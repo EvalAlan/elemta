@@ -1,97 +1,123 @@
 # Elemta Kubernetes Deployment
 
-This directory contains Kubernetes manifests for deploying Elemta in a Kubernetes cluster.
+## Architecture
 
-## Prerequisites
+This directory contains Kubernetes deployment files for the Elemta email platform. The deployment includes:
 
-- Kubernetes cluster (v1.19+)
-- kubectl configured to communicate with your cluster
-- Docker Desktop with Kubernetes enabled (for local development)
+- **Elemta SMTP Server**: The main email server component
+- **ClamAV**: For virus scanning (mocked in this deployment)
+- **Rspamd**: For spam filtering
 
-## Files
+## Quick Start
 
-- `deployment.yaml`: Defines the Elemta deployment
-- `service.yaml`: Exposes the Elemta service
-- `pvc.yaml`: Defines persistent volume claims for data storage
-- `configmap.yaml`: Contains configuration for Elemta
-- `secret.yaml`: Contains sensitive data like LDAP credentials
-- `kustomization.yaml`: Ties all resources together for easy deployment
+### Prerequisites
 
-## Authentication Configuration
+- Kubernetes cluster (minikube, kind, or a cloud provider)
+- `kubectl` configured to use your cluster
+- Docker images built (run `make docker-build` in the project root)
 
-The deployment supports both SQLite and LDAP authentication:
+### Deployment
 
-### SQLite Authentication
-
-SQLite authentication stores user credentials in a local database file. This is suitable for simple deployments or testing.
-
-Configuration parameters:
-- `AUTH_DATASOURCE_TYPE`: Set to "sqlite"
-- `AUTH_SQLITE_PATH`: Path to the SQLite database file
-
-### LDAP Authentication
-
-LDAP authentication connects to an external LDAP server for user authentication. This is suitable for enterprise deployments.
-
-Configuration parameters:
-- `AUTH_DATASOURCE_TYPE`: Set to "ldap"
-- `AUTH_LDAP_HOST`: LDAP server hostname
-- `AUTH_LDAP_PORT`: LDAP server port (default: 389)
-- `AUTH_LDAP_USER_DN`: Base DN for user searches
-- `AUTH_LDAP_GROUP_DN`: Base DN for group searches
-- `AUTH_LDAP_BIND_DN`: DN for binding to the LDAP server
-- `AUTH_LDAP_BIND_PASSWORD`: Password for binding to the LDAP server
-
-## Deployment
-
-### Using kubectl
+To deploy Elemta to your Kubernetes cluster:
 
 ```bash
-# Apply all resources
-kubectl apply -k k8s/
-
-# Or apply individual resources
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
-kubectl apply -f k8s/pvc.yaml
-kubectl apply -f k8s/configmap.yaml
-kubectl apply -f k8s/secret.yaml
+make k8s-deploy
 ```
 
-### Using Docker Desktop Kubernetes
+This will create all necessary resources including:
+- PersistentVolumeClaims for data storage
+- ConfigMaps for configuration
+- Deployment with the Elemta, ClamAV, and Rspamd containers
+- Services to expose the components
 
-If you're using Docker Desktop with Kubernetes enabled:
+### Testing
 
-1. Build the Docker image:
+To test if the deployment is working correctly:
+
+```bash
+make k8s-test
+```
+
+This will run the test script located at `tests/k8s/test-elemta.sh` which tests the SMTP service, ClamAV, and Rspamd functionality.
+
+## Management Commands
+
+- **Deploy**: `make k8s-deploy`
+- **Undeploy**: `make k8s-undeploy`
+- **Stop**: `make k8s-down`
+- **Start**: `make k8s-up`
+- **Restart**: `make k8s-restart`
+- **View Logs**: `make k8s-logs`
+- **Check Status**: `make k8s-status`
+- **Run Tests**: `make k8s-test`
+
+## Configuration
+
+### Elemta Configuration
+
+The Elemta server is configured via the `elemta-config` ConfigMap in the `elemta-all.yaml` file. Key settings include:
+
+- SMTP server settings
+- ClamAV integration
+- Rspamd integration
+
+For production, you should modify:
+- `hostname`: Set to your actual mail server hostname
+- `greeting`: Customize the SMTP greeting
+- Authentication settings if needed
+
+### Rspamd Configuration
+
+Rspamd is configured via the `rspamd-config` ConfigMap. The configuration includes:
+
+- Web interface settings (port 11334, exposed as NodePort 30334)
+- Protocol interface settings (port 11333)
+- No authentication for testing (add authentication for production)
+
+### ClamAV Configuration
+
+In this deployment, ClamAV is mocked using a simple Alpine container with netcat to simulate the ClamAV service. For production, replace this with a real ClamAV container.
+
+## File Structure
+
+- `elemta-all.yaml`: The main Kubernetes deployment file
+- `README.md`: This documentation
+- `../tests/k8s/`: Directory containing test scripts
+
+## Exposed Services
+
+- **SMTP**: NodePort 30025 (mapped to port 25 in the container)
+- **Rspamd Web Interface**: NodePort 30334 (mapped to port 11334 in the container)
+- **ClamAV**: ClusterIP only (internal access via elemta-clamav:3310)
+
+## Test Results
+
+Recent testing confirms:
+
+- **SMTP Service (port 30025)**: ✅ Working
+- **Rspamd Web Interface (port 30334)**: ✅ Working
+- **ClamAV Service (internal only)**: ❓ Not directly accessible from outside (expected)
+
+The deployment is functioning correctly with the SMTP server and Rspamd web interface accessible from outside the cluster.
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Pods not starting**: Check for resource constraints or image pull issues
    ```bash
-   docker build -t elemta:latest .
+   kubectl describe pod -l app=elemta
    ```
 
-2. Apply the Kubernetes manifests:
+2. **Services not accessible**: Verify service and pod status
    ```bash
-   kubectl apply -k k8s/
+   kubectl get services
+   kubectl get pods
    ```
 
-3. Access the service:
+3. **Configuration issues**: Check logs for configuration errors
    ```bash
-   kubectl port-forward svc/elemta 2525:2525
-   ```
-
-## Customization
-
-You can customize the deployment by editing the following files:
-
-- `configmap.yaml`: Update the configuration values
-- `secret.yaml`: Update the sensitive data (use a secure method in production)
-- `deployment.yaml`: Adjust resource limits, replicas, etc.
-
-## Production Considerations
-
-For production deployments, consider the following:
-
-1. Use a proper secret management solution (e.g., HashiCorp Vault, Kubernetes Secrets Store CSI Driver)
-2. Set up proper resource limits and requests
-3. Configure horizontal pod autoscaling
-4. Use a proper ingress controller for TLS termination
-5. Set up monitoring and logging
-6. Use a proper CI/CD pipeline for deployments 
+   kubectl logs -l app=elemta -c elemta
+   kubectl logs -l app=elemta -c rspamd
+   kubectl logs -l app=elemta -c clamav
+   ``` 
