@@ -1,89 +1,41 @@
+# Elemta SMTP Server Configuration
+
 [server]
-hostname = "mail.example.com"
+hostname = "localhost"
 listen = ":2525"
+tls = false
+cert_file = ""
+key_file = ""
 
 queue_dir = "/app/queue"
-max_size = 10485760  # 10MB message size limit
-
-# Local domains for which we accept mail directly (no relay)
-local_domains = ["example.com", "localhost", "mail.example.com"]
-
-# IP addresses and networks allowed to relay (internal networks allowed automatically)
-allowed_relays = ["127.0.0.1", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
-
-[tls]
-enabled = true
-cert_file = "/app/certs/test.crt"
-key_file = "/app/certs/test.key"
-enable_starttls = true
 
 [logging]
-level = "debug"
+level = "info"
 format = "text"
-file = "/app/logs/elemta.log"
+file = ""
 
 [plugins]
 directory = "/app/plugins"
-enabled = ["greylisting", "spf", "dkim", "clamav", "rspamd"]
-
-[auth]
-enabled = true
-required = false  # Authentication required for external connections, but not internal
-datasource_type = "ldap"
-datasource_name = "ldap"
-datasource_host = "elemta-ldap"
-datasource_port = 389
-datasource_db = "dc=example,dc=com"
-datasource_user = "cn=admin,dc=example,dc=com"
-datasource_pass = "admin"
-
-# LDAP specific configuration
-[auth.ldap]
-base_dn = "dc=example,dc=com"
-user_dn = "ou=people"
-group_dn = "ou=groups"
-user_filter = "(&(objectClass=posixAccount)(mail=%s))"
-bind_dn = "cn=admin,dc=example,dc=com"
-bind_password = "admin"
-
-[api]
-enabled = true
-listen_addr = "0.0.0.0:8081"
-
-[delivery]
-mode = "lmtp"  # Use LMTP protocol to deliver to Dovecot
-host = "elemta-dovecot"
-port = 2424
-timeout = 30
-max_retries = 5
-test_mode = true  # Enable test mode delivery
-default_domain = "example.com"  # Default domain for local delivery
-debug = true
-
-[test]
-enabled = true
-discard_real_delivery = false  # Don't discard, actually deliver
-admin_email = "admin@example.com"
+enabled = []
 
 [queue_processor]
-enabled = true  # Enable queue processing
-interval = 10    # Process the queue every 10 seconds
-workers = 5              # Number of concurrent workers
-debug = true            # Enable queue debug logging
-
-# ClamAV anti-virus configuration
-[plugins.clamav]
 enabled = true
-host = "elemta-clamav"
-port = 3310
-timeout = 30
-reject_on_failure = false
-max_size = 10485760  # 10MB scan limit
+interval = 10
+workers = 5
+debug = false
 
-# Rspamd anti-spam configuration
-[plugins.rspamd] 
-enabled = true
-host = "elemta-rspamd"
-port = 11334
-timeout = 30
-reject_on_failure = false
+# TLS Configuration (uncomment and configure as needed)
+# [tls]
+# enabled = false
+# enable_starttls = true
+
+# Authentication Configuration (uncomment and configure as needed)
+# [auth] 
+# enabled = false
+# required = false
+# datasource_type = "file"
+
+# Delivery Configuration (uncomment and configure as needed)
+# [delivery]
+# mode = "smtp"
+# timeout = 30
