@@ -1,0 +1,47 @@
+# Elemta SMTP Server Configuration - STARTTLS Test
+# Configuration for testing STARTTLS and SSL support
+
+[server]
+hostname = "localhost"
+listen = ":2525"
+max_size = 26214400
+queue_dir = "/app/queue"
+
+# TLS Configuration - Enable STARTTLS
+[tls]
+enabled = true
+enable_starttls = true
+cert_file = "/app/certs/test.crt"
+key_file = "/app/certs/test.key"
+# Optional: Listen on dedicated TLS port (SMTPS)
+listen_addr = ":465"
+
+[queue]
+dir = "/app/queue"
+
+[queue_processor]
+enabled = true
+interval = 10
+workers = 5
+debug = false
+
+[logging]
+level = "debug"
+format = "text"
+file = "/app/logs/elemta.log"
+
+[plugins]
+directory = "/app/plugins"
+enabled = []
+
+[auth]
+enabled = false
+required = false
+datasource_type = "file"
+datasource_path = "/app/config/users.txt"
+
+[delivery]
+mode = "lmtp"
+host = "elemta-dovecot"
+port = 2424
+timeout = 30 
