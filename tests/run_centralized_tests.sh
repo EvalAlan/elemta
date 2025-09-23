@@ -144,8 +144,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Check if centralized test script exists
-if [ ! -f "test_elemta_centralized.py" ]; then
-    print_status $RED "❌ Centralized test script not found: test_elemta_centralized.py"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -f "$SCRIPT_DIR/test_elemta_centralized.py" ]; then
+    print_status $RED "❌ Centralized test script not found: $SCRIPT_DIR/test_elemta_centralized.py"
     exit 1
 fi
 
@@ -182,7 +183,7 @@ if [[ "$DEPLOYMENT" == "docker-desktop" || "$DEPLOYMENT" == "docker-dev" ]]; the
 fi
 
 # Build test command
-TEST_CMD="python3 test_elemta_centralized.py --deployment $DEPLOYMENT --host $HOST --smtp-port $SMTP_PORT --timeout $TIMEOUT --max-workers $MAX_WORKERS"
+TEST_CMD="python3 $SCRIPT_DIR/test_elemta_centralized.py --deployment $DEPLOYMENT --host $HOST --smtp-port $SMTP_PORT --timeout $TIMEOUT --max-workers $MAX_WORKERS"
 
 if [ "$VERBOSE" = true ]; then
     TEST_CMD="$TEST_CMD --verbose"
