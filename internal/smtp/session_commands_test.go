@@ -731,18 +731,20 @@ func TestRelayPermissions(t *testing.T) {
 		recipient     string
 		authenticated bool
 		localDomains  []string
+		allowedRelays []string
 		expectCode    string
 	}{
-		{"local domain unauthenticated", "user@localhost", false, []string{"localhost"}, "250"},
-		{"external domain unauthenticated", "user@external.com", false, []string{"localhost"}, "554"},
-		{"external domain authenticated", "user@external.com", true, []string{"localhost"}, "250"},
-		{"local domain authenticated", "user@localhost", true, []string{"localhost"}, "250"},
+		{"local domain unauthenticated", "user@localhost", false, []string{"localhost"}, nil, "250"},
+		{"external domain unauthenticated", "user@external.com", false, []string{"localhost"}, nil, "554"},
+		{"allowed relay unauthenticated", "user@relay.com", false, []string{"localhost"}, []string{"relay.com"}, "250"},
+		{"external domain authenticated", "user@external.com", true, []string{"localhost"}, nil, "250"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := createTestConfig(t)
 			config.LocalDomains = tt.localDomains
+			config.AllowedRelays = tt.allowedRelays
 
 			// For authenticated test, we'll just test unauthenticated scenarios
 			// as auth setup is complex

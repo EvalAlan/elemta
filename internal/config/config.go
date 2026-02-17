@@ -118,6 +118,7 @@ type Config struct {
 	RetrySchedule             []int    `toml:"retry_schedule"`
 	SessionTimeout            string   `toml:"session_timeout"`
 	LocalDomains              []string `toml:"local_domains"`
+	AllowedRelays             []string `toml:"allowed_relays"`
 	FailedQueueRetentionHours int      `toml:"failed_queue_retention_hours"` // 0 = immediate deletion
 
 	// Server configuration (legacy nested structure)
@@ -125,7 +126,8 @@ type Config struct {
 		Hostname         string   `toml:"hostname"`
 		Listen           string   `toml:"listen"`
 		ListenSubmission string   `toml:"listen_submission"`
-		MaxSize          int64    `toml:"max_size"`
+		MaxSize                   int64    `toml:"max_size"`
+		AllowedRelays     []string `toml:"allowed_relays"`
 		LocalDomains     []string `toml:"local_domains"`
 		TLS              bool     `toml:"tls"`
 		CertFile         string   `toml:"cert_file"`
@@ -410,6 +412,41 @@ func (c *Config) SaveConfig(configPath string) error {
 	if len(c.LocalDomains) > 0 {
 		b.WriteString("local_domains = [")
 		for i, d := range c.LocalDomains {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(fmt.Sprintf("%q", d))
+		}
+		b.WriteString("]\n")
+	}
+
+	if len(c.AllowedRelays) > 0 {
+		b.WriteString("allowed_relays = [")
+		for i, d := range c.AllowedRelays {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(fmt.Sprintf("%q", d))
+		}
+		b.WriteString("]\n")
+	}
+
+	if len(c.Server.LocalDomains) > 0 {
+		b.WriteString("[server]\n")
+		b.WriteString("local_domains = [")
+		for i, d := range c.Server.LocalDomains {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(fmt.Sprintf("%q", d))
+		}
+		b.WriteString("]\n")
+	}
+
+	if len(c.Server.AllowedRelays) > 0 {
+		b.WriteString("[server]\n")
+		b.WriteString("allowed_relays = [")
+		for i, d := range c.Server.AllowedRelays {
 			if i > 0 {
 				b.WriteString(", ")
 			}

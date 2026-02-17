@@ -146,7 +146,8 @@ func startServer() {
 		ListenAddr:                cfg.ListenAddr,   // Use top-level listen_addr
 		QueueDir:                  queueDir,         // Use queue directory (prioritize flat, fallback to nested)
 		MaxSize:                   cfg.MaxSize,      // Use top-level max_size
-		LocalDomains:              cfg.LocalDomains, // Use top-level local_domains
+		LocalDomains:              append(cfg.LocalDomains, cfg.Server.LocalDomains...), // Merge top-level and [server] domains
+		AllowedRelays:             append(cfg.AllowedRelays, cfg.Server.AllowedRelays...), // Merge top-level and [server] relays
 		TLS:                       cfg.TLS,
 		DevMode:                   devMode || cfg.Server.DevMode,
 		FailedQueueRetentionHours: cfg.FailedQueueRetentionHours, // Use failed queue retention setting

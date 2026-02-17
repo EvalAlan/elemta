@@ -1112,8 +1112,23 @@ func (ch *CommandHandler) isLocalDomain(ctx context.Context, recipient string) b
 
 // isRelayAllowed checks if relay is allowed for a recipient
 func (ch *CommandHandler) isRelayAllowed(recipient string) bool {
-	// This would typically check against relay rules
-	// For now, return false (no relay allowed without authentication)
+	// Check if the domain is in our explicitly allowed relays list
+	if ch.config.AllowedRelays == nil {
+		return false
+	}
+
+	parts := strings.Split(recipient, "@")
+	if len(parts) != 2 {
+		return false
+	}
+
+	domain := strings.ToLower(parts[1])
+	for _, allowed := range ch.config.AllowedRelays {
+		if strings.ToLower(allowed) == domain {
+			return true
+		}
+	}
+
 	return false
 }
 
