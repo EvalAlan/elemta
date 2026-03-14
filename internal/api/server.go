@@ -1232,88 +1232,32 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rate limiter plugin - we have direct config access
+	rateLimiterEnabled := false
+	if s.mainConfig.RateLimiterPluginConfig != nil {
+		if rateLimiterConfig, ok := s.mainConfig.RateLimiterPluginConfig.(*config.RateLimiterPluginConfig); ok {
+			rateLimiterEnabled = rateLimiterConfig.Enabled
+		}
+	}
+
 	plugins := []map[string]interface{}{
 		{
-			"name": "rate_limiter",
-			"enabled": func() bool {
-				if s.mainConfig.RateLimiterPluginConfig == nil {
-					return false
-				}
-				if rateLimiterConfig, ok := s.mainConfig.RateLimiterPluginConfig.(*config.RateLimiterPluginConfig); ok {
-					return rateLimiterConfig.Enabled
-				}
-				return false
-			}(),
+			"name":        "rate_limiter",
+			"enabled":     rateLimiterEnabled,
 			"description": "Rate limiting and connection management",
 			"config":      s.mainConfig.RateLimiterPluginConfig,
 		},
 		{
 			"name":        "clamav",
-			"enabled":     true, // ClamAV is always enabled in dev deployment
+			"enabled":     nil, // Status unknown - plugin manager not accessible from API
 			"description": "Antivirus and malware scanning",
-			"config": map[string]interface{}{
-				"enabled": true,
-				"port":    "3310",
-				"host":    "elemta-clamav",
-			},
+			"config":      nil,
 		},
 		{
 			"name":        "rspamd",
-			"enabled":     true, // Rspamd is always enabled in dev deployment
+			"enabled":     nil, // Status unknown - plugin manager not accessible from API
 			"description": "Spam filtering and content analysis",
-			"config": map[string]interface{}{
-				"enabled": true,
-				"port":    "11334",
-				"host":    "elemta-rspamd",
-			},
-		},
-		{
-			"name":        "ldap",
-			"enabled":     true, // LDAP is always enabled in dev deployment
-			"description": "Directory service for user authentication",
-			"config": map[string]interface{}{
-				"enabled": true,
-				"port":    "1389",
-				"host":    "elemta-ldap",
-			},
-		},
-		{
-			"name":        "dovecot",
-			"enabled":     true, // Dovecot is always enabled in dev deployment
-			"description": "Mail delivery and IMAP service",
-			"config": map[string]interface{}{
-				"enabled": true,
-				"port":    "14143",
-				"host":    "elemta-dovecot",
-			},
-		},
-		{
-			"name":        "spf",
-			"enabled":     true, // SPF checking is enabled by default
-			"description": "Sender Policy Framework - verifies sender domains",
-			"config": map[string]interface{}{
-				"enabled": true,
-				"mode":    "strict", // strict, relaxed, disabled
-			},
-		},
-		{
-			"name":        "dkim",
-			"enabled":     true, // DKIM signing is enabled by default
-			"description": "DomainKeys Identified Mail - signs outgoing messages",
-			"config": map[string]interface{}{
-				"enabled":  true,
-				"domain":   "example.com",
-				"selector": "mail",
-			},
-		},
-		{
-			"name":        "dmarc",
-			"enabled":     true, // DMARC validation is enabled by default
-			"description": "Domain-based Message Authentication Reporting & Conformance",
-			"config": map[string]interface{}{
-				"enabled": true,
-				"policy":  "reject", // reject, quarantine, none
-			},
+			"config":      nil,
 		},
 	}
 
