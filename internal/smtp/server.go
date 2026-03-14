@@ -757,145 +757,157 @@ func (s *Server) Close() error {
 	s.shutdownOnce.Do(func() {
 		s.slogger.Info("Initiating graceful server shutdown")
 		s.running = false
-
-		// Cancel root context first to propagate cancellation to all sessions
-		if s.rootCancel != nil {
-			s.slogger.Debug("Cancelling server root context to propagate shutdown signal")
-			s.rootCancel()
-		}
-
-		// Close listener first to stop accepting new connections
-		if s.listener != nil {
-			if err := s.listener.Close(); err != nil {
-				s.slogger.Error("Error closing listener", "error", err)
-				shutdownErr = err
-			}
-		}
-
-		// Stop worker pool gracefully
-		if s.workerPool != nil {
-			s.slogger.Info("Stopping worker pool")
-			if err := s.workerPool.Stop(); err != nil {
-				// context.Canceled is expected during graceful shutdown
-				if err != context.Canceled {
-					s.slogger.Error("Error stopping worker pool", "error", err)
-					if shutdownErr == nil {
-						shutdownErr = err
-					}
-				} else {
-					s.slogger.Info("Worker pool stopped successfully")
-				}
-			} else {
-				s.slogger.Info("Worker pool stopped successfully")
-			}
-		}
-
-		// Wait for all managed goroutines to complete with configured timeout
-		shutdownTimeout := s.config.Timeouts.ShutdownTimeout
-		if shutdownTimeout == 0 {
-			shutdownTimeout = 30 * time.Second // fallback default
-		}
-
-		s.slogger.Info("Waiting for goroutines to complete", "timeout", shutdownTimeout)
-		done := make(chan error, 1)
-		go func() {
-			done <- s.errGroup.Wait()
-		}()
-
-		select {
-		case err := <-done:
-			if err != nil {
-				// context.Canceled is expected during graceful shutdown
-				if err != context.Canceled {
-					s.slogger.Error("Error during goroutine shutdown", "error", err)
-					if shutdownErr == nil {
-						shutdownErr = err
-					}
-				} else {
-					s.slogger.Info("All goroutines stopped successfully")
-				}
-			} else {
-				s.slogger.Info("All goroutines stopped successfully")
-			}
-		case <-time.After(shutdownTimeout):
-			s.slogger.Warn("Goroutine shutdown timeout after 30 seconds")
-			if shutdownErr == nil {
-				shutdownErr = fmt.Errorf("shutdown timeout")
-			}
-		}
-
-		// Close resource manager
-		if s.resourceManager != nil {
-			s.resourceManager.Close()
-		}
-
-		// Close metrics server if it was started
-		if s.metricsManager != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := s.metricsManager.Shutdown(ctx); err != nil {
-				s.slogger.Error("Error shutting down metrics server", "error", err)
-				if shutdownErr == nil {
-					shutdownErr = err
-				}
-			}
-		}
-
-		// Close plugin manager
-		if s.pluginManager != nil {
-			if err := s.pluginManager.Close(); err != nil {
-				s.slogger.Error("Error closing plugin manager", "error", err)
-				if shutdownErr == nil {
-					shutdownErr = err
-				}
-			}
-		}
-
-		// Close authenticator
-		if s.authenticator != nil {
-			if auth, ok := s.authenticator.(*SMTPAuthenticator); ok {
-				if err := auth.Close(); err != nil {
-					s.slogger.Error("Error closing authenticator", "error", err)
-					if shutdownErr == nil {
-						shutdownErr = err
-					}
-				}
-			}
-		}
-
-		// Stop TLS manager if it was initialized
-		if s.tlsManager != nil {
-			if err := s.tlsManager.Stop(); err != nil {
-				s.slogger.Error("Error stopping TLS manager", "error", err)
-				if shutdownErr == nil {
-					shutdownErr = err
-				}
-			}
-		}
-
-		// Stop queue processor
-		if s.queueProcessor != nil {
-			s.slogger.Info("Stopping queue processor")
-			if err := s.queueProcessor.Stop(); err != nil {
-				s.slogger.Error("Error stopping queue processor", "error", err)
-				if shutdownErr == nil {
-					shutdownErr = err
-				}
-			} else {
-				s.slogger.Info("Queue processor stopped successfully")
-			}
-		}
-
-		// Stop queue manager
-		if s.queueManager != nil {
-			s.slogger.Info("Stopping queue manager")
-			s.queueManager.Stop()
-		}
-
+		s.cancelRootContext()
+		s.closeListener(&shutdownErr)
+		s.stopWorkerPool(&shutdownErr)
+		s.waitForGoroutines(&shutdownErr)
+		s.closeResourceManagers(&shutdownErr)
+		s.stopSubsystems(&shutdownErr)
 		s.slogger.Info("Graceful server shutdown completed")
 	})
 
 	return shutdownErr
+}
+
+// cancelRootContext cancels the root context to propagate cancellation to all sessions.
+func (s *Server) cancelRootContext() {
+	if s.rootCancel != nil {
+		s.slogger.Debug("Cancelling server root context to propagate shutdown signal")
+		s.rootCancel()
+	}
+}
+
+// closeListener stops accepting new connections.
+func (s *Server) closeListener(shutdownErr *error) {
+	if s.listener != nil {
+		if err := s.listener.Close(); err != nil {
+			s.slogger.Error("Error closing listener", "error", err)
+			*shutdownErr = err
+		}
+	}
+}
+
+// stopWorkerPool gracefully stops the worker pool, ignoring context.Canceled.
+func (s *Server) stopWorkerPool(shutdownErr *error) {
+	if s.workerPool == nil {
+		return
+	}
+
+	s.slogger.Info("Stopping worker pool")
+	err := s.workerPool.Stop()
+	if err == nil || err == context.Canceled {
+		s.slogger.Info("Worker pool stopped successfully")
+		return
+	}
+
+	s.slogger.Error("Error stopping worker pool", "error", err)
+	if *shutdownErr == nil {
+		*shutdownErr = err
+	}
+}
+
+// waitForGoroutines waits for managed goroutines with the configured timeout.
+func (s *Server) waitForGoroutines(shutdownErr *error) {
+	timeout := s.config.Timeouts.ShutdownTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+
+	s.slogger.Info("Waiting for goroutines to complete", "timeout", timeout)
+	done := make(chan error, 1)
+	go func() {
+		done <- s.errGroup.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil || err == context.Canceled {
+			s.slogger.Info("All goroutines stopped successfully")
+		} else {
+			s.slogger.Error("Error during goroutine shutdown", "error", err)
+			if *shutdownErr == nil {
+				*shutdownErr = err
+			}
+		}
+	case <-time.After(timeout):
+		s.slogger.Warn("Goroutine shutdown timeout after 30 seconds")
+		if *shutdownErr == nil {
+			*shutdownErr = fmt.Errorf("shutdown timeout")
+		}
+	}
+}
+
+// closeResourceManagers closes the resource manager.
+func (s *Server) closeResourceManagers(shutdownErr *error) {
+	if s.resourceManager != nil {
+		s.resourceManager.Close()
+	}
+}
+
+// stopSubsystems shuts down metrics, plugins, auth, TLS, and queue subsystems.
+func (s *Server) stopSubsystems(shutdownErr *error) {
+	// Close metrics server
+	if s.metricsManager != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.metricsManager.Shutdown(ctx); err != nil {
+			s.slogger.Error("Error shutting down metrics server", "error", err)
+			if *shutdownErr == nil {
+				*shutdownErr = err
+			}
+		}
+	}
+
+	// Close plugin manager
+	if s.pluginManager != nil {
+		if err := s.pluginManager.Close(); err != nil {
+			s.slogger.Error("Error closing plugin manager", "error", err)
+			if *shutdownErr == nil {
+				*shutdownErr = err
+			}
+		}
+	}
+
+	// Close authenticator
+	if s.authenticator != nil {
+		if auth, ok := s.authenticator.(*SMTPAuthenticator); ok {
+			if err := auth.Close(); err != nil {
+				s.slogger.Error("Error closing authenticator", "error", err)
+				if *shutdownErr == nil {
+					*shutdownErr = err
+				}
+			}
+		}
+	}
+
+	// Stop TLS manager
+	if s.tlsManager != nil {
+		if err := s.tlsManager.Stop(); err != nil {
+			s.slogger.Error("Error stopping TLS manager", "error", err)
+			if *shutdownErr == nil {
+				*shutdownErr = err
+			}
+		}
+	}
+
+	// Stop queue processor
+	if s.queueProcessor != nil {
+		s.slogger.Info("Stopping queue processor")
+		if err := s.queueProcessor.Stop(); err != nil {
+			s.slogger.Error("Error stopping queue processor", "error", err)
+			if *shutdownErr == nil {
+				*shutdownErr = err
+			}
+		} else {
+			s.slogger.Info("Queue processor stopped successfully")
+		}
+	}
+
+	// Stop queue manager
+	if s.queueManager != nil {
+		s.slogger.Info("Stopping queue manager")
+		s.queueManager.Stop()
+	}
 }
 
 // Wait waits for all server goroutines to complete
