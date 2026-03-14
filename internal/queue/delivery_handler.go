@@ -69,34 +69,34 @@ func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 		}
 	}
 
-	// Create delivery result
+	return h.buildDeliveryResult(msg.To, delivered, firstSuccessfulIP, firstSuccessfulHost, lastError)
+}
+
+// buildDeliveryResult constructs a DeliveryResult from delivery statistics
+func (h *SMTPDeliveryHandler) buildDeliveryResult(recipients []string, delivered int, ip, host string, lastError error) (*DeliveryResult, error) {
 	result := &DeliveryResult{
 		Success:         delivered > 0,
-		DeliveryIP:      firstSuccessfulIP,
-		DeliveryHost:    firstSuccessfulHost,
+		DeliveryIP:      ip,
+		DeliveryHost:    host,
 		DeliveryTime:    time.Now(),
-		ResponseMessage: fmt.Sprintf("Delivered to %d/%d recipients", delivered, len(msg.To)),
+		ResponseMessage: fmt.Sprintf("Delivered to %d/%d recipients", delivered, len(recipients)),
 	}
 
-	// If at least one domain succeeded, consider it a partial success
-	if delivered > 0 && delivered < len(msg.To) {
+	switch {
+	case delivered > 0 && delivered < len(recipients):
 		result.Error = fmt.Errorf("partial delivery: %d/%d recipients delivered, last error: %v",
-			delivered, len(msg.To), lastError)
+			delivered, len(recipients), lastError)
 		return result, result.Error
-	}
-
-	// If no recipients were delivered, return the last error
-	if delivered == 0 {
+	case delivered == 0:
 		if lastError != nil {
 			result.Error = lastError
 			return result, lastError
 		}
 		result.Error = fmt.Errorf("delivery failed for all recipients")
 		return result, result.Error
+	default:
+		return result, nil
 	}
-
-	// All recipients delivered successfully
-	return result, nil
 }
 
 // groupRecipientsByDomain groups email recipients by their domain
