@@ -298,19 +298,19 @@ func (m *TLSManager) setupTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// parseTLSVersion parses a TLS version string into a uint16 value
+// parseTLSVersion parses a TLS version string into a uint16 value.
+// TLS 1.0 and 1.1 are rejected as they are deprecated (RFC 8996).
+// The minimum supported version is TLS 1.2.
 func parseTLSVersion(version string) (uint16, error) {
 	switch version {
-	case "1.0", "tls1.0":
-		return tls.VersionTLS10, nil
-	case "1.1", "tls1.1":
-		return tls.VersionTLS11, nil
+	case "1.0", "tls1.0", "1.1", "tls1.1":
+		return 0, fmt.Errorf("TLS %s is deprecated and rejected (RFC 8996), minimum supported version is TLS 1.2", version)
 	case "1.2", "tls1.2":
 		return tls.VersionTLS12, nil
 	case "1.3", "tls1.3":
 		return tls.VersionTLS13, nil
 	default:
-		return 0, fmt.Errorf("unsupported TLS version: %s", version)
+		return 0, fmt.Errorf("unsupported TLS version: %s (supported: 1.2, 1.3)", version)
 	}
 }
 
