@@ -44,53 +44,19 @@ type Server struct {
 	shutdownOnce sync.Once       // Ensure shutdown is called only once
 }
 
-// NewServer creates a new SMTP server
-func NewServer(config *Config) (*Server, error) {
-	// Validate configuration
-	if config == nil {
-		return nil, fmt.Errorf("config cannot be nil")
-	}
-
-	if config.Hostname == "" {
-		// Try to get hostname from OS
-		hostname, err := os.Hostname()
-		if err != nil {
-			return nil, fmt.Errorf("hostname not provided in config and could not be determined: %w", err)
-		}
-		config.Hostname = hostname
-	}
-
-	if config.ListenAddr == "" {
-		config.ListenAddr = ":2525" // Default SMTP port (non-privileged)
-	}
-
-	// Set up logger
-	// Set up logger
-	// logger := log.New(os.Stdout, "SMTP: ", log.LstdFlags) - Removed in favor of slogger
-
-	// Set up structured logger for resource management
-	slogger := slog.Default().With(
-		"component", "smtp-server",
-		"hostname", config.Hostname,
-	)
-
-	slogger.Info("Initializing SMTP server",
-		"event_type", "system",
-		"hostname", config.Hostname)
-
-	// Initialize plugin manager if enabled
+// initPlugins initializes the plugin manager and builtin plugins.
+func initPlugins(config *Config, slogger *slog.Logger) (*plugin.Manager, *plugin.BuiltinPlugins) {
 	var pluginManager *plugin.Manager
 	var builtinPlugins *plugin.BuiltinPlugins
+
 	if config.Plugins != nil && config.Plugins.Enabled {
 		pluginManager = plugin.NewManager(config.Plugins.PluginPath)
 		slogger.Info("Plugin system enabled", "path", config.Plugins.PluginPath)
 
-		// Load plugins
 		if err := pluginManager.LoadPlugins(); err != nil {
 			slogger.Warn("Failed to load plugins", "error", err)
 		}
 
-		// Load specific plugins if specified
 		if len(config.Plugins.Plugins) > 0 {
 			slogger.Info("Attempting to load specified plugins", "count", len(config.Plugins.Plugins))
 			for _, pluginName := range config.Plugins.Plugins {
@@ -103,121 +69,84 @@ func NewServer(config *Config) (*Server, error) {
 		}
 	}
 
-	// Initialize builtin plugins for basic spam/antivirus scanning
 	builtinPlugins = plugin.NewBuiltinPlugins()
-	// Only initialize plugins if explicitly enabled
+
 	if config.Plugins != nil && config.Plugins.Enabled {
+		clamAVEnabled := os.Getenv("ELEMTA_DISABLE_CLAMAV") != "true"
+
+		var pluginNames []string
+		pluginConfig := make(map[string]map[string]interface{})
+
 		if len(config.Plugins.Plugins) > 0 {
-			// Initialize builtin plugins with configuration
-			pluginConfig := make(map[string]map[string]interface{})
-			// Add default configurations for builtin plugins
+			pluginNames = config.Plugins.Plugins
+		} else {
+			pluginNames = []string{"rspamd"}
+			if clamAVEnabled {
+				pluginNames = append(pluginNames, "clamav")
+			}
+		}
+
+		if clamAVEnabled {
 			pluginConfig["clamav"] = map[string]interface{}{
 				"host":    "elemta-clamav",
 				"port":    3310,
 				"timeout": 30,
 			}
-			pluginConfig["rspamd"] = map[string]interface{}{
-				"host":      "elemta-rspamd",
-				"port":      11334,
-				"timeout":   30,
-				"threshold": 5.0,
-			}
+		}
+		pluginConfig["rspamd"] = map[string]interface{}{
+			"host":      "elemta-rspamd",
+			"port":      11334,
+			"timeout":   30,
+			"threshold": 5.0,
+		}
 
-			if err := builtinPlugins.InitBuiltinPlugins(config.Plugins.Plugins, pluginConfig); err != nil {
-				slogger.Warn("Failed to initialize builtin plugins", "error", err)
-			} else {
-				slogger.Info("Builtin plugins initialized successfully")
-			}
+		if err := builtinPlugins.InitBuiltinPlugins(pluginNames, pluginConfig); err != nil {
+			slogger.Warn("Failed to initialize builtin plugins", "error", err)
 		} else {
-			// Initialize with basic builtin scanning if plugins enabled but none specified
-			basicPlugins := []string{"rspamd"}
-			if os.Getenv("ELEMTA_DISABLE_CLAMAV") != "true" {
-				basicPlugins = append(basicPlugins, "clamav")
-			}
-
-			pluginConfig := make(map[string]map[string]interface{})
-			if os.Getenv("ELEMTA_DISABLE_CLAMAV") != "true" {
-				pluginConfig["clamav"] = map[string]interface{}{
-					"host":    "elemta-clamav",
-					"port":    3310,
-					"timeout": 30,
-				}
-			}
-			pluginConfig["rspamd"] = map[string]interface{}{
-				"host":      "elemta-rspamd",
-				"port":      11334,
-				"timeout":   30,
-				"threshold": 5.0,
-			}
-
-			if err := builtinPlugins.InitBuiltinPlugins(basicPlugins, pluginConfig); err != nil {
-				slogger.Warn("Failed to initialize basic builtin plugins", "error", err)
-			} else {
-				slogger.Info("Basic builtin plugins initialized successfully")
-			}
+			slogger.Info("Builtin plugins initialized successfully")
 		}
 	} else {
 		slogger.Info("Plugins disabled or not configured")
 	}
 
-	// Initialize authenticator if enabled
-	var authenticator Authenticator
-	var err error
+	return pluginManager, builtinPlugins
+}
+
+// initAuthenticator initializes the SMTP authenticator.
+func initAuthenticator(config *Config, slogger *slog.Logger) (Authenticator, error) {
 	if config.Auth != nil && config.Auth.Enabled {
 		slogger.Info("Authentication enabled, initializing authenticator")
-		authenticator, err = NewAuthenticator(config.Auth)
+		authenticator, err := NewAuthenticator(config.Auth)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize authenticator: %w", err)
 		}
-
 		if config.Auth.Required {
 			slogger.Info("Authentication will be required for all mail transactions")
 		} else {
 			slogger.Info("Authentication available but not required")
 		}
-	} else {
-		// Create a dummy authenticator that always returns true
-		slogger.Info("Authentication disabled, using dummy authenticator")
-		authenticator = &SMTPAuthenticator{
-			config: &AuthConfig{
-				Enabled:  false,
-				Required: false,
-			},
-		}
+		return authenticator, nil
 	}
 
-	// Initialize metrics
-	metrics := GetMetrics()
-	slogger.Info("Metrics system initialized")
+	slogger.Info("Authentication disabled, using dummy authenticator")
+	return &SMTPAuthenticator{
+		config: &AuthConfig{
+			Enabled:  false,
+			Required: false,
+		},
+	}, nil
+}
 
-	// Initialize metrics manager
-	metricsManager := NewMetricsManager(config, slogger, metrics)
-
-	// Debug: print AuthConfig and TLSConfig
-	if config.Auth != nil {
-		slogger.Info("Auth config loaded",
-			"enabled", config.Auth.Enabled,
-			"required", config.Auth.Required,
-			"datasource", config.Auth.DataSourceType)
-	}
-
-	if config.TLS != nil {
-		slogger.Info("TLS config loaded",
-			"enabled", config.TLS.Enabled,
-			"starttls", config.TLS.EnableStartTLS)
-	}
-
-	// Initialize unified queue system
+// initQueueSystem initializes the queue manager and optional queue processor.
+func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *queue.Processor) {
 	slogger.Info("Initializing unified queue system", "directory", config.QueueDir)
 	queueManager := queue.NewManager(config.QueueDir, config.FailedQueueRetentionHours)
 	slogger.Info("Unified queue system initialized")
 
-	// Initialize queue processor if enabled
 	var queueProcessor *queue.Processor
 	if config.QueueProcessorEnabled {
 		slogger.Info("Queue processor enabled, initializing")
 
-		// Create LMTP delivery handler
 		deliveryHost := "elemta-dovecot"
 		deliveryPort := 2424
 		if config.Delivery != nil {
@@ -229,7 +158,6 @@ func NewServer(config *Config) (*Server, error) {
 			}
 		}
 
-		// Determine per-domain concurrency limit for LMTP deliveries
 		maxPerDomain := config.MaxConnectionsPerDomain
 		if maxPerDomain <= 0 {
 			maxPerDomain = 10
@@ -238,7 +166,6 @@ func NewServer(config *Config) (*Server, error) {
 		slogger.Info("Creating LMTP delivery handler", "host", deliveryHost, "port", deliveryPort, "max_per_domain", maxPerDomain)
 		lmtpHandler := queue.NewLMTPDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours)
 
-		// Create processor configuration
 		processorConfig := queue.ProcessorConfig{
 			Enabled:       config.QueueProcessorEnabled,
 			Interval:      time.Duration(config.QueueProcessInterval) * time.Second,
@@ -256,7 +183,6 @@ func NewServer(config *Config) (*Server, error) {
 		queueProcessor = queue.NewProcessor(queueManager, processorConfig, lmtpHandler)
 		slogger.Info("Queue processor initialized successfully")
 
-		// Set up Valkey metrics recorder if available
 		valkeyAddr := os.Getenv("VALKEY_ADDR")
 		if valkeyAddr == "" {
 			valkeyAddr = "elemta-valkey:6379"
@@ -272,12 +198,15 @@ func NewServer(config *Config) (*Server, error) {
 		slogger.Info("Queue processor disabled")
 	}
 
-	// Initialize resource manager with limits from config
+	return queueManager, queueProcessor
+}
+
+// initResourceManager initializes resource limits and the resource manager.
+func initResourceManager(config *Config, slogger *slog.Logger) (*ResourceManager, *ResourceLimits) {
 	var resourceLimits *ResourceLimits
 	var resourceManager *ResourceManager
 
 	if config.Resources != nil {
-		// Use memory configuration if available, otherwise use defaults
 		var memoryConfig *MemoryConfig
 		if config.Memory != nil {
 			memoryConfig = config.Memory
@@ -291,73 +220,70 @@ func NewServer(config *Config) (*Server, error) {
 				"per_conn_mb", memoryConfig.PerConnectionMemoryLimit/(1024*1024))
 		}
 
-		// Handle missing fields with sensible defaults
 		maxConnPerIP := config.Resources.MaxConnectionsPerIP
 		if maxConnPerIP == 0 {
-			maxConnPerIP = config.Resources.MaxConcurrent // Fallback to MaxConcurrent if not set
+			maxConnPerIP = config.Resources.MaxConcurrent
 			if maxConnPerIP == 0 {
-				maxConnPerIP = 50 // Final fallback default
+				maxConnPerIP = 50
 			}
 		}
 
 		goroutinePoolSize := config.Resources.GoroutinePoolSize
 		if goroutinePoolSize == 0 {
-			goroutinePoolSize = 100 // Default pool size
+			goroutinePoolSize = 100
 		}
 
 		rateLimitWindow := time.Duration(config.Resources.RateLimitWindow) * time.Second
 		if rateLimitWindow == 0 {
-			rateLimitWindow = time.Minute // Default 1 minute window
+			rateLimitWindow = time.Minute
 		}
 
 		maxRequestsPerWindow := config.Resources.MaxRequestsPerWindow
 		if maxRequestsPerWindow == 0 {
-			maxRequestsPerWindow = config.Resources.MaxConnections * 10 // Default: 10 requests per connection
+			maxRequestsPerWindow = config.Resources.MaxConnections * 10
 		}
 
 		resourceLimits = &ResourceLimits{
 			MaxConnections:            config.Resources.MaxConnections,
 			MaxConnectionsPerIP:       maxConnPerIP,
-			MaxGoroutines:             config.Resources.MaxConnections * 2, // Allow 2 goroutines per connection
+			MaxGoroutines:             config.Resources.MaxConnections * 2,
 			ConnectionTimeout:         time.Duration(config.Resources.ConnectionTimeout) * time.Second,
 			SessionTimeout:            time.Duration(config.Resources.SessionTimeout) * time.Second,
 			IdleTimeout:               time.Duration(config.Resources.IdleTimeout) * time.Second,
 			RateLimitWindow:           rateLimitWindow,
 			MaxRequestsPerWindow:      maxRequestsPerWindow,
-			MaxMemoryUsage:            memoryConfig.MaxMemoryUsage, // Use configured memory limit
+			MaxMemoryUsage:            memoryConfig.MaxMemoryUsage,
 			GoroutinePoolSize:         goroutinePoolSize,
 			CircuitBreakerEnabled:     true,
 			ResourceMonitoringEnabled: true,
-			ValkeyURL:                 config.Resources.ValkeyURL,       // Valkey for distributed rate limiting
-			ValkeyKeyPrefix:           config.Resources.ValkeyKeyPrefix, // Valkey key prefix
+			ValkeyURL:                 config.Resources.ValkeyURL,
+			ValkeyKeyPrefix:           config.Resources.ValkeyKeyPrefix,
 		}
 
-		// Initialize resource manager with memory configuration
 		resourceManager = NewResourceManager(resourceLimits, slogger)
-
-		// Initialize memory manager with configuration
 		memoryManager := NewMemoryManager(memoryConfig, slogger)
 		resourceManager.SetMemoryManager(memoryManager)
-
 		slogger.Info("Resource manager initialized with memory protection enabled")
 	} else {
 		resourceLimits = DefaultResourceLimits()
 		resourceManager = NewResourceManager(resourceLimits, slogger)
-		// Initialize default memory manager
 		memoryManager := NewMemoryManager(DefaultMemoryConfig(), slogger)
 		resourceManager.SetMemoryManager(memoryManager)
 		slogger.Info("Resource manager initialized with default memory protection")
 	}
 
-	// Initialize concurrency management with hierarchical context
+	return resourceManager, resourceLimits
+}
+
+// initConcurrency initializes the context hierarchy and worker pool.
+func initConcurrency(slogger *slog.Logger, resourceLimits *ResourceLimits) (context.Context, context.CancelFunc, context.Context, context.CancelFunc, *errgroup.Group, context.Context, *WorkerPool) {
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	ctx, cancel := context.WithCancel(rootCtx)
 	errGroup, gctx := errgroup.WithContext(ctx)
 
-	// Initialize worker pool for connection handling
 	workerPoolConfig := &WorkerPoolConfig{
-		Size:               20,  // Configurable worker pool size
-		JobBufferSize:      100, // Buffer for incoming connections
+		Size:               20,
+		JobBufferSize:      100,
 		ResultBufferSize:   100,
 		CircuitBreakerName: "smtp-connections",
 		MaxRequests:        1000,
@@ -376,6 +302,88 @@ func NewServer(config *Config) (*Server, error) {
 	}
 
 	workerPool := NewWorkerPool(workerPoolConfig, slogger)
+	return rootCtx, rootCancel, ctx, cancel, errGroup, gctx, workerPool
+}
+
+// initTLSManager initializes the TLS manager if TLS is enabled.
+func initTLSManager(config *Config, slogger *slog.Logger) (TLSHandler, error) {
+	if config.TLS != nil && config.TLS.Enabled {
+		slogger.Info("TLS enabled, initializing TLS manager")
+		tlsManager, err := NewTLSManager(config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize TLS manager: %w", err)
+		}
+		slogger.Info("TLS manager initialized successfully")
+
+		if config.TLS.CertFile != "" {
+			slogger.Info("Using TLS certificate", "file", config.TLS.CertFile)
+		}
+		if config.TLS.LetsEncrypt != nil && config.TLS.LetsEncrypt.Enabled {
+			slogger.Info("Let's Encrypt enabled", "domain", config.TLS.LetsEncrypt.Domain)
+		}
+		return tlsManager, nil
+	}
+
+	slogger.Info("TLS disabled")
+	return nil, nil
+}
+
+// NewServer creates a new SMTP server
+func NewServer(config *Config) (*Server, error) {
+	// Validate configuration
+	if config == nil {
+		return nil, fmt.Errorf("config cannot be nil")
+	}
+
+	if config.Hostname == "" {
+		hostname, err := os.Hostname()
+		if err != nil {
+			return nil, fmt.Errorf("hostname not provided in config and could not be determined: %w", err)
+		}
+		config.Hostname = hostname
+	}
+
+	if config.ListenAddr == "" {
+		config.ListenAddr = ":2525" // Default SMTP port (non-privileged)
+	}
+
+	slogger := slog.Default().With(
+		"component", "smtp-server",
+		"hostname", config.Hostname,
+	)
+
+	slogger.Info("Initializing SMTP server",
+		"event_type", "system",
+		"hostname", config.Hostname)
+
+	// Log config summaries
+	if config.Auth != nil {
+		slogger.Info("Auth config loaded",
+			"enabled", config.Auth.Enabled,
+			"required", config.Auth.Required,
+			"datasource", config.Auth.DataSourceType)
+	}
+	if config.TLS != nil {
+		slogger.Info("TLS config loaded",
+			"enabled", config.TLS.Enabled,
+			"starttls", config.TLS.EnableStartTLS)
+	}
+
+	// Initialize subsystems
+	pluginManager, builtinPlugins := initPlugins(config, slogger)
+
+	authenticator, err := initAuthenticator(config, slogger)
+	if err != nil {
+		return nil, err
+	}
+
+	metrics := GetMetrics()
+	slogger.Info("Metrics system initialized")
+	metricsManager := NewMetricsManager(config, slogger, metrics)
+
+	queueManager, queueProcessor := initQueueSystem(config, slogger)
+	resourceManager, resourceLimits := initResourceManager(config, slogger)
+	rootCtx, rootCancel, _, cancel, errGroup, gctx, workerPool := initConcurrency(slogger, resourceLimits)
 
 	server := &Server{
 		config:          config,
@@ -388,38 +396,19 @@ func NewServer(config *Config) (*Server, error) {
 		queueProcessor:  queueProcessor,
 		resourceManager: resourceManager,
 		slogger:         slogger,
-
-		// Concurrency management with hierarchical context
-		workerPool: workerPool,
-		rootCtx:    rootCtx,    // Server lifecycle context
-		rootCancel: rootCancel, // Server lifecycle cancellation
-		ctx:        gctx,       // Worker context (derived from root)
-		cancel:     cancel,     // Worker context cancellation
-		errGroup:   errGroup,
+		workerPool:      workerPool,
+		rootCtx:         rootCtx,
+		rootCancel:      rootCancel,
+		ctx:             gctx,
+		cancel:          cancel,
+		errGroup:        errGroup,
 	}
 
-	// Initialize TLS manager if TLS is enabled
-	if config.TLS != nil && config.TLS.Enabled {
-		slogger.Info("TLS enabled, initializing TLS manager")
-		tlsManager, err := NewTLSManager(config)
-		if err != nil {
-			// TLS is explicitly enabled; failing to initialize it is a hard error
-			return nil, fmt.Errorf("failed to initialize TLS manager: %w", err)
-		}
-		server.tlsManager = tlsManager
-		server.tlsManager = tlsManager
-		slogger.Info("TLS manager initialized successfully")
-
-		// Log certificate information
-		if config.TLS.CertFile != "" {
-			slogger.Info("Using TLS certificate", "file", config.TLS.CertFile)
-		}
-		if config.TLS.LetsEncrypt != nil && config.TLS.LetsEncrypt.Enabled {
-			slogger.Info("Let's Encrypt enabled", "domain", config.TLS.LetsEncrypt.Domain)
-		}
-	} else {
-		slogger.Info("TLS disabled")
+	tlsManager, err := initTLSManager(config, slogger)
+	if err != nil {
+		return nil, err
 	}
+	server.tlsManager = tlsManager
 
 	// Initialize scanner manager
 	scannerManager := NewScannerManager(config, server)
@@ -428,8 +417,6 @@ func NewServer(config *Config) (*Server, error) {
 			"error", err,
 			"component", "scanner-manager",
 		)
-		// Continue even if scanner initialization fails
-		// This prevents the server from crashing if scanners are misconfigured
 	}
 
 	return server, nil
@@ -770,145 +757,157 @@ func (s *Server) Close() error {
 	s.shutdownOnce.Do(func() {
 		s.slogger.Info("Initiating graceful server shutdown")
 		s.running = false
-
-		// Cancel root context first to propagate cancellation to all sessions
-		if s.rootCancel != nil {
-			s.slogger.Debug("Cancelling server root context to propagate shutdown signal")
-			s.rootCancel()
-		}
-
-		// Close listener first to stop accepting new connections
-		if s.listener != nil {
-			if err := s.listener.Close(); err != nil {
-				s.slogger.Error("Error closing listener", "error", err)
-				shutdownErr = err
-			}
-		}
-
-		// Stop worker pool gracefully
-		if s.workerPool != nil {
-			s.slogger.Info("Stopping worker pool")
-			if err := s.workerPool.Stop(); err != nil {
-				// context.Canceled is expected during graceful shutdown
-				if err != context.Canceled {
-					s.slogger.Error("Error stopping worker pool", "error", err)
-					if shutdownErr == nil {
-						shutdownErr = err
-					}
-				} else {
-					s.slogger.Info("Worker pool stopped successfully")
-				}
-			} else {
-				s.slogger.Info("Worker pool stopped successfully")
-			}
-		}
-
-		// Wait for all managed goroutines to complete with configured timeout
-		shutdownTimeout := s.config.Timeouts.ShutdownTimeout
-		if shutdownTimeout == 0 {
-			shutdownTimeout = 30 * time.Second // fallback default
-		}
-
-		s.slogger.Info("Waiting for goroutines to complete", "timeout", shutdownTimeout)
-		done := make(chan error, 1)
-		go func() {
-			done <- s.errGroup.Wait()
-		}()
-
-		select {
-		case err := <-done:
-			if err != nil {
-				// context.Canceled is expected during graceful shutdown
-				if err != context.Canceled {
-					s.slogger.Error("Error during goroutine shutdown", "error", err)
-					if shutdownErr == nil {
-						shutdownErr = err
-					}
-				} else {
-					s.slogger.Info("All goroutines stopped successfully")
-				}
-			} else {
-				s.slogger.Info("All goroutines stopped successfully")
-			}
-		case <-time.After(shutdownTimeout):
-			s.slogger.Warn("Goroutine shutdown timeout after 30 seconds")
-			if shutdownErr == nil {
-				shutdownErr = fmt.Errorf("shutdown timeout")
-			}
-		}
-
-		// Close resource manager
-		if s.resourceManager != nil {
-			s.resourceManager.Close()
-		}
-
-		// Close metrics server if it was started
-		if s.metricsManager != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := s.metricsManager.Shutdown(ctx); err != nil {
-				s.slogger.Error("Error shutting down metrics server", "error", err)
-				if shutdownErr == nil {
-					shutdownErr = err
-				}
-			}
-		}
-
-		// Close plugin manager
-		if s.pluginManager != nil {
-			if err := s.pluginManager.Close(); err != nil {
-				s.slogger.Error("Error closing plugin manager", "error", err)
-				if shutdownErr == nil {
-					shutdownErr = err
-				}
-			}
-		}
-
-		// Close authenticator
-		if s.authenticator != nil {
-			if auth, ok := s.authenticator.(*SMTPAuthenticator); ok {
-				if err := auth.Close(); err != nil {
-					s.slogger.Error("Error closing authenticator", "error", err)
-					if shutdownErr == nil {
-						shutdownErr = err
-					}
-				}
-			}
-		}
-
-		// Stop TLS manager if it was initialized
-		if s.tlsManager != nil {
-			if err := s.tlsManager.Stop(); err != nil {
-				s.slogger.Error("Error stopping TLS manager", "error", err)
-				if shutdownErr == nil {
-					shutdownErr = err
-				}
-			}
-		}
-
-		// Stop queue processor
-		if s.queueProcessor != nil {
-			s.slogger.Info("Stopping queue processor")
-			if err := s.queueProcessor.Stop(); err != nil {
-				s.slogger.Error("Error stopping queue processor", "error", err)
-				if shutdownErr == nil {
-					shutdownErr = err
-				}
-			} else {
-				s.slogger.Info("Queue processor stopped successfully")
-			}
-		}
-
-		// Stop queue manager
-		if s.queueManager != nil {
-			s.slogger.Info("Stopping queue manager")
-			s.queueManager.Stop()
-		}
-
+		s.cancelRootContext()
+		s.closeListener(&shutdownErr)
+		s.stopWorkerPool(&shutdownErr)
+		s.waitForGoroutines(&shutdownErr)
+		s.closeResourceManagers(&shutdownErr)
+		s.stopSubsystems(&shutdownErr)
 		s.slogger.Info("Graceful server shutdown completed")
 	})
 
 	return shutdownErr
+}
+
+// cancelRootContext cancels the root context to propagate cancellation to all sessions.
+func (s *Server) cancelRootContext() {
+	if s.rootCancel != nil {
+		s.slogger.Debug("Cancelling server root context to propagate shutdown signal")
+		s.rootCancel()
+	}
+}
+
+// closeListener stops accepting new connections.
+func (s *Server) closeListener(shutdownErr *error) {
+	if s.listener != nil {
+		if err := s.listener.Close(); err != nil {
+			s.slogger.Error("Error closing listener", "error", err)
+			*shutdownErr = err
+		}
+	}
+}
+
+// stopWorkerPool gracefully stops the worker pool, ignoring context.Canceled.
+func (s *Server) stopWorkerPool(shutdownErr *error) {
+	if s.workerPool == nil {
+		return
+	}
+
+	s.slogger.Info("Stopping worker pool")
+	err := s.workerPool.Stop()
+	if err == nil || err == context.Canceled {
+		s.slogger.Info("Worker pool stopped successfully")
+		return
+	}
+
+	s.slogger.Error("Error stopping worker pool", "error", err)
+	if *shutdownErr == nil {
+		*shutdownErr = err
+	}
+}
+
+// waitForGoroutines waits for managed goroutines with the configured timeout.
+func (s *Server) waitForGoroutines(shutdownErr *error) {
+	timeout := s.config.Timeouts.ShutdownTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+
+	s.slogger.Info("Waiting for goroutines to complete", "timeout", timeout)
+	done := make(chan error, 1)
+	go func() {
+		done <- s.errGroup.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil || err == context.Canceled {
+			s.slogger.Info("All goroutines stopped successfully")
+		} else {
+			s.slogger.Error("Error during goroutine shutdown", "error", err)
+			if *shutdownErr == nil {
+				*shutdownErr = err
+			}
+		}
+	case <-time.After(timeout):
+		s.slogger.Warn("Goroutine shutdown timeout after 30 seconds")
+		if *shutdownErr == nil {
+			*shutdownErr = fmt.Errorf("shutdown timeout")
+		}
+	}
+}
+
+// closeResourceManagers closes the resource manager.
+func (s *Server) closeResourceManagers(shutdownErr *error) {
+	if s.resourceManager != nil {
+		s.resourceManager.Close()
+	}
+}
+
+// stopSubsystems shuts down metrics, plugins, auth, TLS, and queue subsystems.
+func (s *Server) stopSubsystems(shutdownErr *error) {
+	// Close metrics server
+	if s.metricsManager != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.metricsManager.Shutdown(ctx); err != nil {
+			s.slogger.Error("Error shutting down metrics server", "error", err)
+			if *shutdownErr == nil {
+				*shutdownErr = err
+			}
+		}
+	}
+
+	// Close plugin manager
+	if s.pluginManager != nil {
+		if err := s.pluginManager.Close(); err != nil {
+			s.slogger.Error("Error closing plugin manager", "error", err)
+			if *shutdownErr == nil {
+				*shutdownErr = err
+			}
+		}
+	}
+
+	// Close authenticator
+	if s.authenticator != nil {
+		if auth, ok := s.authenticator.(*SMTPAuthenticator); ok {
+			if err := auth.Close(); err != nil {
+				s.slogger.Error("Error closing authenticator", "error", err)
+				if *shutdownErr == nil {
+					*shutdownErr = err
+				}
+			}
+		}
+	}
+
+	// Stop TLS manager
+	if s.tlsManager != nil {
+		if err := s.tlsManager.Stop(); err != nil {
+			s.slogger.Error("Error stopping TLS manager", "error", err)
+			if *shutdownErr == nil {
+				*shutdownErr = err
+			}
+		}
+	}
+
+	// Stop queue processor
+	if s.queueProcessor != nil {
+		s.slogger.Info("Stopping queue processor")
+		if err := s.queueProcessor.Stop(); err != nil {
+			s.slogger.Error("Error stopping queue processor", "error", err)
+			if *shutdownErr == nil {
+				*shutdownErr = err
+			}
+		} else {
+			s.slogger.Info("Queue processor stopped successfully")
+		}
+	}
+
+	// Stop queue manager
+	if s.queueManager != nil {
+		s.slogger.Info("Stopping queue manager")
+		s.queueManager.Stop()
+	}
 }
 
 // Wait waits for all server goroutines to complete

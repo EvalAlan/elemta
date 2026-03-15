@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // SecurityConfig represents the complete security configuration for plugins
@@ -260,9 +262,16 @@ func LoadSecurityConfig(configPath string) (*SecurityConfig, error) {
 		return &config, nil
 	}
 
-	// TODO: Implement actual TOML/JSON/YAML loading
-	// For now, return default config
-	config := DefaultSecurityConfig()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var config SecurityConfig
+	if err := toml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse TOML config: %w", err)
+	}
+
 	return &config, nil
 }
 
@@ -273,8 +282,15 @@ func SaveSecurityConfig(config *SecurityConfig, configPath string) error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	// TODO: Implement actual TOML/JSON/YAML saving
-	// For now, just return success
+	data, err := toml.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config to TOML: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
 	return nil
 }
 
