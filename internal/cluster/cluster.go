@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/busybox42/elemta/internal/version"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -135,7 +136,7 @@ func NewCluster(config ClusterConfig) (*Cluster, error) {
 		Status:    StatusHealthy,
 		LastSeen:  time.Now(),
 		StartedAt: time.Now(),
-		Version:   "1.0.0", // TODO: Get from version package
+		Version:   version.Version,
 		Metadata:  make(map[string]interface{}),
 	}
 
