@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/busybox42/elemta/internal/queue"
+	"github.com/busybox42/elemta/internal/version"
 )
 
 // HealthStats represents server health statistics
@@ -244,7 +245,7 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 			TotalProcessed:    totalProcessed,
 			TotalBytes:        totalBytes,
 		},
-		ServerVersion:             "1.0.0",
+		ServerVersion:             version.Version,
 		ConfiguredAddr:            s.listenAddr,
 		AuthEnabled:               s.authSystem != nil,
 		FailedQueueRetentionHours: s.getFailedQueueRetentionHours(),
