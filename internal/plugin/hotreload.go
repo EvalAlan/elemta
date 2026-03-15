@@ -462,18 +462,80 @@ func (hrm *HotReloadManager) backupPluginAtomic(pluginPath, pluginName string) (
 	return backupPath, nil
 }
 
-// unloadPluginGracefully attempts to gracefully shut down a plugin
+// unloadPluginGracefully attempts to gracefully shut down a plugin.
+// It follows a four-step process:
+//  1. Mark the plugin as unloading to prevent new request acceptance
+//  2. Wait for in-flight requests to drain (up to the configured timeout)
+//  3. Call plugin.Close() to release resources
+//  4. Remove the plugin from the manager
 func (hrm *HotReloadManager) unloadPluginGracefully(pluginName string) error {
-	// This would need to be integrated with the enhanced manager
-	// For now, we'll just log the intent
 	hrm.logger.Info("Gracefully unloading plugin", "plugin", pluginName)
 
-	// TODO: Implement graceful shutdown
-	// 1. Stop accepting new requests for this plugin
-	// 2. Wait for existing requests to complete (with timeout)
-	// 3. Call plugin.Close() method
-	// 4. Remove from plugin manager
+	if hrm.pluginManager == nil {
+		return fmt.Errorf("plugin manager not available")
+	}
 
+	// Step 1: Mark plugin as unloading — prevents new request acceptance
+	hrm.pluginManager.mu.Lock()
+	enhanced, exists := hrm.pluginManager.plugins[pluginName]
+	if !exists {
+		hrm.pluginManager.mu.Unlock()
+		return fmt.Errorf("plugin %s not found", pluginName)
+	}
+	enhanced.State = PluginStateUnloading
+	hrm.pluginManager.plugins[pluginName] = enhanced
+	hrm.pluginManager.mu.Unlock()
+
+	hrm.logger.Debug("Plugin marked as unloading, waiting for in-flight requests to drain",
+		"plugin", pluginName,
+		"timeout", hrm.config.GracefulShutdown)
+
+	// Step 2: Wait for in-flight requests to complete
+	// The plugin state is now PluginStateUnloading, so new requests are blocked.
+	// We wait a brief drain period (proportional to the timeout) to allow
+	// any in-flight requests to complete naturally before forcing closure.
+	drainTime := hrm.config.GracefulShutdown
+	if drainTime > 5*time.Second {
+		drainTime = 5 * time.Second // Cap drain wait at 5s for responsiveness
+	}
+	time.Sleep(drainTime)
+
+	// Step 3: Call plugin.Close() to release resources
+	hrm.pluginManager.mu.Lock()
+	defer hrm.pluginManager.mu.Unlock()
+
+	enhanced, exists = hrm.pluginManager.plugins[pluginName]
+	if !exists {
+		return nil // Already removed by another goroutine
+	}
+
+	if enhanced.Plugin != nil {
+		if err := enhanced.Plugin.Close(); err != nil {
+			hrm.logger.Error("Failed to close plugin during graceful shutdown",
+				"plugin", pluginName, "error", err)
+			// Continue with removal despite close error
+		}
+	}
+
+	// Step 4: Remove from plugin manager
+	enhanced.State = PluginStateUnloaded
+	enhanced.Plugin = nil
+	delete(hrm.pluginManager.plugins, pluginName)
+
+	// Remove from plugin order
+	for i, name := range hrm.pluginManager.pluginOrder {
+		if name == pluginName {
+			hrm.pluginManager.pluginOrder = append(
+				hrm.pluginManager.pluginOrder[:i],
+				hrm.pluginManager.pluginOrder[i+1:]...)
+			break
+		}
+	}
+
+	// Remove from enabled plugins
+	delete(hrm.pluginManager.enabledPlugins, pluginName)
+
+	hrm.logger.Info("Plugin gracefully unloaded", "plugin", pluginName)
 	return nil
 }
 
@@ -561,7 +623,7 @@ func (hrm *HotReloadManager) copyFile(src, dst string) error {
 	}
 	defer func() { _ = srcFile.Close() }()
 
-	dstFile, err := os.Create(dst)
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0700)
 	if err != nil {
 		return err
 	}
