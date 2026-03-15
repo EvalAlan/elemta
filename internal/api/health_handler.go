@@ -135,10 +135,37 @@ var (
 	serverStartTime   = time.Now()
 	totalConnections  atomic.Int64
 	activeConnections atomic.Int32
-	// TODO: Implement metrics tracking for these counters
-	// messagesProcessed atomic.Int64
-	// bytesProcessed    atomic.Int64
+	messagesProcessed atomic.Int64
+	bytesProcessed    atomic.Int64
 )
+
+// TrackMessageProcessed increments the messages processed counter.
+// Called by SMTP handlers when a message is successfully received.
+func TrackMessageProcessed(size int64) {
+	messagesProcessed.Add(1)
+	bytesProcessed.Add(size)
+}
+
+// TrackConnectionOpened increments connection counters.
+func TrackConnectionOpened() {
+	totalConnections.Add(1)
+	activeConnections.Add(1)
+}
+
+// TrackConnectionClosed decrements the active connection counter.
+func TrackConnectionClosed() {
+	activeConnections.Add(-1)
+}
+
+// GetMessagesProcessed returns the total number of messages processed.
+func GetMessagesProcessed() int64 {
+	return messagesProcessed.Load()
+}
+
+// GetBytesProcessed returns the total bytes processed.
+func GetBytesProcessed() int64 {
+	return bytesProcessed.Load()
+}
 
 // handleHealthStats returns server health statistics
 func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
@@ -153,15 +180,20 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 	queueStats := s.queueMgr.GetStats()
 
 	// Get metrics from Valkey store for throughput calculation
+	// Fall back to in-process atomic counters when Valkey is unavailable
 	var totalProcessed int64
 	var totalBytes int64
 	if s.metricsStore != nil {
 		metricsData, err := s.metricsStore.GetMetrics(ctx)
 		if err == nil && metricsData != nil {
 			totalProcessed = metricsData.TotalDelivered + metricsData.TotalFailed + metricsData.TotalDeferred
-			// Note: bytes data may not be available in metrics store, using 0 for now
-			totalBytes = 0
+			totalBytes = GetBytesProcessed()
 		}
+	}
+	// Always include in-process counters as they're more accurate for current session
+	if totalProcessed == 0 {
+		totalProcessed = GetMessagesProcessed()
+		totalBytes = GetBytesProcessed()
 	}
 
 	health := HealthStats{
