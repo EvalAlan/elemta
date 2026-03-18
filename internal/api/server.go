@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"syscall"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/busybox42/elemta/internal/auth"
@@ -47,6 +50,8 @@ type Server struct {
 	mainConfig     *MainConfig // Main application configuration
 	configPath     string      // Path to config file for persistence
 	httpServer     *http.Server
+	listener       net.Listener
+	restarting     atomic.Bool
 	queueMgr       *queue.Manager
 	listenAddr     string
 	webRoot        string
@@ -59,6 +64,8 @@ type Server struct {
 	corsMiddleware *CORSMiddleware
 	metricsStore   MetricsStore
 }
+
+const inheritedHTTPFDEnv = "ELEMTA_INHERITED_HTTP_FD"
 
 // MetricsStore interface for delivery metrics
 type MetricsStore interface {
@@ -424,13 +431,19 @@ func (s *Server) Start() error {
 		WriteTimeout:      15 * time.Second,
 	}
 
+	listener, err := s.createListener()
+	if err != nil {
+		return fmt.Errorf("failed to create API listener: %w", err)
+	}
+	s.listener = listener
+
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Starting API server on %s", s.listenAddr)
 		if s.authMiddleware != nil {
 			log.Printf("Authentication enabled")
 		}
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("API server error: %v", err)
 		}
 	}()
@@ -452,7 +465,63 @@ func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	return s.httpServer.Shutdown(ctx)
+	err := s.httpServer.Shutdown(ctx)
+	s.listener = nil
+	return err
+}
+
+func (s *Server) createListener() (net.Listener, error) {
+	if inheritedFD := os.Getenv(inheritedHTTPFDEnv); inheritedFD != "" {
+		fd, err := strconv.Atoi(inheritedFD)
+		if err != nil {
+			return nil, fmt.Errorf("invalid inherited listener fd %q: %w", inheritedFD, err)
+		}
+
+		f := os.NewFile(uintptr(fd), "inherited-api-listener")
+		if f == nil {
+			return nil, fmt.Errorf("failed to create file handle for inherited listener fd %d", fd)
+		}
+		defer f.Close()
+
+		ln, err := net.FileListener(f)
+		if err != nil {
+			return nil, fmt.Errorf("failed to adopt inherited listener fd %d: %w", fd, err)
+		}
+
+		if err := os.Unsetenv(inheritedHTTPFDEnv); err != nil {
+			log.Printf("warning: failed to unset %s: %v", inheritedHTTPFDEnv, err)
+		}
+		log.Printf("Adopted inherited API listener on fd %d", fd)
+		return ln, nil
+	}
+
+	return net.Listen("tcp", s.listenAddr)
+}
+
+func (s *Server) startReplacementProcess() (*os.Process, error) {
+	tcpListener, ok := s.listener.(*net.TCPListener)
+	if !ok {
+		return nil, fmt.Errorf("listener does not support graceful restart handoff")
+	}
+
+	listenerFile, err := tcpListener.File()
+	if err != nil {
+		return nil, fmt.Errorf("failed to duplicate listener file descriptor: %w", err)
+	}
+	defer listenerFile.Close()
+
+	cmd := exec.Command(os.Args[0], os.Args[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	cmd.ExtraFiles = []*os.File{listenerFile}
+	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=%d", inheritedHTTPFDEnv, 3))
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start replacement process: %w", err)
+	}
+
+	return cmd.Process, nil
 }
 
 // API handlers
@@ -1456,12 +1525,25 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Unknown plugin or invalid update", http.StatusBadRequest)
 }
 
-// handleServerRestart initiates a graceful server shutdown via SIGTERM
+// handleServerRestart initiates a graceful zero-downtime restart using listener handoff.
 func (s *Server) handleServerRestart(w http.ResponseWriter, r *http.Request) {
+	if !s.restarting.CompareAndSwap(false, true) {
+		http.Error(w, "Restart already in progress", http.StatusConflict)
+		return
+	}
+
+	process, err := s.startReplacementProcess()
+	if err != nil {
+		s.restarting.Store(false)
+		http.Error(w, fmt.Sprintf("Failed to start replacement process: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	writeJSON(w, map[string]interface{}{
-		"status":  "success",
-		"message": "Server shutdown initiated. Restart via your process manager (Docker, systemd, etc.)",
-		"warning": "This will terminate the web interface process",
+		"status":       "success",
+		"message":      "Graceful restart initiated",
+		"new_pid":      process.Pid,
+		"drain_period": "existing requests will drain before shutdown",
 	})
 
 	// Flush response before shutting down
@@ -1469,13 +1551,19 @@ func (s *Server) handleServerRestart(w http.ResponseWriter, r *http.Request) {
 		f.Flush()
 	}
 
-	// Send SIGTERM to self after a short delay so the response is delivered
+	// Shutdown current process after response is delivered.
 	go func() {
-		time.Sleep(1 * time.Second)
-		slog.Info("Restart requested via web UI, sending SIGTERM to self")
-		if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
-			slog.Error("Failed to send SIGTERM to self", "error", err)
+		time.Sleep(500 * time.Millisecond)
+		slog.Info("Restart requested via web UI, draining old API process", "new_pid", process.Pid)
+		if err := s.Stop(); err != nil {
+			slog.Error("Failed to gracefully stop old API process", "error", err)
+			if killErr := syscall.Kill(os.Getpid(), syscall.SIGTERM); killErr != nil {
+				slog.Error("Failed to forcefully terminate old API process", "error", killErr)
+			}
+			return
 		}
+
+		os.Exit(0)
 	}()
 }
 
