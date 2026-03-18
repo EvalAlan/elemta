@@ -2,8 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -573,4 +576,39 @@ func BenchmarkJSONEncode(b *testing.B) {
 		w := httptest.NewRecorder()
 		json.NewEncoder(w).Encode(data)
 	}
+}
+
+func TestCreateListener(t *testing.T) {
+	t.Run("returns error for invalid inherited fd", func(t *testing.T) {
+		t.Setenv(inheritedHTTPFDEnv, "abc")
+		s := &Server{listenAddr: "127.0.0.1:0"}
+
+		ln, err := s.createListener()
+		require.Error(t, err)
+		assert.Nil(t, ln)
+	})
+
+	t.Run("adopts inherited listener", func(t *testing.T) {
+		parent, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		defer parent.Close()
+
+		tcpParent, ok := parent.(*net.TCPListener)
+		require.True(t, ok)
+
+		file, err := tcpParent.File()
+		require.NoError(t, err)
+		defer file.Close()
+
+		t.Setenv(inheritedHTTPFDEnv, strconv.Itoa(int(file.Fd())))
+		s := &Server{listenAddr: "127.0.0.1:0"}
+
+		ln, err := s.createListener()
+		require.NoError(t, err)
+		require.NotNil(t, ln)
+		defer ln.Close()
+
+		_, exists := os.LookupEnv(inheritedHTTPFDEnv)
+		assert.False(t, exists, "inherited listener env should be cleared")
+	})
 }
