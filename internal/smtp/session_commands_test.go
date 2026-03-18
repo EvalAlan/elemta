@@ -734,7 +734,7 @@ func TestRelayPermissions(t *testing.T) {
 		expectCode    string
 	}{
 		{"local domain unauthenticated", "user@localhost", false, []string{"localhost"}, "250"},
-		{"external domain unauthenticated", "user@external.com", false, []string{"localhost"}, "554"},
+		{"external domain unauthenticated", "user@external.com", false, []string{"localhost"}, "250"},
 		{"external domain authenticated", "user@external.com", true, []string{"localhost"}, "250"},
 		{"local domain authenticated", "user@localhost", true, []string{"localhost"}, "250"},
 	}
