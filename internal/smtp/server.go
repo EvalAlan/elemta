@@ -328,17 +328,15 @@ func initTLSManager(config *Config, slogger *slog.Logger) (TLSHandler, error) {
 	return nil, nil
 }
 
-// NewServer creates a new SMTP server
-func NewServer(config *Config) (*Server, error) {
-	// Validate configuration
+func prepareServerConfig(config *Config) error {
 	if config == nil {
-		return nil, fmt.Errorf("config cannot be nil")
+		return fmt.Errorf("config cannot be nil")
 	}
 
 	if config.Hostname == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
-			return nil, fmt.Errorf("hostname not provided in config and could not be determined: %w", err)
+			return fmt.Errorf("hostname not provided in config and could not be determined: %w", err)
 		}
 		config.Hostname = hostname
 	}
@@ -347,16 +345,14 @@ func NewServer(config *Config) (*Server, error) {
 		config.ListenAddr = ":2525" // Default SMTP port (non-privileged)
 	}
 
-	slogger := slog.Default().With(
-		"component", "smtp-server",
-		"hostname", config.Hostname,
-	)
+	return nil
+}
 
+func logServerConfigSummary(config *Config, slogger *slog.Logger) {
 	slogger.Info("Initializing SMTP server",
 		"event_type", "system",
 		"hostname", config.Hostname)
 
-	// Log config summaries
 	if config.Auth != nil {
 		slogger.Info("Auth config loaded",
 			"enabled", config.Auth.Enabled,
@@ -368,10 +364,21 @@ func NewServer(config *Config) (*Server, error) {
 			"enabled", config.TLS.Enabled,
 			"starttls", config.TLS.EnableStartTLS)
 	}
+}
 
-	// Initialize subsystems
+// NewServer creates a new SMTP server
+func NewServer(config *Config) (*Server, error) {
+	if err := prepareServerConfig(config); err != nil {
+		return nil, err
+	}
+
+	slogger := slog.Default().With(
+		"component", "smtp-server",
+		"hostname", config.Hostname,
+	)
+	logServerConfigSummary(config, slogger)
+
 	pluginManager, builtinPlugins := initPlugins(config, slogger)
-
 	authenticator, err := initAuthenticator(config, slogger)
 	if err != nil {
 		return nil, err
@@ -380,7 +387,6 @@ func NewServer(config *Config) (*Server, error) {
 	metrics := GetMetrics()
 	slogger.Info("Metrics system initialized")
 	metricsManager := NewMetricsManager(config, slogger, metrics)
-
 	queueManager, queueProcessor := initQueueSystem(config, slogger)
 	resourceManager, resourceLimits := initResourceManager(config, slogger)
 	rootCtx, rootCancel, _, cancel, errGroup, gctx, workerPool := initConcurrency(slogger, resourceLimits)
@@ -410,7 +416,6 @@ func NewServer(config *Config) (*Server, error) {
 	}
 	server.tlsManager = tlsManager
 
-	// Initialize scanner manager
 	scannerManager := NewScannerManager(config, server)
 	if err := scannerManager.Initialize(context.Background()); err != nil {
 		slogger.Warn("Error initializing scanner manager",
