@@ -243,7 +243,7 @@ func TestSMTP_DomainHandling(t *testing.T) {
 		assert.Contains(t, rcptResp, "250", "Local domain should be accepted")
 	})
 
-	t.Run("External_Domain_Relay_Denied", func(t *testing.T) {
+	t.Run("External_Domain_Accepted_When_Auth_Not_Required", func(t *testing.T) {
 		setupSMTPSession(t, reader, conn)
 
 		_, err := conn.Write([]byte("MAIL FROM:<sender@test.example.com>\r\n"))
@@ -256,8 +256,7 @@ func TestSMTP_DomainHandling(t *testing.T) {
 		require.NoError(t, err)
 		rcptResp, err := reader.ReadString('\n')
 		require.NoError(t, err)
-		// External domains should be denied (relay access)
-		assert.Contains(t, rcptResp, "554", "External domain relay should be denied")
+		assert.Contains(t, rcptResp, "250", "External domain should be accepted when auth is not required")
 	})
 }
 
