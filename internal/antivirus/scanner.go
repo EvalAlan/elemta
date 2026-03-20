@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"time"
 )
 
@@ -72,6 +73,19 @@ func Factory(config Config) (Scanner, error) {
 // Manager manages multiple scanners
 type Manager struct {
 	scanners map[string]Scanner
+	mu       sync.RWMutex
+}
+
+func (m *Manager) snapshotScanners() map[string]Scanner {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string]Scanner, len(m.scanners))
+	for k, v := range m.scanners {
+		result[k] = v
+	}
+
+	return result
 }
 
 // NewManager creates a new scanner manager
@@ -84,6 +98,8 @@ func NewManager() *Manager {
 // Register adds a scanner to the manager
 func (m *Manager) Register(scanner Scanner) error {
 	name := scanner.Name()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, exists := m.scanners[name]; exists {
 		return errors.New("scanner with name '" + name + "' already registered")
 	}
@@ -94,6 +110,8 @@ func (m *Manager) Register(scanner Scanner) error {
 
 // Get retrieves a scanner by name
 func (m *Manager) Get(name string) (Scanner, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	scanner, exists := m.scanners[name]
 	if !exists {
 		return nil, ErrNotFound
@@ -104,12 +122,14 @@ func (m *Manager) Get(name string) (Scanner, error) {
 
 // List returns all registered scanners
 func (m *Manager) List() map[string]Scanner {
-	return m.scanners
+	return m.snapshotScanners()
 }
 
 // Remove removes a scanner from the manager
 func (m *Manager) Remove(name string) error {
+	m.mu.RLock()
 	scanner, exists := m.scanners[name]
+	m.mu.RUnlock()
 	if !exists {
 		return ErrNotFound
 	}
@@ -120,6 +140,8 @@ func (m *Manager) Remove(name string) error {
 		}
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	delete(m.scanners, name)
 	return nil
 }
@@ -127,7 +149,7 @@ func (m *Manager) Remove(name string) error {
 // CloseAll closes all scanners
 func (m *Manager) CloseAll() error {
 	var errs []error
-	for name, scanner := range m.scanners {
+	for name, scanner := range m.snapshotScanners() {
 		if scanner.IsConnected() {
 			if err := scanner.Close(); err != nil {
 				errs = append(errs, errors.New("failed to close scanner '"+name+"': "+err.Error()))
@@ -147,7 +169,7 @@ func (m *Manager) ScanBytes(ctx context.Context, data []byte) ([]*ScanResult, er
 	var results []*ScanResult
 	var errs []error
 
-	for name, scanner := range m.scanners {
+	for name, scanner := range m.snapshotScanners() {
 		if !scanner.IsConnected() {
 			errs = append(errs, errors.New("scanner '"+name+"' not connected"))
 			continue
@@ -185,7 +207,7 @@ func (m *Manager) ScanFile(ctx context.Context, filePath string) ([]*ScanResult,
 	var results []*ScanResult
 	var errs []error
 
-	for name, scanner := range m.scanners {
+	for name, scanner := range m.snapshotScanners() {
 		if !scanner.IsConnected() {
 			errs = append(errs, errors.New("scanner '"+name+"' not connected"))
 			continue
