@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -54,18 +55,21 @@ type PluginSandbox struct {
 	mu               sync.RWMutex
 	activeExecutions map[string]*SandboxedExecution
 	resourceMonitor  *ResourceMonitor
+	cpuUsageProvider func(*SandboxedExecution) (float64, error)
 }
 
 // SandboxedExecution tracks a single plugin execution within the sandbox
 type SandboxedExecution struct {
-	ID            string
-	PluginName    string
-	StartTime     time.Time
-	Context       context.Context
-	CancelFunc    context.CancelFunc
-	ResourceUsage *ResourceUsage
-	Violations    []SecurityViolation
-	mu            sync.RWMutex
+	ID             string
+	PluginName     string
+	StartTime      time.Time
+	Context        context.Context
+	CancelFunc     context.CancelFunc
+	ResourceUsage  *ResourceUsage
+	Violations     []SecurityViolation
+	lastCPUTime    time.Duration
+	lastCPUUsageAt time.Time
+	mu             sync.RWMutex
 }
 
 // ResourceUsage tracks current resource consumption
@@ -105,6 +109,7 @@ func NewPluginSandbox(config SandboxConfig) *PluginSandbox {
 		logger:           slog.Default().With("component", "plugin-sandbox"),
 		activeExecutions: make(map[string]*SandboxedExecution),
 		resourceMonitor:  nil, // Will be initialized when started
+		cpuUsageProvider: defaultCPUUsageProvider,
 	}
 }
 
@@ -175,6 +180,11 @@ func (s *PluginSandbox) ExecuteInSandbox(pluginName string, fn func() (*PluginRe
 			LastUpdated: time.Now(),
 		},
 		Violations: make([]SecurityViolation, 0),
+	}
+
+	if cpuTime, err := getProcessCPUTime(); err == nil {
+		execution.lastCPUTime = cpuTime
+		execution.lastCPUUsageAt = time.Now()
 	}
 
 	// Register execution
@@ -267,6 +277,14 @@ func (s *PluginSandbox) checkResourceLimits(execution *SandboxedExecution) error
 		return fmt.Errorf("goroutine limit exceeded: %d > %d", numGoroutines, s.config.MaxGoroutines)
 	}
 
+	// Check CPU limit
+	if execution.ResourceUsage.CPUPercent > s.config.MaxCPUPercent {
+		s.recordViolation(execution, "cpu",
+			fmt.Sprintf("CPU usage %.2f%% exceeds limit %.2f%%", execution.ResourceUsage.CPUPercent, s.config.MaxCPUPercent),
+			"high")
+		return fmt.Errorf("cpu limit exceeded: %.2f%% > %.2f%%", execution.ResourceUsage.CPUPercent, s.config.MaxCPUPercent)
+	}
+
 	return nil
 }
 
@@ -282,9 +300,16 @@ func (s *PluginSandbox) updateResourceUsage(execution *SandboxedExecution) {
 	execution.ResourceUsage.Goroutines = runtime.NumGoroutine()
 	execution.ResourceUsage.LastUpdated = time.Now()
 
-	// CPU percentage calculation would require more sophisticated monitoring
-	// For now, we'll use a placeholder
-	execution.ResourceUsage.CPUPercent = 0.0 // TODO: Implement CPU monitoring
+	cpuPercent, err := s.cpuUsageProvider(execution)
+	if err != nil {
+		s.logger.Debug("failed to collect CPU usage for sandbox execution",
+			"plugin", execution.PluginName,
+			"execution_id", execution.ID,
+			"error", err)
+		execution.ResourceUsage.CPUPercent = 0
+		return
+	}
+	execution.ResourceUsage.CPUPercent = cpuPercent
 }
 
 // recordViolation logs a security violation
@@ -394,6 +419,50 @@ func (rm *ResourceMonitor) monitorResources() {
 			execution.CancelFunc()
 		}
 	}
+}
+
+func defaultCPUUsageProvider(execution *SandboxedExecution) (float64, error) {
+	currentCPUTime, err := getProcessCPUTime()
+	if err != nil {
+		return 0, err
+	}
+
+	now := time.Now()
+	if execution.lastCPUUsageAt.IsZero() {
+		execution.lastCPUUsageAt = now
+		execution.lastCPUTime = currentCPUTime
+		return 0, nil
+	}
+
+	wallDelta := now.Sub(execution.lastCPUUsageAt)
+	if wallDelta <= 0 {
+		return execution.ResourceUsage.CPUPercent, nil
+	}
+
+	cpuDelta := currentCPUTime - execution.lastCPUTime
+	if cpuDelta < 0 {
+		cpuDelta = 0
+	}
+
+	cpuPercent := (float64(cpuDelta) / float64(wallDelta)) * 100
+	if cpuPercent < 0 {
+		cpuPercent = 0
+	}
+
+	execution.lastCPUUsageAt = now
+	execution.lastCPUTime = currentCPUTime
+	return cpuPercent, nil
+}
+
+func getProcessCPUTime() (time.Duration, error) {
+	var usage syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
+		return 0, err
+	}
+
+	user := time.Duration(usage.Utime.Sec)*time.Second + time.Duration(usage.Utime.Usec)*time.Microsecond
+	sys := time.Duration(usage.Stime.Sec)*time.Second + time.Duration(usage.Stime.Usec)*time.Microsecond
+	return user + sys, nil
 }
 
 // GetSandboxStatus returns current sandbox status and statistics

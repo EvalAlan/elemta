@@ -1051,6 +1051,14 @@ func (ch *CommandHandler) validateEmailAddress(ctx context.Context, addr string)
 
 // checkRelayPermissions checks if relay is allowed for a recipient
 func (ch *CommandHandler) checkRelayPermissions(ctx context.Context, recipient string) error {
+	// DevMode bypasses all relay restrictions for testing
+	if ch.config.DevMode {
+		ch.logger.DebugContext(ctx, "Relay allowed (DevMode enabled)",
+			"recipient", recipient,
+		)
+		return nil
+	}
+
 	// If authenticated, allow relay
 	if ch.state.IsAuthenticated() {
 		ch.logger.InfoContext(ctx, "Relay allowed for authenticated user",
@@ -1066,16 +1074,7 @@ func (ch *CommandHandler) checkRelayPermissions(ctx context.Context, recipient s
 		return nil
 	}
 
-	// For external domains, require authentication (unless explicitly allowed)
-	// If authentication is not required, only allow local domains, not external relay
-	if ch.config.Auth != nil && ch.config.Auth.Enabled && !ch.config.Auth.Required {
-		ch.logger.WarnContext(ctx, "External relay denied - authentication not required but recipient is external domain",
-			"recipient", recipient,
-		)
-		return fmt.Errorf("554 5.7.1 Relay access denied")
-	}
-
-	// Check if relay is explicitly allowed
+	// Check if relay is explicitly allowed (AllowedRelays CIDRs / private networks)
 	if ch.isRelayAllowed(recipient) {
 		ch.logger.DebugContext(ctx, "Relay explicitly allowed", "recipient", recipient)
 		return nil
@@ -1110,11 +1109,20 @@ func (ch *CommandHandler) isLocalDomain(ctx context.Context, recipient string) b
 	return false
 }
 
-// isRelayAllowed checks if relay is allowed for a recipient
+// isRelayAllowed checks if relay is allowed for a recipient based on the
+// client's IP address and the configured AllowedRelays list.
+// Private/internal networks are always allowed to relay.
 func (ch *CommandHandler) isRelayAllowed(recipient string) bool {
-	// This would typically check against relay rules
-	// For now, return false (no relay allowed without authentication)
-	return false
+	if ch.conn == nil {
+		return false
+	}
+
+	ip := GetClientIP(ch.conn)
+	if ip == nil {
+		return false
+	}
+
+	return IsAllowedRelay(ip, ch.config.AllowedRelays)
 }
 
 // logCommandResult logs the result of a command execution

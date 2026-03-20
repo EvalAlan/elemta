@@ -299,52 +299,62 @@ func (p *Processor) processMessage(msg Message) {
 	deliveryResult, deliveryErr := p.handler.DeliverMessageWithMetadata(ctx, msg, content)
 
 	if deliveryErr == nil && deliveryResult != nil && deliveryResult.Success {
-		// Success - Log comprehensive delivery success with delivery IP
-		p.msgLogger.LogDelivery(logging.MessageContext{
-			MessageID:      msg.ID,
-			QueueID:        msg.ID,
-			From:           msg.From,
-			To:             msg.To,
-			Subject:        msg.Subject,
-			Size:           msg.Size,
-			ReceptionTime:  msg.ReceivedAt,
-			ProcessingTime: msg.CreatedAt,
-			DeliveryTime:   deliveryResult.DeliveryTime,
-			DeliveryIP:     deliveryResult.DeliveryIP,
-			DeliveryHost:   deliveryResult.DeliveryHost,
-			RetryCount:     msg.RetryCount,
-			DeliveryMethod: "lmtp",
-		})
-
-		p.metricsLock.Lock()
-		p.deliveredCount++
-		p.metricsLock.Unlock()
-
-		// Record to external metrics store (Valkey)
-		if p.metricsRecorder != nil {
-			if err := p.metricsRecorder.IncrDelivered(p.ctx); err != nil {
-				logger.Debug("Failed to record delivered metric", "error", err)
-			}
-		}
-
-		// Record successful attempt (ignore error if message already deleted)
-		if err := p.manager.AddAttempt(msg.ID, "delivered", ""); err != nil {
-			logger.Debug("Could not record successful attempt (message may already be deleted)", "error", err)
-		}
-
-		// Delete successful message
-		if err := p.manager.DeleteMessage(msg.ID); err != nil {
-			logger.Debug("Could not delete delivered message (may already be deleted)", "error", err)
-		}
-
+		p.handleDeliverySuccess(msg, deliveryResult)
 		return
 	}
 
-	// Delivery failed - determine if it's a tempfail or permanent failure
+	p.handleDeliveryFailure(msg, deliveryErr, startTime)
+}
+
+// handleDeliverySuccess processes a successful message delivery
+func (p *Processor) handleDeliverySuccess(msg Message, result *DeliveryResult) {
+	// Log comprehensive delivery success with delivery IP
+	p.msgLogger.LogDelivery(logging.MessageContext{
+		MessageID:      msg.ID,
+		QueueID:        msg.ID,
+		From:           msg.From,
+		To:             msg.To,
+		Subject:        msg.Subject,
+		Size:           msg.Size,
+		ReceptionTime:  msg.ReceivedAt,
+		ProcessingTime: msg.CreatedAt,
+		DeliveryTime:   result.DeliveryTime,
+		DeliveryIP:     result.DeliveryIP,
+		DeliveryHost:   result.DeliveryHost,
+		RetryCount:     msg.RetryCount,
+		DeliveryMethod: "lmtp",
+	})
+
+	p.metricsLock.Lock()
+	p.deliveredCount++
+	p.metricsLock.Unlock()
+
+	// Record to external metrics store (Valkey)
+	if p.metricsRecorder != nil {
+		if err := p.metricsRecorder.IncrDelivered(p.ctx); err != nil {
+			p.logger.Debug("Failed to record delivered metric", "error", err)
+		}
+	}
+
+	// Record successful attempt (ignore error if message already deleted)
+	if err := p.manager.AddAttempt(msg.ID, "delivered", ""); err != nil {
+		p.logger.Debug("Could not record successful attempt (message may already be deleted)", "error", err)
+	}
+
+	// Delete successful message
+	if err := p.manager.DeleteMessage(msg.ID); err != nil {
+		p.logger.Debug("Could not delete delivered message (may already be deleted)", "error", err)
+	}
+}
+
+// handleDeliveryFailure processes a failed message delivery with retry logic
+func (p *Processor) handleDeliveryFailure(msg Message, deliveryErr error, startTime time.Time) {
+	logger := p.logger.With("message_id", msg.ID, "from", msg.From, "to", msg.To)
+
+	// Determine if it's a tempfail or permanent failure
 	isTemporary := p.isTemporaryFailure(deliveryErr)
 
 	if isTemporary {
-		// Log temporary failure (will retry)
 		p.msgLogger.LogTempFail(logging.MessageContext{
 			MessageID:      msg.ID,
 			QueueID:        msg.ID,
@@ -359,7 +369,6 @@ func (p *Processor) processMessage(msg Message) {
 			DeliveryMethod: "lmtp",
 		})
 	} else {
-		// Log permanent failure
 		logger.Error("message_bounced",
 			"event_type", "bounce",
 			"message_id", msg.ID,

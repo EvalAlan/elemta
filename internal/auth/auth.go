@@ -5,8 +5,10 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"crypto/sha1"
@@ -17,6 +19,12 @@ import (
 
 	"github.com/busybox42/elemta/internal/datasource"
 	"golang.org/x/crypto/bcrypt"
+)
+
+// Deprecation warning guards to avoid flooding logs
+var (
+	warnSHA1Once  sync.Once
+	warnSSHAOnce  sync.Once
 )
 
 // Common errors
@@ -216,7 +224,14 @@ func ComparePasswordsSecure(hashedPassword, plainPassword string) error {
 		// bcrypt - already constant time
 		result = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(plainPassword))
 	} else if strings.HasPrefix(hashedPassword, "{SHA}") {
-		// OpenLDAP SHA-1 with constant-time comparison
+		// DEPRECATED: SHA-1 is cryptographically weak and should not be used for password hashing.
+		// This path exists only for backward compatibility with legacy OpenLDAP entries.
+		// Migrate passwords to bcrypt ($2a$) as soon as possible.
+		warnSHA1Once.Do(func() {
+			slog.Warn("DEPRECATED: SHA-1 password hash detected. " +
+				"SHA-1 is cryptographically weak — migrate to bcrypt ($2a$). " +
+				"See https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html")
+		})
 		hash := sha1.Sum([]byte(plainPassword))
 		b64 := base64.StdEncoding.EncodeToString(hash[:])
 		expected := "{SHA}" + b64
@@ -240,7 +255,14 @@ func ComparePasswordsSecure(hashedPassword, plainPassword string) error {
 			result = nil
 		}
 	} else if strings.HasPrefix(hashedPassword, "{SSHA}") {
-		// OpenLDAP SSHA (SHA-1 + salt) with constant-time comparison
+		// DEPRECATED: SSHA (salted SHA-1) is cryptographically weak and should not be used.
+		// This path exists only for backward compatibility with legacy OpenLDAP entries.
+		// Migrate passwords to bcrypt ($2a$) as soon as possible.
+		warnSSHAOnce.Do(func() {
+			slog.Warn("DEPRECATED: SSHA (salted SHA-1) password hash detected. " +
+				"SSHA is cryptographically weak — migrate to bcrypt ($2a$). " +
+				"See https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html")
+		})
 		b, err := base64.StdEncoding.DecodeString(hashedPassword[6:])
 		if err != nil || len(b) < 20 {
 			result = ErrInvalidCredentials
