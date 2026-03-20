@@ -3,12 +3,13 @@ package commands
 import (
 	"fmt"
 
+	"github.com/busybox42/elemta/internal/version"
 	"github.com/spf13/cobra"
 )
 
 var (
-	// Version is the version of the CLI
-	Version = "0.1.0"
+	// Version is the version of the CLI, set via ldflags or defaulting to package version.
+	Version = version.Version
 )
 
 var versionCmd = &cobra.Command{

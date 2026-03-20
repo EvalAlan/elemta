@@ -448,6 +448,14 @@ func TestManagerList(t *testing.T) {
 	for _, name := range scanners {
 		assert.Contains(t, list, name)
 	}
+
+	t.Run("returns a copy", func(t *testing.T) {
+		delete(list, "scanner1")
+
+		fresh := manager.List()
+		assert.Len(t, fresh, 3)
+		assert.Contains(t, fresh, "scanner1")
+	})
 }
 
 func TestConfig(t *testing.T) {
