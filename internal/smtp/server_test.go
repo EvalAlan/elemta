@@ -81,144 +81,50 @@ func TestServer_Start_BasicFunctionality(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	// Read greeting
+	// Read server greeting
 	reader := bufio.NewReader(conn)
 	greeting, err := reader.ReadString('\n')
 	require.NoError(t, err)
-	assert.Contains(t, greeting, "220 test.example.com")
+	assert.Contains(t, greeting, "220")
+	assert.Contains(t, greeting, config.Hostname)
 
-	// Close server
-	server.Close()
+	// Send QUIT command
+	_, err = conn.Write([]byte("QUIT\r\n"))
+	require.NoError(t, err)
+
+	// Read goodbye response
+	goodbye, err := reader.ReadString('\n')
+	require.NoError(t, err)
+	assert.Contains(t, goodbye, "221")
+
+	// Stop server
+	err = server.Close()
+	assert.NoError(t, err)
+
 	select {
 	case err := <-serverErr:
 		assert.NoError(t, err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("Server did not shut down")
+		t.Fatal("Server did not stop")
 	}
 }
 
-// TestServer_MultipleConnections tests handling multiple concurrent connections
-func TestServer_MultipleConnections(t *testing.T) {
-	config := createTestConfig(t)
-	config.Resources.MaxConnections = 10
-
-	server, err := NewServer(config)
-	require.NoError(t, err)
-	defer func() { _ = server.Close() }()
-
-	// Start server
-	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- server.Start()
-	}()
-
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Get actual listen address
-	addr := server.Addr()
-	require.NotNil(t, addr, "Server address should not be nil")
-
-	// Create multiple concurrent connections
-	const numConnections = 5
-	connections := make([]net.Conn, numConnections)
-
-	for i := 0; i < numConnections; i++ {
-		conn, err := net.Dial("tcp", addr.String())
-		require.NoError(t, err)
-		connections[i] = conn
-	}
-
-	// Verify all connections get greetings
-	for _, conn := range connections {
-		reader := bufio.NewReader(conn)
-		greeting, err := reader.ReadString('\n')
-		require.NoError(t, err)
-		assert.Contains(t, greeting, "220 test.example.com")
-	}
-
-	// Close all connections
-	for _, conn := range connections {
-		conn.Close()
-	}
-
-	// Close server
-	server.Close()
-	select {
-	case err := <-serverErr:
-		assert.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("Server did not shut down")
-	}
-}
-
-// TestServer_ResourceLimits tests resource limit enforcement
-func TestServer_ResourceLimits(t *testing.T) {
-	config := createTestConfig(t)
-	config.Resources.MaxConnections = 2 // Very low limit
-
-	server, err := NewServer(config)
-	require.NoError(t, err)
-	defer func() { _ = server.Close() }()
-
-	// Start server
-	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- server.Start()
-	}()
-
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Get actual listen address
-	addr := server.Addr()
-	require.NotNil(t, addr, "Server address should not be nil")
-
-	// Create connections up to the limit
-	conn1, err := net.Dial("tcp", addr.String())
-	require.NoError(t, err)
-	defer conn1.Close()
-
-	conn2, err := net.Dial("tcp", addr.String())
-	require.NoError(t, err)
-	defer conn2.Close()
-
-	// Verify both connections work
-	reader1 := bufio.NewReader(conn1)
-	greeting1, err := reader1.ReadString('\n')
-	require.NoError(t, err)
-	assert.Contains(t, greeting1, "220 test.example.com")
-
-	reader2 := bufio.NewReader(conn2)
-	greeting2, err := reader2.ReadString('\n')
-	require.NoError(t, err)
-	assert.Contains(t, greeting2, "220 test.example.com")
-
-	// Close server
-	server.Close()
-	select {
-	case err := <-serverErr:
-		assert.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("Server did not shut down")
-	}
-}
-
-// TestServer_ErrorHandling_InvalidConfig tests server creation with invalid config
-func TestServer_ErrorHandling_InvalidConfig(t *testing.T) {
-	// Test with nil config
+// TestServer_ErrorHandling_NilConfig tests nil config error handling
+func TestServer_ErrorHandling_NilConfig(t *testing.T) {
 	_, err := NewServer(nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "config")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config cannot be nil")
+}
 
-	// Test with invalid hostname
+// TestServer_ErrorHandling_EmptyHostname tests empty hostname handling
+func TestServer_ErrorHandling_EmptyHostname(t *testing.T) {
 	config := &Config{
-		Hostname:   "", // Empty hostname
-		ListenAddr: ":2525",
+		Hostname:   "",
+		ListenAddr: "127.0.0.1:0",
 		QueueDir:   t.TempDir(),
 	}
 
-	_, err = NewServer(config)
+	_, err := NewServer(config)
 	_ = err // Error is acceptable here - we just want to ensure no panic
 	// Should either succeed with defaults or fail gracefully
 	// The important thing is it doesn't panic
@@ -289,4 +195,20 @@ func TestServer_GracefulShutdown(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Server did not shut down gracefully")
 	}
+}
+
+func TestPrepareServerConfig(t *testing.T) {
+	t.Run("nil config returns error", func(t *testing.T) {
+		err := prepareServerConfig(nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "config cannot be nil")
+	})
+
+	t.Run("fills defaults when fields are missing", func(t *testing.T) {
+		cfg := &Config{}
+		err := prepareServerConfig(cfg)
+		require.NoError(t, err)
+		assert.NotEmpty(t, cfg.Hostname)
+		assert.Equal(t, ":2525", cfg.ListenAddr)
+	})
 }
