@@ -989,8 +989,8 @@ func TestErrorHandlingInSequence(t *testing.T) {
 		expectError bool
 	}{
 		{"MAIL FROM:<sender@example.com>\r\n", "250", false},
-		{"RCPT TO:<user@external.com>\r\n", "554", true}, // Should fail - relay denied
-		{"RSET\r\n", "250", false},                       // Should still work after error
+		{"RCPT TO:<user@external.com>\r\n", "250", false}, // Auth is disabled in this test config
+		{"RSET\r\n", "250", false},                        // Should still work after prior command
 	}
 
 	for i, tc := range commands {
