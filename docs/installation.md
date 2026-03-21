@@ -192,31 +192,29 @@ auth:
 
 For complete configuration options, see [Configuration Reference](configuration.md).
 
-## Distribution Packages (Future)
+## Native Packages
 
-While currently focused on cloud-native deployment, we plan to provide native packages:
+Elemta is moving toward a first-class native packaging model in addition to Docker/Kubernetes deployment.
 
-### Planned Support
+### Current direction
 
-- **RHEL/CentOS 8/9**: RPM packages via `dnf`
-- **Debian 11**: DEB packages via `apt`
-- **Ubuntu 22.04 LTS**: DEB packages via `apt`
-- **Alpine Linux**: APK packages
-- **Arch Linux**: AUR packages
+- support **RPM** and **DEB** packages
+- use standard Linux/FHS-style paths
+- do **not** use `/opt`
+- support native installs as a first-class deployment mode
 
-### Experimental Package Builder
+The canonical packaging/layout direction is tracked in:
 
-```bash
-cd linux-package-builder
+- [Native Install Spec v1](native-install-spec-v1.md)
 
-# Build all package types (experimental)
-./build_all.sh
+### Planned support
 
-# Or build specific types
-./build_rpm.sh      # RHEL/CentOS 8
-./build_debian.sh   # Debian 11
-./build_ubuntu.sh   # Ubuntu 22.04
-```
+Initial native packaging direction focuses on:
+
+- **RHEL/Rocky/Alma/Fedora-family** via RPM
+- **Debian/Ubuntu-family** via DEB
+
+Packaging mechanics and exact support matrix are still being finalized.
 
 **Note**: These packages are experimental and not production-ready. Use Docker/Kubernetes for production.
 
