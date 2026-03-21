@@ -1,0 +1,8 @@
+# Example packaged drop-in for listener overrides
+#
+# Copy or adapt into /etc/elemta/conf.d/ if you want to split packaged config.
+
+listen_addr = ":2525"
+hostname = "mail.example.com"
+local_domains = ["example.com", "mail.example.com", "localhost"]
+max_size = 26214400

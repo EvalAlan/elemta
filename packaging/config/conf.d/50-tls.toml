@@ -1,0 +1,7 @@
+# Example packaged drop-in for TLS settings
+
+[tls]
+enabled = false
+enable_starttls = false
+cert_file = "/etc/elemta/certs/cert.pem"
+key_file = "/etc/elemta/certs/key.pem"

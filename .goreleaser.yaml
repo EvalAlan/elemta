@@ -1,0 +1,60 @@
+version: 2
+
+project_name: elemta
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: elemta
+    main: ./cmd/elemta
+    binary: elemta
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+  - id: elemta-cli
+    main: ./cmd/elemta-cli
+    binary: elemta-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+nfpms:
+  - id: native-packages
+    package_name: elemta
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+    homepage: https://github.com/busybox42/elemta
+    maintainer: EvalAlan
+    description: Elemta SMTP server
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: packaging/config/elemta.toml
+        dst: /etc/elemta/elemta.toml
+        type: config|noreplace
+      - src: packaging/systemd/elemta.service
+        dst: /lib/systemd/system/elemta.service
+      - src: packaging/systemd/elemta.sysusers.conf
+        dst: /usr/lib/sysusers.d/elemta.conf
+      - src: packaging/systemd/elemta.tmpfiles.conf
+        dst: /usr/lib/tmpfiles.d/elemta.conf
+      - src: web/static
+        dst: /usr/share/elemta/web
+        type: tree
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      postremove: packaging/scripts/postremove.sh
+    rpm:
+      group: Applications/System
