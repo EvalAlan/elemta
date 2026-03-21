@@ -32,6 +32,8 @@ mkdir -p /etc/elemta/conf.d \
          /run/elemta
 
 chown -R elemta:elemta /var/lib/elemta /var/log/elemta /var/spool/elemta /run/elemta || true
+chown root:elemta /etc/elemta || true
+chown elemta:elemta /etc/elemta/elemta.toml || true
 chmod 0750 /etc/elemta || true
 chmod 0600 /etc/elemta/elemta.toml || true
 chmod 0700 /etc/elemta/certs || true
