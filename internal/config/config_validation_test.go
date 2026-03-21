@@ -30,13 +30,13 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Test queue defaults
-	if cfg.Queue.Dir != "/app/queue" {
-		t.Errorf("Expected queue dir '/app/queue', got '%s'", cfg.Queue.Dir)
+	if cfg.Queue.Dir != "/var/spool/elemta" {
+		t.Errorf("Expected queue dir '/var/spool/elemta', got '%s'", cfg.Queue.Dir)
 	}
 
 	// Test plugins defaults
-	if cfg.Plugins.Directory != "/app/plugins" {
-		t.Errorf("Expected plugins dir '/app/plugins', got '%s'", cfg.Plugins.Directory)
+	if cfg.Plugins.Directory != "/var/lib/elemta/plugins" {
+		t.Errorf("Expected plugins dir '/var/lib/elemta/plugins', got '%s'", cfg.Plugins.Directory)
 	}
 
 	// Test logging defaults
@@ -51,8 +51,8 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Test plugins defaults
-	if cfg.Plugins.Directory != "/app/plugins" {
-		t.Errorf("Expected plugins dir '/app/plugins', got '%s'", cfg.Plugins.Directory)
+	if cfg.Plugins.Directory != "/var/lib/elemta/plugins" {
+		t.Errorf("Expected plugins dir '/var/lib/elemta/plugins', got '%s'", cfg.Plugins.Directory)
 	}
 
 	// Test queue processor defaults

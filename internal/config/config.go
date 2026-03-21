@@ -219,15 +219,16 @@ func DefaultConfig() *Config {
 	cfg.Server.TLS = false
 
 	// Set default queue directory
-	cfg.Queue.Dir = "/app/queue"
+	cfg.Queue.Dir = "/var/spool/elemta"
 
 	// Set default logging
 	cfg.Logging.Type = "console"
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "text"
+	cfg.Logging.File = "/var/log/elemta/elemta.log"
 
 	// Set default plugins directory
-	cfg.Plugins.Directory = "/app/plugins"
+	cfg.Plugins.Directory = "/var/lib/elemta/plugins"
 
 	// Set default queue processor configuration
 	cfg.QueueProcessor.Enabled = true

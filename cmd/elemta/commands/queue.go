@@ -167,5 +167,5 @@ func getQueueDir() string {
 	}
 
 	// Default queue directory
-	return "/app/queue"
+	return "/var/spool/elemta"
 }
