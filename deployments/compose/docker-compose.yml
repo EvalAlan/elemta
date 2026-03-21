@@ -86,13 +86,13 @@ services:
     volumes:
       - elemta_queue:/app/queue:rw
       - elemta_logs:/app/logs:rw
+      - ../../config/elemta.toml:/app/config/elemta.toml:ro
       - ../../config/users.txt:/app/config/users.txt:ro
       # Web files are now included in the Docker image
-    command: [ "/app/elemta", "web", "--listen", "0.0.0.0:8025", "--queue-dir", "/app/queue", "--web-root", "/app/web/static", "--auth-enabled", "--auth-file", "/app/config/users.txt" ]
+    command: [ "/app/elemta", "--config", "/app/config/elemta.toml", "web", "--listen", "0.0.0.0:8025", "--queue-dir", "/app/queue", "--web-root", "/app/web/static", "--auth-enabled", "--auth-file", "/app/config/users.txt" ]
     environment:
       - TZ=UTC
       - NODE_ID=web
-      - ELEMTA_CONFIG_PATH=/app/config/elemta.toml
       - VALKEY_ADDR=elemta-valkey:6379
     # Security configuration for the container
     security_opt:
