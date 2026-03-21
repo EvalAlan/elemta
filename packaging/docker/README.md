@@ -35,3 +35,4 @@ This script:
 1. builds snapshot RPM/DEB artifacts with GoReleaser in Docker
 2. selects the package artifacts matching the host architecture
 3. smoke-tests package installation in Debian and Rocky containers
+4. smoke-tests basic packaged runtime startup on a non-privileged port
