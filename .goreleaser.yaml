@@ -46,6 +46,10 @@ nfpms:
         type: config|noreplace
       - src: packaging/systemd/elemta.service
         dst: /lib/systemd/system/elemta.service
+      - src: packaging/systemd/elemta.sysusers.conf
+        dst: /usr/lib/sysusers.d/elemta.conf
+      - src: packaging/systemd/elemta.tmpfiles.conf
+        dst: /usr/lib/tmpfiles.d/elemta.conf
       - src: web/static
         dst: /usr/share/elemta/web
         type: tree
