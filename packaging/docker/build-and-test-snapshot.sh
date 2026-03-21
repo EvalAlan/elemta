@@ -51,5 +51,7 @@ fi
 
 ./packaging/docker/test-package-install.sh debian:12 "$DEB_FILE"
 ./packaging/docker/test-package-install.sh rockylinux:9 "$RPM_FILE"
+./packaging/docker/test-package-runtime.sh debian:12 "$DEB_FILE"
+./packaging/docker/test-package-runtime.sh rockylinux:9 "$RPM_FILE"
 
 echo "snapshot package build + smoke tests passed"

@@ -13,6 +13,7 @@ fi
 mkdir -p /etc/elemta/conf.d \
          /etc/elemta/certs \
          /var/lib/elemta \
+         /var/log/elemta \
          /var/spool/elemta/active \
          /var/spool/elemta/deferred \
          /var/spool/elemta/held \
@@ -22,8 +23,9 @@ mkdir -p /etc/elemta/conf.d \
          /var/spool/elemta/tmp \
          /run/elemta
 
-chown -R elemta:elemta /var/lib/elemta /var/spool/elemta /run/elemta || true
+chown -R elemta:elemta /var/lib/elemta /var/log/elemta /var/spool/elemta /run/elemta || true
 chmod 0750 /etc/elemta || true
+chmod 0600 /etc/elemta/elemta.toml || true
 chmod 0700 /etc/elemta/certs || true
 
 if command -v systemctl >/dev/null 2>&1; then
