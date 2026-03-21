@@ -1,0 +1,23 @@
+[Unit]
+Description=Elemta SMTP Server
+Documentation=https://github.com/busybox42/elemta
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=elemta
+Group=elemta
+WorkingDirectory=/var/lib/elemta
+RuntimeDirectory=elemta
+ExecStart=/usr/bin/elemta --config /etc/elemta/elemta.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
