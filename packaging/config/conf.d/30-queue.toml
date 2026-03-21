@@ -1,0 +1,9 @@
+# Example packaged drop-in for queue/backend settings
+
+queue_dir = "/var/spool/elemta"
+
+[queue_processor]
+enabled = true
+interval = 10
+workers = 5
+debug = false
