@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/busybox42/elemta/internal/logging"
+	"github.com/busybox42/elemta/internal/runtimepaths"
 	"github.com/busybox42/elemta/internal/server"
 	"github.com/busybox42/elemta/internal/smtp"
 	"github.com/spf13/cobra"
@@ -137,7 +138,7 @@ func startServer() {
 		queueDir = cfg.Queue.Dir
 	}
 	if queueDir == "" {
-		queueDir = "/var/spool/elemta" // Fallback default
+		queueDir = runtimepaths.Detect().QueueDir // Fallback default
 		slog.Debug("using fallback queue directory", "queue_dir", queueDir)
 	}
 

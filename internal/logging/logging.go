@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/busybox42/elemta/internal/runtimepaths"
 	"sync"
 	"unicode"
 )
@@ -393,7 +395,7 @@ func InitializeLogging(levelStr string) {
 		level = slog.LevelInfo
 	}
 
-	logPath := "/var/log/elemta/elemta.log"
+	logPath := runtimepaths.Detect().LogFile
 
 	// Create logs directory if it doesn't exist
 	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
