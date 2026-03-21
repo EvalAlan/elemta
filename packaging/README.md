@@ -18,6 +18,7 @@ Planned initial toolchain:
 
 - `systemd/` - service unit files
 - `config/` - packaged default configuration skeletons
+- `config/conf.d/` - example drop-in configuration fragments
 - `scripts/` - package/install smoke test helpers
 - `docker/` - Docker-based package validation helpers
 
