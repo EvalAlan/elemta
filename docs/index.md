@@ -19,6 +19,8 @@ Welcome to the Elemta documentation. This guide will help you navigate through a
 
 ## Deployment
 
+- [Installation Guide](installation.md) - Installation and deployment overview
+- [Native Install Spec v1](native-install-spec-v1.md) - Canonical RPM/DEB native install model
 - [Docker Deployment](docker_deployment.md) - Deploy Elemta with Docker
 - [Docker Resources](docker/README.md) - Additional Docker resources
 
