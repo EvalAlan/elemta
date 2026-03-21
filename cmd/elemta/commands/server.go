@@ -137,7 +137,7 @@ func startServer() {
 		queueDir = cfg.Queue.Dir
 	}
 	if queueDir == "" {
-		queueDir = "/app/queue" // Fallback default
+		queueDir = "/var/spool/elemta" // Fallback default
 		slog.Debug("using fallback queue directory", "queue_dir", queueDir)
 	}
 
