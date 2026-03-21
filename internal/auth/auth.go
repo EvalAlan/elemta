@@ -23,8 +23,8 @@ import (
 
 // Deprecation warning guards to avoid flooding logs
 var (
-	warnSHA1Once  sync.Once
-	warnSSHAOnce  sync.Once
+	warnSHA1Once sync.Once
+	warnSSHAOnce sync.Once
 )
 
 // Common errors
@@ -136,7 +136,7 @@ func NewFromEnv() (*Auth, error) {
 		// Get SQLite path from environment
 		sqlitePath := os.Getenv("AUTH_SQLITE_PATH")
 		if sqlitePath == "" {
-			sqlitePath = "/app/config/auth.db" // Default path
+			sqlitePath = "/var/lib/elemta/auth.db" // Default path
 		}
 		return NewWithSQLite(sqlitePath)
 
@@ -168,7 +168,7 @@ func NewFromEnv() (*Auth, error) {
 	case "file":
 		filePath := os.Getenv("AUTH_FILE_PATH")
 		if filePath == "" {
-			filePath = "/app/config/users.txt"
+			filePath = "/etc/elemta/users.txt"
 		}
 		return NewWithFile(filePath)
 

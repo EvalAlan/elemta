@@ -219,7 +219,7 @@ func (s *Server) initializeAuth() error {
 
 	authFile := s.config.AuthFile
 	if authFile == "" {
-		authFile = "/app/config/users.txt"
+		authFile = "/etc/elemta/users.txt"
 	}
 
 	// Try environment first
@@ -1006,6 +1006,10 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 	// Try to read from various log file locations
 	logFiles := []string{
+		"/var/log/elemta/elemta.log",
+		"/var/log/elemta/smtp.log",
+		"/var/log/elemta/queue.log",
+		"/var/log/elemta/application.log",
 		"/app/logs/elemta.log",
 		"/app/logs/smtp.log",
 		"/app/logs/queue.log",
@@ -1041,7 +1045,7 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 			"tail":    tail,
 			"source":  "none",
 			"time":    time.Now().Format(time.RFC3339),
-			"message": "Configure Elemta to write logs to /app/logs/ directory",
+			"message": "Configure Elemta to write logs to /var/log/elemta/ or use container-specific /app/logs/ paths",
 		}
 		writeJSON(w, response)
 		return
@@ -1098,20 +1102,24 @@ func (s *Server) handleGetMessageLogs(w http.ResponseWriter, r *http.Request) {
 	levelFilter := r.URL.Query().Get("level")
 
 	// Read log file using tail approach for better performance
-	logFile := "/app/logs/elemta.log"
+	logFile := "/var/log/elemta/elemta.log"
 	messageLogs, err := s.tailLogFile(logFile, limit, eventTypeFilter, levelFilter)
 	if err != nil {
-		// Try alternate location
-		logFile = "./logs/elemta.log"
+		// Try alternate locations
+		logFile = "/app/logs/elemta.log"
 		messageLogs, err = s.tailLogFile(logFile, limit, eventTypeFilter, levelFilter)
 		if err != nil {
-			writeJSON(w, map[string]interface{}{
-				"logs":    []MessageLog{},
-				"count":   0,
-				"message": "No log file found",
-				"source":  logFile,
-			})
-			return
+			logFile = "./logs/elemta.log"
+			messageLogs, err = s.tailLogFile(logFile, limit, eventTypeFilter, levelFilter)
+			if err != nil {
+				writeJSON(w, map[string]interface{}{
+					"logs":    []MessageLog{},
+					"count":   0,
+					"message": "No log file found",
+					"source":  logFile,
+				})
+				return
+			}
 		}
 	}
 
