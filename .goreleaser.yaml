@@ -45,7 +45,7 @@ nfpms:
         dst: /etc/elemta/elemta.toml
         type: config|noreplace
       - src: packaging/systemd/elemta.service
-        dst: /usr/lib/systemd/system/elemta.service
+        dst: /lib/systemd/system/elemta.service
       - src: web/static
         dst: /usr/share/elemta/web
         type: tree
@@ -54,8 +54,3 @@ nfpms:
       postremove: packaging/scripts/postremove.sh
     rpm:
       group: Applications/System
-    overrides:
-      deb:
-        contents:
-          - src: packaging/systemd/elemta.service
-            dst: /lib/systemd/system/elemta.service
