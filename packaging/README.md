@@ -16,7 +16,7 @@ Planned initial toolchain:
 
 ## Layout
 
-- `systemd/` - service unit files
+- `systemd/` - service unit, sysusers, and tmpfiles assets
 - `config/` - packaged default configuration skeletons
 - `config/conf.d/` - example drop-in configuration fragments
 - `scripts/` - package/install smoke test helpers

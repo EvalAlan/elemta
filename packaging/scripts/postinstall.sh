@@ -1,6 +1,10 @@
 #!/bin/sh
 set -e
 
+if command -v systemd-sysusers >/dev/null 2>&1; then
+  systemd-sysusers /usr/lib/sysusers.d/elemta.conf >/dev/null 2>&1 || true
+fi
+
 if ! getent group elemta >/dev/null 2>&1; then
   groupadd --system elemta >/dev/null 2>&1 || true
 fi
@@ -8,6 +12,10 @@ fi
 if ! id elemta >/dev/null 2>&1; then
   useradd --system --gid elemta --home-dir /var/lib/elemta --shell /sbin/nologin elemta >/dev/null 2>&1 || \
   useradd --system --gid elemta --home /var/lib/elemta --shell /usr/sbin/nologin elemta >/dev/null 2>&1 || true
+fi
+
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/elemta.conf >/dev/null 2>&1 || true
 fi
 
 mkdir -p /etc/elemta/conf.d \
