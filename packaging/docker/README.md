@@ -23,3 +23,15 @@ This is **not** a replacement for testing on real VMs/hosts with full `systemd`,
 ./packaging/docker/test-package-install.sh rockylinux:9 dist/elemta_0.1.0_x86_64.rpm
 ./packaging/docker/test-package-install.sh debian:12 dist/elemta_0.1.0_amd64.deb
 ```
+
+## One-shot snapshot build + smoke test
+
+```bash
+./packaging/docker/build-and-test-snapshot.sh
+```
+
+This script:
+
+1. builds snapshot RPM/DEB artifacts with GoReleaser in Docker
+2. selects the package artifacts matching the host architecture
+3. smoke-tests package installation in Debian and Rocky containers
