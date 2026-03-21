@@ -23,6 +23,7 @@ import (
 	"github.com/busybox42/elemta/internal/config"
 	"github.com/busybox42/elemta/internal/metrics"
 	"github.com/busybox42/elemta/internal/queue"
+	"github.com/busybox42/elemta/internal/runtimepaths"
 	"github.com/gorilla/mux"
 )
 
@@ -219,7 +220,7 @@ func (s *Server) initializeAuth() error {
 
 	authFile := s.config.AuthFile
 	if authFile == "" {
-		authFile = "/etc/elemta/users.txt"
+		authFile = runtimepaths.Detect().AuthUsersFile
 	}
 
 	// Try environment first
@@ -1005,15 +1006,20 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try to read from various log file locations
+	paths := runtimepaths.Detect()
 	logFiles := []string{
-		"/var/log/elemta/elemta.log",
-		"/var/log/elemta/smtp.log",
-		"/var/log/elemta/queue.log",
-		"/var/log/elemta/application.log",
-		"/app/logs/elemta.log",
-		"/app/logs/smtp.log",
-		"/app/logs/queue.log",
-		"/app/logs/application.log",
+		paths.LogFile,
+		filepath.Join(paths.LogDir, "smtp.log"),
+		filepath.Join(paths.LogDir, "queue.log"),
+		filepath.Join(paths.LogDir, "application.log"),
+	}
+	if paths.LogDir != "/app/logs" {
+		logFiles = append(logFiles,
+			"/app/logs/elemta.log",
+			"/app/logs/smtp.log",
+			"/app/logs/queue.log",
+			"/app/logs/application.log",
+		)
 	}
 
 	var allLogs []string
@@ -1090,8 +1096,8 @@ func (s *Server) handleGetMessageLogs(w http.ResponseWriter, r *http.Request) {
 	if limitStr == "" {
 		limitStr = "50" // Reduced default from 100 to 50
 	}
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil || limit < 1 {
+	limit, parseErr := strconv.Atoi(limitStr)
+	if parseErr != nil || limit < 1 {
 		limit = 50
 	}
 	if limit > 500 {
@@ -1102,25 +1108,32 @@ func (s *Server) handleGetMessageLogs(w http.ResponseWriter, r *http.Request) {
 	levelFilter := r.URL.Query().Get("level")
 
 	// Read log file using tail approach for better performance
-	logFile := "/var/log/elemta/elemta.log"
-	messageLogs, err := s.tailLogFile(logFile, limit, eventTypeFilter, levelFilter)
-	if err != nil {
-		// Try alternate locations
-		logFile = "/app/logs/elemta.log"
-		messageLogs, err = s.tailLogFile(logFile, limit, eventTypeFilter, levelFilter)
-		if err != nil {
-			logFile = "./logs/elemta.log"
-			messageLogs, err = s.tailLogFile(logFile, limit, eventTypeFilter, levelFilter)
-			if err != nil {
-				writeJSON(w, map[string]interface{}{
-					"logs":    []MessageLog{},
-					"count":   0,
-					"message": "No log file found",
-					"source":  logFile,
-				})
-				return
-			}
+	paths := runtimepaths.Detect()
+	logCandidates := []string{paths.LogFile}
+	if paths.LogFile != "/app/logs/elemta.log" {
+		logCandidates = append(logCandidates, "/app/logs/elemta.log")
+	}
+	logCandidates = append(logCandidates, "./logs/elemta.log")
+
+	var messageLogs []MessageLog
+	var err error
+	logFile := ""
+	for _, candidate := range logCandidates {
+		messageLogs, err = s.tailLogFile(candidate, limit, eventTypeFilter, levelFilter)
+		if err == nil {
+			logFile = candidate
+			break
 		}
+		logFile = candidate
+	}
+	if err != nil {
+		writeJSON(w, map[string]interface{}{
+			"logs":    []MessageLog{},
+			"count":   0,
+			"message": "No log file found",
+			"source":  logFile,
+		})
+		return
 	}
 
 	writeJSON(w, map[string]interface{}{

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/busybox42/elemta/internal/runtimepaths"
 	"github.com/busybox42/elemta/internal/smtp"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -218,17 +219,19 @@ func DefaultConfig() *Config {
 	cfg.Server.MaxSize = 25 * 1024 * 1024 // 25MB default
 	cfg.Server.TLS = false
 
+	paths := runtimepaths.Detect()
+
 	// Set default queue directory
-	cfg.Queue.Dir = "/var/spool/elemta"
+	cfg.Queue.Dir = paths.QueueDir
 
 	// Set default logging
 	cfg.Logging.Type = "console"
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "text"
-	cfg.Logging.File = "/var/log/elemta/elemta.log"
+	cfg.Logging.File = paths.LogFile
 
 	// Set default plugins directory
-	cfg.Plugins.Directory = "/var/lib/elemta/plugins"
+	cfg.Plugins.Directory = paths.PluginsDir
 
 	// Set default queue processor configuration
 	cfg.QueueProcessor.Enabled = true

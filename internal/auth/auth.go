@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/busybox42/elemta/internal/datasource"
+	"github.com/busybox42/elemta/internal/runtimepaths"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -136,7 +137,7 @@ func NewFromEnv() (*Auth, error) {
 		// Get SQLite path from environment
 		sqlitePath := os.Getenv("AUTH_SQLITE_PATH")
 		if sqlitePath == "" {
-			sqlitePath = "/var/lib/elemta/auth.db" // Default path
+			sqlitePath = runtimepaths.Detect().AuthSQLiteDB // Default path
 		}
 		return NewWithSQLite(sqlitePath)
 
@@ -168,7 +169,7 @@ func NewFromEnv() (*Auth, error) {
 	case "file":
 		filePath := os.Getenv("AUTH_FILE_PATH")
 		if filePath == "" {
-			filePath = "/etc/elemta/users.txt"
+			filePath = runtimepaths.Detect().AuthUsersFile
 		}
 		return NewWithFile(filePath)
 
