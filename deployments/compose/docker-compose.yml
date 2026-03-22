@@ -86,8 +86,7 @@ services:
     volumes:
       - elemta_queue:/app/queue:rw
       - elemta_logs:/app/logs:rw
-      - ../../config/elemta.toml:/app/config/elemta.toml:ro
-      - ../../config/users.txt:/app/config/users.txt:ro
+      - ../../config:/app/config:ro
       # Web files are now included in the Docker image
     command: [ "/bin/sh", "-lc", "cp /app/config/elemta.toml /tmp/elemta-web.toml && chmod 600 /tmp/elemta-web.toml && exec /app/elemta --config /tmp/elemta-web.toml web --listen 0.0.0.0:8025 --queue-dir /app/queue --web-root /app/web/static --auth-enabled --auth-file /app/config/users.txt" ]
     environment:
