@@ -81,15 +81,24 @@ func init() {
 }
 
 func runWeb(cmd *cobra.Command, args []string) {
-	// Load main config to get failed queue retention setting
-	cfg, err := config.LoadConfig("")
-	if err != nil {
-		log.Printf("Warning: failed to load config, using defaults: %v", err)
-		cfg = config.DefaultConfig()
+	// Reuse the root command's already-loaded config so --config is honored.
+	cfg := GetConfig()
+	if cfg == nil {
+		var err error
+		cfg, err = config.LoadConfig(configPath)
+		if err != nil {
+			log.Printf("Warning: failed to load config, using defaults: %v", err)
+			cfg = config.DefaultConfig()
+		}
 	}
 
 	// Find config file path for persistence
-	configPath, _ := config.FindConfigFile("")
+	resolvedConfigPath, _ := config.FindConfigFile(configPath)
+
+	resolvedAuthFile := authFile
+	if resolvedAuthFile == "" && cfg.Auth.Enabled && cfg.Auth.DataSourceType == "file" {
+		resolvedAuthFile = cfg.Auth.DataSourcePath
+	}
 
 	// Create API config
 	apiConfig := &api.Config{
@@ -97,11 +106,11 @@ func runWeb(cmd *cobra.Command, args []string) {
 		ListenAddr:  webListenAddr,
 		WebRoot:     webRoot,
 		AuthEnabled: authEnabled,
-		AuthFile:    authFile,
+		AuthFile:    resolvedAuthFile,
 	}
 
 	// Create and start API server
-	server, err := api.NewServer(apiConfig, convertToAPIMainConfig(cfg), webQueueDir, cfg.FailedQueueRetentionHours, configPath)
+	server, err := api.NewServer(apiConfig, convertToAPIMainConfig(cfg), webQueueDir, cfg.FailedQueueRetentionHours, resolvedConfigPath)
 	if err != nil {
 		log.Fatalf("Failed to create API server: %v", err)
 	}
