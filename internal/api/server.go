@@ -223,22 +223,35 @@ func (s *Server) initializeAuth() error {
 		authFile = runtimepaths.Detect().AuthUsersFile
 	}
 
-	// Try environment first
-	authSystem, err = auth.NewFromEnv()
-	if err != nil {
-		// Fallback to file-based authentication
-		logger.Warn("Failed to initialize auth from environment, falling back to file-based auth",
-			"error", err,
-		)
+	// If an explicit auth file was provided, honor it before consulting environment defaults.
+	// This is especially important for container/web deployments that pass --auth-file
+	// while building without CGO (where the default SQLite path is unusable).
+	if authFile != "" {
 		authSystem, err = auth.NewWithFile(authFile)
 		if err != nil {
 			return fmt.Errorf("failed to initialize file-based authentication from %s: %w", authFile, err)
 		}
-		logger.Info("Authentication initialized using file-based datasource",
+		logger.Info("Authentication initialized using explicit file-based datasource",
 			"datasource", authFile,
 		)
 	} else {
-		logger.Info("Authentication initialized from environment configuration")
+		// Try environment first
+		authSystem, err = auth.NewFromEnv()
+		if err != nil {
+			// Fallback to file-based authentication
+			logger.Warn("Failed to initialize auth from environment, falling back to file-based auth",
+				"error", err,
+			)
+			authSystem, err = auth.NewWithFile(authFile)
+			if err != nil {
+				return fmt.Errorf("failed to initialize file-based authentication from %s: %w", authFile, err)
+			}
+			logger.Info("Authentication initialized using file-based datasource",
+				"datasource", authFile,
+			)
+		} else {
+			logger.Info("Authentication initialized from environment configuration")
+		}
 	}
 
 	// Initialize RBAC
