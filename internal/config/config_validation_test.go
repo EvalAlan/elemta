@@ -593,6 +593,35 @@ func TestFindConfigFile_NonExistentPath(t *testing.T) {
 	}
 }
 
+func TestFindConfigFile_PrefersTomlSearchPaths(t *testing.T) {
+	tempDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get cwd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(cwd)
+	}()
+
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("Failed to chdir to temp dir: %v", err)
+	}
+
+	configFile := filepath.Join(tempDir, "elemta.toml")
+	if err := os.WriteFile(configFile, []byte("[server]\nhostname='test'\n"), 0644); err != nil {
+		t.Fatalf("Failed to create TOML config file: %v", err)
+	}
+
+	found, err := FindConfigFile("")
+	if err != nil {
+		t.Fatalf("Expected to find TOML config file, got error: %v", err)
+	}
+
+	if found != "./elemta.toml" {
+		t.Fatalf("Expected ./elemta.toml, got %s", found)
+	}
+}
+
 func TestLoadConfig_NoConfigFile(t *testing.T) {
 	// Test loading with non-existent config file
 	cfg, err := LoadConfig("/nonexistent/config.conf")

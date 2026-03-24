@@ -74,8 +74,8 @@ func init() {
 
 	// Web-specific flags
 	webCmd.Flags().StringVarP(&webListenAddr, "listen", "l", "127.0.0.1:8025", "Address to listen on")
-	webCmd.Flags().StringVar(&webRoot, "web-root", "./web/static", "Path to web static files")
-	webCmd.Flags().StringVar(&webQueueDir, "queue-dir", "./queue", "Path to queue directory")
+	webCmd.Flags().StringVar(&webRoot, "web-root", "", "Path to web static files")
+	webCmd.Flags().StringVar(&webQueueDir, "queue-dir", "", "Path to queue directory")
 	webCmd.Flags().BoolVar(&authEnabled, "auth-enabled", false, "Enable authentication and authorization")
 	webCmd.Flags().StringVar(&authFile, "auth-file", "", "Path to users file for authentication")
 }
@@ -95,6 +95,24 @@ func runWeb(cmd *cobra.Command, args []string) {
 	// Find config file path for persistence
 	resolvedConfigPath, _ := config.FindConfigFile(configPath)
 
+	resolvedWebRoot := webRoot
+	if !cmd.Flags().Changed("web-root") {
+		resolvedWebRoot = ""
+	}
+
+	resolvedQueueDir := webQueueDir
+	if resolvedQueueDir == "" {
+		resolvedQueueDir = cfg.Queue.Dir
+	}
+	if resolvedQueueDir == "" {
+		resolvedQueueDir = config.DefaultConfig().Queue.Dir
+	}
+
+	resolvedAuthEnabled := authEnabled
+	if !cmd.Flags().Changed("auth-enabled") {
+		resolvedAuthEnabled = cfg.Auth.Enabled
+	}
+
 	resolvedAuthFile := authFile
 	if resolvedAuthFile == "" && cfg.Auth.Enabled && cfg.Auth.DataSourceType == "file" {
 		resolvedAuthFile = cfg.Auth.DataSourcePath
@@ -104,13 +122,13 @@ func runWeb(cmd *cobra.Command, args []string) {
 	apiConfig := &api.Config{
 		Enabled:     true,
 		ListenAddr:  webListenAddr,
-		WebRoot:     webRoot,
-		AuthEnabled: authEnabled,
+		WebRoot:     resolvedWebRoot,
+		AuthEnabled: resolvedAuthEnabled,
 		AuthFile:    resolvedAuthFile,
 	}
 
 	// Create and start API server
-	server, err := api.NewServer(apiConfig, convertToAPIMainConfig(cfg), webQueueDir, cfg.FailedQueueRetentionHours, resolvedConfigPath)
+	server, err := api.NewServer(apiConfig, convertToAPIMainConfig(cfg), resolvedQueueDir, cfg.FailedQueueRetentionHours, resolvedConfigPath)
 	if err != nil {
 		log.Fatalf("Failed to create API server: %v", err)
 	}
