@@ -30,13 +30,13 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Test queue defaults
-	if cfg.Queue.Dir != "/app/queue" {
-		t.Errorf("Expected queue dir '/app/queue', got '%s'", cfg.Queue.Dir)
+	if cfg.Queue.Dir != "/var/spool/elemta" {
+		t.Errorf("Expected queue dir '/var/spool/elemta', got '%s'", cfg.Queue.Dir)
 	}
 
 	// Test plugins defaults
-	if cfg.Plugins.Directory != "/app/plugins" {
-		t.Errorf("Expected plugins dir '/app/plugins', got '%s'", cfg.Plugins.Directory)
+	if cfg.Plugins.Directory != "/var/lib/elemta/plugins" {
+		t.Errorf("Expected plugins dir '/var/lib/elemta/plugins', got '%s'", cfg.Plugins.Directory)
 	}
 
 	// Test logging defaults
@@ -51,8 +51,8 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Test plugins defaults
-	if cfg.Plugins.Directory != "/app/plugins" {
-		t.Errorf("Expected plugins dir '/app/plugins', got '%s'", cfg.Plugins.Directory)
+	if cfg.Plugins.Directory != "/var/lib/elemta/plugins" {
+		t.Errorf("Expected plugins dir '/var/lib/elemta/plugins', got '%s'", cfg.Plugins.Directory)
 	}
 
 	// Test queue processor defaults
@@ -590,6 +590,35 @@ func TestFindConfigFile_NonExistentPath(t *testing.T) {
 	_, err := FindConfigFile("/nonexistent/config.conf")
 	if err == nil {
 		t.Error("Expected error for non-existent config file")
+	}
+}
+
+func TestFindConfigFile_PrefersTomlSearchPaths(t *testing.T) {
+	tempDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get cwd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(cwd)
+	}()
+
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("Failed to chdir to temp dir: %v", err)
+	}
+
+	configFile := filepath.Join(tempDir, "elemta.toml")
+	if err := os.WriteFile(configFile, []byte("[server]\nhostname='test'\n"), 0644); err != nil {
+		t.Fatalf("Failed to create TOML config file: %v", err)
+	}
+
+	found, err := FindConfigFile("")
+	if err != nil {
+		t.Fatalf("Expected to find TOML config file, got error: %v", err)
+	}
+
+	if found != "./elemta.toml" {
+		t.Fatalf("Expected ./elemta.toml, got %s", found)
 	}
 }
 

@@ -18,13 +18,14 @@ import (
 	"strings"
 
 	"github.com/busybox42/elemta/internal/datasource"
+	"github.com/busybox42/elemta/internal/runtimepaths"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // Deprecation warning guards to avoid flooding logs
 var (
-	warnSHA1Once  sync.Once
-	warnSSHAOnce  sync.Once
+	warnSHA1Once sync.Once
+	warnSSHAOnce sync.Once
 )
 
 // Common errors
@@ -136,7 +137,7 @@ func NewFromEnv() (*Auth, error) {
 		// Get SQLite path from environment
 		sqlitePath := os.Getenv("AUTH_SQLITE_PATH")
 		if sqlitePath == "" {
-			sqlitePath = "/app/config/auth.db" // Default path
+			sqlitePath = runtimepaths.Detect().AuthSQLiteDB // Default path
 		}
 		return NewWithSQLite(sqlitePath)
 
@@ -168,7 +169,7 @@ func NewFromEnv() (*Auth, error) {
 	case "file":
 		filePath := os.Getenv("AUTH_FILE_PATH")
 		if filePath == "" {
-			filePath = "/app/config/users.txt"
+			filePath = runtimepaths.Detect().AuthUsersFile
 		}
 		return NewWithFile(filePath)
 
