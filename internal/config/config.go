@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/busybox42/elemta/internal/runtimepaths"
 	"github.com/busybox42/elemta/internal/smtp"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -218,16 +219,19 @@ func DefaultConfig() *Config {
 	cfg.Server.MaxSize = 25 * 1024 * 1024 // 25MB default
 	cfg.Server.TLS = false
 
+	paths := runtimepaths.Detect()
+
 	// Set default queue directory
-	cfg.Queue.Dir = "/app/queue"
+	cfg.Queue.Dir = paths.QueueDir
 
 	// Set default logging
 	cfg.Logging.Type = "console"
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "text"
+	cfg.Logging.File = paths.LogFile
 
 	// Set default plugins directory
-	cfg.Plugins.Directory = "/app/plugins"
+	cfg.Plugins.Directory = paths.PluginsDir
 
 	// Set default queue processor configuration
 	cfg.QueueProcessor.Enabled = true
@@ -261,10 +265,16 @@ func FindConfigFile(configPath string) (string, error) {
 
 	// List of places to check for config
 	locations := []string{
+		"./elemta.toml",
 		"./elemta.conf",
+		"./config/elemta.toml",
 		"./config/elemta.conf",
+		"../config/elemta.toml",
 		"../config/elemta.conf",
+		os.ExpandEnv("$HOME/.config/elemta/elemta.toml"),
+		os.ExpandEnv("$HOME/.elemta.toml"),
 		os.ExpandEnv("$HOME/.elemta.conf"),
+		"/etc/elemta/elemta.toml",
 		"/etc/elemta/elemta.conf",
 	}
 
@@ -328,7 +338,7 @@ func LoadConfig(configPath string) (*Config, error) {
 
 	// Make sure queue directory is set
 	if cfg.Queue.Dir == "" {
-		cfg.Queue.Dir = "/app/queue"
+		cfg.Queue.Dir = runtimepaths.Detect().QueueDir
 	}
 
 	// Use absolute path for queue directory

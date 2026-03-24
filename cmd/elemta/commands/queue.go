@@ -6,6 +6,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/busybox42/elemta/internal/queue"
+	"github.com/busybox42/elemta/internal/runtimepaths"
 	"github.com/spf13/cobra"
 )
 
@@ -167,5 +168,5 @@ func getQueueDir() string {
 	}
 
 	// Default queue directory
-	return "/app/queue"
+	return runtimepaths.Detect().QueueDir
 }

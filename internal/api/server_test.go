@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -123,6 +124,41 @@ func TestServerQueueEndpoints(t *testing.T) {
 	})
 
 	_ = router // Avoid unused warning
+}
+
+func TestInitializeAuthPrefersExplicitAuthFile(t *testing.T) {
+	oldType, hadType := os.LookupEnv("AUTH_DATASOURCE_TYPE")
+	oldSQLitePath, hadSQLitePath := os.LookupEnv("AUTH_SQLITE_PATH")
+	defer func() {
+		if hadType {
+			os.Setenv("AUTH_DATASOURCE_TYPE", oldType)
+		} else {
+			os.Unsetenv("AUTH_DATASOURCE_TYPE")
+		}
+		if hadSQLitePath {
+			os.Setenv("AUTH_SQLITE_PATH", oldSQLitePath)
+		} else {
+			os.Unsetenv("AUTH_SQLITE_PATH")
+		}
+	}()
+
+	// Force the env-backed path to be invalid. initializeAuth should still succeed
+	// when an explicit file datasource is configured.
+	os.Setenv("AUTH_DATASOURCE_TYPE", "sqlite")
+	os.Setenv("AUTH_SQLITE_PATH", filepath.Join(t.TempDir(), "missing-auth.db"))
+
+	usersFile := filepath.Join(t.TempDir(), "users.txt")
+	require.NoError(t, os.WriteFile(usersFile, []byte("admin:secret\n"), 0600))
+
+	server, err := NewServer(&Config{
+		Enabled:     true,
+		ListenAddr:  "127.0.0.1:0",
+		WebRoot:     t.TempDir(),
+		AuthEnabled: true,
+		AuthFile:    usersFile,
+	}, (*MainConfig)(nil), t.TempDir(), 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, server.authSystem)
 }
 
 func TestAPIConfig(t *testing.T) {
