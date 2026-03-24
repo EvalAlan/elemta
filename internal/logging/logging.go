@@ -6,7 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/busybox42/elemta/internal/runtimepaths"
 	"sync"
 	"unicode"
 )
@@ -392,13 +395,15 @@ func InitializeLogging(levelStr string) {
 		level = slog.LevelInfo
 	}
 
+	logPath := runtimepaths.Detect().LogFile
+
 	// Create logs directory if it doesn't exist
-	if err := os.MkdirAll("/app/logs", 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
 		slog.Warn("failed to create logs directory", "error", err)
 	}
 
 	// Open log file
-	logFile, err := os.OpenFile("/app/logs/elemta.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		slog.Warn("failed to open log file", "error", err)
 		// Fallback to default logging if file creation fails
@@ -422,5 +427,5 @@ func InitializeLogging(levelStr string) {
 
 	slog.Info("logging initialized",
 		"log_level", LevelToString(level),
-		"log_file", "/app/logs/elemta.log")
+		"log_file", logPath)
 }
