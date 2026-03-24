@@ -59,6 +59,7 @@ COPY --from=builder --chown=elemta:elemta /build/elemta-cli /app/elemta-cli
 # Copy configuration files with proper ownership
 COPY --chown=elemta:elemta config/elemta.toml /app/config/elemta.toml
 COPY --chown=elemta:elemta config/dev.toml /app/config/dev.toml
+RUN chmod 600 /app/config/elemta.toml /app/config/dev.toml
 # Note: Using LDAP authentication, no local database needed
 
 # TLS certificates are expected to be mounted into /app/certs at runtime
