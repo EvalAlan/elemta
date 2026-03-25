@@ -42,6 +42,10 @@ type SMTPAuthenticator struct {
 	mu         sync.RWMutex
 }
 
+type authDataSourceFactory func(config datasource.Config) (datasource.DataSource, error)
+
+var newAuthDataSource authDataSourceFactory = datasource.Factory
+
 // NewAuthenticator creates a new SMTP authenticator
 func NewAuthenticator(config *AuthConfig) (*SMTPAuthenticator, error) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -86,7 +90,7 @@ func NewAuthenticator(config *AuthConfig) (*SMTPAuthenticator, error) {
 		dsConfig.Options["group_dn"] = "ou=groups"
 	}
 
-	ds, err := datasource.Factory(dsConfig)
+	ds, err := newAuthDataSource(dsConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create datasource: %w", err)
 	}
