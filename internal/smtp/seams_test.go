@@ -25,6 +25,9 @@ func (f *fakeAuthDataSource) Type() string      { return "fake" }
 func (f *fakeAuthDataSource) Query(ctx context.Context, query string, args ...interface{}) (interface{}, error) {
 	return nil, nil
 }
+func (f *fakeAuthDataSource) Execute(ctx context.Context, query string, args ...interface{}) error {
+	return nil
+}
 func (f *fakeAuthDataSource) GetUser(ctx context.Context, username string) (datasource.User, error) {
 	return datasource.User{}, nil
 }
