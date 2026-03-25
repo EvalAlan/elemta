@@ -10,6 +10,10 @@ import (
 	"log/slog"
 )
 
+type rateLimitRedisClientFactory func(redisURL, keyPrefix string, logger *slog.Logger) (*RedisClient, error)
+
+var newRateLimitRedisClient rateLimitRedisClientFactory = NewRedisClient
+
 // NewRateLimiterPlugin creates a new rate limiter plugin instance
 func NewRateLimiterPlugin() *RateLimiterPlugin {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -53,7 +57,7 @@ func (rlp *RateLimiterPlugin) Init(config map[string]interface{}) error {
 	// Initialize Valkey client if configured
 	if rlp.config.ValkeyURL != "" {
 		var err error
-		rlp.redisClient, err = NewRedisClient(rlp.config.ValkeyURL, rlp.config.ValkeyKeyPrefix, rlp.logger)
+		rlp.redisClient, err = newRateLimitRedisClient(rlp.config.ValkeyURL, rlp.config.ValkeyKeyPrefix, rlp.logger)
 		if err != nil {
 			rlp.logger.Warn("Failed to initialize Valkey client, falling back to local rate limiting", "error", err)
 		} else {
