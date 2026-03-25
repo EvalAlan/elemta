@@ -112,6 +112,18 @@ func initPlugins(config *Config, slogger *slog.Logger) (*plugin.Manager, *plugin
 	return pluginManager, builtinPlugins
 }
 
+type deliveryHandlerFactory func(host string, port int, maxPerDomain int, failedQueueRetentionHours int) queue.DeliveryHandler
+
+type metricsStoreFactory func(addr string) (queue.MetricsRecorder, error)
+
+var newDeliveryHandler deliveryHandlerFactory = func(host string, port int, maxPerDomain int, failedQueueRetentionHours int) queue.DeliveryHandler {
+	return queue.NewLMTPDeliveryHandler(host, port, maxPerDomain, failedQueueRetentionHours)
+}
+
+var newQueueMetricsStore metricsStoreFactory = func(addr string) (queue.MetricsRecorder, error) {
+	return deliverymetrics.NewValkeyStore(addr)
+}
+
 // initAuthenticator initializes the SMTP authenticator.
 func initAuthenticator(config *Config, slogger *slog.Logger) (Authenticator, error) {
 	if config.Auth != nil && config.Auth.Enabled {
@@ -164,7 +176,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		}
 
 		slogger.Info("Creating LMTP delivery handler", "host", deliveryHost, "port", deliveryPort, "max_per_domain", maxPerDomain)
-		lmtpHandler := queue.NewLMTPDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours)
+		lmtpHandler := newDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours)
 
 		processorConfig := queue.ProcessorConfig{
 			Enabled:       config.QueueProcessorEnabled,
@@ -187,7 +199,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		if valkeyAddr == "" {
 			valkeyAddr = "elemta-valkey:6379"
 		}
-		metricsStore, err := deliverymetrics.NewValkeyStore(valkeyAddr)
+		metricsStore, err := newQueueMetricsStore(valkeyAddr)
 		if err != nil {
 			slogger.Warn("Failed to connect to Valkey for metrics", "error", err)
 		} else {
