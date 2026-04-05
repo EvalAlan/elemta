@@ -1,4 +1,4 @@
-.PHONY: all help build clean clean-certs certs install install-dev install-dev-full uninstall run test test-load test-docker up down down-volumes restart logs logs-elemta status rebuild rebuild-dev docker-build docker-run docker-stop update lint lint-fix fmt
+.PHONY: all help build clean clean-certs certs install install-dev install-dev-full uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status rebuild rebuild-dev docker-build docker-run docker-stop update lint lint-fix fmt
 
 # Default target
 all: build
@@ -30,6 +30,7 @@ help:
 	@echo "  clean-certs       - Remove test TLS certificates"
 	@echo "  test              - Run Go unit tests"
 	@echo "  test-load         - Run SMTP load/performance tests"
+	@echo "  test-race-smoke   - Run targeted SMTP/session race checks"
 	@echo "  test-docker       - Run full integration test suite (21 tests)"
 	@echo "  lint              - Run code quality checks (production code)"
 	@echo "  fmt               - Format code with gofmt and goimports"
@@ -134,6 +135,11 @@ test-load:
 	@echo "Running SMTP load tests..."
 	@echo "⚠️  Note: Requires Docker services running (make docker-setup)"
 	python3 tests/performance/smtp_load_test.py
+
+test-race-smoke:
+	@echo "Running targeted SMTP/session race smoke checks..."
+	go test ./internal/smtp -race -run 'TestHandleUnknown|TestCommandSequencing|TestConnectionDraining'
+	go test ./tests/integration -race -run 'TestIntegration_PersistentConnection|TestIntegration_TimeoutHandling'
 
 test-all: test test-centralized
 	@echo "All tests completed."
