@@ -11,6 +11,8 @@ Welcome to the Elemta documentation. This guide will help you navigate through a
 ## Core Features
 
 - [Queue Management](queue_management.md) - How the message queue system works
+- [Queue Backend v1 Design](queue-db-backend-v1.md) - File/SQLite backend design and guardrails
+- [Queue Backend Runbook](queue-backend-runbook.md) - Operator procedures for backend usage
 - [Email Authentication](email_authentication.md) - SPF, DKIM, DMARC, and ARC implementation
 - [Plugin System](plugins.md) - Extending Elemta with plugins
 - [Logging](logging.md) - Logging configuration and management
@@ -61,9 +63,15 @@ Welcome to the Elemta documentation. This guide will help you navigate through a
 
 - [Troubleshooting Guide](troubleshooting.md) - Common issues and solutions
 
+## Audits
+
+- [Comprehensive audit (2026-04-05)](audits/2026-04-05-comprehensive-audit.md)
+
 ## Contributing
 
-- See the project [README](../README.md) for contribution guidelines
+- [Contributing Guide](../CONTRIBUTING.md)
+- [Security Policy](../SECURITY.md)
+- [Code of Conduct](../CODE_OF_CONDUCT.md)
 
 ---
 
