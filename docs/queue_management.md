@@ -288,4 +288,4 @@ debug = false                            # Enable debug logging
 
 ## Monitoring
 
-Elemta exposes queue metrics for monitoring. See [Monitoring](monitoring.md) for more information. 
+Elemta exposes queue metrics for monitoring. See [Monitoring](monitoring/README.md) for more information. 
