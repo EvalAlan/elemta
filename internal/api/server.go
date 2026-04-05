@@ -32,6 +32,11 @@ type MainConfig struct {
 	Hostname                  string      `json:"hostname"`
 	ListenAddr                string      `json:"listen_addr"`
 	QueueDir                  string      `json:"queue_dir"`
+	QueueBackend              string      `json:"queue_backend"`
+	QueueSQLitePath           string      `json:"queue_sqlite_path"`
+	QueueSQLiteBusyTimeoutMS  int         `json:"queue_sqlite_busy_timeout_ms"`
+	QueueSQLiteJournalMode    string      `json:"queue_sqlite_journal_mode"`
+	QueueSQLiteSynchronous    string      `json:"queue_sqlite_synchronous"`
 	MaxSize                   int64       `json:"max_size"`
 	MaxWorkers                int         `json:"max_workers"`
 	MaxRetries                int         `json:"max_retries"`
@@ -120,7 +125,10 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 		webRoot = "./web/static"
 	}
 
-	queueMgr := queue.NewManager(queueDir, failedQueueRetentionHours)
+	queueMgr, err := newQueueManagerForAPI(mainConfig, queueDir, failedQueueRetentionHours)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize queue manager: %w", err)
+	}
 
 	server := &Server{
 		config:     config,
@@ -163,6 +171,51 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 	server.corsMiddleware = NewCORSMiddleware(config.CORS)
 
 	return server, nil
+}
+
+func newQueueManagerForAPI(mainConfig *MainConfig, queueDir string, failedQueueRetentionHours int) (*queue.Manager, error) {
+	backend := "file"
+	if mainConfig != nil {
+		if b := strings.TrimSpace(strings.ToLower(mainConfig.QueueBackend)); b != "" {
+			backend = b
+		}
+	}
+
+	switch backend {
+	case "file":
+		return queue.NewManager(queueDir, failedQueueRetentionHours), nil
+	case "sqlite":
+		sqlitePath := ""
+		busyTimeout := 5000
+		journalMode := "WAL"
+		synchronous := "NORMAL"
+
+		if mainConfig != nil {
+			sqlitePath = strings.TrimSpace(mainConfig.QueueSQLitePath)
+			if mainConfig.QueueSQLiteBusyTimeoutMS > 0 {
+				busyTimeout = mainConfig.QueueSQLiteBusyTimeoutMS
+			}
+			if v := strings.TrimSpace(mainConfig.QueueSQLiteJournalMode); v != "" {
+				journalMode = v
+			}
+			if v := strings.TrimSpace(mainConfig.QueueSQLiteSynchronous); v != "" {
+				synchronous = v
+			}
+		}
+
+		if sqlitePath == "" {
+			sqlitePath = filepath.Join(queueDir, "queue.db")
+		}
+
+		sqliteBackend, err := queue.NewSQLiteStorageBackend(sqlitePath, busyTimeout, journalMode, synchronous)
+		if err != nil {
+			return nil, err
+		}
+
+		return queue.NewManagerWithStorage(sqliteBackend, failedQueueRetentionHours), nil
+	default:
+		return nil, fmt.Errorf("unsupported queue backend: %s", backend)
+	}
 }
 
 // valkeyMetricsAdapter adapts ValkeyStore to MetricsStore interface
@@ -656,6 +709,11 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 
 // handleGetQueueStats returns queue statistics
 func (s *Server) handleGetQueueStats(w http.ResponseWriter, r *http.Request) {
+	if err := s.queueMgr.UpdateStats(); err != nil {
+		http.Error(w, fmt.Sprintf("Error: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	stats := s.queueMgr.GetStats()
 	writeJSON(w, stats)
 }
