@@ -32,7 +32,7 @@ RUN groupadd -r elemta -g 1001 && \
     useradd -r -g elemta -u 1001 -d /app -s /bin/sh elemta
 
 # Install required packages (no gosu - we don't need privilege dropping)
-RUN apt-get update && apt-get install -y python3 python3-pip curl netcat-openbsd dos2unix libc6 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y python3 python3-pip curl netcat-openbsd dos2unix libc6 sqlite3 && rm -rf /var/lib/apt/lists/*
 
 # Create directories with proper ownership from the start
 # Note: /app/plugins directory exists but is empty (all plugins are built-in)
