@@ -4,6 +4,8 @@
 
 Draft implementation spec for branch `feat/queue-db-backend`.
 
+Operator runbook: `docs/queue-backend-runbook.md`
+
 ## Hard Requirements (locked)
 
 1. Existing **file queue remains fully supported**.

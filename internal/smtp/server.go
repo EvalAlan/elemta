@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -152,40 +151,22 @@ func initAuthenticator(config *Config, slogger *slog.Logger) (Authenticator, err
 
 // initQueueSystem initializes the queue manager and optional queue processor.
 func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *queue.Processor, error) {
-	backend := strings.ToLower(strings.TrimSpace(config.QueueBackend))
-	if backend == "" {
-		backend = "file"
+	queueManager, err := queue.NewManagerFromBackend(
+		config.QueueDir,
+		config.QueueBackend,
+		queue.SQLiteConfig{
+			Path:          config.QueueSQLite.Path,
+			BusyTimeoutMS: config.QueueSQLite.BusyTimeoutMS,
+			JournalMode:   config.QueueSQLite.JournalMode,
+			Synchronous:   config.QueueSQLite.Synchronous,
+		},
+		config.FailedQueueRetentionHours,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize queue backend: %w", err)
 	}
 
-	slogger.Info("Initializing unified queue system", "directory", config.QueueDir, "backend", backend)
-
-	var queueManager *queue.Manager
-	switch backend {
-	case "file":
-		queueManager = queue.NewManager(config.QueueDir, config.FailedQueueRetentionHours)
-	case "sqlite":
-		sqlitePath := config.QueueSQLite.Path
-		if sqlitePath == "" {
-			sqlitePath = filepath.Join(config.QueueDir, "queue.db")
-		}
-
-		sqliteBackend, err := queue.NewSQLiteStorageBackend(
-			sqlitePath,
-			config.QueueSQLite.BusyTimeoutMS,
-			config.QueueSQLite.JournalMode,
-			config.QueueSQLite.Synchronous,
-		)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to initialize sqlite queue backend: %w", err)
-		}
-
-		queueManager = queue.NewManagerWithStorage(sqliteBackend, config.FailedQueueRetentionHours)
-		slogger.Info("SQLite queue backend initialized", "path", sqlitePath)
-	default:
-		return nil, nil, fmt.Errorf("unsupported queue backend: %s", backend)
-	}
-
-	slogger.Info("Unified queue system initialized")
+	slogger.Info("Unified queue system initialized", "directory", config.QueueDir, "backend", queueManager.BackendType())
 
 	var queueProcessor *queue.Processor
 	if config.QueueProcessorEnabled {

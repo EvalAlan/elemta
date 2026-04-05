@@ -35,10 +35,15 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		localDomains = cfg.LocalDomains // fallback
 	}
 
+	queueDir := cfg.Queue.Dir
+	if queueDir == "" {
+		queueDir = cfg.QueueDir
+	}
+
 	return &api.MainConfig{
 		Hostname:                  hostname,
 		ListenAddr:                listenAddr,
-		QueueDir:                  cfg.QueueDir,
+		QueueDir:                  queueDir,
 		QueueBackend:              cfg.Queue.Backend,
 		QueueSQLitePath:           cfg.Queue.SQLite.Path,
 		QueueSQLiteBusyTimeoutMS:  cfg.Queue.SQLite.BusyTimeoutMS,
@@ -102,7 +107,10 @@ func runWeb(cmd *cobra.Command, args []string) {
 
 	resolvedWebRoot := webRoot
 	if !cmd.Flags().Changed("web-root") {
-		resolvedWebRoot = ""
+		resolvedWebRoot = cfg.API.WebRoot
+	}
+	if resolvedWebRoot == "" {
+		resolvedWebRoot = "./web/static"
 	}
 
 	resolvedQueueDir := webQueueDir
@@ -115,21 +123,48 @@ func runWeb(cmd *cobra.Command, args []string) {
 
 	resolvedAuthEnabled := authEnabled
 	if !cmd.Flags().Changed("auth-enabled") {
-		resolvedAuthEnabled = cfg.Auth.Enabled
+		resolvedAuthEnabled = cfg.API.AuthEnabled
 	}
 
 	resolvedAuthFile := authFile
-	if resolvedAuthFile == "" && cfg.Auth.Enabled && cfg.Auth.DataSourceType == "file" {
-		resolvedAuthFile = cfg.Auth.DataSourcePath
+	if !cmd.Flags().Changed("auth-file") {
+		resolvedAuthFile = cfg.API.AuthFile
+	}
+
+	if resolvedAuthEnabled && resolvedAuthFile != "" {
+		if fi, err := os.Stat(resolvedAuthFile); err == nil && fi.IsDir() {
+			log.Printf("Warning: auth file path %q is a directory; disabling web auth", resolvedAuthFile)
+			resolvedAuthEnabled = false
+			resolvedAuthFile = ""
+		}
 	}
 
 	// Create API config
+	resolvedListenAddr := webListenAddr
+	if !cmd.Flags().Changed("listen") && cfg.API.ListenAddr != "" {
+		resolvedListenAddr = cfg.API.ListenAddr
+	}
+
 	apiConfig := &api.Config{
 		Enabled:     true,
-		ListenAddr:  webListenAddr,
+		ListenAddr:  resolvedListenAddr,
 		WebRoot:     resolvedWebRoot,
 		AuthEnabled: resolvedAuthEnabled,
 		AuthFile:    resolvedAuthFile,
+		ValkeyAddr:  cfg.API.ValkeyAddr,
+		RateLimit: api.RateLimitConfig{
+			Enabled:           cfg.API.RateLimit.Enabled,
+			RequestsPerSecond: cfg.API.RateLimit.RequestsPerSecond,
+			Burst:             cfg.API.RateLimit.Burst,
+		},
+		CORS: api.CORSConfig{
+			Enabled:          cfg.API.CORS.Enabled,
+			AllowedOrigins:   cfg.API.CORS.AllowedOrigins,
+			AllowedMethods:   cfg.API.CORS.AllowedMethods,
+			AllowedHeaders:   cfg.API.CORS.AllowedHeaders,
+			AllowCredentials: cfg.API.CORS.AllowCredentials,
+			MaxAge:           cfg.API.CORS.MaxAge,
+		},
 	}
 
 	// Create and start API server
@@ -142,7 +177,7 @@ func runWeb(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to start API server: %v", err)
 	}
 
-	fmt.Printf("Elemta web interface started on http://%s\n", webListenAddr)
+	fmt.Printf("Elemta web interface started on http://%s\n", resolvedListenAddr)
 	fmt.Println("Press Ctrl+C to stop")
 
 	// Wait for interrupt signal
