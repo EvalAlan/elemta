@@ -85,3 +85,23 @@ jobs:
 
       - name: Run sqlite guardrail tests
         run: go test ./internal/queue/... -run '^TestQueueSQLiteGuardrails_'
+
+  test-smtp-race-smoke:
+    name: test (smtp race smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run SMTP race smoke tests
+        run: |
+          go test ./internal/smtp -race -run 'TestHandleUnknown|TestCommandSequencing|TestConnectionDraining'
+          go test ./tests/integration -race -run 'TestIntegration_PersistentConnection|TestIntegration_TimeoutHandling'

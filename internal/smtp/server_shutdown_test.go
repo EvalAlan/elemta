@@ -64,7 +64,7 @@ func TestGracefulShutdown(t *testing.T) {
 			// Server may have already stopped
 		}
 
-		assert.False(t, server.running, "Server should not be running after shutdown")
+		assert.False(t, server.running.Load(), "Server should not be running after shutdown")
 	})
 
 	t.Run("SIGINT triggers graceful shutdown", func(t *testing.T) {
@@ -215,6 +215,10 @@ func TestConnectionDraining(t *testing.T) {
 
 		// Try to establish new connection
 		addr := server.Addr()
+		if addr == nil {
+			t.Log("✓ Listener already closed during shutdown")
+			return
+		}
 		conn, err := net.DialTimeout("tcp", addr.String(), 1*time.Second)
 		if err == nil {
 			conn.Close()
@@ -456,14 +460,14 @@ func TestKubernetesTermination(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// Check running status before shutdown
-		assert.True(t, server.running, "Server should be running")
+		assert.True(t, server.running.Load(), "Server should be running")
 
 		// Initiate shutdown
 		go server.Close()
 		time.Sleep(50 * time.Millisecond) // Give time for shutdown to start
 
 		// Verify running flag is false (readiness probe would fail)
-		assert.False(t, server.running, "Running flag should be false during shutdown")
+		assert.False(t, server.running.Load(), "Running flag should be false during shutdown")
 		t.Log("✓ Readiness probe would fail during shutdown")
 	})
 

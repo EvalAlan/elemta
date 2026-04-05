@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	deliverymetrics "github.com/busybox42/elemta/internal/metrics"
@@ -22,8 +23,9 @@ import (
 // Server represents an SMTP server
 type Server struct {
 	config          *Config
+	listenerMu      sync.RWMutex
 	listener        net.Listener
-	running         bool
+	running         atomic.Bool
 	pluginManager   *plugin.Manager
 	builtinPlugins  *plugin.BuiltinPlugins // Built-in plugins for spam/antivirus scanning
 	authenticator   Authenticator
@@ -421,7 +423,6 @@ func NewServer(config *Config) (*Server, error) {
 
 	server := &Server{
 		config:          config,
-		running:         false,
 		pluginManager:   pluginManager,
 		builtinPlugins:  builtinPlugins,
 		authenticator:   authenticator,
@@ -455,17 +456,34 @@ func NewServer(config *Config) (*Server, error) {
 	return server, nil
 }
 
-// Addr returns the server's listen address
+func (s *Server) setListener(listener net.Listener) {
+	s.listenerMu.Lock()
+	defer s.listenerMu.Unlock()
+	s.listener = listener
+}
+
+func (s *Server) getListener() net.Listener {
+	s.listenerMu.RLock()
+	defer s.listenerMu.RUnlock()
+	return s.listener
+}
+
+func (s *Server) isRunning() bool {
+	return s.running.Load()
+}
+
+// Addr returns the server's listen address.
 func (s *Server) Addr() net.Addr {
-	if s.listener != nil {
-		return s.listener.Addr()
+	listener := s.getListener()
+	if listener != nil {
+		return listener.Addr()
 	}
 	return nil
 }
 
 // Start starts the SMTP server
 func (s *Server) Start() error {
-	if s.running {
+	if s.isRunning() {
 		return fmt.Errorf("server already running")
 	}
 
@@ -480,13 +498,13 @@ func (s *Server) Start() error {
 
 	// Create listener
 	s.slogger.Info("Creating TCP listener", "address", s.config.ListenAddr)
-	var err error
-	s.listener, err = net.Listen("tcp", s.config.ListenAddr)
+	listener, err := net.Listen("tcp", s.config.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("failed to create listener: %w", err)
 	}
 
-	s.running = true
+	s.setListener(listener)
+	s.running.Store(true)
 	s.slogger.Info("SMTP server running",
 		"event_type", "system",
 		"listen_addr", s.config.ListenAddr)
@@ -560,22 +578,29 @@ func (s *Server) updateQueueMetricsWithRetry() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for s.running {
-		// Update metrics and log any errors we encounter
-		func() {
-			// Use defer to catch any panics that might occur
-			defer func() {
-				if r := recover(); r != nil {
-					s.slogger.Error("Panic in queue metrics update", "panic", r)
-				}
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			if !s.isRunning() {
+				return
+			}
+
+			// Update metrics and log any errors we encounter
+			func() {
+				// Use defer to catch any panics that might occur
+				defer func() {
+					if r := recover(); r != nil {
+						s.slogger.Error("Panic in queue metrics update", "panic", r)
+					}
+				}()
+
+				// Update queue metrics
+				s.metricsManager.UpdateQueueSizes()
+				s.slogger.Debug("Queue metrics updated successfully")
 			}()
-
-			// Update queue metrics
-			s.metricsManager.UpdateQueueSizes()
-			s.slogger.Debug("Queue metrics updated successfully")
-		}()
-
-		<-ticker.C
+		}
 	}
 }
 
@@ -592,21 +617,29 @@ func (s *Server) acceptConnections() error {
 		default:
 		}
 
+		listener := s.getListener()
+		if listener == nil {
+			if s.isRunning() {
+				s.slogger.Warn("Listener is nil while server is marked running")
+			}
+			return nil
+		}
+
 		// Set a short timeout on accept to allow periodic context checking
-		if tcpListener, ok := s.listener.(*net.TCPListener); ok {
+		if tcpListener, ok := listener.(*net.TCPListener); ok {
 			if err := tcpListener.SetDeadline(time.Now().Add(1 * time.Second)); err != nil {
 				s.slogger.Error("Failed to set accept deadline", "error", err)
 			}
 		}
 
-		conn, err := s.listener.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			// Check if it's a timeout error (expected)
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
 
-			if s.running {
+			if s.isRunning() {
 				s.slogger.Error("Failed to accept connection", "error", err)
 			}
 			continue
@@ -615,7 +648,7 @@ func (s *Server) acceptConnections() error {
 		s.slogger.Debug("Connection accepted", "remote_addr", conn.RemoteAddr().String())
 
 		// Reset deadline after successful accept
-		if tcpListener, ok := s.listener.(*net.TCPListener); ok {
+		if tcpListener, ok := listener.(*net.TCPListener); ok {
 			_ = tcpListener.SetDeadline(time.Time{}) // Best effort
 		}
 
@@ -789,7 +822,7 @@ func (s *Server) Close() error {
 
 	s.shutdownOnce.Do(func() {
 		s.slogger.Info("Initiating graceful server shutdown")
-		s.running = false
+		s.running.Store(false)
 		s.cancelRootContext()
 		s.closeListener(&shutdownErr)
 		s.stopWorkerPool(&shutdownErr)
@@ -812,12 +845,16 @@ func (s *Server) cancelRootContext() {
 
 // closeListener stops accepting new connections.
 func (s *Server) closeListener(shutdownErr *error) {
-	if s.listener != nil {
-		if err := s.listener.Close(); err != nil {
-			s.slogger.Error("Error closing listener", "error", err)
-			*shutdownErr = err
-		}
+	listener := s.getListener()
+	if listener == nil {
+		return
 	}
+
+	if err := listener.Close(); err != nil {
+		s.slogger.Error("Error closing listener", "error", err)
+		*shutdownErr = err
+	}
+	s.setListener(nil)
 }
 
 // stopWorkerPool gracefully stops the worker pool, ignoring context.Canceled.

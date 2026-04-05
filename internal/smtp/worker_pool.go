@@ -403,10 +403,8 @@ func (wp *WorkerPool) processJobWithTimeout(job Job, logger *slog.Logger) Result
 	// Update statistics atomically
 	if err != nil {
 		atomic.AddInt64(&wp.stats.FailedJobs, 1)
-		atomic.AddInt64(&wp.stats.CircuitBreaker.Failures, 1)
 	} else {
 		atomic.AddInt64(&wp.stats.CompletedJobs, 1)
-		atomic.AddInt64(&wp.stats.CircuitBreaker.Successes, 1)
 	}
 
 	// Update circuit breaker stats
@@ -472,31 +470,30 @@ func (wp *WorkerPool) resultProcessor() error {
 
 // GetStats returns current worker pool statistics
 func (wp *WorkerPool) GetStats() WorkerPoolStats {
-	wp.mu.RLock()
-	defer wp.mu.RUnlock()
-
-	// Create a copy to avoid race conditions and lock copying
 	stats := WorkerPoolStats{
-		TotalJobs:      wp.stats.TotalJobs,
-		CompletedJobs:  wp.stats.CompletedJobs,
-		FailedJobs:     wp.stats.FailedJobs,
-		ActiveWorkers:  wp.stats.ActiveWorkers,
-		QueuedJobs:     wp.stats.QueuedJobs,
-		GoroutineCount: wp.stats.GoroutineCount,
-		PanicCount:     wp.stats.PanicCount,
-		OrphanedJobs:   wp.stats.OrphanedJobs,
-		CircuitBreaker: struct {
-			State     string
-			Failures  int64
-			Successes int64
-			Timeouts  int64
-		}{
-			State:     wp.stats.CircuitBreaker.State,
-			Failures:  wp.stats.CircuitBreaker.Failures,
-			Successes: wp.stats.CircuitBreaker.Successes,
-			Timeouts:  wp.stats.CircuitBreaker.Timeouts,
-		},
+		TotalJobs:      atomic.LoadInt64(&wp.stats.TotalJobs),
+		CompletedJobs:  atomic.LoadInt64(&wp.stats.CompletedJobs),
+		FailedJobs:     atomic.LoadInt64(&wp.stats.FailedJobs),
+		ActiveWorkers:  atomic.LoadInt32(&wp.stats.ActiveWorkers),
+		QueuedJobs:     atomic.LoadInt32(&wp.stats.QueuedJobs),
+		GoroutineCount: atomic.LoadInt32(&wp.stats.GoroutineCount),
+		PanicCount:     atomic.LoadInt64(&wp.stats.PanicCount),
+		OrphanedJobs:   atomic.LoadInt64(&wp.stats.OrphanedJobs),
 	}
+
+	wp.mu.RLock()
+	stats.CircuitBreaker = struct {
+		State     string
+		Failures  int64
+		Successes int64
+		Timeouts  int64
+	}{
+		State:     wp.stats.CircuitBreaker.State,
+		Failures:  wp.stats.CircuitBreaker.Failures,
+		Successes: wp.stats.CircuitBreaker.Successes,
+		Timeouts:  wp.stats.CircuitBreaker.Timeouts,
+	}
+	wp.mu.RUnlock()
 
 	return stats
 }
