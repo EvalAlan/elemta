@@ -112,7 +112,18 @@ func (r *Redis) SetNX(ctx context.Context, key string, value interface{}, expira
 		return false, ErrNotConnected
 	}
 
-	return r.client.SetNX(ctx, key, value, expiration).Result()
+	status, err := r.client.SetArgs(ctx, key, value, redis.SetArgs{
+		Mode: "NX",
+		TTL:  expiration,
+	}).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return status == "OK", nil
 }
 
 // Delete removes a value from Redis

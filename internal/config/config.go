@@ -421,21 +421,21 @@ func (c *Config) SaveConfig(configPath string) error {
 	b.WriteString("# Elemta SMTP Server Configuration\n\n")
 
 	// Top-level settings (used by web UI)
-	b.WriteString(fmt.Sprintf("hostname = %q\n", c.Hostname))
-	b.WriteString(fmt.Sprintf("listen_addr = %q\n", c.ListenAddr))
-	b.WriteString(fmt.Sprintf("queue_dir = %q\n", c.QueueDir))
-	b.WriteString(fmt.Sprintf("max_size = %d\n", c.MaxSize))
-	b.WriteString(fmt.Sprintf("max_workers = %d\n", c.MaxWorkers))
-	b.WriteString(fmt.Sprintf("max_retries = %d\n", c.MaxRetries))
-	b.WriteString(fmt.Sprintf("max_queue_time = %d\n", c.MaxQueueTime))
-	b.WriteString(fmt.Sprintf("failed_queue_retention_hours = %d\n", c.FailedQueueRetentionHours))
+	fmt.Fprintf(&b, "hostname = %q\n", c.Hostname)
+	fmt.Fprintf(&b, "listen_addr = %q\n", c.ListenAddr)
+	fmt.Fprintf(&b, "queue_dir = %q\n", c.QueueDir)
+	fmt.Fprintf(&b, "max_size = %d\n", c.MaxSize)
+	fmt.Fprintf(&b, "max_workers = %d\n", c.MaxWorkers)
+	fmt.Fprintf(&b, "max_retries = %d\n", c.MaxRetries)
+	fmt.Fprintf(&b, "max_queue_time = %d\n", c.MaxQueueTime)
+	fmt.Fprintf(&b, "failed_queue_retention_hours = %d\n", c.FailedQueueRetentionHours)
 	if len(c.LocalDomains) > 0 {
 		b.WriteString("local_domains = [")
 		for i, d := range c.LocalDomains {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(fmt.Sprintf("%q", d))
+			fmt.Fprintf(&b, "%q", d)
 		}
 		b.WriteString("]\n")
 	}
@@ -443,69 +443,69 @@ func (c *Config) SaveConfig(configPath string) error {
 
 	// Legacy server section (kept for backwards compatibility with SMTP server process)
 	b.WriteString("[server]\n")
-	b.WriteString(fmt.Sprintf("hostname = %q\n", c.Server.Hostname))
-	b.WriteString(fmt.Sprintf("listen = %q\n", c.Server.Listen))
-	b.WriteString(fmt.Sprintf("tls = %t\n", c.Server.TLS))
+	fmt.Fprintf(&b, "hostname = %q\n", c.Server.Hostname)
+	fmt.Fprintf(&b, "listen = %q\n", c.Server.Listen)
+	fmt.Fprintf(&b, "tls = %t\n", c.Server.TLS)
 	if c.Server.CertFile != "" {
-		b.WriteString(fmt.Sprintf("cert_file = %q\n", c.Server.CertFile))
+		fmt.Fprintf(&b, "cert_file = %q\n", c.Server.CertFile)
 	}
 	if c.Server.KeyFile != "" {
-		b.WriteString(fmt.Sprintf("key_file = %q\n", c.Server.KeyFile))
+		fmt.Fprintf(&b, "key_file = %q\n", c.Server.KeyFile)
 	}
 	b.WriteString("\n")
 
 	b.WriteString("[queue]\n")
-	b.WriteString(fmt.Sprintf("dir = %q\n", c.Queue.Dir))
+	fmt.Fprintf(&b, "dir = %q\n", c.Queue.Dir)
 	if c.Queue.Backend != "" {
-		b.WriteString(fmt.Sprintf("backend = %q\n", c.Queue.Backend))
+		fmt.Fprintf(&b, "backend = %q\n", c.Queue.Backend)
 	}
 	b.WriteString("\n")
 
 	if c.Queue.SQLite.Path != "" {
 		b.WriteString("[queue.sqlite]\n")
-		b.WriteString(fmt.Sprintf("path = %q\n", c.Queue.SQLite.Path))
+		fmt.Fprintf(&b, "path = %q\n", c.Queue.SQLite.Path)
 		if c.Queue.SQLite.BusyTimeoutMS > 0 {
-			b.WriteString(fmt.Sprintf("busy_timeout_ms = %d\n", c.Queue.SQLite.BusyTimeoutMS))
+			fmt.Fprintf(&b, "busy_timeout_ms = %d\n", c.Queue.SQLite.BusyTimeoutMS)
 		}
 		if c.Queue.SQLite.JournalMode != "" {
-			b.WriteString(fmt.Sprintf("journal_mode = %q\n", c.Queue.SQLite.JournalMode))
+			fmt.Fprintf(&b, "journal_mode = %q\n", c.Queue.SQLite.JournalMode)
 		}
 		if c.Queue.SQLite.Synchronous != "" {
-			b.WriteString(fmt.Sprintf("synchronous = %q\n", c.Queue.SQLite.Synchronous))
+			fmt.Fprintf(&b, "synchronous = %q\n", c.Queue.SQLite.Synchronous)
 		}
 		b.WriteString("\n")
 	}
 
 	b.WriteString("[logging]\n")
-	b.WriteString(fmt.Sprintf("level = %q\n", c.Logging.Level))
-	b.WriteString(fmt.Sprintf("format = %q\n", c.Logging.Format))
+	fmt.Fprintf(&b, "level = %q\n", c.Logging.Level)
+	fmt.Fprintf(&b, "format = %q\n", c.Logging.Format)
 	if c.Logging.File != "" {
-		b.WriteString(fmt.Sprintf("file = %q\n", c.Logging.File))
+		fmt.Fprintf(&b, "file = %q\n", c.Logging.File)
 	}
 	b.WriteString("\n")
 
 	b.WriteString("[plugins]\n")
-	b.WriteString(fmt.Sprintf("directory = %q\n", c.Plugins.Directory))
+	fmt.Fprintf(&b, "directory = %q\n", c.Plugins.Directory)
 	b.WriteString("enabled = []\n\n")
 
 	b.WriteString("[queue_processor]\n")
-	b.WriteString(fmt.Sprintf("enabled = %t\n", c.QueueProcessor.Enabled))
-	b.WriteString(fmt.Sprintf("interval = %d\n", c.QueueProcessor.Interval))
-	b.WriteString(fmt.Sprintf("workers = %d\n", c.QueueProcessor.Workers))
-	b.WriteString(fmt.Sprintf("debug = %t\n\n", c.QueueProcessor.Debug))
+	fmt.Fprintf(&b, "enabled = %t\n", c.QueueProcessor.Enabled)
+	fmt.Fprintf(&b, "interval = %d\n", c.QueueProcessor.Interval)
+	fmt.Fprintf(&b, "workers = %d\n", c.QueueProcessor.Workers)
+	fmt.Fprintf(&b, "debug = %t\n\n", c.QueueProcessor.Debug)
 
 	// Rate limiter section
 	if c.RateLimiter != nil {
 		b.WriteString("[rate_limiter]\n")
-		b.WriteString(fmt.Sprintf("enabled = %t\n", c.RateLimiter.Enabled))
-		b.WriteString(fmt.Sprintf("max_connections_per_ip = %d\n", c.RateLimiter.MaxConnectionsPerIP))
-		b.WriteString(fmt.Sprintf("connection_rate_per_minute = %d\n", c.RateLimiter.ConnectionRatePerMinute))
-		b.WriteString(fmt.Sprintf("connection_burst_size = %d\n", c.RateLimiter.ConnectionBurstSize))
-		b.WriteString(fmt.Sprintf("connection_timeout = %q\n", c.RateLimiter.ConnectionTimeout))
-		b.WriteString(fmt.Sprintf("max_messages_per_minute = %d\n", c.RateLimiter.MaxMessagesPerMinute))
-		b.WriteString(fmt.Sprintf("max_messages_per_hour = %d\n", c.RateLimiter.MaxMessagesPerHour))
-		b.WriteString(fmt.Sprintf("max_recipients_per_message = %d\n", c.RateLimiter.MaxRecipientsPerMessage))
-		b.WriteString(fmt.Sprintf("max_message_size = %q\n", c.RateLimiter.MaxMessageSize))
+		fmt.Fprintf(&b, "enabled = %t\n", c.RateLimiter.Enabled)
+		fmt.Fprintf(&b, "max_connections_per_ip = %d\n", c.RateLimiter.MaxConnectionsPerIP)
+		fmt.Fprintf(&b, "connection_rate_per_minute = %d\n", c.RateLimiter.ConnectionRatePerMinute)
+		fmt.Fprintf(&b, "connection_burst_size = %d\n", c.RateLimiter.ConnectionBurstSize)
+		fmt.Fprintf(&b, "connection_timeout = %q\n", c.RateLimiter.ConnectionTimeout)
+		fmt.Fprintf(&b, "max_messages_per_minute = %d\n", c.RateLimiter.MaxMessagesPerMinute)
+		fmt.Fprintf(&b, "max_messages_per_hour = %d\n", c.RateLimiter.MaxMessagesPerHour)
+		fmt.Fprintf(&b, "max_recipients_per_message = %d\n", c.RateLimiter.MaxRecipientsPerMessage)
+		fmt.Fprintf(&b, "max_message_size = %q\n", c.RateLimiter.MaxMessageSize)
 		b.WriteString("\n")
 	}
 
