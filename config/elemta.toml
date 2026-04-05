@@ -24,6 +24,16 @@ key_file = ""
 
 queue_dir = "/app/queue"
 
+[queue]
+dir = "/app/queue"
+backend = "sqlite"
+
+[queue.sqlite]
+path = "/app/queue/queue.db"
+busy_timeout_ms = 5000
+journal_mode = "WAL"
+synchronous = "NORMAL"
+
 [logging]
 type = "elastic"
 level = "info"
