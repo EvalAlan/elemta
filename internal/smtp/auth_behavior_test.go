@@ -14,33 +14,43 @@ type testAuthFakeDataSource struct {
 	authenticateFn func(context.Context, string, string) (bool, error)
 }
 
-func (f *testAuthFakeDataSource) Connect() error { return nil }
-func (f *testAuthFakeDataSource) Close() error { return nil }
+func (f *testAuthFakeDataSource) Connect() error    { return nil }
+func (f *testAuthFakeDataSource) Close() error      { return nil }
 func (f *testAuthFakeDataSource) IsConnected() bool { return true }
-func (f *testAuthFakeDataSource) Name() string { return "fake" }
-func (f *testAuthFakeDataSource) Type() string { return "fake" }
-func (f *testAuthFakeDataSource) Query(context.Context, string, ...interface{}) (interface{}, error) { return nil, nil }
+func (f *testAuthFakeDataSource) Name() string      { return "fake" }
+func (f *testAuthFakeDataSource) Type() string      { return "fake" }
+func (f *testAuthFakeDataSource) Query(context.Context, string, ...interface{}) (interface{}, error) {
+	return nil, nil
+}
 func (f *testAuthFakeDataSource) Execute(context.Context, string, ...interface{}) error { return nil }
-func (f *testAuthFakeDataSource) GetUser(context.Context, string) (datasource.User, error) { return datasource.User{}, nil }
+func (f *testAuthFakeDataSource) GetUser(context.Context, string) (datasource.User, error) {
+	return datasource.User{}, nil
+}
 func (f *testAuthFakeDataSource) CreateUser(context.Context, datasource.User) error { return nil }
 func (f *testAuthFakeDataSource) UpdateUser(context.Context, datasource.User) error { return nil }
-func (f *testAuthFakeDataSource) DeleteUser(context.Context, string) error { return nil }
-func (f *testAuthFakeDataSource) ListUsers(context.Context, map[string]interface{}, int, int) ([]datasource.User, error) { return nil, nil }
+func (f *testAuthFakeDataSource) DeleteUser(context.Context, string) error          { return nil }
+func (f *testAuthFakeDataSource) ListUsers(context.Context, map[string]interface{}, int, int) ([]datasource.User, error) {
+	return nil, nil
+}
 func (f *testAuthFakeDataSource) Authenticate(ctx context.Context, username, password string) (bool, error) {
 	if f.authenticateFn != nil {
 		return f.authenticateFn(ctx, username, password)
 	}
 	return true, nil
 }
-func (f *testAuthFakeDataSource) GetPermissions(ctx context.Context, username string) ([]string, error) { return nil, nil }
-func (f *testAuthFakeDataSource) HasPermission(ctx context.Context, username string, permission string) (bool, error) { return false, nil }
+func (f *testAuthFakeDataSource) GetPermissions(ctx context.Context, username string) ([]string, error) {
+	return nil, nil
+}
+func (f *testAuthFakeDataSource) HasPermission(ctx context.Context, username string, permission string) (bool, error) {
+	return false, nil
+}
 
 func TestAuthenticatorBehavior(t *testing.T) {
 	tests := []struct {
-		name          string
-		setup         func() datasource.DataSource
+		name              string
+		setup             func() datasource.DataSource
 		wantAuthenticated bool
-		wantError       bool
+		wantError         bool
 	}{
 		{
 			name: "success",
@@ -52,7 +62,7 @@ func TestAuthenticatorBehavior(t *testing.T) {
 				}
 			},
 			wantAuthenticated: true,
-			wantError: false,
+			wantError:         false,
 		},
 		{
 			name: "failure",
@@ -64,7 +74,7 @@ func TestAuthenticatorBehavior(t *testing.T) {
 				}
 			},
 			wantAuthenticated: false,
-			wantError: false,
+			wantError:         false,
 		},
 		{
 			name: "error",
@@ -76,7 +86,7 @@ func TestAuthenticatorBehavior(t *testing.T) {
 				}
 			},
 			wantAuthenticated: false,
-			wantError: true,
+			wantError:         true,
 		},
 	}
 
