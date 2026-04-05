@@ -127,6 +127,49 @@ Operational behavior:
 
 ---
 
+## Future Backend Path: Postgres (v2+)
+
+SQLite is the near-term implementation target. Postgres is the planned path when workload/architecture crosses single-node limits.
+
+### Trigger criteria to start Postgres work
+
+Start Postgres backend design/implementation when one or more are true:
+
+1. Queue ownership must be shared by multiple active nodes.
+2. HA failover requires queue continuity across host loss.
+3. SQLite lock contention persists after tuning workers/batch size/timeouts.
+4. Operational requirements need stronger remote backup/replication controls than local SQLite provides.
+5. Throughput/backlog SLOs cannot be met with SQLite on target hardware.
+
+### Postgres readiness checklist (before build)
+
+- keep storage contract stable (`StorageBackend` parity tests are green)
+- define lease/claim SQL semantics for concurrent workers (`FOR UPDATE SKIP LOCKED`-style)
+- define migration tooling as explicit operator action (no hidden conversion)
+- define rollback behavior (Postgres back to file/sqlite) and data ownership expectations
+
+### Planned migration model (v2+)
+
+- v2 adds `queue.backend = "postgres"` only after parity test suite exists.
+- migration remains **explicit** and operator-driven.
+- initial migration tool should support dry-run, id mapping validation, and cutover guardrails.
+- no automatic backend flip on startup.
+
+### Configuration placeholder (not active in v1)
+
+```toml
+[queue]
+backend = "file" # file | sqlite | postgres (postgres in v2+)
+
+[queue.postgres]
+dsn = "postgres://user:pass@host:5432/elemta_queue?sslmode=verify-full"
+max_open_conns = 20
+max_idle_conns = 10
+conn_max_lifetime = "30m"
+```
+
+---
+
 ## Rollout / Migration Plan
 
 ### Phase 1: Introduce backend switch + no-op default
