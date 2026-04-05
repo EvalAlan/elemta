@@ -43,6 +43,13 @@ func NewSQLiteStorageBackend(dbPath string, busyTimeoutMS int, journalMode, sync
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
 
+	// SQLite handles concurrent writes poorly with large connection pools.
+	// Keep a single shared connection so busy_timeout and WAL behavior are predictable.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(0)
+
 	backend := &SQLiteStorageBackend{
 		dbPath: dbPath,
 		db:     db,
