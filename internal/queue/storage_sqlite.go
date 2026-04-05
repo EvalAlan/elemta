@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // SQLiteStorageBackend implements StorageBackend using SQLite.
@@ -38,7 +38,7 @@ func NewSQLiteStorageBackend(dbPath string, busyTimeoutMS int, journalMode, sync
 		return nil, fmt.Errorf("failed to create sqlite directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
