@@ -1,92 +1,31 @@
 # Elemta Configuration
 
-This document describes how to configure the Elemta SMTP server using either YAML or TOML configuration formats.
+This document describes how to configure the Elemta SMTP server using the supported TOML configuration format.
 
-## Configuration Formats
+## Configuration Format
 
-Elemta supports two configuration formats:
-
-1. **YAML**: Traditional configuration format
-2. **TOML**: New configuration format with improved readability
-
-Both formats support the same configuration options, so you can choose the one you prefer.
+Elemta's current runtime configuration loader expects **TOML**.
 
 ## Configuration File Location
 
 By default, Elemta looks for a configuration file in the following locations:
 
-1. Path specified with the `-config` flag
-2. `./config/elemta.toml`
-3. `./config/elemta.yaml`
-4. `/etc/elemta/elemta.toml`
-5. `/etc/elemta/elemta.yaml`
+1. Path specified with the `--config` flag
+2. `./elemta.toml` or `./elemta.conf`
+3. `./config/elemta.toml` or `./config/elemta.conf`
+4. `/etc/elemta/elemta.toml` or `/etc/elemta/elemta.conf`
 
 ## Specifying a Configuration File
 
-You can specify a configuration file using the `-config` flag:
+You can specify a configuration file using the `--config` flag:
 
 ```bash
-# Run with YAML configuration
-./elemta -config config/elemta.yaml
-
-# Run with TOML configuration
-./elemta -config config/elemta.toml
+./elemta server --config ./config/elemta.toml
 ```
 
 ## Basic Configuration
 
-Here's a basic configuration example in both formats:
-
-### YAML Format
-
-```yaml
-# Basic server configuration
-hostname: "mail.example.com"
-listen_addr: "0.0.0.0:25"
-queue_dir: "/var/spool/elemta/queue"
-log_level: "info"
-
-# TLS configuration
-tls:
-  enabled: true
-  cert_file: "/etc/elemta/certs/cert.pem"
-  key_file: "/etc/elemta/certs/key.pem"
-
-# Authentication
-auth:
-  enabled: true
-  methods:
-    - "plain"
-    - "login"
-  backend: "file"
-  file_path: "/etc/elemta/users.json"
-
-# Queue configuration
-queue:
-  max_workers: 10
-  max_retries: 5
-  max_queue_time: 172800
-  retry_schedule:
-    - 60
-    - 300
-    - 900
-    - 3600
-    - 10800
-    - 21600
-    - 43200
-  keep_delivered_messages: true
-  keep_message_data: true
-  queue_priority_enabled: true
-
-# Queue processor configuration
-queue_processor:
-  enabled: true
-  interval: 10
-  workers: 5
-  debug: true
-```
-
-### TOML Format
+Here's a basic TOML configuration example:
 
 ```toml
 # Basic server configuration
@@ -234,8 +173,8 @@ When running Elemta in Docker, you can:
 ## Configuration Examples
 
 For more configuration examples, see:
-- [Basic SMTP Server](examples/config/basic.yaml)
-- [TLS Configuration](examples/config/tls.yaml)
-- [Authentication](examples/config/auth.yaml)
-- [Queue Configuration](examples/config/queue.yaml)
-- [Plugin Configuration](examples/config/plugins.yaml) 
+- [Default production-leaning config](../config/elemta.toml)
+- [Development config](../config/dev.toml)
+- [Queue backend design](queue-db-backend-v1.md)
+- [Queue backend runbook](queue-backend-runbook.md)
+- [Config security tests](../internal/config/config_security_test.go) 
