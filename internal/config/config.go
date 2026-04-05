@@ -171,6 +171,29 @@ type Config struct {
 	// Modern SMTP authentication config for Go SMTP server
 	Auth *smtp.AuthConfig `toml:"auth"`
 
+	// API/Web configuration
+	API struct {
+		Enabled     bool   `toml:"enabled"`
+		ListenAddr  string `toml:"listen_addr"`
+		WebRoot     string `toml:"web_root"`
+		AuthEnabled bool   `toml:"auth_enabled"`
+		AuthFile    string `toml:"auth_file"`
+		ValkeyAddr  string `toml:"valkey_addr"`
+		RateLimit   struct {
+			Enabled           bool    `toml:"enabled"`
+			RequestsPerSecond float64 `toml:"requests_per_second"`
+			Burst             int     `toml:"burst"`
+		} `toml:"rate_limit"`
+		CORS struct {
+			Enabled          bool     `toml:"enabled"`
+			AllowedOrigins   []string `toml:"allowed_origins"`
+			AllowedMethods   []string `toml:"allowed_methods"`
+			AllowedHeaders   []string `toml:"allowed_headers"`
+			AllowCredentials bool     `toml:"allow_credentials"`
+			MaxAge           int      `toml:"max_age"`
+		} `toml:"cors"`
+	} `toml:"api"`
+
 	// Queue processor configuration
 	QueueProcessor struct {
 		Enabled  bool `toml:"enabled"`
@@ -235,6 +258,23 @@ func DefaultConfig() *Config {
 	cfg.Queue.SQLite.BusyTimeoutMS = 5000
 	cfg.Queue.SQLite.JournalMode = "WAL"
 	cfg.Queue.SQLite.Synchronous = "NORMAL"
+
+	// Set default API/Web configuration
+	cfg.API.Enabled = true
+	cfg.API.ListenAddr = "127.0.0.1:8025"
+	cfg.API.WebRoot = "./web/static"
+	cfg.API.AuthEnabled = false
+	cfg.API.AuthFile = ""
+	cfg.API.ValkeyAddr = ""
+	cfg.API.RateLimit.Enabled = true
+	cfg.API.RateLimit.RequestsPerSecond = 10
+	cfg.API.RateLimit.Burst = 20
+	cfg.API.CORS.Enabled = true
+	cfg.API.CORS.AllowedOrigins = []string{"http://localhost:8025", "http://localhost:3000"}
+	cfg.API.CORS.AllowedMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	cfg.API.CORS.AllowedHeaders = []string{"Content-Type", "Authorization"}
+	cfg.API.CORS.AllowCredentials = true
+	cfg.API.CORS.MaxAge = 86400
 
 	// Set default logging
 	cfg.Logging.Type = "console"

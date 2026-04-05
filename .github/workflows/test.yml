@@ -67,3 +67,21 @@ jobs:
 
       - name: Run queue race tests
         run: go test ./internal/queue/... -race
+
+  test-queue-sqlite:
+    name: test (queue sqlite guardrails)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run sqlite guardrail tests
+        run: go test ./internal/queue/... -run '^TestQueueSQLiteGuardrails_'

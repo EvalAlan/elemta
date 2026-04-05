@@ -18,6 +18,20 @@ type SQLiteStorageBackend struct {
 	db     *sql.DB
 }
 
+// SQLiteStorageStats holds sqlite-backed storage usage metrics.
+type SQLiteStorageStats struct {
+	DBPath        string
+	DBBytes       int64
+	WALBytes      int64
+	SHMBytes      int64
+	PageSize      int64
+	PageCount     int64
+	FreeListCount int64
+	MessageRows   int64
+	ContentRows   int64
+	ContentBytes  int64
+}
+
 // Ensure SQLiteStorageBackend implements StorageBackend interface.
 var _ StorageBackend = (*SQLiteStorageBackend)(nil)
 
@@ -416,6 +430,42 @@ func (s *SQLiteStorageBackend) listIDsOlderThan(cutoffRFC3339 string) ([]string,
 	}
 
 	return ids, nil
+}
+
+// StorageStats returns storage-level diagnostics for sqlite backend.
+func (s *SQLiteStorageBackend) StorageStats() (SQLiteStorageStats, error) {
+	stats := SQLiteStorageStats{DBPath: s.dbPath}
+
+	if fi, err := os.Stat(s.dbPath); err == nil {
+		stats.DBBytes = fi.Size()
+	}
+	if fi, err := os.Stat(s.dbPath + "-wal"); err == nil {
+		stats.WALBytes = fi.Size()
+	}
+	if fi, err := os.Stat(s.dbPath + "-shm"); err == nil {
+		stats.SHMBytes = fi.Size()
+	}
+
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM queue_messages`).Scan(&stats.MessageRows); err != nil {
+		return stats, fmt.Errorf("failed to count queue_messages: %w", err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM queue_contents`).Scan(&stats.ContentRows); err != nil {
+		return stats, fmt.Errorf("failed to count queue_contents: %w", err)
+	}
+	if err := s.db.QueryRow(`SELECT COALESCE(SUM(LENGTH(content)), 0) FROM queue_contents`).Scan(&stats.ContentBytes); err != nil {
+		return stats, fmt.Errorf("failed to sum queue_contents bytes: %w", err)
+	}
+	if err := s.db.QueryRow(`PRAGMA page_size`).Scan(&stats.PageSize); err != nil {
+		return stats, fmt.Errorf("failed to read sqlite page_size: %w", err)
+	}
+	if err := s.db.QueryRow(`PRAGMA page_count`).Scan(&stats.PageCount); err != nil {
+		return stats, fmt.Errorf("failed to read sqlite page_count: %w", err)
+	}
+	if err := s.db.QueryRow(`PRAGMA freelist_count`).Scan(&stats.FreeListCount); err != nil {
+		return stats, fmt.Errorf("failed to read sqlite freelist_count: %w", err)
+	}
+
+	return stats, nil
 }
 
 func normalizeSQLiteJournalMode(mode string) string {

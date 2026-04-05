@@ -175,47 +175,25 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 
 func newQueueManagerForAPI(mainConfig *MainConfig, queueDir string, failedQueueRetentionHours int) (*queue.Manager, error) {
 	backend := "file"
+	sqliteCfg := queue.SQLiteConfig{BusyTimeoutMS: 5000, JournalMode: "WAL", Synchronous: "NORMAL"}
+
 	if mainConfig != nil {
 		if b := strings.TrimSpace(strings.ToLower(mainConfig.QueueBackend)); b != "" {
 			backend = b
 		}
+		sqliteCfg.Path = strings.TrimSpace(mainConfig.QueueSQLitePath)
+		if mainConfig.QueueSQLiteBusyTimeoutMS > 0 {
+			sqliteCfg.BusyTimeoutMS = mainConfig.QueueSQLiteBusyTimeoutMS
+		}
+		if v := strings.TrimSpace(mainConfig.QueueSQLiteJournalMode); v != "" {
+			sqliteCfg.JournalMode = v
+		}
+		if v := strings.TrimSpace(mainConfig.QueueSQLiteSynchronous); v != "" {
+			sqliteCfg.Synchronous = v
+		}
 	}
 
-	switch backend {
-	case "file":
-		return queue.NewManager(queueDir, failedQueueRetentionHours), nil
-	case "sqlite":
-		sqlitePath := ""
-		busyTimeout := 5000
-		journalMode := "WAL"
-		synchronous := "NORMAL"
-
-		if mainConfig != nil {
-			sqlitePath = strings.TrimSpace(mainConfig.QueueSQLitePath)
-			if mainConfig.QueueSQLiteBusyTimeoutMS > 0 {
-				busyTimeout = mainConfig.QueueSQLiteBusyTimeoutMS
-			}
-			if v := strings.TrimSpace(mainConfig.QueueSQLiteJournalMode); v != "" {
-				journalMode = v
-			}
-			if v := strings.TrimSpace(mainConfig.QueueSQLiteSynchronous); v != "" {
-				synchronous = v
-			}
-		}
-
-		if sqlitePath == "" {
-			sqlitePath = filepath.Join(queueDir, "queue.db")
-		}
-
-		sqliteBackend, err := queue.NewSQLiteStorageBackend(sqlitePath, busyTimeout, journalMode, synchronous)
-		if err != nil {
-			return nil, err
-		}
-
-		return queue.NewManagerWithStorage(sqliteBackend, failedQueueRetentionHours), nil
-	default:
-		return nil, fmt.Errorf("unsupported queue backend: %s", backend)
-	}
+	return queue.NewManagerFromBackend(queueDir, backend, sqliteCfg, failedQueueRetentionHours)
 }
 
 // valkeyMetricsAdapter adapts ValkeyStore to MetricsStore interface
@@ -436,6 +414,7 @@ func (s *Server) Start() error {
 
 	// Read-only queue operations (no authentication required for web interface)
 	api.HandleFunc("/queue/stats", s.handleGetQueueStats).Methods("GET")
+	api.HandleFunc("/queue/storage", s.handleGetQueueStorage).Methods("GET")
 	api.HandleFunc("/queue/message/{id}", s.handleGetMessage).Methods("GET")
 	api.HandleFunc("/queue/{type}", s.handleGetQueue).Methods("GET")
 	api.HandleFunc("/queue", s.handleGetAllQueues).Methods("GET")
@@ -716,6 +695,16 @@ func (s *Server) handleGetQueueStats(w http.ResponseWriter, r *http.Request) {
 
 	stats := s.queueMgr.GetStats()
 	writeJSON(w, stats)
+}
+
+// handleGetQueueStorage returns storage usage details for the active queue backend.
+func (s *Server) handleGetQueueStorage(w http.ResponseWriter, r *http.Request) {
+	info, err := s.queueMgr.GetStorageInfo()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error: %v", err), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, info)
 }
 
 // handleLoginPage serves the public login page
