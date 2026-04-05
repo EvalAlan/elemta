@@ -88,7 +88,7 @@ services:
       - elemta_logs:/app/logs:rw
       - ../../config:/app/config:ro
       # Web files are now included in the Docker image
-    command: [ "/bin/sh", "-lc", "cp /app/config/elemta.toml /tmp/elemta-web.toml && chmod 600 /tmp/elemta-web.toml && exec /app/elemta --config /tmp/elemta-web.toml web --listen 0.0.0.0:8025 --web-root /app/web/static" ]
+    command: [ "/bin/sh", "-lc", "cp /app/config/elemta.toml /tmp/elemta-web.toml && chmod 600 /tmp/elemta-web.toml && exec /app/elemta --config /tmp/elemta-web.toml web --listen 0.0.0.0:8025 --web-root /app/web/static --auth-enabled=false" ]
     environment:
       - TZ=UTC
       - NODE_ID=web
