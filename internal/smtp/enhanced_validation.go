@@ -996,11 +996,11 @@ func SafeLogString(input string) string {
 		case r == '"':
 			result.WriteString("\\\"") // Quote
 		case unicode.IsControl(r):
-			result.WriteString(fmt.Sprintf("\\u%04x", r)) // Other control characters
+			fmt.Fprintf(&result, "\\u%04x", r) // Other control characters
 		case unicode.IsPrint(r):
 			result.WriteRune(r) // Printable characters
 		default:
-			result.WriteString(fmt.Sprintf("\\u%04x", r)) // Non-printable characters
+			fmt.Fprintf(&result, "\\u%04x", r) // Non-printable characters
 		}
 	}
 

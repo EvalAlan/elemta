@@ -67,6 +67,7 @@ func NewSQLiteStorageBackend(dbPath string, busyTimeoutMS int, journalMode, sync
 
 	if err := os.Chmod(dbPath, 0600); err != nil && !os.IsNotExist(err) {
 		// Best-effort hardening: do not fail startup if chmod isn't possible.
+		_ = err
 	}
 
 	return backend, nil
