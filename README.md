@@ -1,105 +1,85 @@
-![Elemta Logo](images/elemta.png?v=2)
+![Elemta Logo](images/elemta.png)
 
-# Elemta - High-Performance SMTP Server
+# Elemta
 
-Elemta: A high-performance SMTP server written in Go with comprehensive email authentication (SPF, DKIM, DMARC, ARC), advanced queue management, and extensive monitoring capabilities. Features a pluggable architecture, containerized deployment, and security-first design.
+Elemta is a high-performance SMTP server written in Go with a modular pipeline, queue management, API/web surfaces, and production-focused security controls.
 
-## Key Features
+## Highlights
 
-- **High Performance**: Built with Go for excellent concurrency and performance
-- **Pluggable Architecture**: Easily extend functionality with plugins
-- **Security-First**: Built-in SPF, DKIM, DMARC, and ARC validation
-- **Container Security**: Non-root execution with hardened Docker and Kubernetes configurations
-- **Cloud-Native**: Ready for Docker and Kubernetes deployment
-- **Comprehensive Monitoring**: Prometheus/Grafana integration with pre-built dashboards
-- **Enhanced Delivery Tracking**: IP address logging and detailed delivery analytics
-- **Flexible Time-Scale Reporting**: Hourly, daily, weekly, and monthly delivery trend analysis
-- **API-Driven**: RESTful API for management and monitoring
+- SMTP server with extensible processing pipeline
+- Queue backends: `file` (default) and `sqlite` (opt-in)
+- Built-in queue/API/web tooling for operational visibility
+- Delivery/auth integrations (file, LDAP, SQL backends)
+- Docker and Kubernetes deployment assets
+- Prometheus/Grafana-ready metrics and health endpoints
 
 ## Quick Start
 
-### Docker Deployment (Recommended)
+### 1) Local development (recommended)
 
 ```bash
 git clone https://github.com/busybox42/elemta.git
 cd elemta
-docker-compose up -d
+
+# Minimal stack (fast)
+make install-dev
+
+# Full stack (clamav/rspamd/roundcube included)
+# make install-dev-full
 ```
 
-**Access Services:**
-- **Web UI**: http://localhost:8025 (admin:password)
-- **SMTP Server**: localhost:2525
-- **Grafana Monitoring**: http://localhost:3000 (admin:elemta123)
-
-### Kubernetes Deployment
+Useful commands:
 
 ```bash
-kubectl apply -f k8s/
-kubectl port-forward service/elemta-web 8025:8025
+make status
+make logs-elemta
+make test
+make test-load
 ```
 
-### From Source (Development)
+### 2) Run from source
 
 ```bash
-git clone https://github.com/busybox42/elemta.git
-cd elemta
-go build -o elemta cmd/elemta/main.go
-./elemta -config config/elemta.yaml
+go build -o build/elemta ./cmd/elemta
+./build/elemta server --config ./config/elemta.toml
 ```
 
-## Documentation
+### 3) Docker Compose directly
 
-### Core Documentation
-- **[Installation & Deployment](docs/installation.md)** - Detailed setup instructions
-- **[Configuration Reference](docs/configuration.md)** - Complete configuration options
-- **[API Reference](docs/api-reference.md)** - Complete REST API documentation
-- **[Email Authentication](docs/email_authentication.md)** - SPF, DKIM, DMARC, ARC setup
-- **[Plugin Development](docs/plugin-development.md)** - Creating custom plugins
+```bash
+docker compose -f deployments/compose/docker-compose.yml up -d
+```
 
-### Production & Operations
-- **[Production Deployment](docs/production-deployment.md)** - Enterprise deployment guide
-- **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
-- **[Monitoring & Metrics](docs/monitoring/README.md)** - Prometheus/Grafana setup
-- **[Queue Management](docs/queue_management.md)** - Queue operations and troubleshooting
-- **[CLI Tools](docs/cli.md)** - Command-line utilities
+## Core Docs
 
-### Standards & Development
-- **[RFC Compliance](docs/rfc-compliance.md)** - SMTP RFC standards implementation status
-- **[Testing](docs/testing.md)** - Testing procedures and tools
-- **[Docker Deployment](docs/docker_deployment.md)** - Advanced Docker configuration
-- **[Logging](docs/logging.md)** - Log management and analysis
+- [Documentation index](docs/index.md)
+- [Installation](docs/installation.md)
+- [Configuration](docs/configuration.md)
+- [Queue backend v1 design](docs/queue-db-backend-v1.md)
+- [Queue backend operator runbook](docs/queue-backend-runbook.md)
+- [Queue management](docs/queue_management.md)
+- [Testing](docs/testing.md)
+- [Production deployment](docs/production-deployment.md)
+- [API reference](docs/api-reference.md)
 
-### Advanced Topics
-- **[Let's Encrypt Integration](docs/letsencrypt-guide.md)** - Automatic TLS certificate management
-- **[Security Hardening](docs/production-deployment.md#security-hardening)** - Production security guide
-- **[Performance Tuning](docs/production-deployment.md#performance-tuning)** - Optimization guide
+## Security & Project Governance
 
-## Architecture
-
-Elemta uses a modular architecture with these core components:
-
-- **SMTP Server**: Protocol handling and message processing
-- **Plugin System**: Extensible processing pipeline
-- **Queue Manager**: Message queuing, retries, and delivery tracking
-- **Monitoring**: Metrics collection and alerting
-- **API Server**: RESTful management interface
-
-For detailed architecture information, see [Architecture Documentation](docs/smtp_server.md).
+- [Security policy](SECURITY.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [Support](SUPPORT.md)
+- [Roadmap](ROADMAP.md)
 
 ## Contributing
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+PRs are welcome. Before opening one:
 
-See [Development Workflow](docs/installation.md) for detailed contribution guidelines.
+1. Run tests and lint locally (`make test` and `make lint`)
+2. Update docs when behavior/config changes
+3. Keep changes focused and scoped
+
+Full guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-**Need Help?** Check our [documentation](docs/README.md) or open an issue on GitHub.
+MIT. See [LICENSE](LICENSE).
