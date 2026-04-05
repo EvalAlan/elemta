@@ -4,10 +4,13 @@ on:
   push:
     branches: [ main, master ]
   pull_request:
+  workflow_dispatch:
 
 jobs:
-  test:
+  test-short:
+    name: test (short)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -16,8 +19,44 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version-file: go.mod
           cache: true
 
-      - name: Run unit tests (short)
+      - name: Run short test suite
         run: go test ./... -short
+
+  test-full:
+    name: test (full)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run full test suite
+        run: go test ./...
+
+  test-queue-race:
+    name: test (queue race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run queue race tests
+        run: go test ./internal/queue/... -race
