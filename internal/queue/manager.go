@@ -126,6 +126,9 @@ func extractQueueDir(storage StorageBackend) string {
 	if fileStorage, ok := storage.(*FileStorageBackend); ok {
 		return fileStorage.queueDir
 	}
+	if sqliteStorage, ok := storage.(*SQLiteStorageBackend); ok {
+		return filepath.Dir(sqliteStorage.dbPath)
+	}
 	return "" // Unknown storage type
 }
 
@@ -301,12 +304,13 @@ func (m *Manager) EnqueueMessage(from string, to []string, subject string, data 
 	m.queueStats.ActiveCount++
 	m.queueStats.LastUpdated = time.Now()
 	m.queueStats.TotalSize += msg.Size
+	activeCount := m.queueStats.ActiveCount
 	m.statsLock.Unlock()
 
 	m.logger.Debug("message enqueued successfully",
 		"message_id", id,
 		"queue_type", Active,
-		"active_count", m.queueStats.ActiveCount)
+		"active_count", activeCount)
 
 	return id, nil
 }
