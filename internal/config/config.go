@@ -139,7 +139,14 @@ type Config struct {
 
 	// Queue configuration
 	Queue struct {
-		Dir string `toml:"dir"`
+		Dir     string `toml:"dir"`
+		Backend string `toml:"backend"` // file|sqlite
+		SQLite  struct {
+			Path          string `toml:"path"`
+			BusyTimeoutMS int    `toml:"busy_timeout_ms"`
+			JournalMode   string `toml:"journal_mode"`
+			Synchronous   string `toml:"synchronous"`
+		} `toml:"sqlite"`
 	} `toml:"queue"`
 
 	// Logging configuration
@@ -221,8 +228,13 @@ func DefaultConfig() *Config {
 
 	paths := runtimepaths.Detect()
 
-	// Set default queue directory
+	// Set default queue configuration
 	cfg.Queue.Dir = paths.QueueDir
+	cfg.Queue.Backend = "file"
+	cfg.Queue.SQLite.Path = filepath.Join(paths.QueueDir, "queue.db")
+	cfg.Queue.SQLite.BusyTimeoutMS = 5000
+	cfg.Queue.SQLite.JournalMode = "WAL"
+	cfg.Queue.SQLite.Synchronous = "NORMAL"
 
 	// Set default logging
 	cfg.Logging.Type = "console"
@@ -443,7 +455,26 @@ func (c *Config) SaveConfig(configPath string) error {
 	b.WriteString("\n")
 
 	b.WriteString("[queue]\n")
-	b.WriteString(fmt.Sprintf("dir = %q\n\n", c.Queue.Dir))
+	b.WriteString(fmt.Sprintf("dir = %q\n", c.Queue.Dir))
+	if c.Queue.Backend != "" {
+		b.WriteString(fmt.Sprintf("backend = %q\n", c.Queue.Backend))
+	}
+	b.WriteString("\n")
+
+	if c.Queue.SQLite.Path != "" {
+		b.WriteString("[queue.sqlite]\n")
+		b.WriteString(fmt.Sprintf("path = %q\n", c.Queue.SQLite.Path))
+		if c.Queue.SQLite.BusyTimeoutMS > 0 {
+			b.WriteString(fmt.Sprintf("busy_timeout_ms = %d\n", c.Queue.SQLite.BusyTimeoutMS))
+		}
+		if c.Queue.SQLite.JournalMode != "" {
+			b.WriteString(fmt.Sprintf("journal_mode = %q\n", c.Queue.SQLite.JournalMode))
+		}
+		if c.Queue.SQLite.Synchronous != "" {
+			b.WriteString(fmt.Sprintf("synchronous = %q\n", c.Queue.SQLite.Synchronous))
+		}
+		b.WriteString("\n")
+	}
 
 	b.WriteString("[logging]\n")
 	b.WriteString(fmt.Sprintf("level = %q\n", c.Logging.Level))
@@ -750,6 +781,16 @@ func (c *Config) validateTLS(result *ValidationResult, sv *SecurityValidator) {
 
 // validateQueue validates queue configuration
 func (c *Config) validateQueue(result *ValidationResult, sv *SecurityValidator) {
+	backend := strings.ToLower(strings.TrimSpace(c.Queue.Backend))
+	if backend == "" {
+		backend = "file"
+	}
+	c.Queue.Backend = backend
+
+	if !contains([]string{"file", "sqlite"}, backend) {
+		result.AddError("queue.backend", c.Queue.Backend, "backend must be one of: file, sqlite")
+	}
+
 	if c.Queue.Dir == "" {
 		result.AddError("queue.dir", c.Queue.Dir, "queue directory is required")
 		return
@@ -777,6 +818,48 @@ func (c *Config) validateQueue(result *ValidationResult, sv *SecurityValidator) 
 	// Check if directory is writable
 	if !isWritableDir(c.Queue.Dir) {
 		result.AddError("queue.dir", c.Queue.Dir, "queue directory is not writable")
+	}
+
+	if backend != "sqlite" {
+		return
+	}
+
+	if c.Queue.SQLite.Path == "" {
+		c.Queue.SQLite.Path = filepath.Join(c.Queue.Dir, "queue.db")
+		result.AddWarning("queue.sqlite.path", c.Queue.SQLite.Path, "sqlite path not set, defaulting to queue dir")
+	}
+
+	c.Queue.SQLite.Path = sv.SanitizePath(c.Queue.SQLite.Path)
+	if err := sv.ValidatePath(c.Queue.SQLite.Path, "queue.sqlite.path"); err != nil {
+		result.AddError("queue.sqlite.path", c.Queue.SQLite.Path, err.Error())
+		return
+	}
+
+	sqliteDir := filepath.Dir(c.Queue.SQLite.Path)
+	if !dirExists(sqliteDir) {
+		if err := os.MkdirAll(sqliteDir, 0700); err != nil {
+			result.AddError("queue.sqlite.path", c.Queue.SQLite.Path, fmt.Sprintf("cannot create sqlite directory: %v", err))
+		} else {
+			result.AddWarning("queue.sqlite.path", c.Queue.SQLite.Path, "sqlite directory was created")
+		}
+	}
+
+	if !isWritableDir(sqliteDir) {
+		result.AddError("queue.sqlite.path", c.Queue.SQLite.Path, "sqlite directory is not writable")
+	}
+
+	if c.Queue.SQLite.BusyTimeoutMS < 0 {
+		result.AddError("queue.sqlite.busy_timeout_ms", c.Queue.SQLite.BusyTimeoutMS, "busy timeout must be >= 0")
+	}
+
+	journalMode := strings.ToUpper(strings.TrimSpace(c.Queue.SQLite.JournalMode))
+	if journalMode != "" && !contains([]string{"DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF"}, journalMode) {
+		result.AddError("queue.sqlite.journal_mode", c.Queue.SQLite.JournalMode, "invalid journal mode")
+	}
+
+	synchronous := strings.ToUpper(strings.TrimSpace(c.Queue.SQLite.Synchronous))
+	if synchronous != "" && !contains([]string{"OFF", "NORMAL", "FULL", "EXTRA"}, synchronous) {
+		result.AddError("queue.sqlite.synchronous", c.Queue.SQLite.Synchronous, "invalid synchronous mode")
 	}
 }
 

@@ -15,13 +15,8 @@ func TestConfigEnsureQueueDirectorySecurity(t *testing.T) {
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create config with queue directory
-	cfg := &Config{
-		Queue: struct {
-			Dir string `toml:"dir"`
-		}{
-			Dir: filepath.Join(tmpDir, "queue"),
-		},
-	}
+	cfg := DefaultConfig()
+	cfg.Queue.Dir = filepath.Join(tmpDir, "queue")
 
 	// Test EnsureQueueDirectory creates secure permissions
 	if err := cfg.EnsureQueueDirectory(); err != nil {
