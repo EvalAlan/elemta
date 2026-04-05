@@ -9,7 +9,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
-	github.com/lib/pq v1.12.0
+	github.com/lib/pq v1.12.3
 	github.com/mattn/go-sqlite3 v1.14.37
 	github.com/pelletier/go-toml/v2 v2.3.0
 	github.com/prometheus/client_golang v1.23.2
