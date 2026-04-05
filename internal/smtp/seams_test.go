@@ -144,7 +144,8 @@ func TestInitQueueSystem_UsesInjectedDeliveryAndMetricsFactories(t *testing.T) {
 	cfg.MaxConnectionsPerDomain = 7
 	cfg.FailedQueueRetentionHours = 48
 
-	manager, processor := initQueueSystem(cfg, slog.Default())
+	manager, processor, err := initQueueSystem(cfg, slog.Default())
+	require.NoError(t, err)
 	require.NotNil(t, manager)
 	require.NotNil(t, processor)
 	assert.Equal(t, "mock-lmtp", gotHost)
@@ -174,7 +175,8 @@ func TestInitQueueSystem_ToleratesMetricsFactoryFailure(t *testing.T) {
 	cfg.QueueProcessInterval = 1
 	cfg.QueueWorkers = 1
 
-	manager, processor := initQueueSystem(cfg, slog.Default())
+	manager, processor, err := initQueueSystem(cfg, slog.Default())
+	require.NoError(t, err)
 	require.NotNil(t, manager)
 	require.NotNil(t, processor)
 

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,9 +151,40 @@ func initAuthenticator(config *Config, slogger *slog.Logger) (Authenticator, err
 }
 
 // initQueueSystem initializes the queue manager and optional queue processor.
-func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *queue.Processor) {
-	slogger.Info("Initializing unified queue system", "directory", config.QueueDir)
-	queueManager := queue.NewManager(config.QueueDir, config.FailedQueueRetentionHours)
+func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *queue.Processor, error) {
+	backend := strings.ToLower(strings.TrimSpace(config.QueueBackend))
+	if backend == "" {
+		backend = "file"
+	}
+
+	slogger.Info("Initializing unified queue system", "directory", config.QueueDir, "backend", backend)
+
+	var queueManager *queue.Manager
+	switch backend {
+	case "file":
+		queueManager = queue.NewManager(config.QueueDir, config.FailedQueueRetentionHours)
+	case "sqlite":
+		sqlitePath := config.QueueSQLite.Path
+		if sqlitePath == "" {
+			sqlitePath = filepath.Join(config.QueueDir, "queue.db")
+		}
+
+		sqliteBackend, err := queue.NewSQLiteStorageBackend(
+			sqlitePath,
+			config.QueueSQLite.BusyTimeoutMS,
+			config.QueueSQLite.JournalMode,
+			config.QueueSQLite.Synchronous,
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to initialize sqlite queue backend: %w", err)
+		}
+
+		queueManager = queue.NewManagerWithStorage(sqliteBackend, config.FailedQueueRetentionHours)
+		slogger.Info("SQLite queue backend initialized", "path", sqlitePath)
+	default:
+		return nil, nil, fmt.Errorf("unsupported queue backend: %s", backend)
+	}
+
 	slogger.Info("Unified queue system initialized")
 
 	var queueProcessor *queue.Processor
@@ -210,7 +242,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		slogger.Info("Queue processor disabled")
 	}
 
-	return queueManager, queueProcessor
+	return queueManager, queueProcessor, nil
 }
 
 // initResourceManager initializes resource limits and the resource manager.
@@ -399,7 +431,10 @@ func NewServer(config *Config) (*Server, error) {
 	metrics := GetMetrics()
 	slogger.Info("Metrics system initialized")
 	metricsManager := NewMetricsManager(config, slogger, metrics)
-	queueManager, queueProcessor := initQueueSystem(config, slogger)
+	queueManager, queueProcessor, err := initQueueSystem(config, slogger)
+	if err != nil {
+		return nil, err
+	}
 	resourceManager, resourceLimits := initResourceManager(config, slogger)
 	rootCtx, rootCancel, _, cancel, errGroup, gctx, workerPool := initConcurrency(slogger, resourceLimits)
 
