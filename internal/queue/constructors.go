@@ -179,15 +179,24 @@ type SimpleProcessorManager struct {
 	logger          *slog.Logger
 	running         bool
 	stopCh          chan struct{}
+	mu              sync.RWMutex
 }
 
 // Start starts the processor manager
 func (pm *SimpleProcessorManager) Start() error {
+	pm.mu.Lock()
+	if pm.running {
+		pm.mu.Unlock()
+		return nil
+	}
+
 	pm.running = true
 	pm.stopCh = make(chan struct{})
+	stopCh := pm.stopCh
+	pm.mu.Unlock()
 
 	// Start processing goroutines
-	go pm.processLoop()
+	go pm.processLoop(stopCh)
 
 	pm.logger.Info("Processor manager started")
 	return nil
@@ -195,27 +204,38 @@ func (pm *SimpleProcessorManager) Start() error {
 
 // Stop stops the processor manager
 func (pm *SimpleProcessorManager) Stop() error {
-	pm.running = false
-	if pm.stopCh != nil {
-		close(pm.stopCh)
+	pm.mu.Lock()
+	if !pm.running {
+		pm.mu.Unlock()
+		return nil
 	}
+
+	pm.running = false
+	stopCh := pm.stopCh
+	pm.stopCh = nil
+	pm.mu.Unlock()
+
+	if stopCh != nil {
+		close(stopCh)
+	}
+
 	pm.logger.Info("Processor manager stopped")
 	return nil
 }
 
 // processLoop is the main processing loop
-func (pm *SimpleProcessorManager) processLoop() {
-	ticker := time.NewTicker(time.Duration(pm.config.ProcessInterval) * time.Second)
+func (pm *SimpleProcessorManager) processLoop(stopCh <-chan struct{}) {
+	ticker := time.NewTicker(time.Duration(pm.getProcessInterval()) * time.Second)
 	defer ticker.Stop()
 
-	for pm.running {
+	for {
 		select {
 		case <-ticker.C:
 			ctx := context.Background()
 			if err := pm.ProcessAllQueues(ctx); err != nil {
 				pm.logger.Error("Failed to process queues", "error", err)
 			}
-		case <-pm.stopCh:
+		case <-stopCh:
 			return
 		}
 	}
@@ -223,22 +243,28 @@ func (pm *SimpleProcessorManager) processLoop() {
 
 // SetEnabled enables or disables processing
 func (pm *SimpleProcessorManager) SetEnabled(enabled bool) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	pm.config.Enabled = enabled
 }
 
 // SetInterval sets the processing interval
 func (pm *SimpleProcessorManager) SetInterval(interval time.Duration) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	pm.config.ProcessInterval = int(interval.Seconds())
 }
 
 // SetMaxWorkers sets the maximum number of workers
 func (pm *SimpleProcessorManager) SetMaxWorkers(count int) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	pm.config.MaxWorkers = count
 }
 
 // ProcessAllQueues processes all queue types
 func (pm *SimpleProcessorManager) ProcessAllQueues(ctx context.Context) error {
-	if !pm.config.Enabled {
+	if !pm.isEnabled() {
 		return nil
 	}
 
@@ -284,14 +310,36 @@ func (pm *SimpleProcessorManager) ProcessDeferredQueue(ctx context.Context) erro
 
 // RunCleanup runs cleanup operations
 func (pm *SimpleProcessorManager) RunCleanup() error {
-	if pm.config.RetentionHours > 0 {
-		deleted, err := pm.queueManager.CleanupExpiredMessages(pm.config.RetentionHours)
+	retentionHours := pm.getRetentionHours()
+	if retentionHours > 0 {
+		deleted, err := pm.queueManager.CleanupExpiredMessages(retentionHours)
 		if err != nil {
 			return err
 		}
 		pm.logger.Info("Cleanup completed", "deleted", deleted)
 	}
 	return nil
+}
+
+func (pm *SimpleProcessorManager) isEnabled() bool {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.config.Enabled
+}
+
+func (pm *SimpleProcessorManager) getRetentionHours() int {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.config.RetentionHours
+}
+
+func (pm *SimpleProcessorManager) getProcessInterval() int {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	if pm.config.ProcessInterval <= 0 {
+		return 1
+	}
+	return pm.config.ProcessInterval
 }
 
 // SimpleMonitoringBackend implements MonitoringBackend

@@ -2,6 +2,7 @@ package queue
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -30,7 +31,7 @@ func TestDomainLimiterConcurrent(t *testing.T) {
 	domain := "concurrent.test"
 
 	var wg sync.WaitGroup
-	var successCount int
+	var successCount atomic.Int64
 
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
@@ -38,14 +39,13 @@ func TestDomainLimiterConcurrent(t *testing.T) {
 			defer wg.Done()
 			if lim.TryAcquire(domain) {
 				lim.Release(domain)
-				// This is a simple safety check; races on successCount are acceptable for this lightweight test
-				successCount++
+				successCount.Add(1)
 			}
 		}()
 	}
 
 	wg.Wait()
-	if successCount > 20 {
-		t.Fatalf("unexpected successCount: %d", successCount)
+	if successCount.Load() > 20 {
+		t.Fatalf("unexpected successCount: %d", successCount.Load())
 	}
 }
