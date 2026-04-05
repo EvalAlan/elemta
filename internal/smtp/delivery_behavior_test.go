@@ -30,7 +30,8 @@ func TestDeliveryHandlerFactoryEnsuresMockUsed(t *testing.T) {
 	cfg.MaxConnectionsPerDomain = 10
 	cfg.FailedQueueRetentionHours = 0
 
-	_, _ = initQueueSystem(cfg, slog.Default())
+	_, _, err := initQueueSystem(cfg, slog.Default())
+	require.NoError(t, err)
 	require.True(t, called, "newDeliveryHandler factory was not called")
 	// We cannot easily inspect processor.handler without exposing it.
 	// However, the seam test already proves the wiring; this test simply
@@ -53,7 +54,8 @@ func TestMetricsStoreFactoryEnsuresStubUsed(t *testing.T) {
 	cfg.QueueProcessInterval = 1
 	cfg.QueueWorkers = 1
 
-	_, _ = initQueueSystem(cfg, slog.Default())
+	_, _, err := initQueueSystem(cfg, slog.Default())
+	require.NoError(t, err)
 	require.True(t, called, "newQueueMetricsStore factory was not called")
 	// We cannot easily inspect processor.metricsRecorder without exposing it.
 	// However, the seam test already proves the wiring; this test simply
@@ -63,8 +65,8 @@ func TestMetricsStoreFactoryEnsuresStubUsed(t *testing.T) {
 type deliveryMetricsStub struct{}
 
 func (s *deliveryMetricsStub) IncrDelivered(ctx context.Context) error { return nil }
-func (s *deliveryMetricsStub) IncrFailed(ctx context.Context) error { return nil }
-func (s *deliveryMetricsStub) IncrDeferred(ctx context.Context) error { return nil }
+func (s *deliveryMetricsStub) IncrFailed(ctx context.Context) error    { return nil }
+func (s *deliveryMetricsStub) IncrDeferred(ctx context.Context) error  { return nil }
 func (s *deliveryMetricsStub) AddRecentError(ctx context.Context, messageID, recipient, errorMsg string) error {
 	return nil
 }

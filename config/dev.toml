@@ -19,6 +19,13 @@ min_version = "tls1.2"
 
 [queue]
 dir = "/tmp/elemta/queue"
+backend = "sqlite"
+
+[queue.sqlite]
+path = "/tmp/elemta/queue/queue.db"
+busy_timeout_ms = 5000
+journal_mode = "WAL"
+synchronous = "NORMAL"
 
 [logging]
 level = "debug"

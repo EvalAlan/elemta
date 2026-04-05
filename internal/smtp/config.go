@@ -13,6 +13,7 @@ import (
 type Config struct {
 	ListenAddr    string   `toml:"listen_addr" json:"listen_addr"`
 	QueueDir      string   `toml:"queue_dir" json:"queue_dir"`
+	QueueBackend  string   `toml:"queue_backend" json:"queue_backend"` // file|sqlite
 	MaxSize       int64    `toml:"max_size" json:"max_size"`
 	DevMode       bool     `toml:"dev_mode" json:"dev_mode"`
 	AllowedRelays []string `toml:"allowed_relays" json:"allowed_relays"`
@@ -22,6 +23,9 @@ type Config struct {
 	MaxRetries    int      `toml:"max_retries" json:"max_retries"`
 	MaxQueueTime  int      `toml:"max_queue_time" json:"max_queue_time"`
 	RetrySchedule []int    `toml:"retry_schedule" json:"retry_schedule"`
+
+	// SQLite queue backend configuration (used when QueueBackend=sqlite)
+	QueueSQLite QueueSQLiteConfig `toml:"queue_sqlite" json:"queue_sqlite"`
 
 	// Queue management options
 	KeepDeliveredMessages     bool `toml:"keep_delivered_messages" json:"keep_delivered_messages"`           // Whether to keep delivered messages for archiving
@@ -102,6 +106,14 @@ type TimeoutConfig struct {
 
 	// Authentication timeout for auth processes
 	AuthTimeout time.Duration `toml:"auth_timeout" json:"auth_timeout"`
+}
+
+// QueueSQLiteConfig represents sqlite queue backend configuration.
+type QueueSQLiteConfig struct {
+	Path          string `toml:"path" json:"path"`
+	BusyTimeoutMS int    `toml:"busy_timeout_ms" json:"busy_timeout_ms"`
+	JournalMode   string `toml:"journal_mode" json:"journal_mode"`
+	Synchronous   string `toml:"synchronous" json:"synchronous"`
 }
 
 // DeliveryConfig represents configuration for message delivery
@@ -495,12 +507,19 @@ func DefaultConfig() *Config {
 		Hostname:              "localhost",
 		MaxSize:               50 * 1024 * 1024, // 50MB
 		QueueDir:              "./queue",
+		QueueBackend:          "file",
 		QueueProcessorEnabled: true,
 		QueueProcessInterval:  30, // 30 seconds
 		MaxRetries:            10,
 		MaxQueueTime:          86400,                             // 24 hours
 		RetrySchedule:         []int{300, 600, 1200, 1800, 3600}, // 5m, 10m, 20m, 30m, 1h
 		MaxWorkers:            5,
+		QueueSQLite: QueueSQLiteConfig{
+			Path:          "./queue/queue.db",
+			BusyTimeoutMS: 5000,
+			JournalMode:   "WAL",
+			Synchronous:   "NORMAL",
+		},
 
 		// TLS configuration with enhanced certificate management
 		TLS: &TLSConfig{

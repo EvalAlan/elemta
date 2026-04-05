@@ -143,9 +143,16 @@ func startServer() {
 	}
 
 	smtpConfig := &smtp.Config{
-		Hostname:                  cfg.Hostname,     // Use top-level hostname
-		ListenAddr:                cfg.ListenAddr,   // Use top-level listen_addr
-		QueueDir:                  queueDir,         // Use queue directory (prioritize flat, fallback to nested)
+		Hostname:     cfg.Hostname,   // Use top-level hostname
+		ListenAddr:   cfg.ListenAddr, // Use top-level listen_addr
+		QueueDir:     queueDir,       // Use queue directory (prioritize flat, fallback to nested)
+		QueueBackend: cfg.Queue.Backend,
+		QueueSQLite: smtp.QueueSQLiteConfig{
+			Path:          cfg.Queue.SQLite.Path,
+			BusyTimeoutMS: cfg.Queue.SQLite.BusyTimeoutMS,
+			JournalMode:   cfg.Queue.SQLite.JournalMode,
+			Synchronous:   cfg.Queue.SQLite.Synchronous,
+		},
 		MaxSize:                   cfg.MaxSize,      // Use top-level max_size
 		LocalDomains:              cfg.LocalDomains, // Use top-level local_domains
 		TLS:                       cfg.TLS,
@@ -153,7 +160,7 @@ func startServer() {
 		FailedQueueRetentionHours: cfg.FailedQueueRetentionHours, // Use failed queue retention setting
 	}
 
-	slog.Info("SMTP Config", "hostname", smtpConfig.Hostname, "queue_dir", smtpConfig.QueueDir, "local_domains", smtpConfig.LocalDomains)
+	slog.Info("SMTP Config", "hostname", smtpConfig.Hostname, "queue_dir", smtpConfig.QueueDir, "queue_backend", smtpConfig.QueueBackend, "local_domains", smtpConfig.LocalDomains)
 
 	// Map authentication config
 	smtpConfig.Auth = cfg.Auth
