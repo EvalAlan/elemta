@@ -21,7 +21,6 @@ This index lists the **maintained** docs for the current codebase.
 - [Troubleshooting](troubleshooting.md)
 - [Production Deployment](production-deployment.md)
 - [Native Install Spec v1](native-install-spec-v1.md)
-- [RFC Compliance](rfc-compliance.md)
 
 ## Security / Governance
 
@@ -35,6 +34,7 @@ This index lists the **maintained** docs for the current codebase.
 These are useful but not required for a standard deployment flow:
 
 - [Email Authentication](email_authentication.md)
+- [Relay Control](relay_control.md)
 - [Logging](logging.md)
 - [Rate Limiting](rate-limiting.md)
 - [Plugin System](plugins.md)
@@ -43,3 +43,4 @@ These are useful but not required for a standard deployment flow:
 - [Multi-node Deployment](multinode-deployment.md)
 - [Docker Resources](docker/README.md)
 - [Monitoring Resources](monitoring/README.md)
+- [RFC Compliance](rfc-compliance.md)
