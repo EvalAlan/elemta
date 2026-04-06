@@ -1,32 +1,34 @@
 # Queue Backend Runbook (file + sqlite)
 
-This is the operator playbook for switching backends, validating runtime behavior, and troubleshooting queue storage.
+Operator playbook for switching queue backends and validating runtime behavior.
+
+---
 
 ## 1) Confirm active backend
 
-Check logs on startup:
-
-- `queue_backend=...`
-- `Initializing unified queue system ... backend=...`
-- For sqlite: `SQLite queue backend initialized`
-
-Or query API:
+### Via API
 
 ```bash
-curl -s http://localhost:8025/api/queue/storage | jq
+curl -s http://127.0.0.1:8025/api/queue/storage | jq
 ```
 
 Look for `backend: "file"` or `backend: "sqlite"`.
+
+### Via logs
+
+Startup logs include backend initialization details.
+
+---
 
 ## 2) Configure backend
 
 ```toml
 [queue]
-dir = "/app/queue"
+dir = "/var/spool/elemta/queue"
 backend = "file" # or "sqlite"
 
 [queue.sqlite]
-path = "/app/queue/queue.db"
+path = "/var/spool/elemta/queue/queue.db"
 busy_timeout_ms = 5000
 journal_mode = "WAL"
 synchronous = "NORMAL"
@@ -34,85 +36,95 @@ synchronous = "NORMAL"
 
 Rules:
 
-- default is `file` when `queue.backend` is omitted
-- sqlite is opt-in only
+- default backend is `file` when omitted
+- sqlite is explicit opt-in
 - no automatic migration between backends
 
-## 3) Switch file -> sqlite safely
+---
 
-1. Stop traffic or drain deliveries.
+## 3) Switch file -> sqlite (safe path)
+
+1. Drain/stop SMTP traffic.
 2. Stop services.
 3. Set `queue.backend = "sqlite"` and sqlite settings.
 4. Start services.
 5. Verify with `/api/queue/storage` and logs.
-6. Send a test message and verify queue visibility.
+6. Send a test message and confirm queue visibility.
 
-## 4) Switch sqlite -> file rollback
+---
+
+## 4) Roll back sqlite -> file
 
 1. Stop services.
 2. Set `queue.backend = "file"`.
 3. Start services.
-4. Verify logs and `/api/queue/storage` report `backend=file`.
+4. Verify backend via logs/API.
+
+---
 
 ## 5) Inspect sqlite queue directly
 
-From container:
+### Host-native example
+
+```bash
+sqlite3 /var/spool/elemta/queue/queue.db '.tables'
+sqlite3 /var/spool/elemta/queue/queue.db "select queue_type,count(*) from queue_messages group by queue_type;"
+```
+
+### Docker example
 
 ```bash
 docker compose -f deployments/compose/docker-compose.yml exec elemta \
   sqlite3 /app/queue/queue.db '.tables'
-
-# Queue counts by state
-docker compose -f deployments/compose/docker-compose.yml exec elemta \
-  sqlite3 /app/queue/queue.db "select queue_type,count(*) from queue_messages group by queue_type;"
 ```
 
-## 6) Storage sizing and health
+---
 
-API endpoint:
+## 6) Storage sizing/health
 
 ```bash
-curl -s http://localhost:8025/api/queue/storage | jq
+curl -s http://127.0.0.1:8025/api/queue/storage | jq
 ```
 
-Key fields:
+Useful fields:
 
-- `total_bytes`, `db_bytes`, `wal_bytes`, `shm_bytes`
+- `total_bytes`
+- `db_bytes`, `wal_bytes`, `shm_bytes`
 - `message_rows`, `content_rows`, `content_bytes`
-- sqlite page stats (`page_size`, `page_count`, `freelist_count`)
+
+---
 
 ## 7) SQLITE_BUSY / lock contention
 
 Symptoms:
 
-- transient enqueue failures
-- log errors containing `SQLITE_BUSY` / `database is locked`
+- transient enqueue/dequeue failures
+- log messages containing `SQLITE_BUSY` or `database is locked`
 
-Current mitigation in code:
+Mitigation:
 
-- sqlite backend uses single shared DB connection
-- `busy_timeout` configured (default 5000ms)
-- WAL mode enabled by default
-
-If this still appears under load:
-
-1. confirm only one queue writer process owns queue DB
+1. ensure one writer process owns the DB path
 2. increase `busy_timeout_ms`
-3. reduce enqueue/delivery concurrency
-4. if multi-writer requirements grow, plan Postgres backend
+3. reduce concurrent queue pressure
+4. if multi-writer/multi-node queue ownership is required, plan a new backend (not auto-handled in current code)
+
+---
 
 ## 8) File backend quick checks
 
 ```bash
-find /app/queue -maxdepth 2 -type f | head
+find /var/spool/elemta/queue -maxdepth 2 -type f | head
 ```
 
-- metadata files are `.json`
-- message content lives under `/app/queue/data`
+Expected:
 
-## 9) No-auto-migration reminder
+- queue-state metadata files
+- message body content under `data/`
 
-Changing backend changes where queue state is read from.
+---
 
-- switching backend does **not** move queued messages automatically
-- migration should be explicit and operator-driven
+## 9) Critical reminder
+
+Changing backend changes which storage is considered authoritative.
+
+Switching backend does **not** move existing queued messages automatically.
