@@ -1,108 +1,94 @@
-# Elemta CLI Tools
+# CLI Reference
 
-This document describes how to use the Elemta CLI tools, both locally and in Docker.
+Elemta currently ships three binaries:
 
-## Local Usage
+- `elemta` — primary command (server/web/queue/cert/zimbra)
+- `elemta-queue` — queue status utility
+- `elemta-cli` — lightweight helper CLI (`status`, `queue`)
 
-If you've built Elemta from source, you can use the CLI tools directly:
+Build all binaries:
 
 ```bash
-# Main Elemta CLI
-./build/elemta [command]
-
-# Queue management CLI
-./build/elemta-queue [options] command [args]
+make build
 ```
 
-## Docker Usage
+---
 
-We provide a convenient script to access the CLI tools in Docker:
+## 1) `elemta` (primary)
 
 ```bash
-# Use the main Elemta CLI
-./scripts/elemta-cli.sh [command]
-
-# Use the queue management CLI
-./scripts/elemta-cli.sh queue [command]
+./bin/elemta --help
 ```
 
-### Available Commands
+Main subcommands:
 
-#### Main CLI
+- `server` — start SMTP server
+- `web` — start web/API interface
+- `queue` — local queue management
+- `cert` — TLS/Let's Encrypt helper commands
+- `zimbra` — LDAP/SOAP diagnostic commands
+
+Global flag:
+
+- `-c, --config <path>`
+
+### `elemta queue` subcommands
 
 ```bash
-# Show help
-./scripts/elemta-cli.sh --help
-
-# Start the server
-./scripts/elemta-cli.sh server
-
-# Manage the queue
-./scripts/elemta-cli.sh queue
+./bin/elemta queue list
+./bin/elemta queue show <message-id>
+./bin/elemta queue delete <message-id>
+./bin/elemta queue flush
+./bin/elemta queue stats
 ```
 
-#### Queue Management
+### `elemta web` useful flags
 
 ```bash
-# Show queue help
-./scripts/elemta-cli.sh queue --help
-
-# List messages in the queue
-./scripts/elemta-cli.sh queue list
-
-# View details of a specific message
-./scripts/elemta-cli.sh queue view <message-id>
-
-# Move a message to the active queue for immediate retry
-./scripts/elemta-cli.sh queue retry <message-id>
-
-# Delete a message from the queue
-./scripts/elemta-cli.sh queue delete <message-id>
-
-# Delete all messages from the queue
-./scripts/elemta-cli.sh queue flush
-
-# Hold a message for manual review
-./scripts/elemta-cli.sh queue hold <message-id> [reason]
-
-# Release a held message back to the active queue
-./scripts/elemta-cli.sh queue release <message-id>
-
-# Show queue statistics
-./scripts/elemta-cli.sh queue stats
+./bin/elemta web --listen 127.0.0.1:8025
+./bin/elemta web --queue-dir /var/spool/elemta/queue
+./bin/elemta web --auth-enabled --auth-file /etc/elemta/users.txt
 ```
 
-### Docker Container Details
-
-The CLI tools are available in a separate Docker container (`elemta-cli`) that runs alongside the main Elemta container. This container:
-
-- Exposes the same CLI interface as the local build
-- Uses the same configuration as the main Elemta container
-- Can be used to manage the queue and server
-
-### Building the CLI Container
-
-If you need to rebuild the CLI container:
+### `elemta cert` subcommands
 
 ```bash
-# Build the container
-docker build -t elemta-cli -f Dockerfile.cli .
-
-# Run the container
-docker run -d --name elemta-cli --network elemta_network -p 2526:25 -p 5871:587 -p 8083:8080 elemta-cli
+./bin/elemta cert info
+./bin/elemta cert renew
+./bin/elemta cert test
 ```
 
-### Kubernetes Usage
+---
 
-For Kubernetes deployments, you can access the CLI tools using:
+## 2) `elemta-queue`
+
+`elemta-queue` is a queue/storage status reporter. It reads config and emits queue/storage stats.
+
+It uses `ELEMTA_CONFIG_PATH` if set.
 
 ```bash
-# Get a list of pods
-kubectl get pods
+ELEMTA_CONFIG_PATH=./config/elemta.toml ./bin/elemta-queue
+```
 
-# Access the CLI in a pod
-kubectl exec -it <pod-name> -- /app/elemta [command]
+---
 
-# Access the queue management CLI in a pod
-kubectl exec -it <pod-name> -- /app/elemta-queue [options] command [args]
-``` 
+## 3) `elemta-cli`
+
+`elemta-cli` is currently minimal:
+
+```bash
+./bin/elemta-cli status
+./bin/elemta-cli queue
+```
+
+If you need full queue management, use `elemta queue` or HTTP API endpoints.
+
+---
+
+## Docker examples
+
+```bash
+docker compose -f deployments/compose/docker-compose.yml exec elemta ./bin/elemta queue stats
+```
+
+(Adjust executable paths based on your container image layout.)

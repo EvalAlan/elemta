@@ -40,8 +40,8 @@ make test-load
 ### 2) Run from source
 
 ```bash
-go build -o build/elemta ./cmd/elemta
-./build/elemta server --config ./config/elemta.toml
+make build
+./bin/elemta server --config ./config/elemta.toml
 ```
 
 ### 3) Docker Compose directly
@@ -55,7 +55,6 @@ docker compose -f deployments/compose/docker-compose.yml up -d
 - [Documentation index](docs/index.md)
 - [Installation](docs/installation.md)
 - [Configuration](docs/configuration.md)
-- [Queue backend v1 design](docs/queue-db-backend-v1.md)
 - [Queue backend operator runbook](docs/queue-backend-runbook.md)
 - [Queue management](docs/queue_management.md)
 - [Testing](docs/testing.md)
