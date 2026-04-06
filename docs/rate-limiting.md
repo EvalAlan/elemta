@@ -57,6 +57,6 @@ curl -s http://127.0.0.1:8025/api/queue/stats | jq
 
 ## Related docs
 
-- [Multinode Deployment](multinode-deployment.md)
-- [Performance and Scaling](performance_and_scaling.md)
+- [Configuration](configuration.md)
+- [Queue Management](queue_management.md)
 - [Troubleshooting](troubleshooting.md)

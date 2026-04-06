@@ -69,4 +69,3 @@ Use this path carefully:
 
 - [Configuration](configuration.md)
 - [Troubleshooting](troubleshooting.md)
-- [Plugin Development](plugin-development.md)
