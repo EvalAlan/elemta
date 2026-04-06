@@ -1,375 +1,130 @@
-# Elemta Troubleshooting Guide
+# Troubleshooting
 
-This guide helps resolve common issues encountered when deploying and operating Elemta.
+Focused checks for the current Elemta repo/runtime.
 
-## Common Issues
+---
 
-### Build and Startup Issues
+## 1) Service won't start
 
-#### Build Fails with "Go Module Not Found"
+### Check config path and parseability
 
-**Problem**: Build fails with module or dependency errors.
-
-**Solution**:
 ```bash
-# Clean and re-download modules
-go clean -modcache
-go mod download
-go mod tidy
-
-# Rebuild
-make clean
-make build
+./bin/elemta server --config ./config/elemta.toml
 ```
 
-#### Server Won't Start - Port Already in Use
+If no config is found, Elemta falls back to defaults and logs that behavior.
 
-**Problem**: `bind: address already in use` error.
+### Port already in use
 
-**Solutions**:
 ```bash
-# Check what's using the port
-sudo netstat -tlnp | grep :25
-sudo ss -tlnp | grep :25
-
-# Kill process using the port
-sudo fuser -k 25/tcp
-
-# Or change the port in configuration
-vim config/elemta.toml
-# Change: listen_addr = ":2525"
+ss -tlnp | grep -E ':25|:2525|:8025|:8080'
 ```
 
-#### Permission Denied on Queue Directory
+Then either free the port or override settings in config/flags.
 
-**Problem**: Server can't write to queue directories.
+---
 
-**Solution**:
+## 2) Docker stack issues
+
 ```bash
-# Create and set permissions
-sudo mkdir -p /var/spool/elemta/queue
-sudo chown -R elemta:elemta /var/spool/elemta
-sudo chmod -R 755 /var/spool/elemta
-
-# Or use local directory
-mkdir -p ./queue
-# Update config: queue_dir = "./queue"
+make status
+make logs
+make logs-elemta
 ```
 
-### Docker Issues
+Compose file in use:
 
-#### Docker Compose Fails to Start
+- `deployments/compose/docker-compose.yml`
 
-**Problem**: Services fail to start with Docker Compose.
+Hard reset when needed:
 
-**Diagnostic Steps**:
 ```bash
-# Check service status
-docker-compose ps
-
-# View logs
-docker-compose logs elemta
-docker-compose logs rspamd
-docker-compose logs ldap
-
-# Check container health
-docker inspect elemta_elemta_1 | grep Health -A 10
+make down
+make rebuild
 ```
 
-**Common Solutions**:
-```bash
-# Clean and restart
-docker-compose down
-docker system prune -f
-docker-compose up -d
+---
 
-# Rebuild containers
-docker-compose build --no-cache
-docker-compose up -d
+## 3) Queue not draining
+
+```bash
+# Local queue view
+./bin/elemta queue stats
+./bin/elemta queue list
+
+# API view
+curl -s http://127.0.0.1:8025/api/queue/stats | jq
+curl -s http://127.0.0.1:8025/api/queue/storage | jq
 ```
 
-#### Container Exits Immediately
+If using sqlite backend, confirm `[queue].backend = "sqlite"` and sqlite path is writable.
 
-**Problem**: Elemta container starts then exits.
+---
 
-**Debug Steps**:
-```bash
-# Run container interactively
-docker run -it --rm elemta /bin/bash
+## 4) Auth failures
 
-# Check configuration
-docker exec elemta_elemta_1 /app/elemta config validate
+Validate auth section in TOML:
 
-# View detailed logs
-docker logs -f elemta_elemta_1
-```
-
-### SMTP Connection Issues
-
-#### Cannot Connect to SMTP Server
-
-**Problem**: Clients can't connect to SMTP server.
-
-**Diagnostic Steps**:
-```bash
-# Test local connection
-telnet localhost 2525
-
-# Test Docker connection
-telnet localhost 2525
-
-# Check firewall
-sudo ufw status
-sudo iptables -L | grep 25
-
-# Check server logs
-tail -f logs/elemta.log
-```
-
-**Solutions**:
-- Verify `listen_addr` in configuration
-- Check firewall rules
-- Ensure Docker port mapping is correct
-- Verify TLS configuration if STARTTLS fails
-
-#### SMTP Authentication Fails
-
-**Problem**: Valid credentials rejected.
-
-**Debug Steps**:
-```bash
-# Test authentication endpoint
-curl -u admin:password http://localhost:8081/api/auth/test
-
-# Check user configuration
-cat config/users.json
-
-# Check LDAP connectivity (if using LDAP)
-ldapsearch -H ldap://localhost:389 -D "cn=admin,dc=example,dc=com" -w admin
-```
-
-**Solutions**:
-- Verify authentication configuration in `elemta.toml`
-- Check user credentials in data source
-- Review auth logs in server output
-- Test with simple file-based auth first
-
-### Queue Issues
-
-#### Messages Stuck in Queue
-
-**Problem**: Messages not being delivered.
-
-**Diagnostic Steps**:
-```bash
-# Check queue status
-./bin/elemta-cli queue stats
-
-# List stuck messages
-./bin/elemta-cli queue list
-
-# View specific message
-./bin/elemta-cli queue view <message-id>
-```
-
-**Solutions**:
-```bash
-# Retry specific message
-./bin/elemta-cli queue retry <message-id>
-
-# Restart queue processor
-docker-compose restart elemta
-
-# Check delivery logs
-tail -f logs/delivery.log
-```
-
-#### Queue Processor Not Running
-
-**Problem**: Queue processor daemon not processing messages.
-
-**Solutions**:
-```bash
-# Check if processor is running
-ps aux | grep elemta-queue
-
-# Start queue processor manually
-./bin/elemta-queue -config config/elemta.toml
-
-# Or restart service
-systemctl restart elemta-queue
-```
-
-### TLS/SSL Issues
-
-#### TLS Handshake Failures
-
-**Problem**: STARTTLS command fails or TLS negotiation errors.
-
-**Debug Steps**:
-```bash
-# Test TLS connection
-openssl s_client -connect localhost:2525 -starttls smtp
-
-# Check certificate validity
-openssl x509 -in config/cert.pem -text -noout
-
-# Verify certificate chain
-openssl verify -CAfile ca.pem config/cert.pem
-```
-
-**Solutions**:
-- Regenerate certificates if expired
-- Check certificate permissions (readable by elemta user)
-- Verify certificate matches hostname
-- Review TLS configuration security level
-
-#### Let's Encrypt Certificate Issues
-
-**Problem**: Automatic certificate renewal fails.
-
-**Solutions**:
-```bash
-# Manual certificate renewal
-./scripts/ssl/letsencrypt-admin.sh renew
-
-# Check certificate status
-./scripts/ssl/letsencrypt-admin.sh status
-
-# View renewal logs
-tail -f /var/log/letsencrypt/letsencrypt.log
-```
-
-### Plugin Issues
-
-#### Plugin Loading Fails
-
-**Problem**: Plugins not loading or causing crashes.
-
-**Debug Steps**:
-```bash
-# Check plugin directory
-ls -la /app/plugins/
-
-# Test plugin manually
-./bin/elemta plugin test /app/plugins/clamav.so
-
-# Check plugin logs
-grep "plugin" logs/elemta.log
-```
-
-**Solutions**:
-- Verify plugin file permissions
-- Check plugin compatibility with current Go version
-- Review plugin configuration
-- Disable problematic plugins temporarily
-
-#### Antivirus/Antispam Not Working
-
-**Problem**: ClamAV or RSpamd not scanning messages.
-
-**Debug Steps**:
-```bash
-# Test ClamAV connection
-echo "X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*" | clamdscan -
-
-# Test RSpamd connection
-curl -X POST http://localhost:11333/symbols -d "Test message"
-
-# Check service status
-docker-compose ps rspamd clamav
-```
-
-### Performance Issues
-
-#### High Memory Usage
-
-**Problem**: Elemta consuming excessive memory.
-
-**Diagnostic Steps**:
-```bash
-# Check memory usage
-top -p $(pgrep elemta)
-ps aux | grep elemta
-
-# Analyze memory with pprof
-go tool pprof http://localhost:8081/debug/pprof/heap
-```
-
-**Solutions**:
-- Review queue size and message retention
-- Check for memory leaks in plugins
-- Adjust worker pool sizes
-- Monitor garbage collection metrics
-
-#### Slow Message Processing
-
-**Problem**: Low throughput, messages backing up.
-
-**Solutions**:
-- Increase worker pool sizes in configuration
-- Optimize database connections (if using SQL auth)
-- Review plugin performance
-- Check network latency to external services
-
-## Monitoring and Debugging
-
-### Enable Debug Logging
-
-Add to configuration:
 ```toml
-[logging]
-level = "debug"
-console = true
+[auth]
+enabled = true
+required = true
+datasource_type = "file" # or ldap/mysql/postgres/sqlite
 ```
 
-### Access Metrics
+Common breakage:
+
+- wrong datasource path/host/credentials
+- `auth_file` path points to a directory for web auth
+
+---
+
+## 5) TLS / STARTTLS problems
+
+Check cert/key readability and paths:
 
 ```bash
-# Prometheus metrics
-curl http://localhost:8081/metrics
-
-# Health check
-curl http://localhost:8081/health
-
-# Queue statistics
-curl http://localhost:8081/api/queue/stats
+openssl x509 -in /path/to/cert.pem -text -noout
 ```
 
-### Log File Locations
+Confirm config:
 
-- **Main logs**: `logs/elemta.log`
-- **Access logs**: `logs/access.log`
-- **Error logs**: `logs/error.log`
-- **Queue logs**: `logs/queue.log`
-- **Docker logs**: `docker-compose logs elemta`
+```toml
+[tls]
+enabled = true
+enable_starttls = true
+cert_file = "/path/to/cert.pem"
+key_file = "/path/to/key.pem"
+```
 
-## Getting Help
+---
 
-If these troubleshooting steps don't resolve your issue:
+## 6) API/web unreachable
 
-1. **Check the logs** for specific error messages
-2. **Review configuration** against examples in `config/`
-3. **Test with minimal configuration** to isolate the problem
-4. **Search existing issues** on GitHub
-5. **Open a new issue** with:
-   - Complete error messages
-   - Configuration file (sanitized)
-   - Steps to reproduce
-   - Environment details (OS, Docker version, etc.)
-
-### Useful Debug Commands
+Default listen is `127.0.0.1:8025`.
 
 ```bash
-# Configuration validation
-./bin/elemta config validate
+curl -i http://127.0.0.1:8025/api/health
+```
 
-# System information
-./bin/elemta version --verbose
+If bound to loopback, remote hosts cannot reach it unless proxied or reconfigured.
 
-# Network connectivity test
-./bin/elemta network test <hostname>
+---
 
-# Performance profiling
-./bin/elemta profile --duration 30s
-``` 
+## 7) Log file permission warnings
+
+If you see permission errors opening `/var/log/elemta/elemta.log`, either:
+
+- run with correct privileges, or
+- point logging to a writable file/path in config.
+
+---
+
+## 8) Minimal sanity command set
+
+```bash
+make test
+make lint
+make status
+curl -s http://127.0.0.1:8025/api/health | jq
+```

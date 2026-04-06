@@ -1,24 +1,21 @@
 # Elemta Documentation
 
-This directory contains the comprehensive documentation for the Elemta SMTP server.
+This directory contains maintained operational and developer documentation for Elemta.
 
-## Documentation Index
+## Start here
 
-Please see the [Documentation Index](index.md) for a complete listing of all available documentation.
+Use the canonical index:
 
-## Documentation Structure
+- [Documentation Index](index.md)
 
-The documentation is organized into several sections:
+## Documentation intent
 
-- Getting Started - Basic configuration and setup
-- Core Features - Details on Elemta's key components
-- Deployment - Deployment options and instructions
-- Integration - How to integrate with other systems
-- Let's Encrypt - TLS certificate management
-- Monitoring - Metrics and monitoring
-- Testing - Testing guides and procedures
-- Plugin Development - Building plugins for Elemta
+The docs are organized around current runtime reality:
 
-## Contributing to Documentation
+- install/deploy
+- configuration
+- SMTP + queue operations
+- API/web usage
+- testing and troubleshooting
 
-We welcome contributions to the documentation. If you find errors or areas that need improvement, please submit a pull request or open an issue in the GitHub repository. 
+If behavior and docs disagree, update docs in the same PR as the code change.

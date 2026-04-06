@@ -1,180 +1,156 @@
 # Elemta Configuration
 
-This document describes how to configure the Elemta SMTP server using the supported TOML configuration format.
+Elemta runtime configuration is loaded from **TOML**.
 
-## Configuration Format
+> `.conf` filenames are still searched for compatibility, but the parser expects TOML content.
 
-Elemta's current runtime configuration loader expects **TOML**.
+---
 
-## Configuration File Location
+## Config file discovery order
 
-By default, Elemta looks for a configuration file in the following locations:
+When `--config` is not provided, Elemta searches common paths in order:
 
-1. Path specified with the `--config` flag
-2. `./elemta.toml` or `./elemta.conf`
-3. `./config/elemta.toml` or `./config/elemta.conf`
-4. `/etc/elemta/elemta.toml` or `/etc/elemta/elemta.conf`
+1. `./elemta.toml`
+2. `./elemta.conf`
+3. `./config/elemta.toml`
+4. `./config/elemta.conf`
+5. `../config/elemta.toml`
+6. `../config/elemta.conf`
+7. `$HOME/.config/elemta/elemta.toml`
+8. `$HOME/.elemta.toml`
+9. `$HOME/.elemta.conf`
+10. `/etc/elemta/elemta.toml`
+11. `/etc/elemta/elemta.conf`
 
-## Specifying a Configuration File
-
-You can specify a configuration file using the `--config` flag:
+You can always pin a file explicitly:
 
 ```bash
-./elemta server --config ./config/elemta.toml
+./bin/elemta server --config ./config/elemta.toml
 ```
 
-## Basic Configuration
+---
 
-Here's a basic TOML configuration example:
+## Minimal working config
 
 ```toml
-# Basic server configuration
 hostname = "mail.example.com"
-listen_addr = "0.0.0.0:25"
-queue_dir = "/var/spool/elemta/queue"
-log_level = "info"
+listen_addr = ":2525"
+max_size = 52428800
+local_domains = ["example.com", "localhost"]
 
-# TLS configuration
-[tls]
-enabled = true
-cert_file = "/etc/elemta/certs/cert.pem"
-key_file = "/etc/elemta/certs/key.pem"
-
-# Authentication
-[auth]
-enabled = true
-methods = ["plain", "login"]
-backend = "file"
-file_path = "/etc/elemta/users.json"
-
-# Queue configuration
 [queue]
-max_workers = 10
-max_retries = 5
-max_queue_time = 172800
-retry_schedule = [60, 300, 900, 3600, 10800, 21600, 43200]
-keep_delivered_messages = true
-keep_message_data = true
-queue_priority_enabled = true
+dir = "/var/spool/elemta/queue"
+backend = "file" # file | sqlite
 
-# Queue processor configuration
+[queue.sqlite]
+path = "/var/spool/elemta/queue/queue.db"
+busy_timeout_ms = 5000
+journal_mode = "WAL"
+synchronous = "NORMAL"
+
+[auth]
+enabled = false
+required = false
+datasource_type = "file"
+datasource_path = "/etc/elemta/users.txt"
+
+[delivery]
+mode = "lmtp"
+host = "127.0.0.1"
+port = 2424
+timeout = 30
+max_retries = 3
+retry_delay = 60
+
+[metrics]
+enabled = true
+listen_addr = ":8080"
+
+[api]
+enabled = true
+listen_addr = "127.0.0.1:8025"
+web_root = "./web/static"
+auth_enabled = false
+auth_file = ""
+
 [queue_processor]
 enabled = true
 interval = 10
 workers = 5
-debug = true
+debug = false
+
+[logging]
+type = "console"
+level = "info"
+format = "text"
+file = "/var/log/elemta/elemta.log"
 ```
 
-## Configuration Options
+---
 
-### Server Options
+## Key sections used in current code
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `hostname` | Server hostname used in SMTP greeting | `localhost` |
-| `listen_addr` | Address and port to listen on | `0.0.0.0:25` |
-| `queue_dir` | Directory for queue storage | `./queue` |
-| `log_level` | Logging level (debug, info, warn, error) | `info` |
-| `max_message_size` | Maximum message size in bytes | `10485760` (10MB) |
-| `max_recipients` | Maximum recipients per message | `100` |
-| `banner` | SMTP banner text | `Elemta SMTP Server` |
+### Top-level SMTP/runtime fields
 
-### TLS Options
+- `hostname`
+- `listen_addr`
+- `max_size`
+- `local_domains`
+- `failed_queue_retention_hours`
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `tls.enabled` | Enable TLS support | `false` |
-| `tls.cert_file` | Path to TLS certificate file | `""` |
-| `tls.key_file` | Path to TLS key file | `""` |
-| `tls.required` | Require TLS for all connections | `false` |
-| `tls.client_auth` | Require client certificate authentication | `false` |
+### Queue backend
 
-### Authentication Options
+- `[queue].dir`
+- `[queue].backend` (`file` or `sqlite`)
+- `[queue.sqlite]` settings
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `auth.enabled` | Enable authentication | `false` |
-| `auth.methods` | Authentication methods (plain, login) | `["plain", "login"]` |
-| `auth.backend` | Authentication backend (file, ldap, etc.) | `"file"` |
-| `auth.file_path` | Path to authentication file | `""` |
+### API/web
 
-### Queue Options
+- `[api].enabled`
+- `[api].listen_addr`
+- `[api].web_root`
+- `[api].auth_enabled`
+- `[api].auth_file`
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `queue.max_workers` | Maximum delivery workers | `5` |
-| `queue.max_retries` | Maximum delivery attempts | `5` |
-| `queue.max_queue_time` | Maximum time in queue (seconds) | `172800` (2 days) |
-| `queue.retry_schedule` | Custom retry schedule in seconds | Exponential backoff |
-| `queue.keep_delivered_messages` | Keep delivered messages | `false` |
-| `queue.keep_message_data` | Keep message data after delivery | `true` |
-| `queue.queue_priority_enabled` | Enable message prioritization | `true` |
+### Auth
 
-### Queue Processor Options
+- `[auth].enabled`
+- `[auth].required`
+- datasource fields (`datasource_type`, `datasource_path`, `datasource_host`, etc.)
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `queue_processor.enabled` | Enable queue processing | `true` |
-| `queue_processor.interval` | Queue processing interval in seconds | `10` |
-| `queue_processor.workers` | Number of concurrent queue processor workers | `5` |
-| `queue_processor.debug` | Enable debug logging for queue processor | `false` |
+### Delivery
 
-### Plugin Options
+- `[delivery].mode`
+- `[delivery].host`
+- `[delivery].port`
+- retry/timeouts
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `plugins.enabled` | Enable plugin system | `true` |
-| `plugins.directory` | Plugin directory | `./plugins` |
-| `plugins.config_directory` | Plugin configuration directory | `./config/plugins` |
+### Metrics
 
-## Environment Variables
+- `[metrics].enabled`
+- `[metrics].listen_addr`
 
-Configuration values can also be set using environment variables. The environment variable names are derived from the configuration keys by:
+### TLS
 
-1. Converting to uppercase
-2. Replacing dots with underscores
-3. Prefixing with `ELEMTA_`
+- `[tls].enabled`
+- `[tls].enable_starttls`
+- `[tls].cert_file`
+- `[tls].key_file`
+- optional `[tls.letsencrypt]`
 
-For example:
-- `hostname` becomes `ELEMTA_HOSTNAME`
-- `tls.enabled` becomes `ELEMTA_TLS_ENABLED`
-- `queue.max_workers` becomes `ELEMTA_QUEUE_MAX_WORKERS`
-- `queue_processor.enabled` becomes `ELEMTA_QUEUE_PROCESSOR_ENABLED`
+---
 
-Environment variables take precedence over configuration file values.
+## Compatibility notes
 
-## Docker Configuration
+- The code still supports some legacy nested fields under `[server]`.
+- Prefer the top-level fields shown above for new configs.
+- If no config file is found, Elemta starts with secure defaults where possible.
 
-When running Elemta in Docker, you can:
+---
 
-1. Mount a configuration file:
-   ```bash
-   docker run -v /path/to/config:/app/config elemta
-   ```
+## Related docs
 
-2. Use environment variables:
-   ```bash
-   docker run -e ELEMTA_HOSTNAME=mail.example.com -e ELEMTA_TLS_ENABLED=true elemta
-   ```
-
-3. Use Docker Compose:
-   ```yaml
-   version: '3'
-   services:
-     elemta:
-       image: elemta
-       volumes:
-         - ./config:/app/config
-       environment:
-         - ELEMTA_HOSTNAME=mail.example.com
-         - ELEMTA_TLS_ENABLED=true
-   ```
-
-## Configuration Examples
-
-For more configuration examples, see:
-- [Default production-leaning config](../config/elemta.toml)
-- [Development config](../config/dev.toml)
-- [Queue backend design](queue-db-backend-v1.md)
-- [Queue backend runbook](queue-backend-runbook.md)
-- [Config security tests](../internal/config/config_security_test.go) 
+- [Installation](installation.md)
+- [SMTP Server](smtp_server.md)
+- [Queue Management](queue_management.md)
+- [Queue Backend Runbook](queue-backend-runbook.md)

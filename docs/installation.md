@@ -1,263 +1,121 @@
 # Elemta Installation Guide
 
-This guide covers all installation and deployment methods for Elemta.
+This guide reflects the **current** install and run paths in this repository.
 
 ## Prerequisites
 
-- **Docker & Docker Compose** (for containerized deployment)
-- **Kubernetes cluster** (for Kubernetes deployment)
-- **Go 1.24+** (for source builds)
-- **Git**
-
-## Deployment Methods
-
-### Docker Deployment (Recommended)
-
-Docker is the recommended deployment method for both development and production environments.
-
-#### Quick Start
-
-```bash
-git clone https://github.com/busybox42/elemta.git
-cd elemta
-docker-compose up -d
-```
-
-#### Service Access
-
-After deployment, access these services:
-
-- **Web UI**: http://localhost:8025 (admin:password)
-- **SMTP Server**: localhost:2525
-- **API Server**: http://localhost:8081
-- **Grafana Monitoring**: http://localhost:3000 (admin:elemta123)
-- **Prometheus**: http://localhost:9090
-- **RSpamd Web UI**: http://localhost:11334
-
-#### Testing the Setup
-
-```bash
-# Send a test email via SMTP
-telnet localhost 2525
-
-# Or use the test script
-./scripts/test/test-smtp.sh
-```
-
-#### Advanced Docker Configuration
-
-For production deployments, see [Docker Deployment Guide](docker_deployment.md).
-
-### Kubernetes Deployment
-
-Deploy Elemta on Kubernetes using the provided manifests:
-
-```bash
-# Deploy all components
-kubectl apply -f k8s/
-
-# Check deployment status
-kubectl get pods -l app=elemta
-
-# Access services via port forwarding
-kubectl port-forward service/elemta-web 8025:8025
-kubectl port-forward service/elemta-smtp 2525:25
-```
-
-#### Kubernetes Configuration
-
-The Kubernetes deployment includes:
-- Elemta SMTP server
-- Web interface
-- Monitoring stack (Prometheus/Grafana)
-- Persistent volumes for queues and logs
-
-For advanced Kubernetes configuration, see `k8s/README.md`.
-
-### From Source (Development)
-
-Building from source is recommended for development and testing.
-
-#### Prerequisites
-
-- Go 1.24 or higher
+- Docker + Docker Compose v2 (`docker compose`)
+- Go (for source builds)
 - Git
 
-#### Build Steps
+---
+
+## 1) Recommended: Docker-based development setup
+
+Clone and enter the repo:
 
 ```bash
-# Clone repository
 git clone https://github.com/busybox42/elemta.git
 cd elemta
-
-# Install dependencies
-go mod download
-
-# Build binaries
-go build -o bin/elemta ./cmd/elemta
-go build -o bin/elemta-queue ./cmd/elemta-queue
-go build -o bin/elemta-cli ./cmd/elemta-cli
-
-# Run with example configuration
-./bin/elemta -config config/elemta.yaml.example
 ```
 
-#### Development Mode
-
-For development, use the provided development script:
+### Minimal dev stack (fast)
 
 ```bash
-# Run with development settings
-./scripts/dev/run-dev.sh
-
-# Run with custom port
-./scripts/dev/run-dev.sh --port 3000
+make install-dev
 ```
 
-Development mode automatically:
-- Uses non-privileged ports (2525-2528)
-- Disables TLS requirements
-- Uses local directories for data
-- Provides verbose logging
+Starts the core services (Elemta + web + Dovecot + LDAP + Valkey) and bootstraps local dev defaults.
 
-#### Running Tests
+### Full dev stack
 
 ```bash
-# Run all tests
-go test ./...
-
-# Run tests with coverage
-go test -cover ./...
-
-# Run specific test suites
-./scripts/test/test-queue-only.sh
-./scripts/test/test-smtp.sh
+make install-dev-full
 ```
 
-## Configuration
+Includes extra services (e.g. ClamAV, Rspamd, Roundcube) in addition to the core stack.
 
-### Configuration Files
-
-Elemta supports both YAML and TOML configuration formats:
-
-#### YAML Configuration
+### Day-to-day commands
 
 ```bash
-# Copy example configuration
-cp config/elemta.yaml.example config/elemta.yaml
-
-# Edit configuration
-vim config/elemta.yaml
-
-# Run with YAML config
-./elemta -config config/elemta.yaml
+make up
+make down
+make restart
+make status
+make logs
+make logs-elemta
 ```
 
-#### TOML Configuration
+Compose file used by Make targets:
+
+- `deployments/compose/docker-compose.yml`
+
+---
+
+## 2) Build from source
+
+Build all binaries:
 
 ```bash
-# Copy example configuration
-cp config/elemta.toml.example config/elemta.toml
-
-# Edit configuration
-vim config/elemta.toml
-
-# Run with TOML config
-./elemta -config config/elemta.toml
+make build
 ```
 
-### Basic Configuration
+Output binaries:
 
-Minimum configuration for getting started:
+- `bin/elemta` (main server/ops CLI)
+- `bin/elemta-queue` (queue status utility)
+- `bin/elemta-cli` (lightweight helper CLI)
 
-```yaml
-# Basic server configuration
-hostname: "mail.example.com"
-listen_addr: "0.0.0.0:25"
-queue_dir: "/var/spool/elemta/queue"
-log_level: "info"
-max_message_size: 10485760  # 10MB
+Run server directly:
 
-# TLS configuration
-tls:
-  enabled: true
-  cert_file: "/etc/elemta/certs/cert.pem"
-  key_file: "/etc/elemta/certs/key.pem"
-
-# Authentication
-auth:
-  enabled: true
-  methods: ["plain", "login"]
+```bash
+./bin/elemta server --config ./config/elemta.toml
 ```
 
-For complete configuration options, see [Configuration Reference](configuration.md).
+Run web/API directly:
 
-## Native Packages
+```bash
+./bin/elemta web --config ./config/elemta.toml
+```
 
-Elemta is moving toward a first-class native packaging model in addition to Docker/Kubernetes deployment.
+---
 
-### Current direction
+## 3) Quick validation after install
 
-- support **RPM** and **DEB** packages
-- use standard Linux/FHS-style paths
-- do **not** use `/opt`
-- support native installs as a first-class deployment mode
+```bash
+make status
+make test
+```
 
-The canonical packaging/layout direction is tracked in:
+Optional targeted concurrency checks:
+
+```bash
+make test-race-smoke
+```
+
+---
+
+## 4) Other deployment models
+
+### Kubernetes
+
+Manifest examples are in `k8s/`.
+
+```bash
+kubectl apply -f k8s/
+```
+
+See also: `k8s/README.md`.
+
+### Native packages (RPM/DEB direction)
+
+For path/layout and packaging direction, see:
 
 - [Native Install Spec v1](native-install-spec-v1.md)
 
-### Planned support
+---
 
-Initial native packaging direction focuses on:
+## Notes
 
-- **RHEL/Rocky/Alma/Fedora-family** via RPM
-- **Debian/Ubuntu-family** via DEB
-
-Packaging mechanics and exact support matrix are still being finalized.
-
-**Note**: These packages are experimental and not production-ready. Use Docker/Kubernetes for production.
-
-## Next Steps
-
-After installation:
-
-1. **Configure Email Authentication**: [Email Authentication Guide](email_authentication.md)
-2. **Set Up Monitoring**: [Monitoring Setup](monitoring/README.md)
-3. **Configure Let's Encrypt**: [Let's Encrypt Guide](letsencrypt-guide.md)
-4. **Develop Plugins**: [Plugin Development](plugins.md)
-
-## Troubleshooting
-
-### Common Issues
-
-#### Port Conflicts
-```bash
-# Check if ports are in use
-netstat -tlnp | grep :25
-netstat -tlnp | grep :2525
-
-# Use alternative ports
-./elemta -config config/elemta.yaml --port 2526
-```
-
-#### Permission Issues
-```bash
-# Ensure correct ownership
-sudo chown -R elemta:elemta /var/spool/elemta
-sudo chmod 755 /var/spool/elemta
-
-# For Docker
-docker-compose logs elemta
-```
-
-#### TLS Certificate Issues
-```bash
-# Test certificate
-openssl x509 -in /etc/elemta/certs/cert.pem -text -noout
-
-# Use Let's Encrypt setup
-./scripts/ssl/letsencrypt-setup.sh
-```
-
-For more troubleshooting, see [Testing Documentation](testing.md). 
+- Configuration is TOML-based. See [Configuration](configuration.md).
+- Queue backend can be `file` or `sqlite`. See [Queue Management](queue_management.md) and [Queue Backend Runbook](queue-backend-runbook.md).
