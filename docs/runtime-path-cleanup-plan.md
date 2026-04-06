@@ -88,7 +88,6 @@ Need to distinguish:
 Needs review:
 
 - `README.md`
-- `INSTALLATION.md`
 - `docs/installation.md`
 - `docs/configuration.md`
 - `docs/production_deployment.md` / `docs/production-deployment.md`
