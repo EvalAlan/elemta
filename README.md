@@ -68,7 +68,6 @@ docker compose -f deployments/compose/docker-compose.yml up -d
 - [Contributing guide](CONTRIBUTING.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)
 - [Support](SUPPORT.md)
-- [Roadmap](ROADMAP.md)
 
 ## Contributing
 
