@@ -33,14 +33,8 @@ This index lists the **maintained** docs for the current codebase.
 
 These are useful but not required for a standard deployment flow:
 
-- [Email Authentication](email_authentication.md)
-- [Relay Control](relay_control.md)
 - [Logging](logging.md)
 - [Rate Limiting](rate-limiting.md)
 - [Plugin System](plugins.md)
-- [Plugin Development](plugin-development.md)
-- [Performance and Scaling](performance_and_scaling.md)
-- [Multi-node Deployment](multinode-deployment.md)
 - [Docker Resources](docker/README.md)
 - [Monitoring Resources](monitoring/README.md)
-- [RFC Compliance](rfc-compliance.md)
