@@ -63,10 +63,6 @@ Welcome to the Elemta documentation. This guide will help you navigate through a
 
 - [Troubleshooting Guide](troubleshooting.md) - Common issues and solutions
 
-## Audits
-
-- [Comprehensive audit (2026-04-05)](audits/2026-04-05-comprehensive-audit.md)
-
 ## Contributing
 
 - [Contributing Guide](../CONTRIBUTING.md)
