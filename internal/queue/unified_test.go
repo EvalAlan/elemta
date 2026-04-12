@@ -363,6 +363,30 @@ func TestQueueSystemIntegration(t *testing.T) {
 	}
 }
 
+func TestUnifiedQueueSystem_SQLiteStorageType(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "unified_queue_sqlite_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	config := QueueConfiguration{
+		QueueDir:        tempDir,
+		StorageType:     "sqlite",
+		Enabled:         true,
+		MaxWorkers:      1,
+		ProcessInterval: 1,
+	}
+
+	uqs := NewUnifiedQueueSystem(config)
+	if uqs == nil {
+		t.Fatal("expected unified queue system instance")
+	}
+	if _, ok := uqs.StorageBackend.(*SQLiteStorageBackend); !ok {
+		t.Fatalf("expected sqlite storage backend, got %T", uqs.StorageBackend)
+	}
+}
+
 func TestStorageBackendDirect(t *testing.T) {
 	// Test the storage backend directly
 	tempDir, err := os.MkdirTemp("", "storage_test")

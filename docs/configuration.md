@@ -51,6 +51,7 @@ synchronous = "NORMAL"
 [auth]
 enabled = false
 required = false
+allow_deprecated_sha1 = true # migration switch for legacy {SHA}/{SSHA}
 datasource_type = "file"
 datasource_path = "/etc/elemta/users.txt"
 
@@ -116,6 +117,7 @@ file = "/var/log/elemta/elemta.log"
 
 - `[auth].enabled`
 - `[auth].required`
+- `[auth].allow_deprecated_sha1` (default true; set false to block legacy `{SHA}`/`{SSHA}` password verification)
 - datasource fields (`datasource_type`, `datasource_path`, `datasource_host`, etc.)
 
 ### Delivery
