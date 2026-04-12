@@ -137,16 +137,17 @@ type MetricsConfig struct {
 
 // AuthConfig represents authentication configuration
 type AuthConfig struct {
-	Enabled        bool   `json:"enabled" toml:"enabled"`
-	Required       bool   `json:"required" toml:"required"`
-	DataSourceType string `json:"datasource_type" toml:"datasource_type"`
-	DataSourceName string `json:"datasource_name" toml:"datasource_name"`
-	DataSourcePath string `json:"datasource_path" toml:"datasource_path"`
-	DataSourceHost string `json:"datasource_host" toml:"datasource_host"`
-	DataSourcePort int    `json:"datasource_port" toml:"datasource_port"`
-	DataSourceUser string `json:"datasource_user" toml:"datasource_user"`
-	DataSourcePass string `json:"datasource_pass" toml:"datasource_pass"`
-	DataSourceDB   string `json:"datasource_db" toml:"datasource_db"`
+	Enabled             bool   `json:"enabled" toml:"enabled"`
+	Required            bool   `json:"required" toml:"required"`
+	AllowDeprecatedSHA1 *bool  `json:"allow_deprecated_sha1,omitempty" toml:"allow_deprecated_sha1"`
+	DataSourceType      string `json:"datasource_type" toml:"datasource_type"`
+	DataSourceName      string `json:"datasource_name" toml:"datasource_name"`
+	DataSourcePath      string `json:"datasource_path" toml:"datasource_path"`
+	DataSourceHost      string `json:"datasource_host" toml:"datasource_host"`
+	DataSourcePort      int    `json:"datasource_port" toml:"datasource_port"`
+	DataSourceUser      string `json:"datasource_user" toml:"datasource_user"`
+	DataSourcePass      string `json:"datasource_pass" toml:"datasource_pass"`
+	DataSourceDB        string `json:"datasource_db" toml:"datasource_db"`
 }
 
 // TLSConfig represents TLS configuration

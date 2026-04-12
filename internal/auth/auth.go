@@ -24,8 +24,10 @@ import (
 
 // Deprecation warning guards to avoid flooding logs
 var (
-	warnSHA1Once sync.Once
-	warnSSHAOnce sync.Once
+	warnSHA1Once        sync.Once
+	warnSSHAOnce        sync.Once
+	warnSHA1BlockedOnce sync.Once
+	warnSSHABlockedOnce sync.Once
 )
 
 // Common errors
@@ -39,13 +41,39 @@ var (
 
 // Auth provides authentication functionality using various datasources
 type Auth struct {
-	ds datasource.DataSource
+	ds                  datasource.DataSource
+	allowDeprecatedSHA1 bool
 }
 
 // Config represents the configuration for the Auth module
 type Config struct {
 	// DataSource is the datasource to use for authentication
 	DataSource datasource.DataSource
+
+	// AllowDeprecatedSHA1 controls whether legacy {SHA}/{SSHA} hashes are accepted.
+	// Nil means use environment/default behavior (default true for migration compatibility).
+	AllowDeprecatedSHA1 *bool
+}
+
+func allowDeprecatedSHA1FromEnv() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("AUTH_ALLOW_DEPRECATED_SHA1")))
+	if v == "" {
+		return true
+	}
+
+	switch v {
+	case "0", "false", "no", "off", "disabled":
+		return false
+	default:
+		return true
+	}
+}
+
+func resolveAllowDeprecatedSHA1(override *bool) bool {
+	if override != nil {
+		return *override
+	}
+	return allowDeprecatedSHA1FromEnv()
 }
 
 // New creates a new Auth instance with the provided configuration
@@ -62,7 +90,8 @@ func New(config Config) (*Auth, error) {
 	}
 
 	return &Auth{
-		ds: config.DataSource,
+		ds:                  config.DataSource,
+		allowDeprecatedSHA1: resolveAllowDeprecatedSHA1(config.AllowDeprecatedSHA1),
 	}, nil
 }
 
@@ -84,7 +113,8 @@ func NewWithSQLite(dbPath string) (*Auth, error) {
 	}
 
 	return &Auth{
-		ds: ds,
+		ds:                  ds,
+		allowDeprecatedSHA1: allowDeprecatedSHA1FromEnv(),
 	}, nil
 }
 
@@ -120,7 +150,8 @@ func NewWithLDAP(host string, port int, bindDN, bindPassword, userDN, groupDN st
 	}
 
 	return &Auth{
-		ds: ds,
+		ds:                  ds,
+		allowDeprecatedSHA1: allowDeprecatedSHA1FromEnv(),
 	}, nil
 }
 
@@ -190,7 +221,7 @@ func NewWithFile(filePath string) (*Auth, error) {
 	if err := ds.Connect(); err != nil {
 		return nil, fmt.Errorf("failed to connect to file datasource: %w", err)
 	}
-	return &Auth{ds: ds}, nil
+	return &Auth{ds: ds, allowDeprecatedSHA1: allowDeprecatedSHA1FromEnv()}, nil
 }
 
 // Close closes the underlying datasource connection
@@ -216,8 +247,13 @@ func HashPassword(password string) (string, error) {
 	return string(hash), nil
 }
 
-// ComparePasswordsSecure compares a hashed password with a plain-text password using constant-time operations
+// ComparePasswordsSecure compares a hashed password with a plain-text password using constant-time operations.
+// It keeps legacy {SHA}/{SSHA} compatibility enabled for migration safety.
 func ComparePasswordsSecure(hashedPassword, plainPassword string) error {
+	return comparePasswordsSecureWithPolicy(hashedPassword, plainPassword, true)
+}
+
+func comparePasswordsSecureWithPolicy(hashedPassword, plainPassword string, allowDeprecatedSHA1 bool) error {
 	// Always perform the same operations to maintain constant time
 	result := ErrInvalidCredentials
 
@@ -226,18 +262,23 @@ func ComparePasswordsSecure(hashedPassword, plainPassword string) error {
 		result = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(plainPassword))
 	} else if strings.HasPrefix(hashedPassword, "{SHA}") {
 		// DEPRECATED: SHA-1 is cryptographically weak and should not be used for password hashing.
-		// This path exists only for backward compatibility with legacy OpenLDAP entries.
-		// Migrate passwords to bcrypt ($2a$) as soon as possible.
 		warnSHA1Once.Do(func() {
 			slog.Warn("DEPRECATED: SHA-1 password hash detected. " +
-				"SHA-1 is cryptographically weak — migrate to bcrypt ($2a$). " +
-				"See https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html")
+				"SHA-1 is cryptographically weak and compatibility support will be removed in a future release. " +
+				"Migrate to bcrypt ($2a$).")
 		})
 		hash := sha1.Sum([]byte(plainPassword))
 		b64 := base64.StdEncoding.EncodeToString(hash[:])
 		expected := "{SHA}" + b64
-		if subtle.ConstantTimeCompare([]byte(hashedPassword), []byte(expected)) == 1 {
+		match := subtle.ConstantTimeCompare([]byte(hashedPassword), []byte(expected)) == 1
+		if allowDeprecatedSHA1 && match {
 			result = nil
+		} else if !allowDeprecatedSHA1 {
+			warnSHA1BlockedOnce.Do(func() {
+				slog.Warn("Legacy SHA-1 password hash verification is disabled by policy",
+					"env", "AUTH_ALLOW_DEPRECATED_SHA1=false",
+				)
+			})
 		}
 	} else if strings.HasPrefix(hashedPassword, "{SHA256}") {
 		// OpenLDAP SHA-256 with constant-time comparison
@@ -257,12 +298,10 @@ func ComparePasswordsSecure(hashedPassword, plainPassword string) error {
 		}
 	} else if strings.HasPrefix(hashedPassword, "{SSHA}") {
 		// DEPRECATED: SSHA (salted SHA-1) is cryptographically weak and should not be used.
-		// This path exists only for backward compatibility with legacy OpenLDAP entries.
-		// Migrate passwords to bcrypt ($2a$) as soon as possible.
 		warnSSHAOnce.Do(func() {
 			slog.Warn("DEPRECATED: SSHA (salted SHA-1) password hash detected. " +
-				"SSHA is cryptographically weak — migrate to bcrypt ($2a$). " +
-				"See https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html")
+				"SSHA is cryptographically weak and compatibility support will be removed in a future release. " +
+				"Migrate to bcrypt ($2a$).")
 		})
 		b, err := base64.StdEncoding.DecodeString(hashedPassword[6:])
 		if err != nil || len(b) < 20 {
@@ -274,8 +313,15 @@ func ComparePasswordsSecure(hashedPassword, plainPassword string) error {
 			h.Write([]byte(plainPassword))
 			h.Write(salt)
 			computedHash := h.Sum(nil)
-			if subtle.ConstantTimeCompare(hash, computedHash) == 1 {
+			match := subtle.ConstantTimeCompare(hash, computedHash) == 1
+			if allowDeprecatedSHA1 && match {
 				result = nil
+			} else if !allowDeprecatedSHA1 {
+				warnSSHABlockedOnce.Do(func() {
+					slog.Warn("Legacy SSHA password hash verification is disabled by policy",
+						"env", "AUTH_ALLOW_DEPRECATED_SHA1=false",
+					)
+				})
 			}
 		}
 	} else {
@@ -322,11 +368,11 @@ func (a *Auth) Authenticate(ctx context.Context, username, password string) (boo
 	// For other datasources, always perform password comparison
 	var authSuccess bool
 	if userExists {
-		err = ComparePasswordsSecure(user.Password, password)
+		err = comparePasswordsSecureWithPolicy(user.Password, password, a.allowDeprecatedSHA1)
 		authSuccess = err == nil
 	} else {
 		// Perform dummy comparison to maintain constant time
-		_ = ComparePasswordsSecure("$2a$10$dummy.hash.for.constant.time", password)
+		_ = comparePasswordsSecureWithPolicy("$2a$10$dummy.hash.for.constant.time", password, a.allowDeprecatedSHA1)
 		authSuccess = false
 	}
 
@@ -545,4 +591,14 @@ func (a *Auth) GetDataSourceType() string {
 		return ""
 	}
 	return a.ds.Type()
+}
+
+// SetAllowDeprecatedSHA1 updates legacy SHA-1/SSHA compatibility policy at runtime.
+func (a *Auth) SetAllowDeprecatedSHA1(allow bool) {
+	a.allowDeprecatedSHA1 = allow
+}
+
+// AllowDeprecatedSHA1 returns whether legacy SHA-1/SSHA compatibility is enabled.
+func (a *Auth) AllowDeprecatedSHA1() bool {
+	return a.allowDeprecatedSHA1
 }

@@ -45,6 +45,7 @@ type MainConfig struct {
 	SessionTimeout            string      `json:"session_timeout"`
 	LocalDomains              []string    `json:"local_domains"`
 	FailedQueueRetentionHours int         `json:"failed_queue_retention_hours"`
+	AuthAllowDeprecatedSHA1   *bool       `json:"auth_allow_deprecated_sha1,omitempty"`
 	RateLimiterPluginConfig   interface{} `json:"rate_limiter"`
 	TLS                       interface{} `json:"tls"`
 	API                       interface{} `json:"api"`
@@ -283,6 +284,13 @@ func (s *Server) initializeAuth() error {
 		} else {
 			logger.Info("Authentication initialized from environment configuration")
 		}
+	}
+
+	if s.mainConfig != nil && s.mainConfig.AuthAllowDeprecatedSHA1 != nil {
+		authSystem.SetAllowDeprecatedSHA1(*s.mainConfig.AuthAllowDeprecatedSHA1)
+		logger.Info("Authentication legacy hash policy overridden by runtime config",
+			"allow_deprecated_sha1", authSystem.AllowDeprecatedSHA1(),
+		)
 	}
 
 	// Initialize RBAC
