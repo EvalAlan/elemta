@@ -11,6 +11,7 @@
 ### Bug Fixes
 - **SMTP Write Deadline Fix**: Fixed stale write deadline causing client hangs after 30s by using `SetDeadline()` (both read+write) in the command processing loop
 - **Configurable Read Timeout**: Added `Resources.ReadTimeout` for tuning the command-loop deadline independently from the initial connection timeout
+- **Auth migration control**: Added explicit `[auth].allow_deprecated_sha1` config switch (and `AUTH_ALLOW_DEPRECATED_SHA1`) so operators can disable legacy `{SHA}`/`{SSHA}` verification ahead of removal
 
 ## Previous Improvements (January 2026)
 

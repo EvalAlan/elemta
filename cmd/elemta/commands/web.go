@@ -40,6 +40,11 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		queueDir = cfg.QueueDir
 	}
 
+	var authAllowDeprecatedSHA1 *bool
+	if cfg.Auth != nil {
+		authAllowDeprecatedSHA1 = cfg.Auth.AllowDeprecatedSHA1
+	}
+
 	return &api.MainConfig{
 		Hostname:                  hostname,
 		ListenAddr:                listenAddr,
@@ -57,6 +62,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		SessionTimeout:            cfg.SessionTimeout,
 		LocalDomains:              localDomains,
 		FailedQueueRetentionHours: cfg.FailedQueueRetentionHours,
+		AuthAllowDeprecatedSHA1:   authAllowDeprecatedSHA1,
 		RateLimiterPluginConfig:   cfg.RateLimiter,
 		TLS:                       cfg.TLS,
 		API:                       nil, // API config not available in main config

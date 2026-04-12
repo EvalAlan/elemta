@@ -592,3 +592,13 @@ func (a *Auth) GetDataSourceType() string {
 	}
 	return a.ds.Type()
 }
+
+// SetAllowDeprecatedSHA1 updates legacy SHA-1/SSHA compatibility policy at runtime.
+func (a *Auth) SetAllowDeprecatedSHA1(allow bool) {
+	a.allowDeprecatedSHA1 = allow
+}
+
+// AllowDeprecatedSHA1 returns whether legacy SHA-1/SSHA compatibility is enabled.
+func (a *Auth) AllowDeprecatedSHA1() bool {
+	return a.allowDeprecatedSHA1
+}
