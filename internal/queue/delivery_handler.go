@@ -39,6 +39,19 @@ func (h *SMTPDeliveryHandler) DeliverMessage(ctx context.Context, msg Message, c
 
 // DeliverMessageWithMetadata attempts to deliver a message via SMTP and returns delivery metadata
 func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, msg Message, content []byte) (*DeliveryResult, error) {
+	if messageRequiresTLS(msg) {
+		err := fmt.Errorf("REQUIRETLS requested but outbound SMTP delivery cannot guarantee TLS yet")
+		h.logger.Warn("Rejecting outbound message due to unsupported REQUIRETLS enforcement",
+			"message_id", msg.ID,
+		)
+		return &DeliveryResult{
+			Success:         false,
+			DeliveryTime:    time.Now(),
+			ResponseMessage: "REQUIRETLS enforcement not available for outbound delivery",
+			Error:           err,
+		}, err
+	}
+
 	// Group recipients by domain for efficient delivery
 	domainGroups := h.groupRecipientsByDomain(msg.To)
 
@@ -96,6 +109,20 @@ func (h *SMTPDeliveryHandler) buildDeliveryResult(recipients []string, delivered
 		return result, result.Error
 	default:
 		return result, nil
+	}
+}
+
+func messageRequiresTLS(msg Message) bool {
+	if msg.Annotations == nil {
+		return false
+	}
+
+	requireTLS := strings.TrimSpace(strings.ToLower(msg.Annotations["require_tls"]))
+	switch requireTLS {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 
