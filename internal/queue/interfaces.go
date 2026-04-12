@@ -2,6 +2,9 @@ package queue
 
 import (
 	"context"
+	"log/slog"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -158,7 +161,13 @@ type DeliveryStats struct {
 type QueueConfiguration struct {
 	// Storage configuration
 	QueueDir    string `toml:"queue_dir" json:"queue_dir"`
-	StorageType string `toml:"storage_type" json:"storage_type"` // "file", "database", etc.
+	StorageType string `toml:"storage_type" json:"storage_type"` // "file", "sqlite", legacy: "database"
+
+	// SQLite storage tuning (used when StorageType is sqlite/database)
+	SQLitePath    string `toml:"sqlite_path" json:"sqlite_path"`
+	SQLiteBusyMS  int    `toml:"sqlite_busy_timeout_ms" json:"sqlite_busy_timeout_ms"`
+	SQLiteJournal string `toml:"sqlite_journal_mode" json:"sqlite_journal_mode"`
+	SQLiteSync    string `toml:"sqlite_synchronous" json:"sqlite_synchronous"`
 
 	// Processing configuration
 	Enabled         bool `toml:"enabled" json:"enabled"`
@@ -205,10 +214,23 @@ type UnifiedQueueSystem struct {
 func NewUnifiedQueueSystem(config QueueConfiguration) *UnifiedQueueSystem {
 	// Create storage backend
 	var storage StorageBackend
-	switch config.StorageType {
-	case "database":
-		// TODO: Implement database storage backend
-		storage = NewFileStorageBackend(config.QueueDir)
+	switch strings.ToLower(strings.TrimSpace(config.StorageType)) {
+	case "database", "sqlite":
+		sqlitePath := strings.TrimSpace(config.SQLitePath)
+		if sqlitePath == "" {
+			sqlitePath = filepath.Join(config.QueueDir, "queue.db")
+		}
+
+		sqliteBackend, err := NewSQLiteStorageBackend(sqlitePath, config.SQLiteBusyMS, config.SQLiteJournal, config.SQLiteSync)
+		if err != nil {
+			slog.Warn("Failed to initialize sqlite storage backend, falling back to file backend",
+				"error", err,
+				"sqlite_path", sqlitePath,
+			)
+			storage = NewFileStorageBackend(config.QueueDir)
+		} else {
+			storage = sqliteBackend
+		}
 	default:
 		storage = NewFileStorageBackend(config.QueueDir)
 	}

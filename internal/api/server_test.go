@@ -161,6 +161,23 @@ func TestInitializeAuthPrefersExplicitAuthFile(t *testing.T) {
 	require.NotNil(t, server.authSystem)
 }
 
+func TestInitializeAuth_RespectsMainConfigLegacyHashPolicy(t *testing.T) {
+	allowDeprecated := false
+	usersFile := filepath.Join(t.TempDir(), "users.txt")
+	require.NoError(t, os.WriteFile(usersFile, []byte("admin:secret\n"), 0600))
+
+	server, err := NewServer(&Config{
+		Enabled:     true,
+		ListenAddr:  "127.0.0.1:0",
+		WebRoot:     t.TempDir(),
+		AuthEnabled: true,
+		AuthFile:    usersFile,
+	}, &MainConfig{AuthAllowDeprecatedSHA1: &allowDeprecated}, t.TempDir(), 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, server.authSystem)
+	require.False(t, server.authSystem.AllowDeprecatedSHA1())
+}
+
 func TestAPIConfig(t *testing.T) {
 	t.Run("Valid config", func(t *testing.T) {
 		config := &Config{
