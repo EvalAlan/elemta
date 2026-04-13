@@ -15,6 +15,14 @@ type SQLiteConfig struct {
 	Synchronous   string
 }
 
+// PostgresConfig holds postgres backend settings for queue manager creation.
+type PostgresConfig struct {
+	DSN                    string
+	MaxOpenConns           int
+	MaxIdleConns           int
+	ConnMaxLifetimeSeconds int
+}
+
 // StorageInfo describes queue storage backend characteristics and size metrics.
 type StorageInfo struct {
 	Backend       string `json:"backend"`
@@ -36,7 +44,7 @@ type StorageInfo struct {
 }
 
 // NewManagerFromBackend creates a queue manager based on configured backend.
-func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, failedQueueRetentionHours int) (*Manager, error) {
+func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, postgresCfg PostgresConfig, failedQueueRetentionHours int) (*Manager, error) {
 	backend = strings.TrimSpace(strings.ToLower(backend))
 	if backend == "" {
 		backend = "file"
@@ -61,6 +69,17 @@ func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, fai
 			m.queueDir = queueDir
 		}
 		return m, nil
+	case "postgres":
+		postgresBackend, err := NewPostgresStorageBackend(postgresCfg)
+		if err != nil {
+			return nil, err
+		}
+
+		m := NewManagerWithStorage(postgresBackend, failedQueueRetentionHours)
+		if m.queueDir == "" {
+			m.queueDir = queueDir
+		}
+		return m, nil
 	default:
 		return nil, fmt.Errorf("unsupported queue backend: %s", backend)
 	}
@@ -73,6 +92,8 @@ func (m *Manager) BackendType() string {
 		return "file"
 	case *SQLiteStorageBackend:
 		return "sqlite"
+	case *PostgresStorageBackend:
+		return "postgres"
 	default:
 		return "unknown"
 	}
@@ -106,6 +127,17 @@ func (m *Manager) GetStorageInfo() (StorageInfo, error) {
 		if info.QueueDir == "" {
 			info.QueueDir = filepath.Dir(sqliteStats.DBPath)
 		}
+		return info, nil
+	case *PostgresStorageBackend:
+		pgStats, err := backend.StorageStats()
+		if err != nil {
+			return info, err
+		}
+		info.DBBytes = pgStats.TotalRelationBytes
+		info.MessageRows = pgStats.MessageRows
+		info.ContentRows = pgStats.ContentRows
+		info.ContentBytes = pgStats.ContentBytes
+		info.TotalBytes = pgStats.TotalRelationBytes
 		return info, nil
 	case *FileStorageBackend:
 		var fileCount int64
