@@ -284,19 +284,21 @@ func (m *Manager) EnqueueMessage(from string, to []string, subject string, data 
 		Attempts:    make([]Attempt, 0),
 	}
 
-	// Store message content
-	if err := m.storageBackend.StoreContent(id, data); err != nil {
-		return "", fmt.Errorf("failed to store message content: %w", err)
-	}
-
 	// Set file path in message metadata
 	msg.FilePath = filepath.Join(m.queueDir, "data", id)
 
-	// Store message metadata
+	// Store message metadata first
+	// NOTE: Postgres backend enforces FK(queue_contents.id -> queue_messages.id),
+	// so metadata must exist before content insert.
 	if err := m.storageBackend.Store(msg); err != nil {
-		// Try to clean up content on error (best effort)
-		_ = m.storageBackend.DeleteContent(id)
 		return "", fmt.Errorf("failed to store message metadata: %w", err)
+	}
+
+	// Store message content second
+	if err := m.storageBackend.StoreContent(id, data); err != nil {
+		// Try to clean up metadata on error (best effort)
+		_ = m.storageBackend.Delete(id)
+		return "", fmt.Errorf("failed to store message content: %w", err)
 	}
 
 	// Update stats atomically

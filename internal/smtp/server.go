@@ -162,6 +162,12 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			JournalMode:   config.QueueSQLite.JournalMode,
 			Synchronous:   config.QueueSQLite.Synchronous,
 		},
+		queue.PostgresConfig{
+			DSN:                    config.QueuePostgres.DSN,
+			MaxOpenConns:           config.QueuePostgres.MaxOpenConns,
+			MaxIdleConns:           config.QueuePostgres.MaxIdleConns,
+			ConnMaxLifetimeSeconds: config.QueuePostgres.ConnMaxLifetimeSeconds,
+		},
 		config.FailedQueueRetentionHours,
 	)
 	if err != nil {
