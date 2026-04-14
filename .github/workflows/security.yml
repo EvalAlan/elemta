@@ -12,6 +12,7 @@ permissions:
   contents: read
   security-events: write
   issues: write
+  actions: read
 
 jobs:
   dependency-scanning:
