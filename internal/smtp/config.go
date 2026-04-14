@@ -13,7 +13,7 @@ import (
 type Config struct {
 	ListenAddr    string   `toml:"listen_addr" json:"listen_addr"`
 	QueueDir      string   `toml:"queue_dir" json:"queue_dir"`
-	QueueBackend  string   `toml:"queue_backend" json:"queue_backend"` // file|sqlite
+	QueueBackend  string   `toml:"queue_backend" json:"queue_backend"` // file|sqlite|postgres
 	MaxSize       int64    `toml:"max_size" json:"max_size"`
 	DevMode       bool     `toml:"dev_mode" json:"dev_mode"`
 	AllowedRelays []string `toml:"allowed_relays" json:"allowed_relays"`
@@ -26,6 +26,9 @@ type Config struct {
 
 	// SQLite queue backend configuration (used when QueueBackend=sqlite)
 	QueueSQLite QueueSQLiteConfig `toml:"queue_sqlite" json:"queue_sqlite"`
+
+	// PostgreSQL queue backend configuration (used when QueueBackend=postgres)
+	QueuePostgres QueuePostgresConfig `toml:"queue_postgres" json:"queue_postgres"`
 
 	// Queue management options
 	KeepDeliveredMessages     bool `toml:"keep_delivered_messages" json:"keep_delivered_messages"`           // Whether to keep delivered messages for archiving
@@ -114,6 +117,14 @@ type QueueSQLiteConfig struct {
 	BusyTimeoutMS int    `toml:"busy_timeout_ms" json:"busy_timeout_ms"`
 	JournalMode   string `toml:"journal_mode" json:"journal_mode"`
 	Synchronous   string `toml:"synchronous" json:"synchronous"`
+}
+
+// QueuePostgresConfig represents postgres queue backend configuration.
+type QueuePostgresConfig struct {
+	DSN                    string `toml:"dsn" json:"dsn"`
+	MaxOpenConns           int    `toml:"max_open_conns" json:"max_open_conns"`
+	MaxIdleConns           int    `toml:"max_idle_conns" json:"max_idle_conns"`
+	ConnMaxLifetimeSeconds int    `toml:"conn_max_lifetime_seconds" json:"conn_max_lifetime_seconds"`
 }
 
 // DeliveryConfig represents configuration for message delivery
@@ -520,6 +531,11 @@ func DefaultConfig() *Config {
 			BusyTimeoutMS: 5000,
 			JournalMode:   "WAL",
 			Synchronous:   "NORMAL",
+		},
+		QueuePostgres: QueuePostgresConfig{
+			MaxOpenConns:           20,
+			MaxIdleConns:           10,
+			ConnMaxLifetimeSeconds: 1800,
 		},
 
 		// TLS configuration with enhanced certificate management

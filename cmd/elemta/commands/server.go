@@ -153,6 +153,12 @@ func startServer() {
 			JournalMode:   cfg.Queue.SQLite.JournalMode,
 			Synchronous:   cfg.Queue.SQLite.Synchronous,
 		},
+		QueuePostgres: smtp.QueuePostgresConfig{
+			DSN:                    cfg.Queue.Postgres.DSN,
+			MaxOpenConns:           cfg.Queue.Postgres.MaxOpenConns,
+			MaxIdleConns:           cfg.Queue.Postgres.MaxIdleConns,
+			ConnMaxLifetimeSeconds: cfg.Queue.Postgres.ConnMaxLifetimeSeconds,
+		},
 		MaxSize:                   cfg.MaxSize,      // Use top-level max_size
 		LocalDomains:              cfg.LocalDomains, // Use top-level local_domains
 		TLS:                       cfg.TLS,

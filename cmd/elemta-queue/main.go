@@ -29,6 +29,12 @@ func main() {
 			JournalMode:   cfg.Queue.SQLite.JournalMode,
 			Synchronous:   cfg.Queue.SQLite.Synchronous,
 		},
+		queue.PostgresConfig{
+			DSN:                    cfg.Queue.Postgres.DSN,
+			MaxOpenConns:           cfg.Queue.Postgres.MaxOpenConns,
+			MaxIdleConns:           cfg.Queue.Postgres.MaxIdleConns,
+			ConnMaxLifetimeSeconds: cfg.Queue.Postgres.ConnMaxLifetimeSeconds,
+		},
 		cfg.FailedQueueRetentionHours,
 	)
 	if err != nil {

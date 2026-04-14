@@ -140,13 +140,19 @@ type Config struct {
 	// Queue configuration
 	Queue struct {
 		Dir     string `toml:"dir"`
-		Backend string `toml:"backend"` // file|sqlite
+		Backend string `toml:"backend"` // file|sqlite|postgres
 		SQLite  struct {
 			Path          string `toml:"path"`
 			BusyTimeoutMS int    `toml:"busy_timeout_ms"`
 			JournalMode   string `toml:"journal_mode"`
 			Synchronous   string `toml:"synchronous"`
 		} `toml:"sqlite"`
+		Postgres struct {
+			DSN                    string `toml:"dsn"`
+			MaxOpenConns           int    `toml:"max_open_conns"`
+			MaxIdleConns           int    `toml:"max_idle_conns"`
+			ConnMaxLifetimeSeconds int    `toml:"conn_max_lifetime_seconds"`
+		} `toml:"postgres"`
 	} `toml:"queue"`
 
 	// Logging configuration
@@ -258,6 +264,9 @@ func DefaultConfig() *Config {
 	cfg.Queue.SQLite.BusyTimeoutMS = 5000
 	cfg.Queue.SQLite.JournalMode = "WAL"
 	cfg.Queue.SQLite.Synchronous = "NORMAL"
+	cfg.Queue.Postgres.MaxOpenConns = 20
+	cfg.Queue.Postgres.MaxIdleConns = 10
+	cfg.Queue.Postgres.ConnMaxLifetimeSeconds = 1800
 
 	// Set default API/Web configuration
 	cfg.API.Enabled = true
@@ -512,6 +521,21 @@ func (c *Config) SaveConfig(configPath string) error {
 		}
 		if c.Queue.SQLite.Synchronous != "" {
 			fmt.Fprintf(&b, "synchronous = %q\n", c.Queue.SQLite.Synchronous)
+		}
+		b.WriteString("\n")
+	}
+
+	if c.Queue.Postgres.DSN != "" {
+		b.WriteString("[queue.postgres]\n")
+		fmt.Fprintf(&b, "dsn = %q\n", c.Queue.Postgres.DSN)
+		if c.Queue.Postgres.MaxOpenConns > 0 {
+			fmt.Fprintf(&b, "max_open_conns = %d\n", c.Queue.Postgres.MaxOpenConns)
+		}
+		if c.Queue.Postgres.MaxIdleConns > 0 {
+			fmt.Fprintf(&b, "max_idle_conns = %d\n", c.Queue.Postgres.MaxIdleConns)
+		}
+		if c.Queue.Postgres.ConnMaxLifetimeSeconds > 0 {
+			fmt.Fprintf(&b, "conn_max_lifetime_seconds = %d\n", c.Queue.Postgres.ConnMaxLifetimeSeconds)
 		}
 		b.WriteString("\n")
 	}
@@ -827,8 +851,8 @@ func (c *Config) validateQueue(result *ValidationResult, sv *SecurityValidator) 
 	}
 	c.Queue.Backend = backend
 
-	if !contains([]string{"file", "sqlite"}, backend) {
-		result.AddError("queue.backend", c.Queue.Backend, "backend must be one of: file, sqlite")
+	if !contains([]string{"file", "sqlite", "postgres"}, backend) {
+		result.AddError("queue.backend", c.Queue.Backend, "backend must be one of: file, sqlite, postgres")
 	}
 
 	if c.Queue.Dir == "" {
@@ -858,6 +882,22 @@ func (c *Config) validateQueue(result *ValidationResult, sv *SecurityValidator) 
 	// Check if directory is writable
 	if !isWritableDir(c.Queue.Dir) {
 		result.AddError("queue.dir", c.Queue.Dir, "queue directory is not writable")
+	}
+
+	if backend == "postgres" {
+		if strings.TrimSpace(c.Queue.Postgres.DSN) == "" {
+			result.AddError("queue.postgres.dsn", c.Queue.Postgres.DSN, "postgres dsn is required when backend=postgres")
+		}
+		if c.Queue.Postgres.MaxOpenConns < 0 {
+			result.AddError("queue.postgres.max_open_conns", c.Queue.Postgres.MaxOpenConns, "max_open_conns must be >= 0")
+		}
+		if c.Queue.Postgres.MaxIdleConns < 0 {
+			result.AddError("queue.postgres.max_idle_conns", c.Queue.Postgres.MaxIdleConns, "max_idle_conns must be >= 0")
+		}
+		if c.Queue.Postgres.ConnMaxLifetimeSeconds < 0 {
+			result.AddError("queue.postgres.conn_max_lifetime_seconds", c.Queue.Postgres.ConnMaxLifetimeSeconds, "conn_max_lifetime_seconds must be >= 0")
+		}
+		return
 	}
 
 	if backend != "sqlite" {

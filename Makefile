@@ -1,4 +1,12 @@
-.PHONY: all help build clean clean-certs certs install install-dev install-dev-full uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status rebuild rebuild-dev docker-build docker-run docker-stop update lint lint-fix fmt
+.PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres configure-queue-backend uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status rebuild rebuild-dev docker-build docker-run docker-stop update lint lint-fix fmt
+
+QUEUE_BACKEND ?= sqlite
+QUEUE_POSTGRES_DSN ?= postgres://elemta:elemta@elemta-postgres:5432/elemta_queue?sslmode=disable
+POSTGRES_CONTAINER_NAME ?= elemta-postgres
+POSTGRES_USER ?= elemta
+POSTGRES_PASSWORD ?= elemta
+POSTGRES_DB ?= elemta_queue
+POSTGRES_VOLUME ?= elemta_pg
 
 # Default target
 all: build
@@ -20,8 +28,10 @@ help:
 	@echo ""
 	@echo "🚀 Setup & Installation:"
 	@echo "  install          - Production setup (interactive, creates .env)"
-	@echo "  install-dev      - Minimal dev setup (Elemta + Web + Dovecot + LDAP + Valkey)"
-	@echo "  install-dev-full - Full dev setup (all services incl. ClamAV, Rspamd, Roundcube)"
+	@echo "  install-dev          - Minimal dev setup (Elemta + Web + Dovecot + LDAP + Valkey)"
+	@echo "  install-dev-full     - Full dev setup (all services incl. ClamAV, Rspamd, Roundcube)"
+	@echo "  install-dev-postgres - One-command postgres queue dev setup (includes DB container)"
+	@echo "  configure-queue-backend - Update config/elemta.toml queue backend (QUEUE_BACKEND=file|sqlite|postgres)"
 	@echo ""
 	@echo "🔧 Build & Test:"
 	@echo "  build             - Build all Elemta binaries (server, queue, cli)"
@@ -36,8 +46,9 @@ help:
 	@echo "  fmt               - Format code with gofmt and goimports"
 	@echo ""
 	@echo "⚡ Quick Start:"
-	@echo "  Minimal Dev:  make install-dev      # Core services only (fast)"
-	@echo "  Full Dev:     make install-dev-full  # All services (ClamAV, Rspamd, Roundcube)"
+	@echo "  Minimal Dev:  make install-dev QUEUE_BACKEND=sqlite"
+	@echo "  Full Dev:     make install-dev-full QUEUE_BACKEND=file"
+	@echo "  Postgres:     make install-dev-postgres"
 	@echo "  Production:   make install          # Interactive production setup"
 	@echo "  Start:        make up               # Start services"
 	@echo "  Stop:         make down             # Stop services"
@@ -206,6 +217,18 @@ setup-kibana:
 	@echo "🔧 Setting up Kibana data views..."
 	./scripts/setup-kibana-data-views.sh
 
+configure-queue-backend:
+	@echo "⚙️  Configuring queue backend: $(QUEUE_BACKEND)"
+	@if [ "$(QUEUE_BACKEND)" != "file" ] && [ "$(QUEUE_BACKEND)" != "sqlite" ] && [ "$(QUEUE_BACKEND)" != "postgres" ]; then \
+		echo "❌ Invalid QUEUE_BACKEND='$(QUEUE_BACKEND)'. Use file|sqlite|postgres"; \
+		exit 1; \
+	fi
+	@python3 ./scripts/configure_queue_backend.py "$(QUEUE_BACKEND)" "$(QUEUE_POSTGRES_DSN)" "config/elemta.toml"
+	@if [ "$(QUEUE_BACKEND)" = "postgres" ]; then \
+		echo "ℹ️  Postgres backend selected. Ensure DSN is reachable:"; \
+		echo "   $(QUEUE_POSTGRES_DSN)"; \
+	fi
+
 install-dev: docker-build
 	@echo "🚀 Elemta Development Setup (Minimal)"
 	@echo "======================================"
@@ -239,12 +262,15 @@ install-dev: docker-build
 		printf "AUTH_REQUIRED=false\n" >> .env; \
 		printf "LDAP_HOST=elemta-ldap\n" >> .env; \
 		printf "DELIVERY_HOST=elemta-dovecot\n" >> .env; \
+		printf "QUEUE_BACKEND=$(QUEUE_BACKEND)\n" >> .env; \
+		printf "QUEUE_POSTGRES_DSN=$(QUEUE_POSTGRES_DSN)\n" >> .env; \
 		printf "COMPOSE_PROJECT_NAME=elemta\n" >> .env; \
 		printf "COMPOSE_FILE=deployments/compose/docker-compose.yml\n" >> .env; \
 		echo "✅ .env created"; \
 	else \
 		echo "ℹ️  Using existing .env"; \
 	fi
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
 	@echo "🚀 Starting services..."
 	@docker compose -f $(COMPOSE_FILE) up -d --no-deps elemta elemta-web elemta-dovecot elemta-ldap valkey
 	@echo "⏳ Waiting for services to become healthy..."
@@ -263,6 +289,46 @@ install-dev: docker-build
 	@echo "   make status      # Check service health"
 	@echo "   make logs        # View logs"
 	@echo "   make test-load   # Run load tests"
+
+install-dev-postgres:
+	@echo "🐘 Elemta Development Setup (Postgres Queue)"
+	@echo "============================================"
+	@$(MAKE) install-dev QUEUE_BACKEND=sqlite
+	@NET=$$(docker inspect -f '{{range $$k,$$v := .NetworkSettings.Networks}}{{println $$k}}{{end}}' elemta-web 2>/dev/null | head -n1); \
+	if [ -z "$$NET" ]; then \
+		echo "❌ Could not detect Docker network from elemta-web"; \
+		exit 1; \
+	fi; \
+	echo "🔎 Using network: $$NET"; \
+	if docker ps -a --format '{{.Names}}' | grep -q '^$(POSTGRES_CONTAINER_NAME)$$'; then \
+		echo "♻️  Recreating $(POSTGRES_CONTAINER_NAME)"; \
+		docker rm -f $(POSTGRES_CONTAINER_NAME) >/dev/null 2>&1 || true; \
+	fi; \
+	docker run -d --name $(POSTGRES_CONTAINER_NAME) \
+		--network "$$NET" \
+		-e POSTGRES_USER=$(POSTGRES_USER) \
+		-e POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
+		-e POSTGRES_DB=$(POSTGRES_DB) \
+		-v $(POSTGRES_VOLUME):/var/lib/postgresql/data \
+		postgres:16 >/dev/null; \
+	echo "✅ Started $(POSTGRES_CONTAINER_NAME)"; \
+	echo "⏳ Waiting for Postgres readiness..."; \
+	for i in $$(seq 1 30); do \
+		if docker exec $(POSTGRES_CONTAINER_NAME) pg_isready -U $(POSTGRES_USER) -d $(POSTGRES_DB) >/dev/null 2>&1; then \
+			echo "✅ Postgres is ready"; \
+			break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			echo "❌ Postgres did not become ready in time"; \
+			exit 1; \
+		fi; \
+		sleep 1; \
+	done
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@docker compose -f $(COMPOSE_FILE) restart elemta elemta-web
+	@echo "✅ Postgres queue dev setup complete"
+	@echo "   DSN: $(QUEUE_POSTGRES_DSN)"
+	@echo "   Verify: docker exec -it $(POSTGRES_CONTAINER_NAME) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
 
 install-dev-full: docker-build
 	@echo "🚀 Elemta Development Setup (Full)"
@@ -297,12 +363,15 @@ install-dev-full: docker-build
 		printf "AUTH_REQUIRED=false\n" >> .env; \
 		printf "LDAP_HOST=elemta-ldap\n" >> .env; \
 		printf "DELIVERY_HOST=elemta-dovecot\n" >> .env; \
+		printf "QUEUE_BACKEND=$(QUEUE_BACKEND)\n" >> .env; \
+		printf "QUEUE_POSTGRES_DSN=$(QUEUE_POSTGRES_DSN)\n" >> .env; \
 		printf "COMPOSE_PROJECT_NAME=elemta\n" >> .env; \
 		printf "COMPOSE_FILE=deployments/compose/docker-compose.yml\n" >> .env; \
 		echo "✅ .env created"; \
 	else \
 		echo "ℹ️  Using existing .env"; \
 	fi
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
 	@echo "🚀 Starting services..."
 	@docker compose -f deployments/compose/docker-compose.yml up -d
 	@echo "⏳ Initializing LDAP..."
