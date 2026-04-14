@@ -40,13 +40,19 @@ local_domains = ["example.com", "localhost"]
 
 [queue]
 dir = "/var/spool/elemta/queue"
-backend = "file" # file | sqlite
+backend = "file" # file | sqlite | postgres
 
 [queue.sqlite]
 path = "/var/spool/elemta/queue/queue.db"
 busy_timeout_ms = 5000
 journal_mode = "WAL"
 synchronous = "NORMAL"
+
+[queue.postgres]
+dsn = "postgres://elemta:secret@127.0.0.1:5432/elemta_queue?sslmode=disable"
+max_open_conns = 20
+max_idle_conns = 10
+conn_max_lifetime_seconds = 1800
 
 [auth]
 enabled = false
@@ -102,8 +108,9 @@ file = "/var/log/elemta/elemta.log"
 ### Queue backend
 
 - `[queue].dir`
-- `[queue].backend` (`file` or `sqlite`)
+- `[queue].backend` (`file`, `sqlite`, or `postgres`)
 - `[queue.sqlite]` settings
+- `[queue.postgres]` settings (`dsn`, pool sizing)
 
 ### API/web
 

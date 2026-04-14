@@ -27,12 +27,17 @@ queue_dir = "/app/queue"
 [queue]
 dir = "/app/queue"
 backend = "sqlite"
-
 [queue.sqlite]
 path = "/app/queue/queue.db"
 busy_timeout_ms = 5000
 journal_mode = "WAL"
 synchronous = "NORMAL"
+
+[queue.postgres]
+dsn = "postgres://elemta:elemta@127.0.0.1:5432/elemta_queue?sslmode=disable"
+max_open_conns = 20
+max_idle_conns = 10
+conn_max_lifetime_seconds = 1800
 
 [logging]
 type = "elastic"

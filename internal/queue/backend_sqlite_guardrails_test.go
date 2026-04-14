@@ -21,6 +21,7 @@ func newSQLiteManagerForTest(t *testing.T) *Manager {
 			JournalMode:   "WAL",
 			Synchronous:   "NORMAL",
 		},
+		PostgresConfig{},
 		24,
 	)
 	if err != nil {

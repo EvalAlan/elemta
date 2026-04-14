@@ -37,6 +37,10 @@ type MainConfig struct {
 	QueueSQLiteBusyTimeoutMS  int         `json:"queue_sqlite_busy_timeout_ms"`
 	QueueSQLiteJournalMode    string      `json:"queue_sqlite_journal_mode"`
 	QueueSQLiteSynchronous    string      `json:"queue_sqlite_synchronous"`
+	QueuePostgresDSN          string      `json:"queue_postgres_dsn"`
+	QueuePostgresMaxOpenConns int         `json:"queue_postgres_max_open_conns"`
+	QueuePostgresMaxIdleConns int         `json:"queue_postgres_max_idle_conns"`
+	QueuePostgresConnMaxLifeS int         `json:"queue_postgres_conn_max_lifetime_seconds"`
 	MaxSize                   int64       `json:"max_size"`
 	MaxWorkers                int         `json:"max_workers"`
 	MaxRetries                int         `json:"max_retries"`
@@ -177,6 +181,7 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 func newQueueManagerForAPI(mainConfig *MainConfig, queueDir string, failedQueueRetentionHours int) (*queue.Manager, error) {
 	backend := "file"
 	sqliteCfg := queue.SQLiteConfig{BusyTimeoutMS: 5000, JournalMode: "WAL", Synchronous: "NORMAL"}
+	postgresCfg := queue.PostgresConfig{MaxOpenConns: 20, MaxIdleConns: 10, ConnMaxLifetimeSeconds: 1800}
 
 	if mainConfig != nil {
 		if b := strings.TrimSpace(strings.ToLower(mainConfig.QueueBackend)); b != "" {
@@ -192,9 +197,19 @@ func newQueueManagerForAPI(mainConfig *MainConfig, queueDir string, failedQueueR
 		if v := strings.TrimSpace(mainConfig.QueueSQLiteSynchronous); v != "" {
 			sqliteCfg.Synchronous = v
 		}
+		postgresCfg.DSN = strings.TrimSpace(mainConfig.QueuePostgresDSN)
+		if mainConfig.QueuePostgresMaxOpenConns > 0 {
+			postgresCfg.MaxOpenConns = mainConfig.QueuePostgresMaxOpenConns
+		}
+		if mainConfig.QueuePostgresMaxIdleConns > 0 {
+			postgresCfg.MaxIdleConns = mainConfig.QueuePostgresMaxIdleConns
+		}
+		if mainConfig.QueuePostgresConnMaxLifeS > 0 {
+			postgresCfg.ConnMaxLifetimeSeconds = mainConfig.QueuePostgresConnMaxLifeS
+		}
 	}
 
-	return queue.NewManagerFromBackend(queueDir, backend, sqliteCfg, failedQueueRetentionHours)
+	return queue.NewManagerFromBackend(queueDir, backend, sqliteCfg, postgresCfg, failedQueueRetentionHours)
 }
 
 // valkeyMetricsAdapter adapts ValkeyStore to MetricsStore interface
