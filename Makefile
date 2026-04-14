@@ -1,7 +1,12 @@
-.PHONY: all help build clean clean-certs certs install install-dev install-dev-full configure-queue-backend uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status rebuild rebuild-dev docker-build docker-run docker-stop update lint lint-fix fmt
+.PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres configure-queue-backend uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status rebuild rebuild-dev docker-build docker-run docker-stop update lint lint-fix fmt
 
 QUEUE_BACKEND ?= sqlite
-QUEUE_POSTGRES_DSN ?= postgres://elemta:elemta@127.0.0.1:5432/elemta_queue?sslmode=disable
+QUEUE_POSTGRES_DSN ?= postgres://elemta:elemta@elemta-postgres:5432/elemta_queue?sslmode=disable
+POSTGRES_CONTAINER_NAME ?= elemta-postgres
+POSTGRES_USER ?= elemta
+POSTGRES_PASSWORD ?= elemta
+POSTGRES_DB ?= elemta_queue
+POSTGRES_VOLUME ?= elemta_pg
 
 # Default target
 all: build
@@ -23,8 +28,9 @@ help:
 	@echo ""
 	@echo "🚀 Setup & Installation:"
 	@echo "  install          - Production setup (interactive, creates .env)"
-	@echo "  install-dev      - Minimal dev setup (Elemta + Web + Dovecot + LDAP + Valkey)"
-	@echo "  install-dev-full - Full dev setup (all services incl. ClamAV, Rspamd, Roundcube)"
+	@echo "  install-dev          - Minimal dev setup (Elemta + Web + Dovecot + LDAP + Valkey)"
+	@echo "  install-dev-full     - Full dev setup (all services incl. ClamAV, Rspamd, Roundcube)"
+	@echo "  install-dev-postgres - One-command postgres queue dev setup (includes DB container)"
 	@echo "  configure-queue-backend - Update config/elemta.toml queue backend (QUEUE_BACKEND=file|sqlite|postgres)"
 	@echo ""
 	@echo "🔧 Build & Test:"
@@ -42,7 +48,7 @@ help:
 	@echo "⚡ Quick Start:"
 	@echo "  Minimal Dev:  make install-dev QUEUE_BACKEND=sqlite"
 	@echo "  Full Dev:     make install-dev-full QUEUE_BACKEND=file"
-	@echo "  Postgres:     make install-dev QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN='postgres://user:pass@host:5432/db?sslmode=disable'"
+	@echo "  Postgres:     make install-dev-postgres"
 	@echo "  Production:   make install          # Interactive production setup"
 	@echo "  Start:        make up               # Start services"
 	@echo "  Stop:         make down             # Stop services"
@@ -283,6 +289,34 @@ install-dev: docker-build
 	@echo "   make status      # Check service health"
 	@echo "   make logs        # View logs"
 	@echo "   make test-load   # Run load tests"
+
+install-dev-postgres:
+	@echo "🐘 Elemta Development Setup (Postgres Queue)"
+	@echo "============================================"
+	@$(MAKE) install-dev QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@NET=$$(docker inspect -f '{{range $$k,$$v := .NetworkSettings.Networks}}{{println $$k}}{{end}}' elemta-web 2>/dev/null | head -n1); \
+	if [ -z "$$NET" ]; then \
+		echo "❌ Could not detect Docker network from elemta-web"; \
+		exit 1; \
+	fi; \
+	echo "🔎 Using network: $$NET"; \
+	if docker ps -a --format '{{.Names}}' | grep -q '^$(POSTGRES_CONTAINER_NAME)$$'; then \
+		echo "♻️  Recreating $(POSTGRES_CONTAINER_NAME)"; \
+		docker rm -f $(POSTGRES_CONTAINER_NAME) >/dev/null 2>&1 || true; \
+	fi; \
+	docker run -d --name $(POSTGRES_CONTAINER_NAME) \
+		--network "$$NET" \
+		-e POSTGRES_USER=$(POSTGRES_USER) \
+		-e POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
+		-e POSTGRES_DB=$(POSTGRES_DB) \
+		-v $(POSTGRES_VOLUME):/var/lib/postgresql/data \
+		postgres:16 >/dev/null; \
+	echo "✅ Started $(POSTGRES_CONTAINER_NAME)"
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@docker compose -f $(COMPOSE_FILE) restart elemta elemta-web
+	@echo "✅ Postgres queue dev setup complete"
+	@echo "   DSN: $(QUEUE_POSTGRES_DSN)"
+	@echo "   Verify: docker exec -it $(POSTGRES_CONTAINER_NAME) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
 
 install-dev-full: docker-build
 	@echo "🚀 Elemta Development Setup (Full)"
