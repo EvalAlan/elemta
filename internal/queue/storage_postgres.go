@@ -69,11 +69,18 @@ CREATE TABLE IF NOT EXISTS queue_messages (
   queue_type TEXT NOT NULL,
   metadata JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL
+  updated_at TIMESTAMPTZ NOT NULL,
+  claimed_by TEXT,
+  claim_until TIMESTAMPTZ
 );
+
+ALTER TABLE queue_messages ADD COLUMN IF NOT EXISTS claimed_by TEXT;
+ALTER TABLE queue_messages ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_queue_messages_queue_type ON queue_messages(queue_type);
 CREATE INDEX IF NOT EXISTS idx_queue_messages_created_at ON queue_messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_queue_messages_claim_until ON queue_messages(claim_until);
+CREATE INDEX IF NOT EXISTS idx_queue_messages_queue_claim ON queue_messages(queue_type, claim_until);
 
 CREATE TABLE IF NOT EXISTS queue_contents (
   id TEXT PRIMARY KEY REFERENCES queue_messages(id) ON DELETE CASCADE,
@@ -238,7 +245,12 @@ func (p *PostgresStorageBackend) DeleteAll(queueType QueueType) error {
 }
 
 func (p *PostgresStorageBackend) Move(id string, fromQueue, toQueue QueueType) error {
-	res, err := p.db.Exec(`UPDATE queue_messages SET queue_type = $1, updated_at = $2 WHERE id = $3 AND queue_type = $4`, string(toQueue), time.Now().UTC(), id, string(fromQueue))
+	res, err := p.db.Exec(
+		`UPDATE queue_messages
+		 SET queue_type = $1, updated_at = $2, claimed_by = NULL, claim_until = NULL
+		 WHERE id = $3 AND queue_type = $4`,
+		string(toQueue), time.Now().UTC(), id, string(fromQueue),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to move message: %w", err)
 	}
@@ -248,6 +260,80 @@ func (p *PostgresStorageBackend) Move(id string, fromQueue, toQueue QueueType) e
 	}
 	if affected == 0 {
 		return fmt.Errorf("message not found in queue %s: %s", fromQueue, id)
+	}
+	return nil
+}
+
+// ClaimMessages atomically claims up to limit messages from a queue for one worker.
+func (p *PostgresStorageBackend) ClaimMessages(queueType QueueType, limit int, workerID string, leaseUntil time.Time) ([]Message, error) {
+	if limit <= 0 {
+		return []Message{}, nil
+	}
+	if strings.TrimSpace(workerID) == "" {
+		return nil, fmt.Errorf("worker id is required")
+	}
+
+	rows, err := p.db.Query(
+		`WITH claimed AS (
+			SELECT id
+			FROM queue_messages
+			WHERE queue_type = $1
+			  AND (claim_until IS NULL OR claim_until < NOW())
+			ORDER BY created_at ASC
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE queue_messages q
+		SET claimed_by = $3, claim_until = $4, updated_at = NOW()
+		FROM claimed
+		WHERE q.id = claimed.id
+		RETURNING q.id, q.metadata`,
+		string(queueType), limit, workerID, leaseUntil.UTC(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to claim messages: %w", err)
+	}
+	defer rows.Close()
+
+	messages := make([]Message, 0, limit)
+	for rows.Next() {
+		var id string
+		var metadata []byte
+		if err := rows.Scan(&id, &metadata); err != nil {
+			return nil, fmt.Errorf("failed scanning claimed row: %w", err)
+		}
+
+		var msg Message
+		if err := json.Unmarshal(metadata, &msg); err != nil {
+			return nil, fmt.Errorf("failed decoding claimed message metadata: %w", err)
+		}
+		msg.ID = id
+		msg.QueueType = queueType
+		messages = append(messages, msg)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating claimed messages: %w", err)
+	}
+
+	return messages, nil
+}
+
+// ReleaseMessageClaim clears an active claim on a message for the given worker.
+func (p *PostgresStorageBackend) ReleaseMessageClaim(id, workerID string) error {
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("message id is required")
+	}
+
+	query := `UPDATE queue_messages SET claimed_by = NULL, claim_until = NULL, updated_at = NOW() WHERE id = $1`
+	args := []any{id}
+	if strings.TrimSpace(workerID) != "" {
+		query += ` AND claimed_by = $2`
+		args = append(args, workerID)
+	}
+
+	if _, err := p.db.Exec(query, args...); err != nil {
+		return fmt.Errorf("failed to release message claim: %w", err)
 	}
 	return nil
 }

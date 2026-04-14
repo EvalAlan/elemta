@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/busybox42/elemta/internal/logging"
+	"github.com/google/uuid"
 )
 
 // ProcessorConfig holds configuration for the queue processor
@@ -58,6 +59,12 @@ type MetricsRecorder interface {
 	AddRecentError(ctx context.Context, messageID, recipient, errorMsg string) error
 }
 
+// ClaimingStorageBackend defines optional atomic-claim semantics for distributed queue workers.
+type ClaimingStorageBackend interface {
+	ClaimMessages(queueType QueueType, limit int, workerID string, leaseUntil time.Time) ([]Message, error)
+	ReleaseMessageClaim(id, workerID string) error
+}
+
 // Processor orchestrates queue processing and delivery
 type Processor struct {
 	manager   *Manager
@@ -82,6 +89,9 @@ type Processor struct {
 
 	// Message lifecycle logger
 	msgLogger *logging.MessageLogger
+
+	// Distributed claim identity for backends that support atomic claims.
+	workerID string
 }
 
 // NewProcessor creates a new queue processor
@@ -99,6 +109,7 @@ func NewProcessor(manager *Manager, config ProcessorConfig, handler DeliveryHand
 		workerSem:          make(chan struct{}, config.MaxConcurrent),
 		processingMessages: make(map[string]bool),
 		msgLogger:          logging.NewMessageLogger(baseLogger),
+		workerID:           uuid.NewString(),
 	}
 }
 
@@ -227,9 +238,26 @@ func (p *Processor) reportMetrics() {
 
 // processQueue processes messages in a specific queue
 func (p *Processor) processQueue(queueType QueueType) error {
-	messages, err := p.manager.ListMessages(queueType)
-	if err != nil {
-		return fmt.Errorf("failed to list messages: %w", err)
+	var (
+		messages []Message
+		err      error
+	)
+
+	if claimer, ok := p.manager.storageBackend.(ClaimingStorageBackend); ok {
+		availableWorkers := cap(p.workerSem) - len(p.workerSem)
+		if availableWorkers <= 0 {
+			return nil
+		}
+		leaseUntil := time.Now().Add(15 * time.Minute)
+		messages, err = claimer.ClaimMessages(queueType, availableWorkers, p.workerID, leaseUntil)
+		if err != nil {
+			return fmt.Errorf("failed to claim messages: %w", err)
+		}
+	} else {
+		messages, err = p.manager.ListMessages(queueType)
+		if err != nil {
+			return fmt.Errorf("failed to list messages: %w", err)
+		}
 	}
 
 	// Process messages with concurrency control
@@ -265,6 +293,12 @@ func (p *Processor) processMessage(msg Message) {
 		p.manager.mutex.Lock()
 		delete(p.processingMessages, msg.ID)
 		p.manager.mutex.Unlock()
+
+		if claimer, ok := p.manager.storageBackend.(ClaimingStorageBackend); ok {
+			if err := claimer.ReleaseMessageClaim(msg.ID, p.workerID); err != nil {
+				p.logger.Debug("Failed to release message claim", "message_id", msg.ID, "error", err)
+			}
+		}
 
 		p.wg.Done()
 	}()
