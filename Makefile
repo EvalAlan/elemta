@@ -293,7 +293,7 @@ install-dev: docker-build
 install-dev-postgres:
 	@echo "🐘 Elemta Development Setup (Postgres Queue)"
 	@echo "============================================"
-	@$(MAKE) install-dev QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) install-dev QUEUE_BACKEND=sqlite
 	@NET=$$(docker inspect -f '{{range $$k,$$v := .NetworkSettings.Networks}}{{println $$k}}{{end}}' elemta-web 2>/dev/null | head -n1); \
 	if [ -z "$$NET" ]; then \
 		echo "❌ Could not detect Docker network from elemta-web"; \
@@ -311,7 +311,19 @@ install-dev-postgres:
 		-e POSTGRES_DB=$(POSTGRES_DB) \
 		-v $(POSTGRES_VOLUME):/var/lib/postgresql/data \
 		postgres:16 >/dev/null; \
-	echo "✅ Started $(POSTGRES_CONTAINER_NAME)"
+	echo "✅ Started $(POSTGRES_CONTAINER_NAME)"; \
+	echo "⏳ Waiting for Postgres readiness..."; \
+	for i in $$(seq 1 30); do \
+		if docker exec $(POSTGRES_CONTAINER_NAME) pg_isready -U $(POSTGRES_USER) -d $(POSTGRES_DB) >/dev/null 2>&1; then \
+			echo "✅ Postgres is ready"; \
+			break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			echo "❌ Postgres did not become ready in time"; \
+			exit 1; \
+		fi; \
+		sleep 1; \
+	done
 	@$(MAKE) configure-queue-backend QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
 	@docker compose -f $(COMPOSE_FILE) restart elemta elemta-web
 	@echo "✅ Postgres queue dev setup complete"
