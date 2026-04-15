@@ -1,5 +1,14 @@
-.PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres configure-queue-backend uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status rebuild rebuild-dev docker-build docker-run docker-stop update lint lint-fix fmt
+.PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres \
+	configure-queue-backend ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
+	uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
+	rebuild rebuild-dev docker docker-build docker-run docker-stop docker-setup docker-down update lint lint-fix fmt
 
+# Core paths/config
+COMPOSE_FILE ?= deployments/compose/docker-compose.yml
+DEV_ENV_FILE ?= .env
+DEV_MIN_SERVICES ?= elemta elemta-web elemta-dovecot elemta-ldap valkey
+
+# Queue backend config
 QUEUE_BACKEND ?= sqlite
 QUEUE_POSTGRES_DSN ?= postgres://elemta:elemta@elemta-postgres:5432/elemta_queue?sslmode=disable
 POSTGRES_CONTAINER_NAME ?= elemta-postgres
@@ -27,10 +36,11 @@ help:
 	@echo "  status         - Show service status"
 	@echo ""
 	@echo "🚀 Setup & Installation:"
-	@echo "  install          - Production setup (interactive, creates .env)"
-	@echo "  install-dev          - Minimal dev setup (Elemta + Web + Dovecot + LDAP + Valkey)"
-	@echo "  install-dev-full     - Full dev setup (all services incl. ClamAV, Rspamd, Roundcube)"
-	@echo "  install-dev-postgres - One-command postgres queue dev setup (includes DB container)"
+	@echo "  install               - Production setup (interactive, creates .env)"
+	@echo "  install-dev           - Minimal dev setup (Elemta + Web + Dovecot + LDAP + Valkey)"
+	@echo "  install-dev-full      - Full dev setup (all services incl. ClamAV, Rspamd, Roundcube)"
+	@echo "  install-dev-postgres  - One-command postgres queue dev setup (includes DB container)"
+	@echo "  refresh-dev-env       - Refresh backend/compose keys in .env"
 	@echo "  configure-queue-backend - Update config/elemta.toml queue backend (QUEUE_BACKEND=file|sqlite|postgres)"
 	@echo ""
 	@echo "🔧 Build & Test:"
@@ -187,19 +197,11 @@ fmt:
 	fi
 
 # Docker targets
-docker: docker-build docker-run
+docker: docker-build up
 
 docker-build:
 	@echo "Building Docker image..."
-	docker compose -f deployments/compose/docker-compose.yml build
-
-docker-run:
-	@echo "Starting Docker containers..."
-	API_ENABLED=true docker compose up -d
-
-docker-stop:
-	@echo "Stopping Docker containers..."
-	docker compose down
+	docker compose -f $(COMPOSE_FILE) build
 
 # Advanced/internal targets (not shown in help)
 
@@ -229,66 +231,81 @@ configure-queue-backend:
 		echo "   $(QUEUE_POSTGRES_DSN)"; \
 	fi
 
-install-dev: docker-build
-	@echo "🚀 Elemta Development Setup (Minimal)"
-	@echo "======================================"
-	@if [ ! -f config/test.crt ] || [ ! -f config/test.key ]; then \
-		if ! command -v openssl >/dev/null 2>&1; then \
-			echo "❌ Error: openssl not found. Install it or run 'make certs' separately."; \
+check-tools:
+	@for tool in docker python3 openssl; do \
+		if ! command -v $$tool >/dev/null 2>&1; then \
+			echo "❌ Missing required tool: $$tool"; \
 			exit 1; \
 		fi; \
-		echo "🔐 Generating self-signed TLS certificates..."; \
-		openssl req -x509 -newkey rsa:4096 -nodes \
-			-keyout config/test.key \
-			-out config/test.crt \
-			-days 365 \
-			-subj '/CN=mail.dev.evil-admin.com/O=Elemta Dev/C=US' \
-			-addext 'subjectAltName=DNS:mail.dev.evil-admin.com,DNS:*.dev.evil-admin.com' 2>/dev/null; \
-		chmod 600 config/test.key; \
-		chmod 644 config/test.crt; \
-		echo "✅ TLS certificates generated"; \
+	done
+
+ensure-dev-certs:
+	@if [ ! -f config/test.crt ] || [ ! -f config/test.key ]; then \
+		echo "🔐 Missing test certs, generating..."; \
+		$(MAKE) certs; \
 	else \
 		echo "ℹ️  Using existing TLS certificates"; \
 	fi
-	@if [ ! -f .env ]; then \
-		echo "📝 Creating .env for development..."; \
-		printf "# Elemta Development Environment - Auto-generated\n" > .env; \
-		printf "ENVIRONMENT=development\n" >> .env; \
-		printf "HOSTNAME=mail.dev.evil-admin.com\n" >> .env; \
-		printf "LISTEN_PORT=2525\n" >> .env; \
-		printf "LOG_LEVEL=DEBUG\n" >> .env; \
-		printf "DEV_MODE=true\n" >> .env; \
-		printf "TEST_MODE=true\n" >> .env; \
-		printf "AUTH_REQUIRED=false\n" >> .env; \
-		printf "LDAP_HOST=elemta-ldap\n" >> .env; \
-		printf "DELIVERY_HOST=elemta-dovecot\n" >> .env; \
-		printf "QUEUE_BACKEND=$(QUEUE_BACKEND)\n" >> .env; \
-		printf "QUEUE_POSTGRES_DSN=$(QUEUE_POSTGRES_DSN)\n" >> .env; \
-		printf "COMPOSE_PROJECT_NAME=elemta\n" >> .env; \
-		printf "COMPOSE_FILE=deployments/compose/docker-compose.yml\n" >> .env; \
-		echo "✅ .env created"; \
+
+ensure-dev-env:
+	@if [ ! -f $(DEV_ENV_FILE) ]; then \
+		echo "📝 Creating $(DEV_ENV_FILE) for development..."; \
+		printf "# Elemta Development Environment - Auto-generated\n" > $(DEV_ENV_FILE); \
+		printf "ENVIRONMENT=development\n" >> $(DEV_ENV_FILE); \
+		printf "HOSTNAME=mail.dev.evil-admin.com\n" >> $(DEV_ENV_FILE); \
+		printf "LISTEN_PORT=2525\n" >> $(DEV_ENV_FILE); \
+		printf "LOG_LEVEL=DEBUG\n" >> $(DEV_ENV_FILE); \
+		printf "DEV_MODE=true\n" >> $(DEV_ENV_FILE); \
+		printf "TEST_MODE=true\n" >> $(DEV_ENV_FILE); \
+		printf "AUTH_REQUIRED=false\n" >> $(DEV_ENV_FILE); \
+		printf "LDAP_HOST=elemta-ldap\n" >> $(DEV_ENV_FILE); \
+		printf "DELIVERY_HOST=elemta-dovecot\n" >> $(DEV_ENV_FILE); \
+		printf "COMPOSE_PROJECT_NAME=elemta\n" >> $(DEV_ENV_FILE); \
+		printf "COMPOSE_FILE=$(COMPOSE_FILE)\n" >> $(DEV_ENV_FILE); \
+		echo "✅ $(DEV_ENV_FILE) created"; \
 	else \
-		echo "ℹ️  Using existing .env"; \
+		echo "ℹ️  Using existing $(DEV_ENV_FILE)"; \
 	fi
-	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
-	@echo "🚀 Starting services..."
-	@docker compose -f $(COMPOSE_FILE) up -d --no-deps elemta elemta-web elemta-dovecot elemta-ldap valkey
-	@echo "⏳ Waiting for services to become healthy..."
-	@sleep 5
-	@echo "⏳ Initializing LDAP..."
-	@./scripts/init-ldap-if-needed.sh || true
+
+refresh-dev-env:
+	@touch $(DEV_ENV_FILE)
+	@for kv in \
+		"QUEUE_BACKEND=$(QUEUE_BACKEND)" \
+		"QUEUE_POSTGRES_DSN=$(QUEUE_POSTGRES_DSN)" \
+		"COMPOSE_FILE=$(COMPOSE_FILE)"; do \
+		key=$${kv%%=*}; \
+		if grep -q "^$${key}=" $(DEV_ENV_FILE); then \
+			sed -i "s|^$${key}=.*|$${kv}|" $(DEV_ENV_FILE); \
+		else \
+			echo "$${kv}" >> $(DEV_ENV_FILE); \
+		fi; \
+	done
+
+print-dev-summary:
 	@echo ""
 	@echo "✅ Development Environment Ready!"
 	@echo "=================================="
 	@echo "   📧 SMTP:      localhost:2525"
 	@echo "   📊 Metrics:   http://localhost:8080/metrics"
 	@echo "   🌐 Web UI:    http://localhost:8025"
-	@echo "   👤 Test User: [EMAIL] / password"
+	@echo "   👤 Test User: user@example.com / password"
 	@echo ""
 	@echo "📋 Next Steps:"
 	@echo "   make status      # Check service health"
 	@echo "   make logs        # View logs"
 	@echo "   make test-load   # Run load tests"
+
+install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+	@echo "🚀 Elemta Development Setup (Minimal)"
+	@echo "======================================"
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@echo "🚀 Starting services..."
+	@docker compose -f $(COMPOSE_FILE) up -d --no-deps $(DEV_MIN_SERVICES)
+	@echo "⏳ Waiting for services to become healthy..."
+	@sleep 5
+	@echo "⏳ Initializing LDAP..."
+	@./scripts/init-ldap-if-needed.sh || true
+	@$(MAKE) print-dev-summary
 
 install-dev-postgres:
 	@echo "🐘 Elemta Development Setup (Postgres Queue)"
@@ -324,76 +341,25 @@ install-dev-postgres:
 		fi; \
 		sleep 1; \
 	done
+	@$(MAKE) refresh-dev-env QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
 	@$(MAKE) configure-queue-backend QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
 	@docker compose -f $(COMPOSE_FILE) restart elemta elemta-web
 	@echo "✅ Postgres queue dev setup complete"
 	@echo "   DSN: $(QUEUE_POSTGRES_DSN)"
 	@echo "   Verify: docker exec -it $(POSTGRES_CONTAINER_NAME) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
 
-install-dev-full: docker-build
+install-dev-full: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Full)"
 	@echo "=================================="
-	@if [ ! -f config/test.crt ] || [ ! -f config/test.key ]; then \
-		if ! command -v openssl >/dev/null 2>&1; then \
-			echo "❌ Error: openssl not found. Install it or run 'make certs' separately."; \
-			exit 1; \
-		fi; \
-		echo "🔐 Generating self-signed TLS certificates..."; \
-		openssl req -x509 -newkey rsa:4096 -nodes \
-			-keyout config/test.key \
-			-out config/test.crt \
-			-days 365 \
-			-subj '/CN=mail.dev.evil-admin.com/O=Elemta Dev/C=US' \
-			-addext 'subjectAltName=DNS:mail.dev.evil-admin.com,DNS:*.dev.evil-admin.com' 2>/dev/null; \
-		chmod 600 config/test.key; \
-		chmod 644 config/test.crt; \
-		echo "✅ TLS certificates generated"; \
-	else \
-		echo "ℹ️  Using existing TLS certificates"; \
-	fi
-	@if [ ! -f .env ]; then \
-		echo "📝 Creating .env for development..."; \
-		printf "# Elemta Development Environment - Auto-generated\n" > .env; \
-		printf "ENVIRONMENT=development\n" >> .env; \
-		printf "HOSTNAME=mail.dev.evil-admin.com\n" >> .env; \
-		printf "LISTEN_PORT=2525\n" >> .env; \
-		printf "LOG_LEVEL=DEBUG\n" >> .env; \
-		printf "DEV_MODE=true\n" >> .env; \
-		printf "TEST_MODE=true\n" >> .env; \
-		printf "AUTH_REQUIRED=false\n" >> .env; \
-		printf "LDAP_HOST=elemta-ldap\n" >> .env; \
-		printf "DELIVERY_HOST=elemta-dovecot\n" >> .env; \
-		printf "QUEUE_BACKEND=$(QUEUE_BACKEND)\n" >> .env; \
-		printf "QUEUE_POSTGRES_DSN=$(QUEUE_POSTGRES_DSN)\n" >> .env; \
-		printf "COMPOSE_PROJECT_NAME=elemta\n" >> .env; \
-		printf "COMPOSE_FILE=deployments/compose/docker-compose.yml\n" >> .env; \
-		echo "✅ .env created"; \
-	else \
-		echo "ℹ️  Using existing .env"; \
-	fi
 	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
 	@echo "🚀 Starting services..."
-	@docker compose -f deployments/compose/docker-compose.yml up -d
+	@docker compose -f $(COMPOSE_FILE) up -d
 	@echo "⏳ Initializing LDAP..."
 	@./scripts/init-ldap-if-needed.sh || true
-	@echo ""
-	@echo "✅ Development Environment Ready!"
-	@echo "=================================="
-	@echo "   📧 SMTP:      localhost:2525"
-	@echo "   📊 Metrics:   http://localhost:8080/metrics"
-	@echo "   🌐 Web UI:    http://localhost:8025"
+	@$(MAKE) print-dev-summary
 	@echo "   ✉️  Roundcube: http://localhost:8026"
-	@echo "   👤 Test User: user@example.com / password"
-	@echo ""
-	@echo "📋 Next Steps:"
-	@echo "   make status      # Check service health"
-	@echo "   make logs        # View logs"
-	@echo "   make test-load   # Run load tests"
 
 docker-setup: install-dev-full
-
-# Define compose file location
-COMPOSE_FILE := deployments/compose/docker-compose.yml
 
 # Modern Docker commands
 up:
