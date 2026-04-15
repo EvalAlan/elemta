@@ -52,12 +52,18 @@ type MemoryStats struct {
 
 // QueueHealth represents queue health information
 type QueueHealth struct {
-	TotalMessages   int  `json:"total_messages"`
-	ActiveCount     int  `json:"active_count"`
-	DeferredCount   int  `json:"deferred_count"`
-	HoldCount       int  `json:"hold_count"`
-	FailedCount     int  `json:"failed_count"`
-	ProcessorActive bool `json:"processor_active"`
+	TotalMessages            int    `json:"total_messages"`
+	ActiveCount              int    `json:"active_count"`
+	DeferredCount            int    `json:"deferred_count"`
+	HoldCount                int    `json:"hold_count"`
+	FailedCount              int    `json:"failed_count"`
+	ProcessorActive          bool   `json:"processor_active"`
+	OldestActiveAgeSeconds   int64  `json:"oldest_active_age_seconds"`
+	OldestDeferredAgeSeconds int64  `json:"oldest_deferred_age_seconds"`
+	OldestFailedAgeSeconds   int64  `json:"oldest_failed_age_seconds"`
+	OldestActiveAge          string `json:"oldest_active_age"`
+	OldestDeferredAge        string `json:"oldest_deferred_age"`
+	OldestFailedAge          string `json:"oldest_failed_age"`
 }
 
 // SMTPHealth represents SMTP server health
@@ -78,6 +84,8 @@ type ThroughputInfo struct {
 	BytesPerMinute    float64 `json:"bytes_per_minute"`
 	TotalProcessed    int64   `json:"total_processed"`
 	TotalBytes        int64   `json:"total_bytes"`
+	TimeoutErrors5m   int64   `json:"timeout_errors_5m"`
+	ConnCloseErrors5m int64   `json:"conn_close_errors_5m"`
 }
 
 // DeliveryStats represents delivery statistics
@@ -179,6 +187,9 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 
 	// Get queue stats
 	queueStats := s.queueMgr.GetStats()
+	oldestActiveAge := s.getOldestQueueMessageAge(queue.Active)
+	oldestDeferredAge := s.getOldestQueueMessageAge(queue.Deferred)
+	oldestFailedAge := s.getOldestQueueMessageAge(queue.Failed)
 
 	// Get metrics from Valkey store for throughput calculation
 	// Fall back to in-process atomic counters when Valkey is unavailable
@@ -196,6 +207,8 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 		totalProcessed = GetMessagesProcessed()
 		totalBytes = GetBytesProcessed()
 	}
+
+	timeoutErrors5m, connCloseErrors5m := s.getRecentConnectionErrorSignals(ctx, 5*time.Minute)
 
 	health := HealthStats{
 		Status:          "healthy",
@@ -223,12 +236,18 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 			SysMB:        float64(memStats.Sys) / 1024 / 1024,
 		},
 		Queue: QueueHealth{
-			TotalMessages:   queueStats.ActiveCount + queueStats.DeferredCount + queueStats.HoldCount + queueStats.FailedCount,
-			ActiveCount:     queueStats.ActiveCount,
-			DeferredCount:   queueStats.DeferredCount,
-			HoldCount:       queueStats.HoldCount,
-			FailedCount:     queueStats.FailedCount,
-			ProcessorActive: true,
+			TotalMessages:            queueStats.ActiveCount + queueStats.DeferredCount + queueStats.HoldCount + queueStats.FailedCount,
+			ActiveCount:              queueStats.ActiveCount,
+			DeferredCount:            queueStats.DeferredCount,
+			HoldCount:                queueStats.HoldCount,
+			FailedCount:              queueStats.FailedCount,
+			ProcessorActive:          true,
+			OldestActiveAgeSeconds:   int64(oldestActiveAge.Seconds()),
+			OldestDeferredAgeSeconds: int64(oldestDeferredAge.Seconds()),
+			OldestFailedAgeSeconds:   int64(oldestFailedAge.Seconds()),
+			OldestActiveAge:          formatOptionalDuration(oldestActiveAge),
+			OldestDeferredAge:        formatOptionalDuration(oldestDeferredAge),
+			OldestFailedAge:          formatOptionalDuration(oldestFailedAge),
 		},
 		SMTP: SMTPHealth{
 			Listening:         true,
@@ -245,6 +264,8 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 			BytesPerMinute:    calculateRate(totalBytes, uptime, time.Minute),
 			TotalProcessed:    totalProcessed,
 			TotalBytes:        totalBytes,
+			TimeoutErrors5m:   timeoutErrors5m,
+			ConnCloseErrors5m: connCloseErrors5m,
 		},
 		ServerVersion:             version.Version,
 		ConfiguredAddr:            s.listenAddr,
@@ -261,6 +282,70 @@ func (s *Server) getFailedQueueRetentionHours() int {
 		return s.queueMgr.GetFailedQueueRetentionHours()
 	}
 	return 0 // Default to immediate deletion
+}
+
+func (s *Server) getOldestQueueMessageAge(queueType queue.QueueType) time.Duration {
+	if s.queueMgr == nil {
+		return 0
+	}
+
+	messages, err := s.queueMgr.ListMessages(queueType)
+	if err != nil || len(messages) == 0 {
+		return 0
+	}
+
+	now := time.Now()
+	oldest := now
+	for _, msg := range messages {
+		ts := msg.CreatedAt
+		if ts.IsZero() {
+			ts = msg.UpdatedAt
+		}
+		if ts.IsZero() {
+			continue
+		}
+		if ts.Before(oldest) {
+			oldest = ts
+		}
+	}
+
+	if oldest.Equal(now) {
+		return 0
+	}
+
+	return now.Sub(oldest)
+}
+
+func (s *Server) getRecentConnectionErrorSignals(ctx context.Context, window time.Duration) (int64, int64) {
+	if s.metricsStore == nil {
+		return 0, 0
+	}
+
+	recentErrors, err := s.metricsStore.GetRecentErrors(ctx, 250)
+	if err != nil || len(recentErrors) == 0 {
+		return 0, 0
+	}
+
+	cutoff := time.Now().Add(-window)
+	var timeoutErrors int64
+	var connCloseErrors int64
+
+	for _, e := range recentErrors {
+		ts, err := time.Parse(time.RFC3339, e["timestamp"])
+		if err != nil || ts.Before(cutoff) {
+			continue
+		}
+
+		errText := strings.ToLower(e["error"])
+		if strings.Contains(errText, "timed out") || strings.Contains(errText, "timeout") {
+			timeoutErrors++
+		}
+		if strings.Contains(errText, "connection unexpectedly closed") || strings.Contains(errText, "connection closed") {
+			connCloseErrors++
+		}
+	}
+
+	return timeoutErrors, connCloseErrors
 }
 
 // handleDeliveryStats returns delivery statistics
@@ -481,6 +566,13 @@ func (s *Server) handleSendTestEmail(w http.ResponseWriter, r *http.Request) {
 // formatDuration formats a duration as human readable
 func formatDuration(d time.Duration) string {
 	return d.Round(time.Second).String()
+}
+
+func formatOptionalDuration(d time.Duration) string {
+	if d <= 0 {
+		return "-"
+	}
+	return formatDuration(d)
 }
 
 // getDailyStats aggregates hourly data into daily statistics

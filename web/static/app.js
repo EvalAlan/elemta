@@ -2038,6 +2038,9 @@ async function refreshHealth() {
         document.getElementById('queue-hold-health').textContent = queue.hold_count || 0;
         document.getElementById('queue-failed-health').textContent = queue.failed_count || 0;
         document.getElementById('queue-processor').textContent = queue.processor_active ? 'Yes' : 'No';
+        document.getElementById('queue-oldest-active').textContent = queue.oldest_active_age || '-';
+        document.getElementById('queue-oldest-deferred').textContent = queue.oldest_deferred_age || '-';
+        document.getElementById('queue-oldest-failed').textContent = queue.oldest_failed_age || '-';
 
         // Throughput
         const throughput = health.throughput || {};
@@ -2050,6 +2053,8 @@ async function refreshHealth() {
         document.getElementById('smtp-connections').textContent = smtp.active_connections || 0;
         document.getElementById('smtp-total-connections').textContent = smtp.total_connections || 0;
         document.getElementById('smtp-tls').textContent = smtp.tls_enabled ? 'Yes' : 'No';
+        document.getElementById('smtp-timeout-5m').textContent = throughput.timeout_errors_5m || 0;
+        document.getElementById('smtp-conn-close-5m').textContent = throughput.conn_close_errors_5m || 0;
 
     } catch (error) {
         console.error('Error loading health:', error);
