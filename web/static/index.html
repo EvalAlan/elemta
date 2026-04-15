@@ -451,6 +451,9 @@
                                 <dt class="failed-health-stat">Oldest Failed Age</dt>
                                 <dd id="queue-oldest-failed" class="failed-health-stat">-</dd>
                             </dl>
+                            <div style="margin-top: 0.75rem;">
+                                <button class="btn btn-secondary btn-sm" onclick="drilldownQueueRiskLogs()">View Queue Risk Logs</button>
+                            </div>
                         </div>
                     </div>
                     <div class="card">
@@ -476,6 +479,10 @@
                                 <dt>Conn Close Errors (5m)</dt>
                                 <dd id="smtp-conn-close-5m">-</dd>
                             </dl>
+                            <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                <button class="btn btn-secondary btn-sm" onclick="drilldownTimeoutLogs()">View Timeout Logs</button>
+                                <button class="btn btn-secondary btn-sm" onclick="drilldownConnectionCloseLogs()">View Conn-Close Logs</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -759,6 +766,14 @@ If you received this message, your mail server is working correctly!</textarea>
                         </div>
                         <div class="card-body errors-list" id="recent-errors">
                             <div class="loading-placeholder">No recent errors</div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Top Failure Reasons</h3>
+                        </div>
+                        <div class="card-body errors-list" id="top-error-reasons">
+                            <div class="loading-placeholder">No aggregated reasons</div>
                         </div>
                     </div>
                 </div>

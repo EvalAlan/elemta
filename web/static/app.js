@@ -1097,6 +1097,36 @@ async function refreshLogs() {
     }
 }
 
+function applyLogDrilldown({ search = '', level = '', type = '' } = {}) {
+    switchView('logs');
+
+    const searchInput = document.getElementById('log-search-input');
+    const levelFilter = document.getElementById('log-level-filter');
+    const typeFilter = document.getElementById('log-type-filter');
+
+    if (searchInput) searchInput.value = search;
+    if (levelFilter) levelFilter.value = level;
+    if (typeFilter) typeFilter.value = type;
+
+    refreshLogs();
+}
+
+function drilldownLogsBySearch(search) {
+    applyLogDrilldown({ search, level: 'ERROR' });
+}
+
+function drilldownTimeoutLogs() {
+    applyLogDrilldown({ search: 'timeout', level: 'ERROR' });
+}
+
+function drilldownConnectionCloseLogs() {
+    applyLogDrilldown({ search: 'connection unexpectedly closed', level: 'ERROR' });
+}
+
+function drilldownQueueRiskLogs() {
+    applyLogDrilldown({ type: 'deferral', level: 'WARN' });
+}
+
 function getEventTypeClass(eventType) {
     const typeMap = {
         'reception': 'event-reception',
@@ -2184,8 +2214,9 @@ async function refreshReports() {
         console.log('Chart data:', chartData);
         renderChart(chartData);
 
-        // Update recent errors
+        // Update recent errors + aggregated reasons
         renderRecentErrors(stats.recent_errors || []);
+        renderTopErrorReasons(stats.top_error_reasons || []);
 
     } catch (error) {
         console.error('Error loading reports:', error);
@@ -2406,6 +2437,31 @@ function renderRecentErrors(errors) {
             <div class="error-content">
                 <div class="error-message">${escapeHtml(err.error)}</div>
                 <div class="error-meta">${escapeHtml(err.recipient)} • ${formatTimeAgo(err.timestamp)}</div>
+                <div style="margin-top: 0.35rem;">
+                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch(decodeURIComponent('${encodeURIComponent(err.error || '')}'))">View related logs</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderTopErrorReasons(reasons) {
+    const container = document.getElementById('top-error-reasons');
+    if (!container) return;
+
+    if (!reasons || reasons.length === 0) {
+        container.innerHTML = '<div class="loading-placeholder">No aggregated reasons</div>';
+        return;
+    }
+
+    container.innerHTML = reasons.map(reason => `
+        <div class="error-item">
+            <div class="error-content">
+                <div class="error-message">${escapeHtml(reason.reason || 'unknown error')}</div>
+                <div class="error-meta">${reason.count || 0} event(s)</div>
+                <div style="margin-top: 0.35rem;">
+                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch(decodeURIComponent('${encodeURIComponent(reason.reason || '')}'))">View matching logs</button>
+                </div>
             </div>
         </div>
     `).join('');

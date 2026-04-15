@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -137,6 +138,11 @@ type DeliveryError struct {
 	Recipient string    `json:"recipient"`
 	Error     string    `json:"error"`
 	Timestamp time.Time `json:"timestamp"`
+}
+
+type ErrorReasonCount struct {
+	Reason string `json:"reason"`
+	Count  int64  `json:"count"`
 }
 
 // Server-level stats tracking
@@ -365,6 +371,7 @@ func (s *Server) handleDeliveryStats(w http.ResponseWriter, r *http.Request) {
 	var byHour []HourlyStats
 	var data []TimeScaleStats
 	var recentErrors []DeliveryError
+	var topErrorReasons []ErrorReasonCount
 
 	// Try to get metrics from Valkey store
 	if s.metricsStore != nil {
@@ -473,6 +480,8 @@ func (s *Server) handleDeliveryStats(w http.ResponseWriter, r *http.Request) {
 		totalFailed += int64(queueStats.FailedCount)
 	}
 
+	topErrorReasons = buildTopErrorReasons(recentErrors, 5)
+
 	// Calculate success rate
 	total := totalDelivered + totalFailed
 	successRate := 100.0
@@ -493,13 +502,14 @@ func (s *Server) handleDeliveryStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]interface{}{
-		"total_delivered": totalDelivered,
-		"total_failed":    totalFailed,
-		"total_deferred":  totalDeferred,
-		"success_rate":    successRate,
-		"data":            data,
-		"by_hour":         byHour, // Keep for backward compatibility
-		"recent_errors":   recentErrors,
+		"total_delivered":   totalDelivered,
+		"total_failed":      totalFailed,
+		"total_deferred":    totalDeferred,
+		"success_rate":      successRate,
+		"data":              data,
+		"by_hour":           byHour, // Keep for backward compatibility
+		"recent_errors":     recentErrors,
+		"top_error_reasons": topErrorReasons,
 	})
 }
 
@@ -510,6 +520,59 @@ func extractDomain(email string) string {
 		return parts[1]
 	}
 	return "unknown"
+}
+
+func buildTopErrorReasons(errors []DeliveryError, limit int) []ErrorReasonCount {
+	if len(errors) == 0 || limit <= 0 {
+		return nil
+	}
+
+	reasonCounts := make(map[string]int64)
+	for _, e := range errors {
+		reason := normalizeErrorReason(e.Error)
+		reasonCounts[reason]++
+	}
+
+	reasons := make([]ErrorReasonCount, 0, len(reasonCounts))
+	for reason, count := range reasonCounts {
+		reasons = append(reasons, ErrorReasonCount{Reason: reason, Count: count})
+	}
+
+	sort.Slice(reasons, func(i, j int) bool {
+		if reasons[i].Count == reasons[j].Count {
+			return reasons[i].Reason < reasons[j].Reason
+		}
+		return reasons[i].Count > reasons[j].Count
+	})
+
+	if len(reasons) > limit {
+		return reasons[:limit]
+	}
+	return reasons
+}
+
+func normalizeErrorReason(raw string) string {
+	text := strings.TrimSpace(strings.ToLower(raw))
+	if text == "" {
+		return "unknown error"
+	}
+	switch {
+	case strings.Contains(text, "timeout") || strings.Contains(text, "timed out"):
+		return "timeout"
+	case strings.Contains(text, "connection unexpectedly closed") || strings.Contains(text, "connection closed"):
+		return "connection closed"
+	case strings.Contains(text, "refused"):
+		return "connection refused"
+	case strings.Contains(text, "dns") || strings.Contains(text, "no such host"):
+		return "dns / host lookup"
+	case strings.Contains(text, "tls"):
+		return "tls failure"
+	default:
+		if len(raw) > 80 {
+			return raw[:80] + "..."
+		}
+		return raw
+	}
 }
 
 // handleSendTestEmail sends a test email
