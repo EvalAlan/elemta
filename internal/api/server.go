@@ -437,6 +437,7 @@ func (s *Server) Start() error {
 
 	// Read-only queue operations (no authentication required for web interface)
 	api.HandleFunc("/queue/stats", s.handleGetQueueStats).Methods("GET")
+	api.HandleFunc("/queue/observability", s.handleGetQueueObservability).Methods("GET")
 	api.HandleFunc("/queue/storage", s.handleGetQueueStorage).Methods("GET")
 	api.HandleFunc("/queue/message/{id}", s.handleGetMessage).Methods("GET")
 	api.HandleFunc("/queue/{type}", s.handleGetQueue).Methods("GET")
@@ -482,12 +483,20 @@ func (s *Server) Start() error {
 		// Message deletion requires queue:delete permission
 		deleteHandler := s.authMiddleware.RequirePermission(auth.PermissionQueueDelete)(http.HandlerFunc(s.handleDeleteMessage))
 		api.Handle("/queue/message/{id}", deleteHandler).Methods("DELETE")
+		// Queue management actions require queue:manage permission
+		manageHandler := s.authMiddleware.RequirePermission(auth.PermissionQueueManage)
+		api.Handle("/queue/message/{id}/requeue", manageHandler(http.HandlerFunc(s.handleRequeueMessage))).Methods("POST")
+		api.Handle("/queue/message/{id}/hold", manageHandler(http.HandlerFunc(s.handleHoldMessage))).Methods("POST")
+		api.Handle("/queue/message/{id}/release-claim", manageHandler(http.HandlerFunc(s.handleReleaseMessageClaim))).Methods("POST")
 		// Queue flushing requires queue:flush permission
 		flushHandler := s.authMiddleware.RequirePermission(auth.PermissionQueueFlush)(http.HandlerFunc(s.handleFlushQueue))
 		api.Handle("/queue/{type}/flush", flushHandler).Methods("POST")
 	} else {
 		// If auth is disabled, allow destructive operations without authentication
 		api.HandleFunc("/queue/message/{id}", s.handleDeleteMessage).Methods("DELETE")
+		api.HandleFunc("/queue/message/{id}/requeue", s.handleRequeueMessage).Methods("POST")
+		api.HandleFunc("/queue/message/{id}/hold", s.handleHoldMessage).Methods("POST")
+		api.HandleFunc("/queue/message/{id}/release-claim", s.handleReleaseMessageClaim).Methods("POST")
 		api.HandleFunc("/queue/{type}/flush", s.handleFlushQueue).Methods("POST")
 	}
 
