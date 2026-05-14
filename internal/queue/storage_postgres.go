@@ -338,6 +338,37 @@ func (p *PostgresStorageBackend) ReleaseMessageClaim(id, workerID string) error 
 	return nil
 }
 
+// ListClaims returns active message claims for operational observability.
+func (p *PostgresStorageBackend) ListClaims(now time.Time) ([]QueueClaimInfo, error) {
+	rows, err := p.db.Query(
+		`SELECT id, queue_type, claimed_by, claim_until
+		 FROM queue_messages
+		 WHERE claimed_by IS NOT NULL OR claim_until IS NOT NULL
+		 ORDER BY claim_until ASC NULLS FIRST, updated_at ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list message claims: %w", err)
+	}
+	defer rows.Close()
+
+	claims := make([]QueueClaimInfo, 0)
+	for rows.Next() {
+		var claim QueueClaimInfo
+		var queueType string
+		if err := rows.Scan(&claim.MessageID, &queueType, &claim.ClaimedBy, &claim.ClaimUntil); err != nil {
+			return nil, fmt.Errorf("failed scanning message claim: %w", err)
+		}
+		claim.QueueType = QueueType(queueType)
+		claim.Expired = !claim.ClaimUntil.IsZero() && !claim.ClaimUntil.After(now)
+		claim.SecondsRemaining = int64(claim.ClaimUntil.Sub(now).Seconds())
+		claims = append(claims, claim)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating message claims: %w", err)
+	}
+	return claims, nil
+}
+
 func (p *PostgresStorageBackend) StoreContent(id string, data []byte) error {
 	_, err := p.db.Exec(
 		`INSERT INTO queue_contents (id, content) VALUES ($1, $2)
