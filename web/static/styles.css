@@ -557,6 +557,100 @@ body {
     gap: 0.5rem;
 }
 
+.queue-observability-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.queue-observability-card .card-header {
+    align-items: center;
+}
+
+.queue-backend-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 999px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-family: 'SF Mono', Monaco, monospace;
+}
+
+.queue-observability-info dd {
+    overflow-wrap: anywhere;
+}
+
+.queue-hotspot-row,
+.queue-claim-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.25rem 0.75rem;
+    align-items: center;
+    padding: 0.625rem 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.queue-hotspot-row:last-child,
+.queue-claim-row:last-child {
+    border-bottom: none;
+}
+
+.queue-hotspot-domain {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.queue-hotspot-count {
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--accent-primary);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.queue-hotspot-meta,
+.queue-claim-meta {
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+.queue-claim-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.queue-claim-row.expired {
+    border-left: 3px solid var(--accent-danger);
+    padding-left: 0.625rem;
+}
+
+.link-button {
+    background: none;
+    border: none;
+    color: var(--accent-primary);
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    font-family: 'SF Mono', Monaco, monospace;
+}
+
+.link-button:hover {
+    text-decoration: underline;
+}
+
+.btn-compact {
+    padding: 0.375rem 0.625rem;
+    font-size: 0.75rem;
+}
+
 /* Buttons */
 .btn {
     display: inline-flex;
