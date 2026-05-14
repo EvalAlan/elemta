@@ -153,7 +153,10 @@ function switchView(viewName) {
     // Update page title
     const titles = {
         dashboard: 'Dashboard',
+        health: 'Health',
         queues: 'Mail Queues',
+        compose: 'Send Test',
+        reports: 'Reports',
         logs: 'Logs',
         settings: 'Settings'
     };
@@ -162,11 +165,26 @@ function switchView(viewName) {
     // Close mobile sidebar
     document.getElementById('sidebar').classList.remove('open');
 
-    // Load view-specific data
-    if (viewName === 'queues') {
-        loadQueue(state.currentQueue);
-    } else if (viewName === 'logs') {
-        refreshLogs();
+    // Load view-specific data when the user opens a section. Do not rely on
+    // initial page load: remote deploys, slow API startup, and browser cache can
+    // otherwise leave sections stuck on placeholders.
+    switch (viewName) {
+        case 'dashboard':
+            refreshAllData();
+            refreshHealth();
+            break;
+        case 'health':
+            refreshHealth();
+            break;
+        case 'queues':
+            refreshQueue();
+            break;
+        case 'reports':
+            refreshReports();
+            break;
+        case 'logs':
+            refreshLogs();
+            break;
     }
 }
 
