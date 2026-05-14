@@ -9,6 +9,7 @@ const state = {
     pageSize: 25,
     allMessages: [],
     filteredMessages: [],
+    queueObservability: null,
     selectedMessages: new Set(),
     currentMessageId: null,
     refreshInterval: null,
@@ -267,6 +268,7 @@ async function refreshAllData() {
     try {
         await Promise.all([
             loadQueueStats(),
+            loadQueueObservability(),
             loadQueue(state.currentQueue),
             loadRecentActivity()
         ]);
@@ -295,6 +297,79 @@ async function loadQueueStats() {
     } catch (error) {
         console.error('Error loading queue stats:', error);
     }
+}
+
+async function loadQueueObservability() {
+    try {
+        const response = await fetch(`${API_BASE}/queue/observability`);
+        if (!response.ok) throw new Error('Failed to fetch queue observability');
+
+        const snapshot = await response.json();
+        state.queueObservability = snapshot;
+        renderQueueObservability(snapshot);
+    } catch (error) {
+        console.error('Error loading queue observability:', error);
+        renderQueueObservability(null);
+    }
+}
+
+function renderQueueObservability(snapshot) {
+    const backendEl = document.getElementById('queue-backend');
+    const totalEl = document.getElementById('obs-total-messages');
+    const oldestEl = document.getElementById('obs-oldest-message');
+    const oldestAgeEl = document.getElementById('obs-oldest-age');
+    const storageEl = document.getElementById('obs-storage-used');
+    const domainsEl = document.getElementById('obs-domain-hotspots');
+    const claimsEl = document.getElementById('obs-claims');
+
+    if (!backendEl || !totalEl || !oldestEl || !oldestAgeEl || !storageEl || !domainsEl || !claimsEl) {
+        return;
+    }
+
+    if (!snapshot) {
+        backendEl.textContent = 'backend: unavailable';
+        totalEl.textContent = '-';
+        oldestEl.textContent = '-';
+        oldestAgeEl.textContent = '-';
+        storageEl.textContent = '-';
+        domainsEl.innerHTML = '<div class="loading-placeholder">Queue observability unavailable</div>';
+        claimsEl.innerHTML = '<div class="loading-placeholder">Claim data unavailable</div>';
+        return;
+    }
+
+    backendEl.textContent = `backend: ${snapshot.backend || 'unknown'}`;
+    totalEl.textContent = snapshot.total_messages ?? 0;
+    oldestEl.innerHTML = snapshot.oldest_message
+        ? `<button class="link-button" onclick="viewMessage('${escapeJsArg(snapshot.oldest_message.id)}')">${escapeHtml(shortMessageId(snapshot.oldest_message.id))}</button>`
+        : '-';
+    oldestAgeEl.textContent = formatDurationSeconds(snapshot.oldest_message?.age_seconds || 0);
+    storageEl.textContent = formatBytes(snapshot.storage?.total_bytes || 0);
+
+    const domains = Array.isArray(snapshot.by_domain) ? snapshot.by_domain.slice(0, 5) : [];
+    domainsEl.innerHTML = domains.length > 0 ? domains.map(domain => `
+        <div class="queue-hotspot-row">
+            <span class="queue-hotspot-domain" title="${escapeHtml(domain.domain)}">${escapeHtml(domain.domain)}</span>
+            <span class="queue-hotspot-count">${domain.count || 0}</span>
+            <span class="queue-hotspot-meta">oldest ${formatDurationSeconds(domain.oldest_age_seconds || 0)}</span>
+        </div>
+    `).join('') : '<div class="loading-placeholder">No queued domains</div>';
+
+    if (!snapshot.claims_supported) {
+        claimsEl.innerHTML = '<div class="loading-placeholder">Claims not supported by this backend</div>';
+        return;
+    }
+
+    const claims = Array.isArray(snapshot.claims) ? snapshot.claims.slice(0, 5) : [];
+    claimsEl.innerHTML = claims.length > 0 ? claims.map(claim => `
+        <div class="queue-claim-row ${claim.expired ? 'expired' : ''}">
+            <div>
+                <button class="link-button" onclick="viewMessage('${escapeJsArg(claim.message_id)}')">${escapeHtml(shortMessageId(claim.message_id))}</button>
+                <span class="status-badge ${queueStatusClass(claim.queue_type)}">${escapeHtml(claim.queue_type || 'unknown')}</span>
+            </div>
+            <div class="queue-claim-meta">${escapeHtml(claim.claimed_by || 'unknown worker')} • ${claim.expired ? 'expired' : `${formatDurationSeconds(claim.seconds_remaining || 0)} left`}</div>
+            <button class="btn btn-secondary btn-compact" onclick="releaseMessageClaim('${escapeJsArg(claim.message_id)}', '${escapeJsArg(claim.claimed_by || '')}')">Release</button>
+        </div>
+    `).join('') : '<div class="loading-placeholder">No active claims</div>';
 }
 
 async function loadQueue(queueType) {
@@ -375,6 +450,7 @@ function switchQueue(queue) {
 
 function refreshQueue() {
     loadQueueStats();
+    loadQueueObservability();
     loadQueue(state.currentQueue);
 }
 
@@ -539,19 +615,25 @@ function renderMessages() {
                 <td><span class="status-badge status-${state.currentQueue}">${state.currentQueue}</span></td>
                 <td>
                     <div class="action-buttons">
-                        <button onclick="viewMessage('${msg.id}')" title="View Details">
+                        <button onclick="viewMessage('${escapeJsArg(msg.id)}')" title="View Details">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                                 <circle cx="12" cy="12" r="3"/>
                             </svg>
                         </button>
-                        <button onclick="retryMessage('${msg.id}')" title="Retry">
+                        <button onclick="retryMessage('${escapeJsArg(msg.id)}')" title="Requeue message">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="23 4 23 10 17 10"/>
                                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
                             </svg>
                         </button>
-                        <button onclick="deleteMessage('${msg.id}')" title="Delete">
+                        <button onclick="holdMessage('${escapeJsArg(msg.id)}')" title="Hold message">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="6" y="4" width="4" height="16"/>
+                                <rect x="14" y="4" width="4" height="16"/>
+                            </svg>
+                        </button>
+                        <button onclick="deleteMessage('${escapeJsArg(msg.id)}')" title="Delete">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="3 6 5 6 21 6"/>
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -690,9 +772,26 @@ async function deleteSelected() {
 }
 
 async function retrySelected() {
-    showToast(`Retrying ${state.selectedMessages.size} messages...`, 'info');
+    const selected = Array.from(state.selectedMessages);
+    showToast(`Requeueing ${selected.length} messages...`, 'info');
+
+    let successCount = 0;
+    for (const id of selected) {
+        try {
+            const response = await fetch(`${API_BASE}/queue/message/${id}/requeue`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason: 'bulk requeue from web UI' })
+            });
+            if (response.ok) successCount++;
+        } catch (error) {
+            console.error(`Failed to requeue ${id}:`, error);
+        }
+    }
+
+    showToast(`Requeued ${successCount} of ${selected.length} messages`, successCount === selected.length ? 'success' : 'warning');
     clearSelection();
-    await retryCurrentQueue();
+    refreshQueue();
 }
 
 // ============================================================================
@@ -794,8 +893,69 @@ function closeModal() {
 }
 
 async function retryMessage(messageId) {
-    showToast('Retrying message...', 'info');
-    await retryCurrentQueue();
+    try {
+        const response = await fetch(`${API_BASE}/queue/message/${messageId}/requeue`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: 'requeued from web UI' })
+        });
+
+        if (response.ok) {
+            showToast('Message requeued', 'success');
+            refreshQueue();
+            closeModal();
+        } else {
+            throw new Error('Requeue failed');
+        }
+    } catch (error) {
+        showToast('Failed to requeue message', 'error');
+    }
+}
+
+async function holdMessage(messageId) {
+    const reason = prompt('Reason for holding this message?', 'held from web UI');
+    if (reason === null) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/queue/message/${messageId}/hold`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason })
+        });
+
+        if (response.ok) {
+            showToast('Message moved to hold', 'success');
+            refreshQueue();
+            closeModal();
+        } else {
+            throw new Error('Hold failed');
+        }
+    } catch (error) {
+        showToast('Failed to hold message', 'error');
+    }
+}
+
+async function releaseMessageClaim(messageId, workerId = '') {
+    if (!confirm(`Release the worker claim for message ${shortMessageId(messageId)}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/queue/message/${messageId}/release-claim`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ worker_id: workerId })
+        });
+
+        if (response.ok) {
+            showToast('Message claim released', 'success');
+            refreshQueue();
+        } else {
+            throw new Error('Claim release failed');
+        }
+    } catch (error) {
+        showToast('Failed to release message claim', 'error');
+    }
 }
 
 async function deleteMessage(messageId) {
@@ -1198,6 +1358,32 @@ function getPriorityLabel(priority) {
 function formatDate(dateString) {
     if (!dateString) return 'Unknown';
     return new Date(dateString).toLocaleString();
+}
+
+function shortMessageId(id) {
+    if (!id) return '';
+    return String(id).substring(0, 12);
+}
+
+function escapeJsArg(value) {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function queueStatusClass(queueType) {
+    const safeType = ['active', 'deferred', 'hold', 'failed'].includes(queueType) ? queueType : 'active';
+    return `status-${safeType}`;
+}
+
+function formatDurationSeconds(seconds) {
+    seconds = Math.max(0, Number(seconds) || 0);
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m`;
+    return `${Math.floor(seconds)}s`;
 }
 
 function formatTimeAgo(dateString) {
