@@ -505,6 +505,43 @@
                     </div>
                 </div>
 
+                <div class="queue-observability-grid" id="queue-observability">
+                    <div class="card queue-observability-card">
+                        <div class="card-header">
+                            <h3>Queue Pressure</h3>
+                            <span class="queue-backend-badge" id="queue-backend">backend: -</span>
+                        </div>
+                        <div class="card-body queue-observability-body">
+                            <dl class="info-grid queue-observability-info">
+                                <dt>Total Messages</dt>
+                                <dd id="obs-total-messages">-</dd>
+                                <dt>Oldest Message</dt>
+                                <dd id="obs-oldest-message">-</dd>
+                                <dt>Oldest Age</dt>
+                                <dd id="obs-oldest-age">-</dd>
+                                <dt>Storage Used</dt>
+                                <dd id="obs-storage-used">-</dd>
+                            </dl>
+                        </div>
+                    </div>
+                    <div class="card queue-observability-card">
+                        <div class="card-header">
+                            <h3>Domain Hotspots</h3>
+                        </div>
+                        <div class="card-body" id="obs-domain-hotspots">
+                            <div class="loading-placeholder">Loading...</div>
+                        </div>
+                    </div>
+                    <div class="card queue-observability-card">
+                        <div class="card-header">
+                            <h3>Worker Claims</h3>
+                        </div>
+                        <div class="card-body" id="obs-claims">
+                            <div class="loading-placeholder">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="search-filter-bar">
                     <div class="search-box">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
