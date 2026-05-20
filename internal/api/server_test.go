@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/busybox42/elemta/internal/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -176,6 +177,56 @@ func TestInitializeAuth_RespectsMainConfigLegacyHashPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, server.authSystem)
 	require.False(t, server.authSystem.AllowDeprecatedSHA1())
+}
+
+func TestRequireAuthIfConfigured(t *testing.T) {
+	protectedCalled := false
+	protected := (&Server{
+		authMiddleware: NewAuthMiddleware(nil, nil, nil),
+	}).requireAuthIfConfigured(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protectedCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	protectedReq := httptest.NewRequest(http.MethodGet, "/api/queue/message/test", nil)
+	protectedReq.Header.Set("Accept", "application/json")
+	protectedReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+	protectedRR := httptest.NewRecorder()
+	protected.ServeHTTP(protectedRR, protectedReq)
+
+	require.Equal(t, http.StatusUnauthorized, protectedRR.Code)
+	require.False(t, protectedCalled)
+
+	openCalled := false
+	open := (&Server{}).requireAuthIfConfigured(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		openCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	openRR := httptest.NewRecorder()
+	open.ServeHTTP(openRR, httptest.NewRequest(http.MethodGet, "/api/queue/message/test", nil))
+	require.Equal(t, http.StatusOK, openRR.Code)
+	require.True(t, openCalled)
+}
+
+func TestValidateRequestedAPIKeyPermissions(t *testing.T) {
+	server := &Server{}
+
+	userCtx := &AuthContext{
+		Username: "operator",
+		Permissions: []auth.Permission{
+			auth.PermissionAPIRead,
+			auth.PermissionQueueView,
+		},
+	}
+	require.NoError(t, server.validateRequestedAPIKeyPermissions(userCtx, []auth.Permission{auth.PermissionAPIRead}))
+	require.Error(t, server.validateRequestedAPIKeyPermissions(userCtx, []auth.Permission{auth.PermissionSystemAdmin}))
+
+	adminCtx := &AuthContext{
+		Username:    "admin",
+		Permissions: []auth.Permission{auth.PermissionSystemAdmin},
+	}
+	require.NoError(t, server.validateRequestedAPIKeyPermissions(adminCtx, []auth.Permission{auth.PermissionSystemConfig}))
 }
 
 func TestAPIConfig(t *testing.T) {

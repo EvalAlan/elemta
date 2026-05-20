@@ -276,20 +276,8 @@ func (cm *CORSMiddleware) Handler(next http.Handler) http.Handler {
 		}
 
 		origin := r.Header.Get("Origin")
-
-		// Validate origin against whitelist
-		allowed := false
-		allowedOrigin := ""
-		for _, allowedOrg := range cm.config.AllowedOrigins {
-			if allowedOrg == "*" || allowedOrg == origin {
-				allowed = true
-				allowedOrigin = origin
-				if allowedOrg == "*" {
-					allowedOrigin = "*"
-				}
-				break
-			}
-		}
+		allowedOrigin := cm.allowedOrigin(origin)
+		allowed := allowedOrigin != ""
 
 		if !allowed && origin != "" {
 			// Origin not allowed, reject preflight requests
@@ -303,7 +291,7 @@ func (cm *CORSMiddleware) Handler(next http.Handler) http.Handler {
 		}
 
 		// Set CORS headers only for allowed origins
-		if allowed && allowedOrigin != "" {
+		if allowed {
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 
 			if cm.config.AllowCredentials {
@@ -323,6 +311,30 @@ func (cm *CORSMiddleware) Handler(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (cm *CORSMiddleware) allowedOrigin(origin string) string {
+	if origin == "" {
+		return ""
+	}
+
+	wildcardAllowed := false
+	for _, allowedOrg := range cm.config.AllowedOrigins {
+		if allowedOrg == origin {
+			return origin
+		}
+		if allowedOrg == "*" {
+			wildcardAllowed = true
+		}
+	}
+
+	// A wildcard credentialed CORS response lets any origin drive browser
+	// requests with cookies. Require explicit origins when credentials are used.
+	if wildcardAllowed && !cm.config.AllowCredentials {
+		return "*"
+	}
+
+	return ""
 }
 
 // CORS middleware for handling Cross-Origin Resource Sharing (deprecated, use NewCORSMiddleware)

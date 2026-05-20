@@ -113,8 +113,8 @@ func (m *APIKeyManager) CreateAPIKey(username, name, description string, permiss
 
 // ValidateAPIKey validates an API key and returns the associated key info
 func (m *APIKeyManager) ValidateAPIKey(keyString string) (*APIKey, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	// Check key format
 	if !strings.HasPrefix(keyString, "elemta_") {
