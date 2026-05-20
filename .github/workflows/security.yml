@@ -25,7 +25,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25.10'
           cache: false
 
       - name: Run Trivy vulnerability scanner in repo mode
@@ -103,7 +103,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25.10'
           cache: false
 
       - name: Run Gosec Security Scanner
@@ -170,7 +170,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25.10'
           cache: false
 
       - name: Install go-licenses
@@ -263,4 +263,3 @@ jobs:
                     'https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId,
               labels: ['security', 'automated']
             })
-
