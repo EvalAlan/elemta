@@ -435,25 +435,26 @@ func (s *Server) Start() error {
 		api.HandleFunc("/logging/level", s.HandleSetLogLevel).Methods("POST", "PUT")
 	}
 
-	// Read-only queue operations (no authentication required for web interface)
-	api.HandleFunc("/queue/stats", s.handleGetQueueStats).Methods("GET")
-	api.HandleFunc("/queue/observability", s.handleGetQueueObservability).Methods("GET")
-	api.HandleFunc("/queue/storage", s.handleGetQueueStorage).Methods("GET")
-	api.HandleFunc("/queue/message/{id}", s.handleGetMessage).Methods("GET")
-	api.HandleFunc("/queue/{type}", s.handleGetQueue).Methods("GET")
-	api.HandleFunc("/queue", s.handleGetAllQueues).Methods("GET")
+	// Read-only queue operations expose message metadata/content and require auth
+	// whenever the web UI has authentication enabled.
+	api.Handle("/queue/stats", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetQueueStats))).Methods("GET")
+	api.Handle("/queue/observability", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetQueueObservability))).Methods("GET")
+	api.Handle("/queue/storage", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetQueueStorage))).Methods("GET")
+	api.Handle("/queue/message/{id}", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetMessage))).Methods("GET")
+	api.Handle("/queue/{type}", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetQueue))).Methods("GET")
+	api.Handle("/queue", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetAllQueues))).Methods("GET")
 
-	// Logs endpoint (no authentication required for web interface)
-	api.HandleFunc("/logs", s.handleGetLogs).Methods("GET")
-	api.HandleFunc("/logs/messages", s.handleGetMessageLogs).Methods("GET")
+	// Logs can contain sender, recipient, hostname, and auth-adjacent context.
+	api.Handle("/logs", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetLogs))).Methods("GET")
+	api.Handle("/logs/messages", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetMessageLogs))).Methods("GET")
 
-	// Health and monitoring endpoints (no auth required for dashboard)
+	// Health stays public for probes; detailed delivery stats follow dashboard auth.
 	api.HandleFunc("/health", s.handleHealthStats).Methods("GET")
-	api.HandleFunc("/stats/delivery", s.handleDeliveryStats).Methods("GET")
+	api.Handle("/stats/delivery", s.requireAuthIfConfigured(http.HandlerFunc(s.handleDeliveryStats))).Methods("GET")
 
-	// Configuration management endpoints (read-only for now)
-	api.HandleFunc("/config", s.handleGetConfig).Methods("GET")
-	api.HandleFunc("/config/plugins", s.handleGetPlugins).Methods("GET")
+	// Configuration read endpoints expose operational topology.
+	api.Handle("/config", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetConfig))).Methods("GET")
+	api.Handle("/config/plugins", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetPlugins))).Methods("GET")
 
 	// Configuration management endpoints (write operations require auth)
 	if s.authMiddleware != nil {
@@ -527,6 +528,13 @@ func (s *Server) Start() error {
 	}()
 
 	return nil
+}
+
+func (s *Server) requireAuthIfConfigured(next http.Handler) http.Handler {
+	if s.authMiddleware == nil {
+		return next
+	}
+	return s.authMiddleware.RequireAuth(next)
 }
 
 // Stop stops the API server
@@ -817,7 +825,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Session created successfully, ID: %s", session.ID)
+	log.Printf("Session created successfully for user: %s", loginReq.Username)
 
 	// Set session cookie
 	log.Printf("Setting session cookie")
@@ -830,7 +838,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"status":      "success",
 		"username":    loginReq.Username,
-		"session_id":  session.ID,
 		"permissions": permissions,
 	})
 }
@@ -938,6 +945,10 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		duration := time.Duration(*req.ExpiryDays) * 24 * time.Hour
 		expiryDuration = &duration
 	}
+	if err := s.validateRequestedAPIKeyPermissions(authCtx, req.Permissions); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 
 	apiKey, keyString, err := s.apiKeyManager.CreateAPIKey(
 		authCtx.Username,
@@ -1014,6 +1025,10 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 
 	if apiKey.Username != authCtx.Username && !s.isAdmin(authCtx) {
 		http.Error(w, "Access denied", http.StatusForbidden)
+		return
+	}
+	if err := s.validateRequestedAPIKeyPermissions(authCtx, req.Permissions); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 
@@ -1717,6 +1732,26 @@ func (s *Server) isAdmin(authCtx *AuthContext) bool {
 		}
 	}
 	return false
+}
+
+func (s *Server) validateRequestedAPIKeyPermissions(authCtx *AuthContext, requested []auth.Permission) error {
+	if authCtx == nil {
+		return fmt.Errorf("not authenticated")
+	}
+	if s.isAdmin(authCtx) {
+		return nil
+	}
+
+	allowed := make(map[auth.Permission]struct{}, len(authCtx.Permissions))
+	for _, permission := range authCtx.Permissions {
+		allowed[permission] = struct{}{}
+	}
+	for _, permission := range requested {
+		if _, ok := allowed[permission]; !ok {
+			return fmt.Errorf("cannot grant API key permission %q", permission)
+		}
+	}
+	return nil
 }
 
 // Regex patterns for SMTP code detection

@@ -220,7 +220,8 @@ func TestCORSPreflightRequest(t *testing.T) {
 }
 
 func TestCORSSecurity(t *testing.T) {
-	// Test that wildcard with credentials is allowed (should be warned about in production)
+	// Wildcard plus credentials would allow arbitrary origins to drive
+	// cookie-backed requests. Require explicit origins for that mode.
 	config := CORSConfig{
 		Enabled:          true,
 		AllowedOrigins:   []string{"*"},
@@ -241,10 +242,40 @@ func TestCORSSecurity(t *testing.T) {
 
 	middleware.ServeHTTP(rr, req)
 
-	// Note: In production, wildcard + credentials should be rejected,
-	// but we allow configuration flexibility here
 	allowOrigin := rr.Header().Get("Access-Control-Allow-Origin")
-	if allowOrigin == "" {
-		t.Error("Expected CORS headers to be set even with wildcard")
+	if allowOrigin != "" {
+		t.Errorf("Expected no credentialed wildcard CORS header, got %q", allowOrigin)
+	}
+	allowCreds := rr.Header().Get("Access-Control-Allow-Credentials")
+	if allowCreds != "" {
+		t.Errorf("Expected no credentialed wildcard CORS credentials header, got %q", allowCreds)
+	}
+}
+
+func TestCORSCredentialsWithExplicitOrigin(t *testing.T) {
+	config := CORSConfig{
+		Enabled:          true,
+		AllowedOrigins:   []string{"*", "https://admin.example.com"},
+		AllowCredentials: true,
+	}
+
+	cm := NewCORSMiddleware(config)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware := cm.Handler(handler)
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Origin", "https://admin.example.com")
+	rr := httptest.NewRecorder()
+
+	middleware.ServeHTTP(rr, req)
+
+	if rr.Header().Get("Access-Control-Allow-Origin") != "https://admin.example.com" {
+		t.Fatalf("Expected explicit allowed origin, got %q", rr.Header().Get("Access-Control-Allow-Origin"))
+	}
+	if rr.Header().Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("Expected credentials header for explicit origin")
 	}
 }
