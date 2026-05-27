@@ -35,6 +35,12 @@ func main() {
 			MaxIdleConns:           cfg.Queue.Postgres.MaxIdleConns,
 			ConnMaxLifetimeSeconds: cfg.Queue.Postgres.ConnMaxLifetimeSeconds,
 		},
+		queue.IndexedFSConfig{
+			IndexPath:         cfg.Queue.IndexedFS.IndexPath,
+			ContentDir:        cfg.Queue.IndexedFS.ContentDir,
+			SyncMode:          cfg.Queue.IndexedFS.SyncMode,
+			RecoveryOnStartup: cfg.Queue.IndexedFS.RecoveryOnStartup,
+		},
 		cfg.FailedQueueRetentionHours,
 	)
 	if err != nil {

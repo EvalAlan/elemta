@@ -140,13 +140,19 @@ type Config struct {
 	// Queue configuration
 	Queue struct {
 		Dir     string `toml:"dir"`
-		Backend string `toml:"backend"` // file|sqlite|postgres
+		Backend string `toml:"backend"` // file|sqlite|postgres|indexedfs
 		SQLite  struct {
 			Path          string `toml:"path"`
 			BusyTimeoutMS int    `toml:"busy_timeout_ms"`
 			JournalMode   string `toml:"journal_mode"`
 			Synchronous   string `toml:"synchronous"`
 		} `toml:"sqlite"`
+		IndexedFS struct {
+			IndexPath         string `toml:"index_path"`
+			ContentDir        string `toml:"content_dir"`
+			SyncMode          string `toml:"sync_mode"`
+			RecoveryOnStartup bool   `toml:"recovery_on_startup"`
+		} `toml:"indexedfs"`
 		Postgres struct {
 			DSN                    string `toml:"dsn"`
 			MaxOpenConns           int    `toml:"max_open_conns"`
@@ -264,6 +270,10 @@ func DefaultConfig() *Config {
 	cfg.Queue.SQLite.BusyTimeoutMS = 5000
 	cfg.Queue.SQLite.JournalMode = "WAL"
 	cfg.Queue.SQLite.Synchronous = "NORMAL"
+	cfg.Queue.IndexedFS.IndexPath = filepath.Join(paths.QueueDir, "index")
+	cfg.Queue.IndexedFS.ContentDir = filepath.Join(paths.QueueDir, "data")
+	cfg.Queue.IndexedFS.SyncMode = "normal"
+	cfg.Queue.IndexedFS.RecoveryOnStartup = true
 	cfg.Queue.Postgres.MaxOpenConns = 20
 	cfg.Queue.Postgres.MaxIdleConns = 10
 	cfg.Queue.Postgres.ConnMaxLifetimeSeconds = 1800
@@ -522,6 +532,21 @@ func (c *Config) SaveConfig(configPath string) error {
 		if c.Queue.SQLite.Synchronous != "" {
 			fmt.Fprintf(&b, "synchronous = %q\n", c.Queue.SQLite.Synchronous)
 		}
+		b.WriteString("\n")
+	}
+
+	if c.Queue.IndexedFS.IndexPath != "" || c.Queue.IndexedFS.ContentDir != "" {
+		b.WriteString("[queue.indexedfs]\n")
+		if c.Queue.IndexedFS.IndexPath != "" {
+			fmt.Fprintf(&b, "index_path = %q\n", c.Queue.IndexedFS.IndexPath)
+		}
+		if c.Queue.IndexedFS.ContentDir != "" {
+			fmt.Fprintf(&b, "content_dir = %q\n", c.Queue.IndexedFS.ContentDir)
+		}
+		if c.Queue.IndexedFS.SyncMode != "" {
+			fmt.Fprintf(&b, "sync_mode = %q\n", c.Queue.IndexedFS.SyncMode)
+		}
+		fmt.Fprintf(&b, "recovery_on_startup = %t\n", c.Queue.IndexedFS.RecoveryOnStartup)
 		b.WriteString("\n")
 	}
 
@@ -851,8 +876,8 @@ func (c *Config) validateQueue(result *ValidationResult, sv *SecurityValidator) 
 	}
 	c.Queue.Backend = backend
 
-	if !contains([]string{"file", "sqlite", "postgres"}, backend) {
-		result.AddError("queue.backend", c.Queue.Backend, "backend must be one of: file, sqlite, postgres")
+	if !contains([]string{"file", "sqlite", "postgres", "indexedfs"}, backend) {
+		result.AddError("queue.backend", c.Queue.Backend, "backend must be one of: file, sqlite, postgres, indexedfs")
 	}
 
 	if c.Queue.Dir == "" {
@@ -896,6 +921,19 @@ func (c *Config) validateQueue(result *ValidationResult, sv *SecurityValidator) 
 		}
 		if c.Queue.Postgres.ConnMaxLifetimeSeconds < 0 {
 			result.AddError("queue.postgres.conn_max_lifetime_seconds", c.Queue.Postgres.ConnMaxLifetimeSeconds, "conn_max_lifetime_seconds must be >= 0")
+		}
+		return
+	}
+
+	if backend == "indexedfs" {
+		if strings.TrimSpace(c.Queue.IndexedFS.IndexPath) == "" {
+			c.Queue.IndexedFS.IndexPath = filepath.Join(c.Queue.Dir, "index")
+		}
+		if strings.TrimSpace(c.Queue.IndexedFS.ContentDir) == "" {
+			c.Queue.IndexedFS.ContentDir = filepath.Join(c.Queue.Dir, "data")
+		}
+		if strings.TrimSpace(c.Queue.IndexedFS.SyncMode) == "" {
+			c.Queue.IndexedFS.SyncMode = "normal"
 		}
 		return
 	}
