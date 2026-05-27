@@ -168,6 +168,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			MaxIdleConns:           config.QueuePostgres.MaxIdleConns,
 			ConnMaxLifetimeSeconds: config.QueuePostgres.ConnMaxLifetimeSeconds,
 		},
+		queue.IndexedFSConfig{},
 		config.FailedQueueRetentionHours,
 	)
 	if err != nil {
