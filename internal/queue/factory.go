@@ -23,6 +23,14 @@ type PostgresConfig struct {
 	ConnMaxLifetimeSeconds int
 }
 
+// IndexedFSConfig holds indexed filesystem backend settings for queue manager creation.
+type IndexedFSConfig struct {
+	IndexPath         string
+	ContentDir        string
+	SyncMode          string
+	RecoveryOnStartup bool
+}
+
 // StorageInfo describes queue storage backend characteristics and size metrics.
 type StorageInfo struct {
 	Backend       string `json:"backend"`
@@ -44,7 +52,7 @@ type StorageInfo struct {
 }
 
 // NewManagerFromBackend creates a queue manager based on configured backend.
-func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, postgresCfg PostgresConfig, failedQueueRetentionHours int) (*Manager, error) {
+func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, postgresCfg PostgresConfig, indexedFSCfg IndexedFSConfig, failedQueueRetentionHours int) (*Manager, error) {
 	backend = strings.TrimSpace(strings.ToLower(backend))
 	if backend == "" {
 		backend = "file"
@@ -80,6 +88,17 @@ func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, pos
 			m.queueDir = queueDir
 		}
 		return m, nil
+	case "indexedfs":
+		indexedBackend, err := NewIndexedFSStorageBackend(queueDir, indexedFSCfg)
+		if err != nil {
+			return nil, err
+		}
+
+		m := NewManagerWithStorage(indexedBackend, failedQueueRetentionHours)
+		if m.queueDir == "" {
+			m.queueDir = queueDir
+		}
+		return m, nil
 	default:
 		return nil, fmt.Errorf("unsupported queue backend: %s", backend)
 	}
@@ -94,6 +113,8 @@ func (m *Manager) BackendType() string {
 		return "sqlite"
 	case *PostgresStorageBackend:
 		return "postgres"
+	case *IndexedFSStorageBackend:
+		return "indexedfs"
 	default:
 		return "unknown"
 	}

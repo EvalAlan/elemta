@@ -13,7 +13,7 @@ import (
 type Config struct {
 	ListenAddr    string   `toml:"listen_addr" json:"listen_addr"`
 	QueueDir      string   `toml:"queue_dir" json:"queue_dir"`
-	QueueBackend  string   `toml:"queue_backend" json:"queue_backend"` // file|sqlite|postgres
+	QueueBackend  string   `toml:"queue_backend" json:"queue_backend"` // file|sqlite|postgres|indexedfs
 	MaxSize       int64    `toml:"max_size" json:"max_size"`
 	DevMode       bool     `toml:"dev_mode" json:"dev_mode"`
 	AllowedRelays []string `toml:"allowed_relays" json:"allowed_relays"`

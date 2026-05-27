@@ -22,6 +22,7 @@ func newSQLiteManagerForTest(t *testing.T) *Manager {
 			Synchronous:   "NORMAL",
 		},
 		PostgresConfig{},
+		IndexedFSConfig{},
 		24,
 	)
 	if err != nil {
