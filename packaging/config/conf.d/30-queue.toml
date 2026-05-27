@@ -2,6 +2,17 @@
 
 queue_dir = "/var/spool/elemta"
 
+[queue]
+# Supported values: file, sqlite, postgres, indexedfs
+backend = "file"
+
+[queue.indexedfs]
+# Used when queue.backend = "indexedfs"
+index_path = "/var/spool/elemta/index"
+content_dir = "/var/spool/elemta/data"
+sync_mode = "normal"
+recovery_on_startup = true
+
 [queue_processor]
 enabled = true
 interval = 10

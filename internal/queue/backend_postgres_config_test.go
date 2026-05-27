@@ -13,6 +13,7 @@ func TestQueuePostgresBackendRequiresDSN(t *testing.T) {
 		"postgres",
 		SQLiteConfig{},
 		PostgresConfig{},
+		IndexedFSConfig{},
 		24,
 	)
 	if err == nil {
