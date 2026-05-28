@@ -601,7 +601,7 @@ func (csm *CommandSecurityManager) checkMemoryUsage(ctx context.Context, initial
 	runtime.ReadMemStats(&currentStats)
 
 	// Calculate memory increase
-	memoryIncrease := int64(currentStats.Alloc) - int64(initialStats.Alloc)
+	memoryIncrease := safeUint64ToInt64(currentStats.Alloc) - safeUint64ToInt64(initialStats.Alloc)
 
 	// Check if memory increase exceeds the maximum allowed
 	if memoryIncrease > csm.config.MaxMemoryPerCommand {

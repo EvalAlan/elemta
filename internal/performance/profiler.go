@@ -217,7 +217,7 @@ func (p *Profiler) GenerateGoroutineProfile() error {
 		return fmt.Errorf("failed to write goroutine profile: %w", err)
 	}
 
-	p.metrics.Goroutines.Store(int32(runtime.NumGoroutine()))
+	p.metrics.Goroutines.Store(safeIntToInt32(runtime.NumGoroutine()))
 	p.metrics.ProfilesGenerated.Add(1)
 	p.metrics.LastProfileTime.Store(time.Now().UnixNano())
 
