@@ -512,7 +512,7 @@ func LoadConfig(configPath string) (*Config, error) {
 		}
 	}
 
-	if err := os.MkdirAll(config.QueueDir, 0755); err != nil {
+	if err := os.MkdirAll(config.QueueDir, 0750); err != nil {
 		return nil, err
 	}
 
