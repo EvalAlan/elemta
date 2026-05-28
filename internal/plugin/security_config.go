@@ -10,6 +10,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 )
+
 // SecurityConfig represents the complete security configuration for plugins
 type SecurityConfig struct {
 	// Global security settings

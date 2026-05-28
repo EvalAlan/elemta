@@ -12,6 +12,7 @@ import (
 
 	"strings"
 )
+
 // SecurePluginManager provides enhanced security for plugin management
 type SecurePluginManager struct {
 	*Manager

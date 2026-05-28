@@ -10,6 +10,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 )
+
 // Config represents the main configuration for the SMTP server
 type Config struct {
 	ListenAddr    string   `toml:"listen_addr" json:"listen_addr"`
