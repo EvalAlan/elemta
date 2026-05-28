@@ -6,9 +6,10 @@ import (
 	"os"
 	"time"
 
+	"strings"
+
 	"github.com/BurntSushi/toml"
 )
-
 // Config represents the main configuration for the SMTP server
 type Config struct {
 	ListenAddr    string   `toml:"listen_addr" json:"listen_addr"`
@@ -302,6 +303,7 @@ type APIConfig struct {
 
 func findConfigFile(configPath string) (string, error) {
 	if configPath != "" {
+		// #nosec G703 -- explicit config path is operator-provided CLI/env input
 		if _, err := os.Stat(configPath); err == nil {
 			// Informational: config file found at explicit path
 			return configPath, nil
@@ -343,6 +345,13 @@ func LoadConfig(configPath string) (*Config, error) {
 		return DefaultConfig(), nil
 	}
 
+	if strings.Contains(path, "..") {
+		return nil, fmt.Errorf("invalid config file path: path traversal attempt detected")
+	}
+
+	// #nosec G304 -- path is validated above for traversal
+	// #nosec G703 -- config path is validated for traversal before file read
+	//nolint:gosec // config path is validated for traversal before file read
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("error reading config file: %w", err)

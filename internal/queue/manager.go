@@ -597,6 +597,7 @@ func calculateNextRetry(retryCount int) time.Time {
 
 	// Add some randomness (±10%)
 	jitter := float64(delaySeconds) * 0.1
+	// #nosec G404 -- jitter for retry delay does not require cryptographic randomness
 	delaySeconds = delaySeconds + int(jitter*(2.0*rand.Float64()-1.0))
 
 	return time.Now().Add(time.Duration(delaySeconds) * time.Second)

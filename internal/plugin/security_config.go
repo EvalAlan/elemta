@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"sync"
 
+	"strings"
+
 	"github.com/pelletier/go-toml/v2"
 )
-
 // SecurityConfig represents the complete security configuration for plugins
 type SecurityConfig struct {
 	// Global security settings
@@ -262,6 +263,10 @@ func LoadSecurityConfig(configPath string) (*SecurityConfig, error) {
 		return &config, nil
 	}
 
+	if strings.Contains(configPath, "..") {
+		return nil, fmt.Errorf("invalid config file path: path traversal attempt detected")
+	}
+	// #nosec G304 -- configPath traversal is checked above
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
