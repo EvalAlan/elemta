@@ -1304,8 +1304,13 @@ function startAutoRefresh() {
 
     if (state.refreshRate > 0) {
         state.refreshInterval = setInterval(() => {
+            // Keep all major views live, not just queue table rows.
             loadQueueStats();
+            loadQueueObservability();
             loadQueue(state.currentQueue);
+            loadRecentActivity();
+            refreshHealth();
+            updateLastUpdated();
         }, state.refreshRate);
     }
 }
