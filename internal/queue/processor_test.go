@@ -114,19 +114,20 @@ func TestProcessor(t *testing.T) {
 		}
 		defer processor.Stop()
 
-		// Wait for initial processing attempt
-		time.Sleep(300 * time.Millisecond)
-
-		// Message should be moved to deferred queue
-		stats := manager.GetStats()
-		if stats.DeferredCount != 1 {
-			t.Errorf("Expected 1 deferred message, got %d", stats.DeferredCount)
-		}
-
-		// Get the message to check retry count
-		msg, err := manager.GetMessage(msgID)
-		if err != nil {
-			t.Fatalf("Failed to get message: %v", err)
+		// Wait until failure path has actually deferred the message.
+		deadline := time.Now().Add(2 * time.Second)
+		var msg Message
+		for {
+			stats := manager.GetStats()
+			current, getErr := manager.GetMessage(msgID)
+			if getErr == nil && stats.DeferredCount == 1 && current.RetryCount == 1 && current.QueueType == Deferred {
+				msg = current
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("RetryLogic did not reach deferred state in time: deferred=%d retry=%d queue=%v err=%v", stats.DeferredCount, current.RetryCount, current.QueueType, getErr)
+			}
+			time.Sleep(25 * time.Millisecond)
 		}
 
 		if msg.RetryCount != 1 {
