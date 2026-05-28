@@ -349,10 +349,8 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config file path: path traversal attempt detected")
 	}
 
-	// #nosec G304 -- path is validated above for traversal
-	// #nosec G703 -- config path is validated for traversal before file read
-	//nolint:gosec // config path is validated for traversal before file read
-	data, err := os.ReadFile(path)
+	// Path was normalized/checked before use.
+	data, err := os.ReadFile(path) // #nosec G304,G703 -- operator-provided config path, validated for traversal
 	if err != nil {
 		return nil, fmt.Errorf("error reading config file: %w", err)
 	}
