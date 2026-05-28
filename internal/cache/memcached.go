@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -230,6 +231,9 @@ func (m *Memcached) Increment(ctx context.Context, key string, amount int64) (in
 	}
 
 	if !exists {
+		if amount < 0 {
+			return 0, fmt.Errorf("amount must be non-negative")
+		}
 		// Initialize with amount
 		if err := m.Set(ctx, key, strconv.FormatInt(amount, 10), 0); err != nil {
 			return 0, err
@@ -238,9 +242,15 @@ func (m *Memcached) Increment(ctx context.Context, key string, amount int64) (in
 	}
 
 	// Increment existing value
+	if amount < 0 {
+		return 0, fmt.Errorf("amount must be non-negative")
+	}
 	newValue, err := m.client.Increment(key, uint64(amount))
 	if err != nil {
 		return 0, err
+	}
+	if newValue > math.MaxInt64 {
+		return 0, fmt.Errorf("increment result overflows int64")
 	}
 
 	return int64(newValue), nil
@@ -267,9 +277,15 @@ func (m *Memcached) Decrement(ctx context.Context, key string, amount int64) (in
 	}
 
 	// Decrement existing value
+	if amount < 0 {
+		return 0, fmt.Errorf("amount must be non-negative")
+	}
 	newValue, err := m.client.Decrement(key, uint64(amount))
 	if err != nil {
 		return 0, err
+	}
+	if newValue > math.MaxInt64 {
+		return 0, fmt.Errorf("decrement result overflows int64")
 	}
 
 	return int64(newValue), nil

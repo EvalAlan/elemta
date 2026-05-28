@@ -322,7 +322,7 @@ func (mm *MemoryManager) updateMemoryStats() {
 	runtime.ReadMemStats(&m)
 
 	// Update memory statistics
-	mm.stats.CurrentMemoryUsage = int64(m.Alloc)
+	mm.stats.CurrentMemoryUsage = safeUint64ToInt64(m.Alloc)
 	mm.stats.MemoryUtilization = float64(m.Alloc) / float64(mm.config.MaxMemoryUsage)
 	mm.stats.GoroutineCount = runtime.NumGoroutine()
 	mm.stats.GCCollections = int64(m.NumGC)
@@ -343,7 +343,7 @@ func (mm *MemoryManager) getCurrentMemoryStats() *MemoryStats {
 	runtime.ReadMemStats(&m)
 
 	return &MemoryStats{
-		CurrentMemoryUsage: int64(m.Alloc),
+		CurrentMemoryUsage: safeUint64ToInt64(m.Alloc),
 		MemoryUtilization:  float64(m.Alloc) / float64(mm.config.MaxMemoryUsage),
 		GoroutineCount:     runtime.NumGoroutine(),
 		GCCollections:      int64(m.NumGC),
