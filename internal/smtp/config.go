@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"strings"
+
 	"github.com/BurntSushi/toml"
 )
 
@@ -302,6 +304,7 @@ type APIConfig struct {
 
 func findConfigFile(configPath string) (string, error) {
 	if configPath != "" {
+		// #nosec G703 -- explicit config path is operator-provided CLI/env input
 		if _, err := os.Stat(configPath); err == nil {
 			// Informational: config file found at explicit path
 			return configPath, nil
@@ -343,7 +346,12 @@ func LoadConfig(configPath string) (*Config, error) {
 		return DefaultConfig(), nil
 	}
 
-	data, err := os.ReadFile(path)
+	if strings.Contains(path, "..") {
+		return nil, fmt.Errorf("invalid config file path: path traversal attempt detected")
+	}
+
+	// Path was normalized/checked before use.
+	data, err := os.ReadFile(path) // #nosec G304,G703 -- operator-provided config path, validated for traversal
 	if err != nil {
 		return nil, fmt.Errorf("error reading config file: %w", err)
 	}

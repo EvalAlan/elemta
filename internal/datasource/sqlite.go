@@ -362,6 +362,7 @@ func (s *SQLite) GetUser(ctx context.Context, username string) (User, error) {
 	}
 
 	// Get user groups
+	// #nosec G201 -- table names are internal backend configuration, username is parameterized
 	groupQuery := fmt.Sprintf(`
 		SELECT g.name
 		FROM %s g
@@ -424,6 +425,7 @@ func (s *SQLite) ListUsers(ctx context.Context, filter map[string]interface{}, l
 	}
 
 	// Build the query
+	// #nosec G201 -- table names are internal backend configuration, values stay parameterized
 	query := fmt.Sprintf(`
 		SELECT username, password, email, full_name, is_active, is_admin, 
 		       created_at, updated_at, last_login_at
@@ -520,6 +522,7 @@ func (s *SQLite) CreateUser(ctx context.Context, user User) error {
 	defer func() { _ = tx.Rollback() }()
 
 	// Insert the user
+	// #nosec G201 -- table names are internal backend configuration, values stay parameterized
 	query := fmt.Sprintf(`
 		INSERT INTO %s (
 			username, password, email, full_name, is_active, is_admin,
@@ -611,6 +614,7 @@ func (s *SQLite) UpdateUser(ctx context.Context, user User) error {
 	defer func() { _ = tx.Rollback() }()
 
 	// Update the user
+	// #nosec G201 -- table names are internal backend configuration, values stay parameterized
 	query := fmt.Sprintf(`
 		UPDATE %s SET
 			password = ?,
@@ -732,6 +736,7 @@ func (s *SQLite) DeleteUser(ctx context.Context, username string) error {
 	defer func() { _ = tx.Rollback() }()
 
 	// Delete the user (cascade will handle related records)
+	// #nosec G201 -- table name is internal backend configuration, username is parameterized
 	query := fmt.Sprintf("DELETE FROM %s WHERE username = ?", s.userTable)
 	result, err := tx.ExecContext(ctx, query, username)
 

@@ -306,6 +306,7 @@ func (m *MySQL) GetUser(ctx context.Context, username string) (User, error) {
 	}
 
 	// Get user groups
+	// #nosec G201 -- table names are internal backend configuration, username is parameterized
 	groupQuery := fmt.Sprintf(`
 		SELECT g.name
 		FROM %s g
@@ -533,6 +534,7 @@ func (m *MySQL) CreateUser(ctx context.Context, user User) error {
 	defer func() { _ = tx.Rollback() }()
 
 	// Insert the user
+	// #nosec G201 -- table names are internal backend configuration, values stay parameterized
 	query := fmt.Sprintf(`
 		INSERT INTO %s (
 			username, password, email, full_name, is_active, is_admin,
@@ -611,6 +613,7 @@ func (m *MySQL) UpdateUser(ctx context.Context, user User) error {
 	defer func() { _ = tx.Rollback() }()
 
 	// Update the user
+	// #nosec G201 -- table names are internal backend configuration, values stay parameterized
 	query := fmt.Sprintf(`
 		UPDATE %s SET
 			password = ?,

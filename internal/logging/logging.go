@@ -403,6 +403,7 @@ func InitializeLogging(levelStr string) {
 	}
 
 	// Open log file
+	// #nosec G304 -- logPath comes from validated logging configuration
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		slog.Warn("failed to open log file", "error", err)

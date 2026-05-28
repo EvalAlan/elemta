@@ -281,7 +281,12 @@ func (v *PluginValidator) validateDependencies(pluginPath string, result *Valida
 }
 
 // calculateFileHash calculates SHA256 hash of the plugin file
+// Performs basic path traversal checks to avoid G304 false positives
 func (v *PluginValidator) calculateFileHash(pluginPath string) (string, error) {
+	if strings.Contains(pluginPath, "..") {
+		return "", fmt.Errorf("path traversal attempt detected")
+	}
+	// #nosec G304 -- pluginPath traversal is checked above
 	file, err := os.Open(pluginPath)
 	if err != nil {
 		return "", err

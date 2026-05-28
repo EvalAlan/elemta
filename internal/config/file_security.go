@@ -76,6 +76,7 @@ func (cfs *ConfigFileSecurity) SecureFilePermissions(filePath string) error {
 // ContainsSensitiveData checks if a configuration file contains sensitive information
 func (cfs *ConfigFileSecurity) ContainsSensitiveData(filePath string) (bool, error) {
 	// Read file content
+	// #nosec G304 -- filePath is a configuration path provided for explicit security scanning
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return false, err
