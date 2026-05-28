@@ -398,7 +398,7 @@ func InitializeLogging(levelStr string) {
 	logPath := runtimepaths.Detect().LogFile
 
 	// Create logs directory if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0750); err != nil {
 		slog.Warn("failed to create logs directory", "error", err)
 	}
 

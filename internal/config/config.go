@@ -1014,7 +1014,7 @@ func (c *Config) validateLogging(result *ValidationResult, sv *SecurityValidator
 			} else {
 				logDir := filepath.Dir(c.Logging.File)
 				if !dirExists(logDir) {
-					if err := os.MkdirAll(logDir, 0755); err != nil {
+					if err := os.MkdirAll(logDir, 0750); err != nil {
 						result.AddError("logging.file", c.Logging.File, fmt.Sprintf("cannot create log directory: %v", err))
 					}
 				}

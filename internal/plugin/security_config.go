@@ -278,7 +278,7 @@ func LoadSecurityConfig(configPath string) (*SecurityConfig, error) {
 // SaveSecurityConfig saves security configuration to file
 func SaveSecurityConfig(config *SecurityConfig, configPath string) error {
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0750); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 

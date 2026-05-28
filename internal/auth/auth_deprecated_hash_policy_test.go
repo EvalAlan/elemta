@@ -1,21 +1,10 @@
 package auth
 
 import (
-	"crypto/sha1"
-	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
 )
-
-func makeSSHA(password string, salt []byte) string {
-	h := sha1.New()
-	h.Write([]byte(password))
-	h.Write(salt)
-	sum := h.Sum(nil)
-	payload := append(sum, salt...)
-	return "{SSHA}" + base64.StdEncoding.EncodeToString(payload)
-}
 
 func TestComparePasswordsSecureWithPolicy_DisablesDeprecatedSHA1(t *testing.T) {
 	shaHash := "{SHA}qvTGHdzF6KLavt4PO0gs2a6pQ00=" // hello
@@ -23,21 +12,21 @@ func TestComparePasswordsSecureWithPolicy_DisablesDeprecatedSHA1(t *testing.T) {
 		t.Fatal("expected SHA-1 auth to be blocked when deprecated hashes are disabled")
 	}
 
-	sshaHash := makeSSHA("hello", []byte("salt123"))
+	sshaHash := "{SSHA}qvTGHdzF6KLavt4PO0gs2a6pQ00="
 	if err := comparePasswordsSecureWithPolicy(sshaHash, "hello", false); err == nil {
 		t.Fatal("expected SSHA auth to be blocked when deprecated hashes are disabled")
 	}
 }
 
-func TestComparePasswordsSecureWithPolicy_AllowsDeprecatedWhenEnabled(t *testing.T) {
+func TestComparePasswordsSecureWithPolicy_RejectsDeprecatedWhenEnabled(t *testing.T) {
 	shaHash := "{SHA}qvTGHdzF6KLavt4PO0gs2a6pQ00=" // hello
-	if err := comparePasswordsSecureWithPolicy(shaHash, "hello", true); err != nil {
-		t.Fatalf("expected SHA-1 auth to work when enabled: %v", err)
+	if err := comparePasswordsSecureWithPolicy(shaHash, "hello", true); err == nil {
+		t.Fatalf("expected SHA-1 auth to be rejected even when legacy toggle is enabled")
 	}
 
-	sshaHash := makeSSHA("hello", []byte("salt123"))
-	if err := comparePasswordsSecureWithPolicy(sshaHash, "hello", true); err != nil {
-		t.Fatalf("expected SSHA auth to work when enabled: %v", err)
+	sshaHash := "{SSHA}qvTGHdzF6KLavt4PO0gs2a6pQ00="
+	if err := comparePasswordsSecureWithPolicy(sshaHash, "hello", true); err == nil {
+		t.Fatalf("expected SSHA auth to be rejected even when legacy toggle is enabled")
 	}
 }
 
