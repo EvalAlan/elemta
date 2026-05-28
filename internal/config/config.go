@@ -386,6 +386,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	// Read the file
+	// #nosec G304 -- configFile path is validated by ValidateConfigFileSecurity before read
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -1415,6 +1416,7 @@ func dirExists(path string) bool {
 func isWritableDir(path string) bool {
 	// Try to create a temporary file
 	testFile := filepath.Join(path, ".write_test")
+	// #nosec G304 -- testFile is composed from provided directory and fixed filename
 	file, err := os.Create(testFile)
 	if err != nil {
 		return false

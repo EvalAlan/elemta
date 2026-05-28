@@ -503,6 +503,7 @@ func (m *Manager) reportMetrics(ctx context.Context) {
 // createTLSConfig creates a TLS configuration from the config
 func createTLSConfig(config *Config) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
+		// #nosec G402 -- controlled by explicit operator config for compatibility with legacy/test endpoints
 		InsecureSkipVerify: config.TLSInsecureSkipVerify,
 	}
 

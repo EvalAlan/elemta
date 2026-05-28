@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"strings"
 )
 
 // SecurePluginManager provides enhanced security for plugin management
@@ -456,7 +458,12 @@ func NewPluginSignatureStore(trustedCerts []string, cacheSize int, cacheTTL time
 }
 
 // loadTrustedCertificate loads a trusted certificate from file
+// Performs basic path traversal checks to avoid G304 false positives
 func (pss *PluginSignatureStore) loadTrustedCertificate(certPath string) error {
+	if strings.Contains(certPath, "..") {
+		return fmt.Errorf("path traversal attempt detected")
+	}
+	// #nosec G304 -- certPath traversal is checked above
 	certData, err := os.ReadFile(certPath)
 	if err != nil {
 		return err
