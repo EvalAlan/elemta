@@ -241,14 +241,9 @@ func (m *TLSManager) setupTLSConfig() (*tls.Config, error) {
 		}
 	}
 
-	// Apply custom cipher suites if specified
+	// Custom cipher suites are intentionally ignored to enforce hardened defaults.
 	if len(m.config.TLS.Ciphers) > 0 {
-		cipherSuites, err := parseCipherSuites(m.config.TLS.Ciphers)
-		if err != nil {
-			m.logger.Printf("Warning: Some cipher suites are invalid, using default: %v", err)
-		} else if len(cipherSuites) > 0 {
-			tlsConfig.CipherSuites = cipherSuites
-		}
+		m.logger.Printf("Warning: custom TLS cipher suites are ignored; using hardened defaults")
 	}
 
 	// Apply custom client auth if specified
