@@ -159,6 +159,12 @@ func startServer() {
 			MaxIdleConns:           cfg.Queue.Postgres.MaxIdleConns,
 			ConnMaxLifetimeSeconds: cfg.Queue.Postgres.ConnMaxLifetimeSeconds,
 		},
+		QueueIndexedFS: smtp.QueueIndexedFSConfig{
+			IndexPath:         cfg.Queue.IndexedFS.IndexPath,
+			ContentDir:        cfg.Queue.IndexedFS.ContentDir,
+			SyncMode:          cfg.Queue.IndexedFS.SyncMode,
+			RecoveryOnStartup: cfg.Queue.IndexedFS.RecoveryOnStartup,
+		},
 		MaxSize:                   cfg.MaxSize,      // Use top-level max_size
 		LocalDomains:              cfg.LocalDomains, // Use top-level local_domains
 		TLS:                       cfg.TLS,

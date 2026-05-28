@@ -168,7 +168,12 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			MaxIdleConns:           config.QueuePostgres.MaxIdleConns,
 			ConnMaxLifetimeSeconds: config.QueuePostgres.ConnMaxLifetimeSeconds,
 		},
-		queue.IndexedFSConfig{},
+		queue.IndexedFSConfig{
+			IndexPath:         config.QueueIndexedFS.IndexPath,
+			ContentDir:        config.QueueIndexedFS.ContentDir,
+			SyncMode:          config.QueueIndexedFS.SyncMode,
+			RecoveryOnStartup: config.QueueIndexedFS.RecoveryOnStartup,
+		},
 		config.FailedQueueRetentionHours,
 	)
 	if err != nil {
