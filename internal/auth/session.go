@@ -167,9 +167,9 @@ func (sm *SessionManager) SetCookie(w http.ResponseWriter, sessionID string) {
 		Name:     sm.cookieName,
 		Value:    sessionID,
 		MaxAge:   int(sm.maxAge.Seconds()),
-		HttpOnly: sm.httpOnly,
-		Secure:   sm.secureCookie,
-		SameSite: sm.sameSite,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 	}
 
@@ -245,9 +245,9 @@ func (sm *SessionManager) ClearCookie(w http.ResponseWriter) {
 		Name:     sm.cookieName,
 		Value:    "",
 		MaxAge:   -1,
-		HttpOnly: sm.httpOnly,
-		Secure:   sm.secureCookie,
-		SameSite: sm.sameSite,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 	}
 

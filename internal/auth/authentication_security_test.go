@@ -242,10 +242,10 @@ func TestConstantTimeAuthentication(t *testing.T) {
 			t.Error("Invalid bcrypt hash should return error")
 		}
 
-		// Test SHA-1 comparison
+		// Test SHA-1 comparison (legacy format is intentionally rejected)
 		sha1Hash := "{SHA}qvTGHdzF6KLavt4PO0gs2a6pQ00=" // "hello" in SHA-1
-		if err := ComparePasswordsSecure(sha1Hash, "hello"); err != nil {
-			t.Errorf("Valid SHA-1 hash should succeed: %v", err)
+		if err := ComparePasswordsSecure(sha1Hash, "hello"); err == nil {
+			t.Error("Legacy SHA-1 hash must be rejected")
 		}
 
 		if err := ComparePasswordsSecure(sha1Hash, "wrong"); err == nil {

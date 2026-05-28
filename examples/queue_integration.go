@@ -12,7 +12,7 @@ import (
 func main() {
 	// Create queue directory
 	queueDir := "./queue_example"
-	if err := os.MkdirAll(queueDir, 0755); err != nil {
+	if err := os.MkdirAll(queueDir, 0750); err != nil {
 		log.Fatalf("Failed to create queue directory: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(queueDir) }()

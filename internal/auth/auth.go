@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -261,25 +260,17 @@ func comparePasswordsSecureWithPolicy(hashedPassword, plainPassword string, allo
 		// bcrypt - already constant time
 		result = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(plainPassword))
 	} else if strings.HasPrefix(hashedPassword, "{SHA}") {
-		// DEPRECATED: SHA-1 is cryptographically weak and should not be used for password hashing.
 		warnSHA1Once.Do(func() {
-			slog.Warn("DEPRECATED: SHA-1 password hash detected. " +
-				"SHA-1 is cryptographically weak and compatibility support will be removed in a future release. " +
-				"Migrate to bcrypt ($2a$).")
+			slog.Warn("Legacy SHA-1 password hashes are no longer accepted; migrate account password hashes to bcrypt")
 		})
-		hash := sha1.Sum([]byte(plainPassword))
-		b64 := base64.StdEncoding.EncodeToString(hash[:])
-		expected := "{SHA}" + b64
-		match := subtle.ConstantTimeCompare([]byte(hashedPassword), []byte(expected)) == 1
-		if allowDeprecatedSHA1 && match {
-			result = nil
-		} else if !allowDeprecatedSHA1 {
+		if !allowDeprecatedSHA1 {
 			warnSHA1BlockedOnce.Do(func() {
 				slog.Warn("Legacy SHA-1 password hash verification is disabled by policy",
 					"env", "AUTH_ALLOW_DEPRECATED_SHA1=false",
 				)
 			})
 		}
+		result = ErrInvalidCredentials
 	} else if strings.HasPrefix(hashedPassword, "{SHA256}") {
 		// OpenLDAP SHA-256 with constant-time comparison
 		hash := sha256.Sum256([]byte(plainPassword))
@@ -297,33 +288,18 @@ func comparePasswordsSecureWithPolicy(hashedPassword, plainPassword string, allo
 			result = nil
 		}
 	} else if strings.HasPrefix(hashedPassword, "{SSHA}") {
-		// DEPRECATED: SSHA (salted SHA-1) is cryptographically weak and should not be used.
+		// Legacy SSHA is intentionally rejected.
 		warnSSHAOnce.Do(func() {
-			slog.Warn("DEPRECATED: SSHA (salted SHA-1) password hash detected. " +
-				"SSHA is cryptographically weak and compatibility support will be removed in a future release. " +
-				"Migrate to bcrypt ($2a$).")
+			slog.Warn("Legacy SSHA password hashes are no longer accepted; migrate account password hashes to bcrypt")
 		})
-		b, err := base64.StdEncoding.DecodeString(hashedPassword[6:])
-		if err != nil || len(b) < 20 {
-			result = ErrInvalidCredentials
-		} else {
-			hash := b[:20]
-			salt := b[20:]
-			h := sha1.New()
-			h.Write([]byte(plainPassword))
-			h.Write(salt)
-			computedHash := h.Sum(nil)
-			match := subtle.ConstantTimeCompare(hash, computedHash) == 1
-			if allowDeprecatedSHA1 && match {
-				result = nil
-			} else if !allowDeprecatedSHA1 {
-				warnSSHABlockedOnce.Do(func() {
-					slog.Warn("Legacy SSHA password hash verification is disabled by policy",
-						"env", "AUTH_ALLOW_DEPRECATED_SHA1=false",
-					)
-				})
-			}
+		if !allowDeprecatedSHA1 {
+			warnSSHABlockedOnce.Do(func() {
+				slog.Warn("Legacy SSHA password hash verification is disabled by policy",
+					"env", "AUTH_ALLOW_DEPRECATED_SHA1=false",
+				)
+			})
 		}
+		result = ErrInvalidCredentials
 	} else {
 		// fallback: plain text with constant-time comparison
 		if subtle.ConstantTimeCompare([]byte(hashedPassword), []byte(plainPassword)) == 1 {

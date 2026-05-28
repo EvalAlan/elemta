@@ -163,7 +163,8 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 		// Continue without metrics - not fatal
 	} else {
 		server.metricsStore = &valkeyMetricsAdapter{store: metricsStore}
-		log.Printf("Connected to Valkey for metrics at %s", valkeyAddr)
+		// #nosec G706 -- operational startup log; value is sanitized before logging
+		log.Printf("Connected to Valkey for metrics at %s", sanitizeForLog(valkeyAddr))
 	}
 
 	// Initialize authentication if enabled
@@ -333,7 +334,7 @@ func (s *Server) initializeAuth() error {
 	sessionConfig := auth.SessionConfig{
 		MaxAge:       24 * time.Hour,
 		CookieName:   "elemta_session",
-		SecureCookie: false, // Set to true in production with HTTPS
+		SecureCookie: true, // Always require secure cookies
 		HTTPOnly:     true,
 		SameSite:     "lax",
 	}
@@ -578,6 +579,11 @@ func (s *Server) createListener() (net.Listener, error) {
 			return nil, fmt.Errorf("invalid inherited listener fd %q: %w", inheritedFD, err)
 		}
 
+		if fd < 0 {
+			return nil, fmt.Errorf("invalid inherited listener fd %d", fd)
+		}
+
+		// #nosec G115 -- fd is validated as non-negative OS file descriptor before uintptr conversion
 		f := os.NewFile(uintptr(fd), "inherited-api-listener")
 		if f == nil {
 			return nil, fmt.Errorf("failed to create file handle for inherited listener fd %d", fd)
@@ -611,7 +617,13 @@ func (s *Server) startReplacementProcess() (*os.Process, error) {
 	}
 	defer listenerFile.Close()
 
-	cmd := exec.Command(os.Args[0], os.Args[1:]...)
+	executablePath, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve executable path: %w", err)
+	}
+
+	// #nosec G204 -- intentional self-reexec for graceful restart; executable path is resolved from current binary
+	cmd := exec.Command(executablePath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -699,6 +711,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	content, err := s.queueMgr.GetMessageContent(id)
 	if err != nil {
 		// Log the error and return a more specific message to the user
+		// #nosec G706 -- diagnostic logging only; message id is operational metadata
 		log.Printf("Error getting content for message %s: %v", id, err)
 		http.Error(w, fmt.Sprintf("Message metadata loaded, but content is missing or corrupt: %v", err), http.StatusNotFound)
 		return
@@ -707,7 +720,9 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	// If format=raw is specified, return raw message
 	if r.URL.Query().Get("format") == "raw" {
 		w.Header().Set("Content-Type", "text/plain")
+		// #nosec G705 -- raw MIME output is intentional for queue message inspection endpoint
 		if _, err := w.Write(content); err != nil {
+			// #nosec G706 -- diagnostic logging only; message id is operational metadata
 			log.Printf("Error writing raw response for message %s: %v", id, err)
 			http.Error(w, "Failed to write response", http.StatusInternalServerError)
 		}
@@ -769,7 +784,8 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 
 // handleLogo serves the Elemta logo for the login page (public)
 func (s *Server) handleLogo(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Logo request received for path: %s", r.URL.Path)
+	// #nosec G706 -- request path is logged for troubleshooting and sanitized
+	log.Printf("Logo request received for path: %s", sanitizeForLog(r.URL.Path))
 
 	// Try different possible paths
 	paths := []string{
@@ -868,7 +884,8 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := s.sessionManager.GetSessionFromRequest(r)
-	log.Printf("Found session ID for logout: %s", sessionID)
+	// #nosec G706 -- session id logging is operational; value is sanitized
+	log.Printf("Found session ID for logout: %s", sanitizeForLog(sessionID))
 
 	if sessionID != "" {
 		err := s.sessionManager.RevokeSession(sessionID)
@@ -1149,7 +1166,11 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 	// Read from available log files
 	for _, logFile := range logFiles {
+		if !isAllowedLogPath(logFile) {
+			continue
+		}
 		if _, err := os.Stat(logFile); err == nil {
+			// #nosec G304 -- path is constrained by isAllowedLogPath allowlist
 			data, err := os.ReadFile(logFile)
 			if err == nil {
 				lines := strings.Split(string(data), "\n")
@@ -1268,6 +1289,11 @@ func (s *Server) handleGetMessageLogs(w http.ResponseWriter, r *http.Request) {
 
 // tailLogFile reads log file from the end and returns matching entries
 func (s *Server) tailLogFile(filename string, limit int, eventTypeFilter, levelFilter string) ([]MessageLog, error) {
+	if !isAllowedLogPath(filename) {
+		return nil, fmt.Errorf("log file path not allowed: %s", filename)
+	}
+
+	// #nosec G304 -- path is constrained by isAllowedLogPath allowlist
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -1767,6 +1793,42 @@ func (s *Server) validateRequestedAPIKeyPermissions(authCtx *AuthContext, reques
 		}
 	}
 	return nil
+}
+
+func isAllowedLogPath(path string) bool {
+	allowedFiles := map[string]struct{}{
+		"elemta.log":      {},
+		"smtp.log":        {},
+		"queue.log":       {},
+		"application.log": {},
+	}
+
+	base := filepath.Base(path)
+	if _, ok := allowedFiles[base]; !ok {
+		return false
+	}
+
+	cleanPath := filepath.Clean(path)
+	allowedDirs := []string{
+		"/app/logs",
+		"./logs",
+		"logs",
+		filepath.Clean(runtimepaths.Detect().LogDir),
+	}
+
+	for _, dir := range allowedDirs {
+		cleanDir := filepath.Clean(dir)
+		if cleanPath == filepath.Join(cleanDir, base) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func sanitizeForLog(value string) string {
+	replacer := strings.NewReplacer("\n", "", "\r", "", "\t", " ")
+	return replacer.Replace(value)
 }
 
 // Regex patterns for SMTP code detection
