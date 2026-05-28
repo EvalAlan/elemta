@@ -330,7 +330,7 @@ func initConcurrency(slogger *slog.Logger, resourceLimits *ResourceLimits) (cont
 		Timeout:            30 * time.Second,
 		JobTimeout:         5 * time.Minute,
 		ShutdownTimeout:    30 * time.Second,
-		MaxGoroutines:      int32(resourceLimits.MaxGoroutines),
+		MaxGoroutines:      safeIntToInt32(resourceLimits.MaxGoroutines),
 		OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
 			slogger.Info("SMTP connection circuit breaker state changed",
 				"name", name,

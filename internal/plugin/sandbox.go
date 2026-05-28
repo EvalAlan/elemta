@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -259,7 +260,7 @@ func (s *PluginSandbox) checkResourceLimits(execution *SandboxedExecution) error
 	// Check memory limit
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	currentMemoryMB := int64(m.Alloc / 1024 / 1024)
+	currentMemoryMB := safeUint64ToInt64(m.Alloc / 1024 / 1024)
 
 	if currentMemoryMB > s.config.MaxMemoryMB {
 		s.recordViolation(execution, "memory",
@@ -296,7 +297,7 @@ func (s *PluginSandbox) updateResourceUsage(execution *SandboxedExecution) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	execution.ResourceUsage.MemoryMB = int64(m.Alloc / 1024 / 1024)
+	execution.ResourceUsage.MemoryMB = safeUint64ToInt64(m.Alloc / 1024 / 1024)
 	execution.ResourceUsage.Goroutines = runtime.NumGoroutine()
 	execution.ResourceUsage.LastUpdated = time.Now()
 
@@ -484,4 +485,11 @@ func (s *PluginSandbox) GetSandboxStatus() map[string]interface{} {
 		"filesystem_allowed": s.config.AllowFileSystem,
 		"monitor_running":    s.resourceMonitor != nil && s.resourceMonitor.running,
 	}
+}
+
+func safeUint64ToInt64(v uint64) int64 {
+	if v > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(v)
 }
