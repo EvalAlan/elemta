@@ -11,9 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"crypto/sha256"
-	"crypto/sha512"
-	"encoding/base64"
 	"strings"
 
 	"github.com/busybox42/elemta/internal/datasource"
@@ -271,22 +268,9 @@ func comparePasswordsSecureWithPolicy(hashedPassword, plainPassword string, allo
 			})
 		}
 		result = ErrInvalidCredentials
-	} else if strings.HasPrefix(hashedPassword, "{SHA256}") {
-		// OpenLDAP SHA-256 with constant-time comparison
-		hash := sha256.Sum256([]byte(plainPassword))
-		b64 := base64.StdEncoding.EncodeToString(hash[:])
-		expected := "{SHA256}" + b64
-		if subtle.ConstantTimeCompare([]byte(hashedPassword), []byte(expected)) == 1 {
-			result = nil
-		}
-	} else if strings.HasPrefix(hashedPassword, "{SHA512}") {
-		// OpenLDAP SHA-512 with constant-time comparison
-		hash := sha512.Sum512([]byte(plainPassword))
-		b64 := base64.StdEncoding.EncodeToString(hash[:])
-		expected := "{SHA512}" + b64
-		if subtle.ConstantTimeCompare([]byte(hashedPassword), []byte(expected)) == 1 {
-			result = nil
-		}
+	} else if strings.HasPrefix(hashedPassword, "{SHA256}") || strings.HasPrefix(hashedPassword, "{SHA512}") {
+		// Legacy fast hashes are intentionally rejected. Migrate to bcrypt.
+		result = ErrInvalidCredentials
 	} else if strings.HasPrefix(hashedPassword, "{SSHA}") {
 		// Legacy SSHA is intentionally rejected.
 		warnSSHAOnce.Do(func() {
