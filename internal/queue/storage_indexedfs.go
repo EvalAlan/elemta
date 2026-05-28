@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -118,6 +119,56 @@ func (b *IndexedFSStorageBackend) Cleanup(retentionHours int) (int, error) {
 	return deleted, nil
 }
 
+func (b *IndexedFSStorageBackend) Count(queueType QueueType) (int, error) {
+	state, err := b.loadIndexSnapshot()
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, entry := range state.Messages {
+		if entry.QueueType == queueType {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (b *IndexedFSStorageBackend) List(queueType QueueType) ([]Message, error) {
+	state, err := b.loadIndexSnapshot()
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(state.Messages))
+	for id, entry := range state.Messages {
+		if entry.QueueType == queueType {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+
+	messages := make([]Message, 0, len(ids))
+	stale := make([]string, 0)
+	for _, id := range ids {
+		msg, err := b.FileStorageBackend.Retrieve(id)
+		if err != nil {
+			stale = append(stale, id)
+			continue
+		}
+		messages = append(messages, msg)
+	}
+
+	if len(stale) > 0 {
+		_ = b.updateIndex(func(s *indexedFSIndexState) {
+			for _, id := range stale {
+				delete(s.Messages, id)
+			}
+		})
+	}
+
+	return messages, nil
+}
+
 func (b *IndexedFSStorageBackend) ensureIndexFile() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -137,6 +188,12 @@ func (b *IndexedFSStorageBackend) updateIndex(mut func(*indexedFSIndexState)) er
 	}
 	mut(&state)
 	return b.writeIndexUnlocked(state)
+}
+
+func (b *IndexedFSStorageBackend) loadIndexSnapshot() (indexedFSIndexState, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.readIndexUnlocked()
 }
 
 func (b *IndexedFSStorageBackend) readIndexUnlocked() (indexedFSIndexState, error) {
