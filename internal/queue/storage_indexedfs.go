@@ -111,14 +111,14 @@ func (b *IndexedFSStorageBackend) DeleteAll(queueType QueueType) error {
 
 	toRemove := make([]string, 0, len(ids))
 	for _, id := range ids {
-		if _, err := b.FileStorageBackend.Retrieve(id); err != nil {
+		if _, err := b.Retrieve(id); err != nil {
 			toRemove = append(toRemove, id)
 			continue
 		}
 		if err := b.FileStorageBackend.Delete(id); err != nil {
 			return err
 		}
-		_ = b.FileStorageBackend.DeleteContent(id)
+		_ = b.DeleteContent(id)
 		toRemove = append(toRemove, id)
 	}
 
@@ -145,7 +145,7 @@ func (b *IndexedFSStorageBackend) Cleanup(retentionHours int) (int, error) {
 	deletedCount := 0
 
 	for id := range state.Messages {
-		msg, err := b.FileStorageBackend.Retrieve(id)
+		msg, err := b.Retrieve(id)
 		if err != nil {
 			toRemove = append(toRemove, id)
 			continue
@@ -154,7 +154,7 @@ func (b *IndexedFSStorageBackend) Cleanup(retentionHours int) (int, error) {
 			if err := b.FileStorageBackend.Delete(id); err == nil {
 				deletedCount++
 			}
-			_ = b.FileStorageBackend.DeleteContent(id)
+			_ = b.DeleteContent(id)
 			toRemove = append(toRemove, id)
 		}
 	}
@@ -198,7 +198,7 @@ func (b *IndexedFSStorageBackend) List(queueType QueueType) ([]Message, error) {
 	messages := make([]Message, 0, len(ids))
 	stale := make([]string, 0)
 	for _, id := range ids {
-		msg, err := b.FileStorageBackend.Retrieve(id)
+		msg, err := b.Retrieve(id)
 		if err != nil {
 			stale = append(stale, id)
 			continue
