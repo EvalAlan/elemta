@@ -203,7 +203,7 @@ func (p *ConnectionPool) Acquire(ctx context.Context) (*PooledConnection, error)
 	}
 
 	// Try to create new connection if under limit
-	if atomic.LoadInt32(&p.totalConns) < int32(p.maxActive) {
+	if atomic.LoadInt32(&p.totalConns) < safeIntToInt32(p.maxActive) {
 		conn, err := p.createConnection(ctx)
 		if err == nil {
 			atomic.AddInt32(&p.activeConns, 1)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"runtime"
 	"runtime/debug"
 	"sync"
@@ -203,7 +204,7 @@ func (mo *MemoryOptimizer) checkMemory() {
 	mo.stats.HeapIdle.Store(m.HeapIdle)
 	mo.stats.GCRuns.Store(m.NumGC)
 	mo.stats.GCPauseTotal.Store(m.PauseTotalNs)
-	mo.stats.LastGC.Store(int64(m.LastGC))
+	mo.stats.LastGC.Store(safeUint64ToInt64(m.LastGC))
 
 	// Calculate memory usage percentage
 	usage := float64(m.HeapAlloc) / float64(mo.maxMemory)
@@ -273,7 +274,7 @@ func (mo *MemoryOptimizer) GetStats() map[string]interface{} {
 		"gc_pause_avg_ms":   avgGCPause / 1000000,
 		"gc_cpu_fraction":   m.GCCPUFraction,
 		"next_gc_mb":        m.NextGC / (1024 * 1024),
-		"last_gc":           time.Unix(0, int64(m.LastGC)).Format(time.RFC3339),
+		"last_gc":           time.Unix(0, safeUint64ToInt64(m.LastGC)).Format(time.RFC3339),
 		"max_memory_mb":     mo.maxMemory / (1024 * 1024),
 		"usage_percent":     fmt.Sprintf("%.2f", float64(m.HeapAlloc)/float64(mo.maxMemory)*100),
 		"goroutines":        runtime.NumGoroutine(),
@@ -348,4 +349,21 @@ func (mo *MemoryOptimizer) HeapDump(filename string) error {
 	// Implementation depends on specific requirements
 	mo.logger.Info("heap dump requested", "filename", filename)
 	return nil
+}
+
+func safeUint64ToInt64(v uint64) int64 {
+	if v > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(v)
+}
+
+func safeIntToInt32(v int) int32 {
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v)
 }
