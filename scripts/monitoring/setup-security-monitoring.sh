@@ -46,7 +46,7 @@ receivers:
     send_resolved: true
 - name: 'slack-notifications'
   slack_configs:
-  - api_url: 'https://hooks.slack.com/services/REDACTED'
+  - api_url: '${SLACK_WEBHOOK_URL}'
     channel: '#elemta-alerts'
     send_resolved: true
 
