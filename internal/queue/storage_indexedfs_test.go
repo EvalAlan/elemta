@@ -107,3 +107,38 @@ func TestIndexedFSRecoveryRebuildsIndexOnStartup(t *testing.T) {
 		t.Fatalf("expected recovered message %s in index", msg.ID)
 	}
 }
+
+func TestIndexedFSCountIgnoresStrayMetadataFiles(t *testing.T) {
+	root := t.TempDir()
+	idx := filepath.Join(root, "index")
+	backend, err := NewIndexedFSStorageBackend(root, IndexedFSConfig{IndexPath: idx})
+	if err != nil {
+		t.Fatalf("new backend: %v", err)
+	}
+
+	msg := Message{
+		ID:        "m3",
+		QueueType: Active,
+		From:      "a@example.com",
+		To:        []string{"b@example.com"},
+		Subject:   "count",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := backend.Store(msg); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+
+	stray := filepath.Join(root, string(Active), "stray.json")
+	if err := os.WriteFile(stray, []byte(`{"junk":true}`), 0600); err != nil {
+		t.Fatalf("write stray file: %v", err)
+	}
+
+	count, err := backend.Count(Active)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected indexed count=1, got %d", count)
+	}
+}
