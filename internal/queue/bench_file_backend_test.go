@@ -89,9 +89,13 @@ func benchmarkFileBackendListActiveAtDepth(b *testing.B, depth int) {
 	}
 }
 
-func BenchmarkFileBackendListActive_1K(b *testing.B)  { benchmarkFileBackendListActiveAtDepth(b, 1000) }
-func BenchmarkFileBackendListActive_10K(b *testing.B) { benchmarkFileBackendListActiveAtDepth(b, 10000) }
-func BenchmarkFileBackendListActive_50K(b *testing.B) { benchmarkFileBackendListActiveAtDepth(b, 50000) }
+func BenchmarkFileBackendListActive_1K(b *testing.B) { benchmarkFileBackendListActiveAtDepth(b, 1000) }
+func BenchmarkFileBackendListActive_10K(b *testing.B) {
+	benchmarkFileBackendListActiveAtDepth(b, 10000)
+}
+func BenchmarkFileBackendListActive_50K(b *testing.B) {
+	benchmarkFileBackendListActiveAtDepth(b, 50000)
+}
 
 func BenchmarkFileBackendMoveActiveToDeferred(b *testing.B) {
 	m, _ := newBenchFileManager(b)
