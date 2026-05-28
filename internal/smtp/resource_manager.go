@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -68,9 +69,10 @@ type IPConnectionTracker struct {
 
 // NewIPConnectionTracker creates a new IP connection tracker
 func NewIPConnectionTracker(maxPerIP int) *IPConnectionTracker {
+	maxPerIP32 := safeIntToInt32(maxPerIP)
 	return &IPConnectionTracker{
 		connections: make(map[string]int32),
-		maxPerIP:    int32(maxPerIP),
+		maxPerIP:    maxPerIP32,
 	}
 }
 
@@ -144,13 +146,16 @@ type ResourceRateLimiter struct {
 // NewResourceRateLimiter creates a new rate limiter
 func NewResourceRateLimiter(maxTokens, refillRate int, windowLimit int, windowDuration time.Duration) *ResourceRateLimiter {
 	now := time.Now()
+	maxTokens32 := safeIntToInt32(maxTokens)
+	refillRate32 := safeIntToInt32(refillRate)
+	windowLimit32 := safeIntToInt32(windowLimit)
 	return &ResourceRateLimiter{
-		tokens:         int32(maxTokens),
-		maxTokens:      int32(maxTokens),
-		refillRate:     int32(refillRate),
+		tokens:         maxTokens32,
+		maxTokens:      maxTokens32,
+		refillRate:     refillRate32,
 		lastRefill:     now.Unix(),
 		windowStart:    now,
-		windowLimit:    int32(windowLimit),
+		windowLimit:    windowLimit32,
 		windowDuration: windowDuration,
 	}
 }
@@ -175,7 +180,7 @@ func (rl *ResourceRateLimiter) Allow() bool {
 	// Refill tokens based on time elapsed
 	elapsed := now.Unix() - rl.lastRefill
 	if elapsed > 0 {
-		tokensToAdd := int32(elapsed) * rl.refillRate
+		tokensToAdd := safeInt64ToInt32(elapsed) * rl.refillRate
 		rl.tokens = minInt32(rl.maxTokens, rl.tokens+tokensToAdd)
 		rl.lastRefill = now.Unix()
 	}
@@ -334,7 +339,7 @@ type CircuitBreaker struct {
 func NewCircuitBreaker(name string, maxFailures int, timeout time.Duration, logger *slog.Logger) *CircuitBreaker {
 	return &CircuitBreaker{
 		name:        name,
-		maxFailures: int32(maxFailures),
+		maxFailures: safeIntToInt32(maxFailures),
 		timeout:     timeout,
 		state:       CircuitBreakerClosed,
 		logger:      logger,
@@ -689,7 +694,7 @@ func (rm *ResourceManager) CanAcceptConnection(remoteAddr string) bool {
 
 	// Check global connection limit
 	rm.logger.Debug("Checking global connection limit", "active", atomic.LoadInt32(&rm.activeConnections), "max", rm.limits.MaxConnections)
-	if atomic.LoadInt32(&rm.activeConnections) >= int32(rm.limits.MaxConnections) {
+	if atomic.LoadInt32(&rm.activeConnections) >= safeIntToInt32(rm.limits.MaxConnections) {
 		rm.logger.Debug("Global connection limit reached")
 		atomic.AddInt64(&rm.rejectedRequests, 1)
 		rm.logger.Warn("Connection rejected: global limit reached",
@@ -1133,4 +1138,31 @@ func maxInt64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+func safeIntToInt32(v int) int32 {
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v)
+}
+
+func safeInt64ToInt32(v int64) int32 {
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v)
+}
+
+func safeUint64ToInt64(v uint64) int64 {
+	if v > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(v)
 }
