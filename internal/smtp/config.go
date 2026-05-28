@@ -30,6 +30,9 @@ type Config struct {
 	// PostgreSQL queue backend configuration (used when QueueBackend=postgres)
 	QueuePostgres QueuePostgresConfig `toml:"queue_postgres" json:"queue_postgres"`
 
+	// Indexed filesystem queue backend configuration (used when QueueBackend=indexedfs)
+	QueueIndexedFS QueueIndexedFSConfig `toml:"queue_indexedfs" json:"queue_indexedfs"`
+
 	// Queue management options
 	KeepDeliveredMessages     bool `toml:"keep_delivered_messages" json:"keep_delivered_messages"`           // Whether to keep delivered messages for archiving
 	KeepMessageData           bool `toml:"keep_message_data" json:"keep_message_data"`                       // Whether to keep message data after delivery
@@ -125,6 +128,14 @@ type QueuePostgresConfig struct {
 	MaxOpenConns           int    `toml:"max_open_conns" json:"max_open_conns"`
 	MaxIdleConns           int    `toml:"max_idle_conns" json:"max_idle_conns"`
 	ConnMaxLifetimeSeconds int    `toml:"conn_max_lifetime_seconds" json:"conn_max_lifetime_seconds"`
+}
+
+// QueueIndexedFSConfig represents indexedfs queue backend configuration.
+type QueueIndexedFSConfig struct {
+	IndexPath         string `toml:"index_path" json:"index_path"`
+	ContentDir        string `toml:"content_dir" json:"content_dir"`
+	SyncMode          string `toml:"sync_mode" json:"sync_mode"`
+	RecoveryOnStartup bool   `toml:"recovery_on_startup" json:"recovery_on_startup"`
 }
 
 // DeliveryConfig represents configuration for message delivery
@@ -536,6 +547,12 @@ func DefaultConfig() *Config {
 			MaxOpenConns:           20,
 			MaxIdleConns:           10,
 			ConnMaxLifetimeSeconds: 1800,
+		},
+		QueueIndexedFS: QueueIndexedFSConfig{
+			IndexPath:         "./queue/index",
+			ContentDir:        "./queue/data",
+			SyncMode:          "normal",
+			RecoveryOnStartup: true,
 		},
 
 		// TLS configuration with enhanced certificate management

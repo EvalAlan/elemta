@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 type indexedFSIndexEntry struct {
@@ -96,27 +97,74 @@ func (b *IndexedFSStorageBackend) Move(id string, fromQueue, toQueue QueueType) 
 }
 
 func (b *IndexedFSStorageBackend) DeleteAll(queueType QueueType) error {
-	if err := b.FileStorageBackend.DeleteAll(queueType); err != nil {
+	state, err := b.loadIndexSnapshot()
+	if err != nil {
 		return err
 	}
-	return b.updateIndex(func(s *indexedFSIndexState) {
-		for id, entry := range s.Messages {
-			if entry.QueueType == queueType {
-				delete(s.Messages, id)
-			}
+
+	ids := make([]string, 0)
+	for id, entry := range state.Messages {
+		if entry.QueueType == queueType {
+			ids = append(ids, id)
 		}
-	})
+	}
+
+	toRemove := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, err := b.FileStorageBackend.Retrieve(id); err != nil {
+			toRemove = append(toRemove, id)
+			continue
+		}
+		if err := b.FileStorageBackend.Delete(id); err != nil {
+			return err
+		}
+		_ = b.FileStorageBackend.DeleteContent(id)
+		toRemove = append(toRemove, id)
+	}
+
+	if len(toRemove) > 0 {
+		if err := b.removeIndexEntries(toRemove); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *IndexedFSStorageBackend) Cleanup(retentionHours int) (int, error) {
-	deleted, err := b.FileStorageBackend.Cleanup(retentionHours)
+	if retentionHours <= 0 {
+		return 0, fmt.Errorf("retention hours must be positive")
+	}
+
+	state, err := b.loadIndexSnapshot()
 	if err != nil {
-		return deleted, err
+		return 0, err
 	}
-	if err := b.rebuildIndexFromDisk(); err != nil {
-		return deleted, err
+
+	cutoffTime := time.Now().Add(-time.Duration(retentionHours) * time.Hour)
+	toRemove := make([]string, 0)
+	deletedCount := 0
+
+	for id := range state.Messages {
+		msg, err := b.FileStorageBackend.Retrieve(id)
+		if err != nil {
+			toRemove = append(toRemove, id)
+			continue
+		}
+		if msg.CreatedAt.Before(cutoffTime) {
+			if err := b.FileStorageBackend.Delete(id); err == nil {
+				deletedCount++
+			}
+			_ = b.FileStorageBackend.DeleteContent(id)
+			toRemove = append(toRemove, id)
+		}
 	}
-	return deleted, nil
+
+	if len(toRemove) > 0 {
+		if err := b.removeIndexEntries(toRemove); err != nil {
+			return deletedCount, err
+		}
+	}
+	return deletedCount, nil
 }
 
 func (b *IndexedFSStorageBackend) Count(queueType QueueType) (int, error) {
@@ -194,6 +242,17 @@ func (b *IndexedFSStorageBackend) loadIndexSnapshot() (indexedFSIndexState, erro
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.readIndexUnlocked()
+}
+
+func (b *IndexedFSStorageBackend) removeIndexEntries(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return b.updateIndex(func(s *indexedFSIndexState) {
+		for _, id := range ids {
+			delete(s.Messages, id)
+		}
+	})
 }
 
 func (b *IndexedFSStorageBackend) readIndexUnlocked() (indexedFSIndexState, error) {
