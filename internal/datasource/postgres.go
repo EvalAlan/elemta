@@ -240,6 +240,7 @@ func (p *Postgres) GetUser(ctx context.Context, username string) (User, error) {
 		return User{}, ErrNotConnected
 	}
 
+	// #nosec G201 -- table names are internal backend configuration, values stay parameterized
 	query := fmt.Sprintf(`
 		SELECT username, password, email, full_name, is_active, is_admin, 
 		       created_at, updated_at, last_login_at
@@ -280,6 +281,7 @@ func (p *Postgres) GetUser(ctx context.Context, username string) (User, error) {
 	}
 
 	// Get user groups
+	// #nosec G201 -- table names are internal backend configuration, username is parameterized
 	groupQuery := fmt.Sprintf(`
 		SELECT g.name
 		FROM %s g
@@ -342,6 +344,7 @@ func (p *Postgres) ListUsers(ctx context.Context, filter map[string]interface{},
 	}
 
 	// Build the query
+	// #nosec G201 -- table names are internal backend configuration, values stay parameterized
 	query := fmt.Sprintf(`
 		SELECT username, password, email, full_name, is_active, is_admin, 
 		       created_at, updated_at, last_login_at
@@ -442,6 +445,7 @@ func (p *Postgres) CreateUser(ctx context.Context, user User) error {
 	defer func() { _ = tx.Rollback() }()
 
 	// Insert the user
+	// #nosec G201 -- table names are internal backend configuration, values stay parameterized
 	query := fmt.Sprintf(`
 		INSERT INTO %s (
 			username, password, email, full_name, is_active, is_admin,
@@ -537,6 +541,7 @@ func (p *Postgres) UpdateUser(ctx context.Context, user User) error {
 	defer func() { _ = tx.Rollback() }()
 
 	// Update the user
+	// #nosec G201 -- table names are internal backend configuration, values stay parameterized
 	query := fmt.Sprintf(`
 		UPDATE %s SET
 			password = $1,
@@ -684,6 +689,7 @@ func (p *Postgres) DeleteUser(ctx context.Context, username string) error {
 	}
 
 	// Delete the user
+	// #nosec G201 -- table name is internal backend configuration, username is parameterized
 	query := fmt.Sprintf("DELETE FROM %s WHERE username = $1", p.userTable)
 	result, err := tx.ExecContext(ctx, query, username)
 

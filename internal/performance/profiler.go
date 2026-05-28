@@ -130,6 +130,7 @@ func (p *Profiler) StartCPUProfile() error {
 	}
 
 	filename := fmt.Sprintf("%s/cpu-%s.prof", p.profileDir, time.Now().Format("20060102-150405"))
+	// #nosec G304 -- filename is generated internally from profiler directory and timestamp
 	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create CPU profile: %w", err)
@@ -176,6 +177,7 @@ func (p *Profiler) GenerateHeapProfile() error {
 	}
 
 	filename := fmt.Sprintf("%s/heap-%s.prof", p.profileDir, time.Now().Format("20060102-150405"))
+	// #nosec G304 -- filename is generated internally from profiler directory and timestamp
 	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create heap profile: %w", err)
@@ -202,6 +204,7 @@ func (p *Profiler) GenerateGoroutineProfile() error {
 	}
 
 	filename := fmt.Sprintf("%s/goroutine-%s.prof", p.profileDir, time.Now().Format("20060102-150405"))
+	// #nosec G304 -- filename is generated internally from profiler directory and timestamp
 	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create goroutine profile: %w", err)
@@ -241,6 +244,7 @@ func (p *Profiler) generateRuntimeProfile(profileType, profileName string, setup
 	}
 
 	filename := fmt.Sprintf("%s/%s-%s.prof", p.profileDir, profileType, time.Now().Format("20060102-150405"))
+	// #nosec G304 -- filename is generated internally from profiler directory and timestamp
 	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create %s profile: %w", profileType, err)
@@ -291,6 +295,7 @@ func (p *Profiler) StartTrace() error {
 	}
 
 	filename := fmt.Sprintf("%s/trace-%s.out", p.profileDir, time.Now().Format("20060102-150405"))
+	// #nosec G304 -- filename is generated internally from profiler directory and timestamp
 	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create trace file: %w", err)
