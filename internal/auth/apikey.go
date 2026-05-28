@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -37,17 +38,30 @@ type APIKey struct {
 
 // APIKeyManager manages API keys
 type APIKeyManager struct {
-	keys map[string]*APIKey // key: key hash
-	mu   sync.RWMutex
-	rbac *RBAC
+	keys       map[string]*APIKey // key: key hash
+	mu         sync.RWMutex
+	rbac       *RBAC
+	hmacSecret []byte
 }
 
 // NewAPIKeyManager creates a new API key manager
 func NewAPIKeyManager(rbac *RBAC) *APIKeyManager {
-	return &APIKeyManager{
-		keys: make(map[string]*APIKey),
-		rbac: rbac,
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		panic(fmt.Sprintf("failed to initialize API key HMAC secret: %v", err))
 	}
+
+	return &APIKeyManager{
+		keys:       make(map[string]*APIKey),
+		rbac:       rbac,
+		hmacSecret: secret,
+	}
+}
+
+func (m *APIKeyManager) hashAPIKey(key string) string {
+	h := hmac.New(sha256.New, m.hmacSecret)
+	_, _ = h.Write([]byte(key))
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 // CreateAPIKey creates a new API key
@@ -65,9 +79,8 @@ func (m *APIKeyManager) CreateAPIKey(username, name, description string, permiss
 	keyString := base64.URLEncoding.EncodeToString(keyBytes)
 	keyString = "elemta_" + keyString // Add prefix for identification
 
-	// Hash the key for storage
-	hash := sha256.Sum256([]byte(keyString))
-	keyHash := fmt.Sprintf("%x", hash)
+	// Hash the key for storage with HMAC to avoid plain fast-hash usage.
+	keyHash := m.hashAPIKey(keyString)
 
 	// Generate unique ID
 	idBytes := make([]byte, 8)
@@ -122,8 +135,7 @@ func (m *APIKeyManager) ValidateAPIKey(keyString string) (*APIKey, error) {
 	}
 
 	// Hash the provided key
-	hash := sha256.Sum256([]byte(keyString))
-	keyHash := fmt.Sprintf("%x", hash)
+	keyHash := m.hashAPIKey(keyString)
 
 	// Find the key
 	apiKey, exists := m.keys[keyHash]
