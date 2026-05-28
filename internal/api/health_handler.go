@@ -216,6 +216,7 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 			HeapReleased: memStats.HeapReleased,
 			StackInuse:   memStats.StackInuse,
 			NumGC:        memStats.NumGC,
+			// #nosec G115 -- runtime.MemStats.LastGC is monotonic nanoseconds since epoch; bounded on supported platforms
 			LastGC:       int64(memStats.LastGC),
 			GCPauseTotal: memStats.PauseTotalNs,
 			AllocMB:      float64(memStats.Alloc) / 1024 / 1024,

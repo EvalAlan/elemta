@@ -579,7 +579,7 @@ func (cm *CapabilityManager) isCapabilityAllowed(pluginName, capability string) 
 // NewSecurityAuditLogger creates a new security audit logger
 func NewSecurityAuditLogger(logPath string, retentionDays int) (*SecurityAuditLogger, error) {
 	// Ensure log directory exists
-	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0750); err != nil {
 		return nil, fmt.Errorf("failed to create audit log directory: %w", err)
 	}
 

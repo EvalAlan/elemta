@@ -116,7 +116,7 @@ func (hrm *HotReloadManager) Start() error {
 
 	// Create backup directory if needed
 	if hrm.config.BackupOldVersions {
-		if err := os.MkdirAll(hrm.config.BackupDirectory, 0755); err != nil {
+		if err := os.MkdirAll(hrm.config.BackupDirectory, 0750); err != nil {
 			return fmt.Errorf("failed to create backup directory: %w", err)
 		}
 	}
@@ -451,7 +451,7 @@ func (hrm *HotReloadManager) backupPluginAtomic(pluginPath, pluginName string) (
 	}
 
 	// Set restrictive permissions on backup
-	if err := os.Chmod(backupPath, 0640); err != nil {
+	if err := os.Chmod(backupPath, 0600); err != nil {
 		hrm.logger.Warn("Failed to set backup permissions", "error", err)
 	}
 
@@ -623,7 +623,7 @@ func (hrm *HotReloadManager) copyFile(src, dst string) error {
 	}
 	defer func() { _ = srcFile.Close() }()
 
-	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0700)
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}

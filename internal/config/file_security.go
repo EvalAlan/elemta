@@ -252,7 +252,7 @@ func (cfs *ConfigFileSecurity) CreateSecureConfigFile(filePath string, content [
 
 	// Create directory if it doesn't exist
 	configDir := filepath.Dir(filePath)
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0750); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
