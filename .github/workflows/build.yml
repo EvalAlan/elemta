@@ -51,7 +51,6 @@ jobs:
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:${{ github.sha }}
           platforms: linux/amd64
-          # GHA cache tokens/SAS URLs can expire during slow network pulls.
-          # Extend backend timeout to avoid mid-build 403 AuthenticationFailed.
-          cache-from: type=gha,timeout=30m
-          cache-to: type=gha,mode=max,timeout=30m
+          # Deliberately avoid type=gha cache: Actions cache SAS tokens are
+          # expiring during long/unstable network pulls in this environment.
+          # Reliability > speed here.
