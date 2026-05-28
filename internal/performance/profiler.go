@@ -65,7 +65,7 @@ func NewProfiler(config ProfilerConfig) *Profiler {
 	}
 
 	// Create profile directory
-	if err := os.MkdirAll(config.ProfileDir, 0755); err != nil {
+	if err := os.MkdirAll(config.ProfileDir, 0750); err != nil {
 		config.Logger.Error("failed to create profile directory",
 			"dir", config.ProfileDir,
 			"error", err)

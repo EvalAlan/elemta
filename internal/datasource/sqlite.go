@@ -106,7 +106,7 @@ func (s *SQLite) Connect() error {
 	// Ensure the directory exists
 	dir := filepath.Dir(s.dbPath)
 	if dir != "." && dir != "/" {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0750); err != nil {
 			return fmt.Errorf("failed to create directory for SQLite database: %w", err)
 		}
 	}

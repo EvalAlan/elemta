@@ -5,7 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -989,7 +989,7 @@ func (dh *DataHandler) extractMessageMetadata(ctx context.Context, data []byte) 
 	}
 
 	// Calculate checksum
-	hash := md5.Sum(data)
+	hash := sha256.Sum256(data)
 	metadata.Checksum = fmt.Sprintf("%x", hash)
 
 	// Extract headers
