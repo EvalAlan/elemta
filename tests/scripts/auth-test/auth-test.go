@@ -30,7 +30,7 @@ func main() {
 func testAuthSuccess() error {
 	// Connect with TLS
 	conn, err := tls.Dial("tcp", "localhost:2525", &tls.Config{
-		InsecureSkipVerify: true, // For testing
+		ServerName: "localhost",
 	})
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
@@ -70,7 +70,7 @@ func testAuthSuccess() error {
 func testAuthFailure() error {
 	// Connect with TLS
 	conn, err := tls.Dial("tcp", "localhost:2525", &tls.Config{
-		InsecureSkipVerify: true, // For testing
+		ServerName: "localhost",
 	})
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
