@@ -18,7 +18,7 @@ type indexedFSIndexEntry struct {
 
 type indexedFSIndexState struct {
 	Messages map[string]indexedFSIndexEntry `json:"messages"`
-	Checksum uint32                        `json:"checksum"`
+	Checksum uint32                         `json:"checksum"`
 }
 
 // IndexedFSStorageBackend keeps metadata index alongside file-backed queue content.
@@ -288,7 +288,7 @@ func (b *IndexedFSStorageBackend) Maintenance() (int, error) {
 	// Prune orphaned index entries (index says file exists but it doesn't)
 	var orphaned []string
 	for id := range state.Messages {
-		if _, err := b.FileStorageBackend.Retrieve(id); err != nil {
+		if _, err := b.Retrieve(id); err != nil {
 			orphaned = append(orphaned, id)
 		}
 	}
