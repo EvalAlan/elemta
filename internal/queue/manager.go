@@ -118,7 +118,34 @@ func NewManagerWithStorage(storage StorageBackend, failedQueueRetentionHours int
 	// Start background stats updater
 	go m.updateStatsLoop()
 
+	// Start background maintenance loop for backends that support it
+	if _, ok := storage.(*IndexedFSStorageBackend); ok {
+		go m.maintenanceLoop()
+	}
+
 	return m
+}
+
+// maintenanceLoop periodically runs index housekeeping (compaction + orphan pruning)
+// for indexedfs backends. Runs every 5 minutes; stops via stopCh.
+func (m *Manager) maintenanceLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if idx, ok := m.storageBackend.(*IndexedFSStorageBackend); ok {
+				if pruned, err := idx.Maintenance(); err != nil {
+					m.logger.Warn("index maintenance failed", "error", err)
+				} else if pruned > 0 {
+					m.logger.Info("index maintenance pruned entries", "count", pruned)
+				}
+			}
+		case <-m.stopCh:
+			return
+		}
+	}
 }
 
 // extractQueueDir tries to extract queue directory from storage backend

@@ -391,6 +391,128 @@ func TestIndexedFSChecksumPresentAfterStore(t *testing.T) {
 	}
 }
 
+func TestIndexedFSEmptyIndexFile(t *testing.T) {
+	// An empty index file (0 bytes) should be treated as a valid empty index,
+	// not corrupt. ValidateIndexIntegrity should pass without rebuilding.
+	root := t.TempDir()
+	idx := filepath.Join(root, "index")
+	backend, err := NewIndexedFSStorageBackend(root, IndexedFSConfig{IndexPath: idx})
+	if err != nil {
+		t.Fatalf("new backend: %v", err)
+	}
+
+	// Truncate the index file to 0 bytes (simulates crash during initial write)
+	if err := os.WriteFile(filepath.Join(idx, "messages.json"), []byte{}, 0600); err != nil {
+		t.Fatalf("truncate index: %v", err)
+	}
+
+	// ValidateIndexIntegrity should succeed — empty file = empty index
+	if err := backend.ValidateIndexIntegrity(); err != nil {
+		t.Fatalf("ValidateIndexIntegrity on empty index: %v", err)
+	}
+
+	// Store should still work after empty index
+	msg := Message{
+		ID:        "after-empty",
+		QueueType: Active,
+		From:      "a@example.com",
+		To:        []string{"b@example.com"},
+		Subject:   "after-empty",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := backend.Store(msg); err != nil {
+		t.Fatalf("store after empty index: %v", err)
+	}
+
+	state := readIndexedFSIndex(t, idx)
+	if _, ok := state.Messages[msg.ID]; !ok {
+		t.Fatalf("expected message in index after store on empty index")
+	}
+}
+
+func TestIndexedFSRecoverySkipsCorruptedMessageFiles(t *testing.T) {
+	// Recovery should succeed even if some message files contain
+	// garbage JSON — they are skipped during FileStorageBackend.List.
+	root := t.TempDir()
+	base := NewFileStorageBackend(root)
+	if err := base.EnsureDirectories(); err != nil {
+		t.Fatalf("ensure directories: %v", err)
+	}
+
+	// Store a valid message
+	validMsg := Message{
+		ID:        "valid-recovery",
+		QueueType: Active,
+		From:      "a@example.com",
+		To:        []string{"b@example.com"},
+		Subject:   "valid",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := base.Store(validMsg); err != nil {
+		t.Fatalf("store valid: %v", err)
+	}
+
+	// Write a corrupted message file (invalid JSON)
+	corruptPath := filepath.Join(root, string(Active), "corrupt.json")
+	if err := os.WriteFile(corruptPath, []byte(`{not valid json`), 0600); err != nil {
+		t.Fatalf("write corrupt file: %v", err)
+	}
+
+	// Recovery should succeed — corrupt file is skipped by List
+	idx := filepath.Join(root, "index")
+	backend, err := NewIndexedFSStorageBackend(root, IndexedFSConfig{
+		IndexPath:         idx,
+		RecoveryOnStartup: true,
+	})
+	if err != nil {
+		t.Fatalf("recovery should succeed despite corrupt files, got: %v", err)
+	}
+
+	state := readIndexedFSIndex(t, idx)
+	if _, ok := state.Messages[validMsg.ID]; !ok {
+		t.Fatalf("expected valid message in rebuilt index")
+	}
+	// Corrupt file should NOT appear in index (List skips it)
+	if _, ok := state.Messages["corrupt"]; ok {
+		t.Fatalf("corrupt file should not appear in rebuilt index")
+	}
+
+	_ = backend
+}
+
+func TestIndexedFSMaintenanceNoOpOnCleanIndex(t *testing.T) {
+	// Maintenance on a clean, valid index should be a no-op (pruned=0)
+	root := t.TempDir()
+	idx := filepath.Join(root, "index")
+	backend, err := NewIndexedFSStorageBackend(root, IndexedFSConfig{IndexPath: idx})
+	if err != nil {
+		t.Fatalf("new backend: %v", err)
+	}
+
+	msg := Message{
+		ID:        "clean",
+		QueueType: Active,
+		From:      "a@example.com",
+		To:        []string{"b@example.com"},
+		Subject:   "clean",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := backend.Store(msg); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+
+	pruned, err := backend.Maintenance()
+	if err != nil {
+		t.Fatalf("maintenance: %v", err)
+	}
+	if pruned != 0 {
+		t.Fatalf("expected 0 pruned on clean index, got %d", pruned)
+	}
+}
+
 func TestIndexedFSRecoveryContinuesOnPartialFailure(t *testing.T) {
 	// Simulates a scenario where one queue directory is unreadable during rebuild.
 	// The rebuild should still succeed with whatever queues it can list.
