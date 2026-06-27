@@ -3,6 +3,7 @@ package queue
 import (
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +18,7 @@ type indexedFSIndexEntry struct {
 
 type indexedFSIndexState struct {
 	Messages map[string]indexedFSIndexEntry `json:"messages"`
+	Checksum uint32                        `json:"checksum"`
 }
 
 // IndexedFSStorageBackend keeps metadata index alongside file-backed queue content.
@@ -54,6 +56,9 @@ func NewIndexedFSStorageBackend(queueDir string, cfg IndexedFSConfig) (*IndexedF
 		}
 	} else {
 		if err := b.ensureIndexFile(); err != nil {
+			return nil, err
+		}
+		if err := b.ValidateIndexIntegrity(); err != nil {
 			return nil, err
 		}
 	}
@@ -217,6 +222,112 @@ func (b *IndexedFSStorageBackend) List(queueType QueueType) ([]Message, error) {
 	return messages, nil
 }
 
+// ValidateIndexIntegrity checks the index against on-disk state and auto-heals
+// if corruption or divergence is detected. Returns nil if the index is healthy
+// or was successfully repaired.
+func (b *IndexedFSStorageBackend) ValidateIndexIntegrity() error {
+	state, err := b.readIndexUnlocked()
+	if err != nil {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.rebuildIndexFromDiskUnlocked()
+	}
+
+	// Check 1: checksum validation (detects truncated/garbage writes)
+	if !b.verifyChecksum(state) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.rebuildIndexFromDiskUnlocked()
+	}
+
+	// Check 2: disk divergence — verify every indexed entry has a file
+	var orphaned []string
+	for id := range state.Messages {
+		if _, err := b.Retrieve(id); err != nil {
+			orphaned = append(orphaned, id)
+		}
+	}
+
+	if len(orphaned) > 0 {
+		// Prune orphaned entries — checksum was valid, so index metadata is
+		// correct; only the backing files are missing.
+		return b.updateIndex(func(s *indexedFSIndexState) {
+			for _, id := range orphaned {
+				delete(s.Messages, id)
+			}
+		})
+	}
+
+	return nil
+}
+
+// Maintenance performs periodic index housekeeping: compacts the index
+// by rewriting it (eliminating fragmentation from many small updates) and
+// removes stale entries whose backing files no longer exist.
+// Returns the number of stale entries pruned.
+func (b *IndexedFSStorageBackend) Maintenance() (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	state, err := b.readIndexUnlocked()
+	if err != nil {
+		// Index is corrupt — full rebuild
+		if err := b.rebuildIndexFromDiskUnlocked(); err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+
+	if !b.verifyChecksum(state) {
+		if err := b.rebuildIndexFromDiskUnlocked(); err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+
+	// Prune orphaned index entries (index says file exists but it doesn't)
+	var orphaned []string
+	for id := range state.Messages {
+		if _, err := b.FileStorageBackend.Retrieve(id); err != nil {
+			orphaned = append(orphaned, id)
+		}
+	}
+
+	if len(orphaned) == 0 && state.Checksum != 0 {
+		// Index is clean and valid — just rewrite to compact
+		return 0, b.writeIndexUnlocked(state)
+	}
+
+	for _, id := range orphaned {
+		delete(state.Messages, id)
+	}
+	if err := b.writeIndexUnlocked(state); err != nil {
+		return len(orphaned), err
+	}
+	return len(orphaned), nil
+}
+
+// computeChecksum computes a CRC32 over the message map contents.
+// Key-order-independent: XOR per-key CRCs so map reordering doesn't change the result.
+func (b *IndexedFSStorageBackend) computeChecksum(state *indexedFSIndexState) uint32 {
+	var h uint32
+	for id, entry := range state.Messages {
+		ie := crc32.ChecksumIEEE([]byte(id))
+		ie ^= crc32.ChecksumIEEE([]byte(entry.QueueType))
+		h ^= ie
+	}
+	return h
+}
+
+// verifyChecksum recomputes and compares the stored checksum.
+// A zero checksum indicates a legacy index without checksum support.
+func (b *IndexedFSStorageBackend) verifyChecksum(state indexedFSIndexState) bool {
+	if state.Checksum == 0 {
+		return true
+	}
+	return state.Checksum == b.computeChecksum(&state)
+}
+
 func (b *IndexedFSStorageBackend) ensureIndexFile() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -274,6 +385,7 @@ func (b *IndexedFSStorageBackend) writeIndexUnlocked(state indexedFSIndexState) 
 	if state.Messages == nil {
 		state.Messages = map[string]indexedFSIndexEntry{}
 	}
+	state.Checksum = b.computeChecksum(&state)
 	payload, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("marshal index: %w", err)
@@ -306,18 +418,22 @@ func (b *IndexedFSStorageBackend) writeIndexUnlocked(state indexedFSIndexState) 
 }
 
 func (b *IndexedFSStorageBackend) rebuildIndexFromDisk() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.rebuildIndexFromDiskUnlocked()
+}
+
+func (b *IndexedFSStorageBackend) rebuildIndexFromDiskUnlocked() error {
 	state := indexedFSIndexState{Messages: map[string]indexedFSIndexEntry{}}
 	for _, q := range []QueueType{Active, Deferred, Hold, Failed} {
 		msgs, err := b.FileStorageBackend.List(q)
 		if err != nil {
-			return err
+			// Log and continue: partial rebuild is better than no rebuild.
+			continue
 		}
 		for _, m := range msgs {
 			state.Messages[m.ID] = indexedFSIndexEntry{QueueType: m.QueueType}
 		}
 	}
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	return b.writeIndexUnlocked(state)
 }

@@ -220,3 +220,220 @@ func TestIndexedFSCleanupUsesIndexAndPrunesStaleEntries(t *testing.T) {
 		t.Fatalf("expected failed count=0 after cleanup, got %d", count)
 	}
 }
+
+func TestIndexedFSValidateIndexIntegrityDetectsCorruption(t *testing.T) {
+	root := t.TempDir()
+	idx := filepath.Join(root, "index")
+	backend, err := NewIndexedFSStorageBackend(root, IndexedFSConfig{IndexPath: idx})
+	if err != nil {
+		t.Fatalf("new backend: %v", err)
+	}
+
+	msg := Message{
+		ID:        "v1",
+		QueueType: Active,
+		From:      "a@example.com",
+		To:        []string{"b@example.com"},
+		Subject:   "integrity",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := backend.Store(msg); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+
+	// Corrupt the index file with garbage
+	if err := os.WriteFile(filepath.Join(idx, "messages.json"), []byte(`{"messages":{`), 0600); err != nil {
+		t.Fatalf("corrupt index: %v", err)
+	}
+
+	// ValidateIndexIntegrity should detect and auto-heal by rebuilding
+	if err := backend.ValidateIndexIntegrity(); err != nil {
+		t.Fatalf("validateIndexIntegrity should auto-heal, got: %v", err)
+	}
+
+	// The rebuilt index should still contain our message
+	state := readIndexedFSIndex(t, idx)
+	if _, ok := state.Messages[msg.ID]; !ok {
+		t.Fatalf("expected message %s recovered after corruption detection", msg.ID)
+	}
+}
+
+func TestIndexedFSValidateIndexIntegrityDetectsMissingFiles(t *testing.T) {
+	root := t.TempDir()
+	idx := filepath.Join(root, "index")
+	backend, err := NewIndexedFSStorageBackend(root, IndexedFSConfig{IndexPath: idx})
+	if err != nil {
+		t.Fatalf("new backend: %v", err)
+	}
+
+	msg := Message{
+		ID:        "v2",
+		QueueType: Active,
+		From:      "a@example.com",
+		To:        []string{"b@example.com"},
+		Subject:   "orphan",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := backend.Store(msg); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+
+	// Delete the backing file but leave index entry (simulates crash mid-delete)
+	if err := os.Remove(filepath.Join(root, string(Active), msg.ID+".json")); err != nil {
+		t.Fatalf("remove backing file: %v", err)
+	}
+
+	// ValidateIndexIntegrity should prune the orphaned entry
+	if err := backend.ValidateIndexIntegrity(); err != nil {
+		t.Fatalf("validateIndexIntegrity: %v", err)
+	}
+
+	state := readIndexedFSIndex(t, idx)
+	if _, ok := state.Messages[msg.ID]; ok {
+		t.Fatalf("expected orphaned message %s pruned from index", msg.ID)
+	}
+}
+
+func TestIndexedFSMaintenanceCompactsAndPrunes(t *testing.T) {
+	root := t.TempDir()
+	idx := filepath.Join(root, "index")
+	backend, err := NewIndexedFSStorageBackend(root, IndexedFSConfig{IndexPath: idx})
+	if err != nil {
+		t.Fatalf("new backend: %v", err)
+	}
+
+	now := time.Now()
+	// Store active message
+	activeMsg := Message{
+		ID:        "maint-active",
+		QueueType: Active,
+		From:      "a@example.com",
+		To:        []string{"b@example.com"},
+		Subject:   "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Store(activeMsg); err != nil {
+		t.Fatalf("store active: %v", err)
+	}
+
+	// Store a failed message then delete its backing file (orphan)
+	orphanMsg := Message{
+		ID:        "maint-orphan",
+		QueueType: Failed,
+		From:      "a@example.com",
+		To:        []string{"b@example.com"},
+		Subject:   "orphan",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Store(orphanMsg); err != nil {
+		t.Fatalf("store orphan: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, string(Failed), orphanMsg.ID+".json")); err != nil {
+		t.Fatalf("remove orphan backing file: %v", err)
+	}
+
+	// Run maintenance — should prune the orphaned entry
+	pruned, err := backend.Maintenance()
+	if err != nil {
+		t.Fatalf("maintenance: %v", err)
+	}
+	if pruned != 1 {
+		t.Fatalf("expected 1 pruned entry, got %d", pruned)
+	}
+
+	// Verify: active message still present, orphan removed
+	state := readIndexedFSIndex(t, idx)
+	if _, ok := state.Messages[activeMsg.ID]; !ok {
+		t.Fatalf("expected active message still in index after maintenance")
+	}
+	if _, ok := state.Messages[orphanMsg.ID]; ok {
+		t.Fatalf("expected orphan message pruned from index after maintenance")
+	}
+}
+
+func TestIndexedFSChecksumPresentAfterStore(t *testing.T) {
+	root := t.TempDir()
+	idx := filepath.Join(root, "index")
+	backend, err := NewIndexedFSStorageBackend(root, IndexedFSConfig{IndexPath: idx})
+	if err != nil {
+		t.Fatalf("new backend: %v", err)
+	}
+	msg := Message{
+		ID:        "cs1",
+		QueueType: Deferred,
+		From:      "a@example.com",
+		To:        []string{"b@example.com"},
+		Subject:   "checksum",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := backend.Store(msg); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+
+	// Read the index and verify checksum is non-zero (stored as float64 in JSON)
+	data, err := os.ReadFile(filepath.Join(idx, "messages.json"))
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	var raw struct {
+		Checksum float64 `json:"checksum"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	if raw.Checksum == 0 {
+		t.Fatalf("expected non-zero checksum in stored index")
+	}
+}
+
+func TestIndexedFSRecoveryContinuesOnPartialFailure(t *testing.T) {
+	// Simulates a scenario where one queue directory is unreadable during rebuild.
+	// The rebuild should still succeed with whatever queues it can list.
+	root := t.TempDir()
+	base := NewFileStorageBackend(root)
+	if err := base.EnsureDirectories(); err != nil {
+		t.Fatalf("ensure directories: %v", err)
+	}
+
+	// Store a message in the Active queue
+	msg := Message{
+		ID:        "recovery-partial",
+		QueueType: Active,
+		From:      "a@example.com",
+		To:        []string{"b@example.com"},
+		Subject:   "partial",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := base.Store(msg); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+
+	// Remove one queue directory to simulate unreadable queue
+	if err := os.RemoveAll(filepath.Join(root, string(Deferred))); err != nil {
+		t.Fatalf("remove deferred dir: %v", err)
+	}
+
+	idx := filepath.Join(root, "index")
+
+	// Recovery should not fail even though deferred queue dir is missing
+	backend, err := NewIndexedFSStorageBackend(root, IndexedFSConfig{
+		IndexPath:         idx,
+		RecoveryOnStartup: true,
+	})
+	if err != nil {
+		t.Fatalf("recovery should continue on partial failure, got: %v", err)
+	}
+
+	state := readIndexedFSIndex(t, idx)
+	if _, ok := state.Messages[msg.ID]; !ok {
+		t.Fatalf("expected message in rebuilt index despite partial queue failure")
+	}
+
+	_ = backend
+}
