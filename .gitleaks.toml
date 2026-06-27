@@ -1,0 +1,14 @@
+title = "Gitleaks Config for Elemta"
+
+[allowlist]
+  description = "Allow known test/example values"
+  paths = [
+    '''config/elemta\.toml''',
+    '''config/dev\.toml''',
+    '''tests/''',
+    '''examples/''',
+  ]
+  regexes = [
+    '''admin''',
+    '''password\s*=\s*["']?\*\*\*["']?''',
+  ]
