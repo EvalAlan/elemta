@@ -157,16 +157,16 @@ func BenchmarkIndexedFSStoreAndStoreContent(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		id := fmt.Sprintf("store-content-%d", i)
 		msg := Message{
-			ID:        id,
-			QueueType: Active,
-			From:      "sender@example.com",
-			To:        []string{"rcpt@example.net"},
-			Subject:   "store-content-bench",
-			Size:      int64(len(payload)),
-			Priority:  PriorityNormal,
-			ReceivedAt:  receivedAt,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			ID:         id,
+			QueueType:  Active,
+			From:       "sender@example.com",
+			To:         []string{"rcpt@example.net"},
+			Subject:    "store-content-bench",
+			Size:       int64(len(payload)),
+			Priority:   PriorityNormal,
+			ReceivedAt: receivedAt,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
 		}
 		if err := m.storageBackend.Store(msg); err != nil {
 			b.Fatalf("store failed: %v", err)
