@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 )
 
@@ -27,6 +26,7 @@ func main() {
 		fmt.Println("Deferred: 0")
 		fmt.Println("Failed: 0")
 	default:
-		log.Fatalf("Unknown command: %s", command)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
+		os.Exit(1)
 	}
 }

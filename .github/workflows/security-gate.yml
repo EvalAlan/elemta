@@ -18,6 +18,21 @@ permissions:
   actions: read
 
 jobs:
+  gitleaks:
+    name: Gitleaks (Secret Scanning)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: false
+
   trivy-deps:
     name: Trivy (Go Dependencies — HIGH/CRITICAL blocks)
     runs-on: ubuntu-latest
@@ -65,13 +80,32 @@ jobs:
       - name: Run Gosec Security Scanner
         uses: securego/gosec@master
         with:
-          args: '-fmt sarif -out gosec-results.sarif -severity medium -exclude-generated ./...'
+          args: '-fmt sarif -out gosec-results.sarif -severity medium -exclude-generated -exit-code 1 ./...'
 
       - name: Upload Gosec results
         uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'gosec-results.sarif'
+
+  govulncheck:
+    name: Govulncheck (Go Vulnerability Database)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck -test ./...
 
   codeql:
     name: CodeQL Analysis
