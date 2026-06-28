@@ -65,16 +65,29 @@ type ClaimingStorageBackend interface {
 	ReleaseMessageClaim(id, workerID string) error
 }
 
+// BounceEngine defines the interface for generating DSN bounce messages
+type BounceEngine interface {
+	GenerateBounceIfNeeded(ctx context.Context, msg Message, failureReason string) *BounceResult
+}
+
+// BounceResult contains the result of a bounce generation attempt
+type BounceResult struct {
+	BounceGenerated bool
+	BounceID        string
+	Error           error
+}
+
 // Processor orchestrates queue processing and delivery
 type Processor struct {
-	manager   *Manager
-	config    ProcessorConfig
-	handler   DeliveryHandler
-	logger    *slog.Logger
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	workerSem chan struct{}
+	manager        *Manager
+	config         ProcessorConfig
+	handler        DeliveryHandler
+	logger         *slog.Logger
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	workerSem      chan struct{}
+	bounceEngine   BounceEngine
 
 	// Metrics
 	metricsLock     sync.RWMutex
@@ -116,6 +129,11 @@ func NewProcessor(manager *Manager, config ProcessorConfig, handler DeliveryHand
 // SetMetricsRecorder sets the metrics recorder for the processor
 func (p *Processor) SetMetricsRecorder(recorder MetricsRecorder) {
 	p.metricsRecorder = recorder
+}
+
+// SetBounceEngine sets the bounce engine for DSN generation on permanent failures
+func (p *Processor) SetBounceEngine(engine BounceEngine) {
+	p.bounceEngine = engine
 }
 
 // Start begins processing queues
@@ -501,6 +519,22 @@ func (p *Processor) moveToFailed(msg Message, reason string) {
 	p.metricsLock.Lock()
 	p.failedCount++
 	p.metricsLock.Unlock()
+
+	// Generate DSN bounce if the engine is configured and DSN was requested
+	if p.bounceEngine != nil {
+		bounceResult := p.bounceEngine.GenerateBounceIfNeeded(p.ctx, msg, reason)
+		if bounceResult != nil && bounceResult.Error != nil {
+			p.logger.Warn("DSN bounce generation failed",
+				"original_message_id", msg.ID,
+				"error", bounceResult.Error,
+			)
+		} else if bounceResult != nil && bounceResult.BounceGenerated {
+			p.logger.Info("DSN bounce generated for failed message",
+				"original_message_id", msg.ID,
+				"bounce_id", bounceResult.BounceID,
+			)
+		}
+	}
 
 	// Record to external metrics store (Valkey)
 	if p.metricsRecorder != nil {

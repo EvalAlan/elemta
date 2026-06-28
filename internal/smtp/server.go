@@ -220,6 +220,11 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			"workers", processorConfig.MaxConcurrent)
 
 		queueProcessor = queue.NewProcessor(queueManager, processorConfig, lmtpHandler)
+
+		// Set up bounce engine for DSN generation on permanent failures
+		bounceEngine := NewBounceEngine(queueManager, config.Hostname, slogger)
+		queueProcessor.SetBounceEngine(bounceEngine)
+
 		slogger.Info("Queue processor initialized successfully")
 
 		valkeyAddr := os.Getenv("VALKEY_ADDR")

@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/smtp"
@@ -21,6 +22,7 @@ type Manager struct {
 	router         *Router
 	tracker        *DeliveryTracker
 	tlsConfig      *tls.Config
+	mtastsManager  *MTASTSManager
 
 	// Runtime state
 	ctx     context.Context
@@ -58,6 +60,11 @@ type Config struct {
 	TLSMinVersion         string        `yaml:"tls_min_version" json:"tls_min_version"`
 	TLSInsecureSkipVerify bool          `yaml:"tls_insecure_skip_verify" json:"tls_insecure_skip_verify"`
 	TLSHandshakeTimeout   time.Duration `yaml:"tls_handshake_timeout" json:"tls_handshake_timeout"`
+
+	// MTA-STS settings
+	MTASTSEnabled    bool          `yaml:"mtasts_enabled" json:"mtasts_enabled"`
+	MTASTSCacheSize  int           `yaml:"mtasts_cache_size" json:"mtasts_cache_size"`
+	MTASTSFetchTimeout time.Duration `yaml:"mtasts_fetch_timeout" json:"mtasts_fetch_timeout"`
 
 	// Routing settings
 	LocalDomains  []string `yaml:"local_domains" json:"local_domains"`
@@ -98,6 +105,10 @@ func DefaultConfig() *Config {
 		TLSInsecureSkipVerify: false,
 		TLSHandshakeTimeout:   10 * time.Second,
 
+		MTASTSEnabled:      true,
+		MTASTSCacheSize:    1000,
+		MTASTSFetchTimeout: 30 * time.Second,
+
 		LocalDomains: []string{"localhost"},
 		RelayPort:    587,
 		RelayAuth:    false,
@@ -131,6 +142,7 @@ func NewManager(config *Config) (*Manager, error) {
 		router:         NewRouter(config),
 		tracker:        NewDeliveryTracker(config),
 		tlsConfig:      tlsConfig,
+		mtastsManager:  NewMTASTSManager(config),
 		ctx:            ctx,
 		cancel:         cancel,
 		workers:        make(chan struct{}, config.MaxConcurrentDeliveries),
@@ -157,6 +169,7 @@ func (m *Manager) Start() error {
 	go m.connectionPool.cleanup(m.ctx)
 	go m.dnsCache.cleanup(m.ctx)
 	go m.tracker.cleanup(m.ctx)
+	go m.mtastsManager.cleanup(m.ctx)
 
 	if m.config.MetricsEnabled {
 		go m.reportMetrics(m.ctx)
@@ -358,9 +371,32 @@ func (m *Manager) deliverToDomain(ctx context.Context, msg *Message, domain stri
 		return mxRecords[i].Pref < mxRecords[j].Pref
 	})
 
+	// Check MTA-STS policy for this domain
+	mtastsPolicy, _ := m.mtastsManager.GetPolicy(ctx, domain)
+
 	// Try each MX record
 	var lastError error
 	for _, mx := range mxRecords {
+		// MTA-STS enforcement: check MX match and TLS requirement
+		if mtastsPolicy != nil {
+			if err := m.mtastsManager.EnforcePolicy(ctx, domain, mx.Host, false); err != nil {
+				var policyErr *DeliveryError
+				if errors.As(err, &policyErr) && !policyErr.Retryable {
+					m.logger.Error("MTA-STS policy violation (non-retryable)",
+						"domain", domain,
+						"mx_host", mx.Host,
+						"error", err)
+					return err
+				}
+				m.logger.Warn("MTA-STS policy check failed, skipping MX",
+					"domain", domain,
+					"mx_host", mx.Host,
+					"error", err)
+				lastError = err
+				continue
+			}
+		}
+
 		if err := m.deliverToHost(ctx, msg, mx.Host, 25, recipients); err != nil {
 			m.logger.Debug("MX delivery failed",
 				"host", mx.Host,
@@ -475,6 +511,11 @@ func (m *Manager) GetConnectionStats() map[string]interface{} {
 // GetDNSStats returns DNS cache statistics
 func (m *Manager) GetDNSStats() map[string]interface{} {
 	return m.dnsCache.GetStats()
+}
+
+// GetMTASTSStats returns MTA-STS policy manager statistics
+func (m *Manager) GetMTASTSStats() map[string]interface{} {
+	return m.mtastsManager.GetStats()
 }
 
 // GetDeliveryStats returns delivery statistics
