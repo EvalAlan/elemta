@@ -162,7 +162,7 @@ func (be *BounceEngine) buildDSNBounce(msg queue.Message, failureReason string) 
 	fmt.Fprintf(&buf, "Message-ID: %s\r\n", messageID)
 	fmt.Fprintf(&buf, "Date: %s\r\n", now.Format(time.RFC1123Z))
 	buf.WriteString("From: <postmaster@" + be.hostname + ">\r\n")
-	fmt.Fprintf(&buf, "To: <%s>\r\n", msg.From)
+	fmt.Fprintf(&buf, "To: <%s>\r\n", sanitizeEmailForHeader(msg.From))
 	buf.WriteString("Subject: Delivery Status Notification (Failure)\r\n")
 	buf.WriteString("\r\n")
 
@@ -175,14 +175,14 @@ func (be *BounceEngine) buildDSNBounce(msg queue.Message, failureReason string) 
 	buf.WriteString("\r\n")
 	fmt.Fprintf(&buf, "Your message to the following recipients could not be delivered:\r\n")
 	for _, recipient := range msg.To {
-		fmt.Fprintf(&buf, "  - %s\r\n", recipient)
+		fmt.Fprintf(&buf, "  - %s\r\n", sanitizeEmailForHeader(recipient))
 	}
 	buf.WriteString("\r\n")
 	fmt.Fprintf(&buf, "Reason: %s\r\n", failureReason)
 	buf.WriteString("\r\n")
 	fmt.Fprintf(&buf, "Original message ID: %s\r\n", msg.ID)
 	fmt.Fprintf(&buf, "Original subject: %s\r\n", msg.Subject)
-	fmt.Fprintf(&buf, "Original sender: %s\r\n", msg.From)
+	fmt.Fprintf(&buf, "Original sender: %s\r\n", sanitizeEmailForHeader(msg.From))
 	fmt.Fprintf(&buf, "Failed at: %s\r\n", now.Format(time.RFC1123Z))
 	buf.WriteString("\r\n")
 	buf.WriteString("If you believe this is an error, please contact your mail administrator.\r\n")
@@ -201,9 +201,9 @@ func (be *BounceEngine) buildDSNBounce(msg queue.Message, failureReason string) 
 		// Final-Recipient: use ORCPT if available, otherwise the final address
 		// RFC 3462 requires the format "Final-Recipient: <type>; <addr>"
 		// ORCPT format is "rfc822;addr" or "dns;addr" per RFC 3461
-		finalRecipient := "rfc822; " + recipient
+		finalRecipient := "rfc822; " + sanitizeEmailForHeader(recipient)
 		if orcpt != "" {
-			finalRecipient = orcpt
+			finalRecipient = sanitizeEmailForHeader(orcpt)
 		}
 
 		buf.WriteString("Reporting-MTA: dns; " + be.hostname + "\r\n")
@@ -233,9 +233,13 @@ func (be *BounceEngine) buildDSNBounce(msg queue.Message, failureReason string) 
 		// Include original message headers (and body if available)
 		buf.WriteString("Received: from unknown (unknown)\r\n")
 		fmt.Fprintf(&buf, "\tby %s with ESMTP id %s\r\n", be.hostname, msg.ID+"-original")
-		fmt.Fprintf(&buf, "\tfor <%s>; %s\r\n", strings.Join(msg.To, ", "), msg.ReceivedAt.Format(time.RFC1123Z))
-		fmt.Fprintf(&buf, "From: <%s>\r\n", msg.From)
-		fmt.Fprintf(&buf, "To: %s\r\n", strings.Join(msg.To, ", "))
+		sanitizedTo := make([]string, len(msg.To))
+		for i, addr := range msg.To {
+			sanitizedTo[i] = sanitizeEmailForHeader(addr)
+		}
+		fmt.Fprintf(&buf, "\tfor <%s>; %s\r\n", strings.Join(sanitizedTo, ", "), msg.ReceivedAt.Format(time.RFC1123Z))
+		fmt.Fprintf(&buf, "From: <%s>\r\n", sanitizeEmailForHeader(msg.From))
+		fmt.Fprintf(&buf, "To: %s\r\n", strings.Join(sanitizedTo, ", "))
 		fmt.Fprintf(&buf, "Subject: %s\r\n", msg.Subject)
 		fmt.Fprintf(&buf, "Date: %s\r\n", msg.ReceivedAt.Format(time.RFC1123Z))
 		fmt.Fprintf(&buf, "Message-ID: %s\r\n", msg.ID)
