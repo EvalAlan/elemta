@@ -62,7 +62,7 @@ type BounceResult = queue.BounceResult
 // Returns a BounceResult with the bounce ID if a bounce was successfully queued.
 func (be *BounceEngine) GenerateBounceIfNeeded(ctx context.Context, msg queue.Message, failureReason string) *BounceResult {
 	// Check if DSN annotations exist on the message
-	if msg.Annotations == nil || len(msg.Annotations) == 0 {
+	if len(msg.Annotations) == 0 {
 		return &BounceResult{BounceGenerated: false}
 	}
 
