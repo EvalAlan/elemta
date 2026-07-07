@@ -788,13 +788,18 @@ func (dh *DataHandler) addServerHeaders(ctx context.Context, data []byte, metada
 
 	// Add Received header (most important for email tracing)
 	receivedTime := time.Now().Format(time.RFC1123Z)
+	sanitizedFrom := sanitizeEmailForHeader(metadata.From)
+	sanitizedTo := make([]string, len(metadata.To))
+	for i, addr := range metadata.To {
+		sanitizedTo[i] = sanitizeEmailForHeader(addr)
+	}
 	receivedHeader := fmt.Sprintf("Received: from %s (%s)\r\n\tby %s with ESMTP id %s\r\n\t(envelope-from <%s>)\r\n\tfor <%s>; %s",
 		dh.config.Hostname,
 		dh.conn.RemoteAddr().String(),
 		dh.config.Hostname,
 		metadata.MessageID,
-		metadata.From,
-		strings.Join(metadata.To, ", "),
+		sanitizedFrom,
+		strings.Join(sanitizedTo, ", "),
 		receivedTime,
 	)
 	additionalHeaders = append(additionalHeaders, receivedHeader)
