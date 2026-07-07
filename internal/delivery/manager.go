@@ -62,8 +62,8 @@ type Config struct {
 	TLSHandshakeTimeout   time.Duration `yaml:"tls_handshake_timeout" json:"tls_handshake_timeout"`
 
 	// MTA-STS settings
-	MTASTSEnabled    bool          `yaml:"mtasts_enabled" json:"mtasts_enabled"`
-	MTASTSCacheSize  int           `yaml:"mtasts_cache_size" json:"mtasts_cache_size"`
+	MTASTSEnabled      bool          `yaml:"mtasts_enabled" json:"mtasts_enabled"`
+	MTASTSCacheSize    int           `yaml:"mtasts_cache_size" json:"mtasts_cache_size"`
 	MTASTSFetchTimeout time.Duration `yaml:"mtasts_fetch_timeout" json:"mtasts_fetch_timeout"`
 
 	// Routing settings
