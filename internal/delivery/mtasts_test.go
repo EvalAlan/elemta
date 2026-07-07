@@ -8,12 +8,12 @@ import (
 
 func TestParsePolicyText(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       string
-		expectNil   bool
-		expectMode  string
-		expectMX    []string
-		expectAge   int
+		name       string
+		input      string
+		expectNil  bool
+		expectMode string
+		expectMX   []string
+		expectAge  int
 	}{
 		{
 			name: "valid enforce policy",
