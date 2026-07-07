@@ -79,15 +79,15 @@ type BounceResult struct {
 
 // Processor orchestrates queue processing and delivery
 type Processor struct {
-	manager        *Manager
-	config         ProcessorConfig
-	handler        DeliveryHandler
-	logger         *slog.Logger
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	workerSem      chan struct{}
-	bounceEngine   BounceEngine
+	manager      *Manager
+	config       ProcessorConfig
+	handler      DeliveryHandler
+	logger       *slog.Logger
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	workerSem    chan struct{}
+	bounceEngine BounceEngine
 
 	// Metrics
 	metricsLock     sync.RWMutex
