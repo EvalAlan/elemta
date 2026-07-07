@@ -72,7 +72,7 @@ type MTASTSManager struct {
 
 // MTASTSMetrics tracks MTA-STS policy fetch/cache statistics.
 type MTASTSMetrics struct {
-	mu            sync.RWMutex
+	mu              sync.RWMutex
 	PoliciesFetched int64
 	CacheHits       int64
 	CacheMisses     int64

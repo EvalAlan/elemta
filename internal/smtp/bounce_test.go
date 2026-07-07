@@ -54,7 +54,7 @@ func TestBounceEngine_NEVERNoBounce(t *testing.T) {
 		Subject:   "Test message",
 		CreatedAt: time.Now(),
 		Annotations: map[string]string{
-			"dsn_return":           "FULL",
+			"dsn_return":                       "FULL",
 			"dsn_notify:recipient@example.com": "NEVER",
 		},
 	}
@@ -70,16 +70,16 @@ func TestBounceEngine_GeneratesBounce(t *testing.T) {
 
 	// Message with DSN FULL - bounce should be generated
 	msg := queue.Message{
-		ID:        "test-bounce-full",
-		From:      "sender@example.com",
-		To:        []string{"recipient@example.com"},
-		Subject:   "Test message",
-		CreatedAt: time.Now(),
+		ID:         "test-bounce-full",
+		From:       "sender@example.com",
+		To:         []string{"recipient@example.com"},
+		Subject:    "Test message",
+		CreatedAt:  time.Now(),
 		ReceivedAt: time.Now().Add(-5 * time.Minute),
 		Annotations: map[string]string{
-			"dsn_return":           "FULL",
+			"dsn_return":                       "FULL",
 			"dsn_notify:recipient@example.com": "FAILURE",
-			"dsn_orcpt:recipient@example.com": "rfc822;recipient@example.com",
+			"dsn_orcpt:recipient@example.com":  "rfc822;recipient@example.com",
 		},
 	}
 
@@ -95,14 +95,14 @@ func TestBounceEngine_GeneratesBounceHDRS(t *testing.T) {
 
 	// Message with DSN HDRS - bounce should be generated
 	msg := queue.Message{
-		ID:        "test-bounce-hdrs",
-		From:      "sender@example.com",
-		To:        []string{"recipient@example.com"},
-		Subject:   "Test message",
-		CreatedAt: time.Now(),
+		ID:         "test-bounce-hdrs",
+		From:       "sender@example.com",
+		To:         []string{"recipient@example.com"},
+		Subject:    "Test message",
+		CreatedAt:  time.Now(),
 		ReceivedAt: time.Now().Add(-5 * time.Minute),
 		Annotations: map[string]string{
-			"dsn_return":           "HDRS",
+			"dsn_return":                       "HDRS",
 			"dsn_notify:recipient@example.com": "FAILURE",
 		},
 	}
@@ -118,16 +118,16 @@ func TestBounceEngine_MultipleRecipients(t *testing.T) {
 	ctx := context.Background()
 
 	msg := queue.Message{
-		ID:        "test-multi-rcpt",
-		From:      "sender@example.com",
-		To:        []string{"rcpt1@example.com", "rcpt2@example.com"},
-		Subject:   "Test message",
-		CreatedAt: time.Now(),
+		ID:         "test-multi-rcpt",
+		From:       "sender@example.com",
+		To:         []string{"rcpt1@example.com", "rcpt2@example.com"},
+		Subject:    "Test message",
+		CreatedAt:  time.Now(),
 		ReceivedAt: time.Now().Add(-5 * time.Minute),
 		Annotations: map[string]string{
-			"dsn_return":                     "FULL",
-			"dsn_notify:rcpt1@example.com":  "FAILURE",
-			"dsn_notify:rcpt2@example.com":  "FAILURE,SUCCESS",
+			"dsn_return":                   "FULL",
+			"dsn_notify:rcpt1@example.com": "FAILURE",
+			"dsn_notify:rcpt2@example.com": "FAILURE,SUCCESS",
 		},
 	}
 
@@ -149,7 +149,7 @@ func TestBounceEngine_NEVERWithOtherNotify(t *testing.T) {
 		Subject:   "Test message",
 		CreatedAt: time.Now(),
 		Annotations: map[string]string{
-			"dsn_return":                    "FULL",
+			"dsn_return":                   "FULL",
 			"dsn_notify:rcpt1@example.com": "FAILURE",
 			"dsn_notify:rcpt2@example.com": "NEVER",
 		},
@@ -246,10 +246,10 @@ func TestBuildDSNBounceStructure(t *testing.T) {
 		CreatedAt:  time.Now(),
 		ReceivedAt: time.Now().Add(-5 * time.Minute),
 		Annotations: map[string]string{
-			"dsn_return":                     "FULL",
+			"dsn_return":                       "FULL",
 			"dsn_notify:recipient@example.com": "FAILURE,SUCCESS",
-			"dsn_orcpt:recipient@example.com": "rfc822;recipient@example.com",
-			"dsn_envid":                      "test-env-123",
+			"dsn_orcpt:recipient@example.com":  "rfc822;recipient@example.com",
+			"dsn_envid":                        "test-env-123",
 		},
 	}
 
@@ -295,7 +295,7 @@ func TestBuildDSNBounceNoOriginalRecipient(t *testing.T) {
 		CreatedAt:  time.Now(),
 		ReceivedAt: time.Now(),
 		Annotations: map[string]string{
-			"dsn_return":                     "FULL",
+			"dsn_return":                       "FULL",
 			"dsn_notify:recipient@example.com": "FAILURE",
 		},
 	}
@@ -319,7 +319,7 @@ func TestBuildDSNBounceHDRSNoMessagePart(t *testing.T) {
 		CreatedAt:  time.Now(),
 		ReceivedAt: time.Now(),
 		Annotations: map[string]string{
-			"dsn_return":                     "HDRS",
+			"dsn_return":                       "HDRS",
 			"dsn_notify:recipient@example.com": "FAILURE",
 		},
 	}
@@ -340,11 +340,11 @@ func TestBounceEngineEmptyAnnotations(t *testing.T) {
 
 	// Message with empty annotations map - no bounce
 	msg := queue.Message{
-		ID:         "test-empty-annotations",
-		From:       "sender@example.com",
-		To:         []string{"recipient@example.com"},
-		Subject:    "Test",
-		CreatedAt:  time.Now(),
+		ID:          "test-empty-annotations",
+		From:        "sender@example.com",
+		To:          []string{"recipient@example.com"},
+		Subject:     "Test",
+		CreatedAt:   time.Now(),
 		Annotations: map[string]string{},
 	}
 
@@ -395,7 +395,7 @@ func TestGetRecipientDSNParams(t *testing.T) {
 	msg := queue.Message{
 		Annotations: map[string]string{
 			"dsn_notify:rcpt1@example.com": "FAILURE,SUCCESS",
-			"dsn_orcpt:rcpt1@example.com": "rfc822;rcpt1@example.com",
+			"dsn_orcpt:rcpt1@example.com":  "rfc822;rcpt1@example.com",
 			"dsn_notify:rcpt2@example.com": "DELAY",
 		},
 	}
