@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Manager handles queue operations and implements the QueueManager interface
@@ -578,10 +580,16 @@ func (m *Manager) SetAnnotation(id string, key, value string) error {
 
 // Helper functions
 
-// generateUniqueID creates a unique message ID
+// generateUniqueID creates a unique message ID.
+//
+// Format: <unix-nanos>-<uuidv4>. The timestamp prefix keeps on-disk files
+// roughly time-ordered for operators, while the 122-bit random UUID suffix
+// guarantees collision-freedom under concurrent enqueue (a purely time-derived
+// ID collides on coarse-clock hosts and silently overwrites a queued message)
+// and makes IDs unguessable, closing the /api/queue/message/{id} enumeration
+// vector.
 func generateUniqueID() string {
-	// Format: timestamp-random
-	return fmt.Sprintf("%d-%07d", time.Now().UnixNano(), time.Now().Nanosecond())
+	return fmt.Sprintf("%d-%s", time.Now().UnixNano(), uuid.NewString())
 }
 
 // extractDomain returns the domain portion of an email address, or empty string if invalid
