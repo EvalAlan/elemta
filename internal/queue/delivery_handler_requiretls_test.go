@@ -150,7 +150,7 @@ func TestConnectSMTPWithMetadata_RequireTLSButNotSupported(t *testing.T) {
 func TestConnectSMTPWithMetadata_STARTTLSNegotiationSucceeds(t *testing.T) {
 	addr := startFakeSMTPServer(t, true)
 	h := NewSMTPDeliveryHandler(0)
-	h.insecureSkipVerify = true // fake server uses a self-signed certificate
+	h.tlsConfig = &tls.Config{InsecureSkipVerify: true} // fake server uses a self-signed certificate
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
