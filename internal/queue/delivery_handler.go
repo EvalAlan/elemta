@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -9,7 +10,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/busybox42/elemta/internal/delivery"
 )
+
+// mtastsEnforcer checks outbound delivery against a domain's MTA-STS policy.
+// Satisfied by *delivery.MTASTSManager; abstracted so tests can inject a stub
+// instead of making real DNS/HTTPS lookups.
+type mtastsEnforcer interface {
+	EnforcePolicy(ctx context.Context, domain, mxHost string, tlsUsed bool) error
+}
 
 // SMTPDeliveryHandler implements DeliveryHandler for SMTP delivery
 type SMTPDeliveryHandler struct {
@@ -18,6 +28,8 @@ type SMTPDeliveryHandler struct {
 	retryDNS                  bool
 	maxMXLookups              int
 	failedQueueRetentionHours int
+	insecureSkipVerify        bool // test-only: bypass TLS certificate verification
+	mtastsManager             mtastsEnforcer
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -28,6 +40,7 @@ func NewSMTPDeliveryHandler(failedQueueRetentionHours int) *SMTPDeliveryHandler 
 		retryDNS:                  true,
 		maxMXLookups:              3,
 		failedQueueRetentionHours: failedQueueRetentionHours,
+		mtastsManager:             delivery.NewMTASTSManager(&delivery.Config{MTASTSEnabled: true}),
 	}
 }
 
@@ -39,18 +52,7 @@ func (h *SMTPDeliveryHandler) DeliverMessage(ctx context.Context, msg Message, c
 
 // DeliverMessageWithMetadata attempts to deliver a message via SMTP and returns delivery metadata
 func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, msg Message, content []byte) (*DeliveryResult, error) {
-	if messageRequiresTLS(msg) {
-		err := fmt.Errorf("REQUIRETLS requested but outbound SMTP delivery cannot guarantee TLS yet")
-		h.logger.Warn("Rejecting outbound message due to unsupported REQUIRETLS enforcement",
-			"message_id", msg.ID,
-		)
-		return &DeliveryResult{
-			Success:         false,
-			DeliveryTime:    time.Now(),
-			ResponseMessage: "REQUIRETLS enforcement not available for outbound delivery",
-			Error:           err,
-		}, err
-	}
+	requireTLS := messageRequiresTLS(msg)
 
 	// Group recipients by domain for efficient delivery
 	domainGroups := h.groupRecipientsByDomain(msg.To)
@@ -61,7 +63,7 @@ func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 	var firstSuccessfulHost string
 
 	for domain, recipients := range domainGroups {
-		ip, host, err := h.deliverToDomainWithMetadata(ctx, msg, domain, recipients, content)
+		ip, host, err := h.deliverToDomainWithMetadata(ctx, msg, domain, recipients, content, requireTLS)
 		if err != nil {
 			h.logger.Error("Failed to deliver to domain",
 				"domain", domain,
@@ -145,7 +147,7 @@ func (h *SMTPDeliveryHandler) groupRecipientsByDomain(recipients []string) map[s
 }
 
 // deliverToDomainWithMetadata delivers messages to all recipients in a specific domain and returns delivery metadata
-func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, msg Message, domain string, recipients []string, content []byte) (string, string, error) {
+func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, msg Message, domain string, recipients []string, content []byte, requireTLS bool) (string, string, error) {
 	// Look up MX records for the domain
 	mxRecords, err := h.lookupMX(ctx, domain)
 	if err != nil {
@@ -159,7 +161,7 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 	// Try each MX record in order of preference
 	var lastError error
 	for _, mx := range mxRecords {
-		ip, host, err := h.attemptDeliveryToHostWithMetadata(ctx, mx.Host, msg, recipients, content)
+		ip, host, err := h.attemptDeliveryToHostWithMetadata(ctx, mx.Host, msg, recipients, content, requireTLS, domain)
 		if err != nil {
 			h.logger.Warn("Delivery failed to MX host",
 				"host", mx.Host,
@@ -205,7 +207,7 @@ func (h *SMTPDeliveryHandler) lookupMX(ctx context.Context, domain string) ([]*n
 }
 
 // attemptDeliveryToHostWithMetadata attempts delivery to a specific SMTP host and returns delivery metadata
-func (h *SMTPDeliveryHandler) attemptDeliveryToHostWithMetadata(ctx context.Context, host string, msg Message, recipients []string, content []byte) (string, string, error) {
+func (h *SMTPDeliveryHandler) attemptDeliveryToHostWithMetadata(ctx context.Context, host string, msg Message, recipients []string, content []byte, requireTLS bool, domain string) (string, string, error) {
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
@@ -217,7 +219,7 @@ func (h *SMTPDeliveryHandler) attemptDeliveryToHostWithMetadata(ctx context.Cont
 	for _, port := range ports {
 		address := net.JoinHostPort(host, port)
 
-		ip, hostIP, err := h.deliverToAddressWithMetadata(ctx, address, msg, recipients, content)
+		ip, hostIP, err := h.deliverToAddressWithMetadata(ctx, address, msg, recipients, content, requireTLS, domain, host)
 		if err != nil {
 			h.logger.Debug("Delivery attempt failed",
 				"address", address,
@@ -234,18 +236,24 @@ func (h *SMTPDeliveryHandler) attemptDeliveryToHostWithMetadata(ctx context.Cont
 }
 
 // deliverToAddressWithMetadata performs the actual SMTP delivery to a specific address and returns delivery metadata
-func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, address string, msg Message, recipients []string, content []byte) (string, string, error) {
+func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, address string, msg Message, recipients []string, content []byte, requireTLS bool, domain string, mxHost string) (string, string, error) {
 	h.logger.Debug("Attempting SMTP delivery",
 		"address", address,
 		"from", msg.From,
-		"recipients", recipients)
+		"recipients", recipients,
+		"require_tls", requireTLS)
 
 	// Connect to SMTP server and capture connection info
-	client, conn, err := h.connectSMTPWithMetadata(ctx, address)
+	client, conn, tlsUsed, err := h.connectSMTPWithMetadata(ctx, address, requireTLS)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to connect to %s: %w", address, err)
 	}
 	defer func() { _ = client.Close() }()
+
+	// Enforce the domain's MTA-STS policy (if any) now that we know whether TLS was used
+	if err := h.mtastsManager.EnforcePolicy(ctx, domain, mxHost, tlsUsed); err != nil {
+		return "", "", fmt.Errorf("MTA-STS policy check failed for %s: %w", domain, err)
+	}
 
 	// Set sender (strip angle brackets if present to avoid parameter issues)
 	sender := strings.Trim(msg.From, "<>")
@@ -265,8 +273,8 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 			return "", "", fmt.Errorf("MAIL FROM command failed: %w", err)
 		}
 		text.StartResponse(id)
-		defer text.EndResponse(id)
 		_, _, err = text.ReadResponse(250)
+		text.EndResponse(id)
 		if err != nil {
 			return "", "", fmt.Errorf("MAIL FROM failed: %w", err)
 		}
@@ -301,7 +309,8 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 	h.logger.Info("SMTP delivery successful",
 		"address", address,
 		"from", msg.From,
-		"recipients", len(recipients))
+		"recipients", len(recipients),
+		"tls_used", tlsUsed)
 
 	// Capture delivery IP and host from connection
 	deliveryIP := ""
@@ -321,7 +330,8 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 }
 
 // connectSMTPWithMetadata establishes a connection to the SMTP server and returns connection metadata
-func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, address string) (*smtp.Client, net.Conn, error) {
+// along with whether the connection is protected by TLS.
+func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, address string, requireTLS bool) (*smtp.Client, net.Conn, bool, error) {
 	// Create dialer with context support
 	dialer := &net.Dialer{
 		Timeout: h.timeout,
@@ -330,24 +340,55 @@ func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, addre
 	// Dial with context
 	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to dial %s: %w", address, err)
+		return nil, nil, false, fmt.Errorf("failed to dial %s: %w", address, err)
 	}
 
+	// Extract hostname for TLS verification
+	host := strings.Split(address, ":")[0]
+
 	// Create SMTP client
-	client, err := smtp.NewClient(conn, strings.Split(address, ":")[0])
+	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		_ = conn.Close() // Ignore error on cleanup in error path
-		return nil, nil, fmt.Errorf("failed to create SMTP client: %w", err)
+		return nil, nil, false, fmt.Errorf("failed to create SMTP client: %w", err)
 	}
 
 	// Send EHLO/HELO
 	hostname := "localhost"
 	if err := client.Hello(hostname); err != nil {
 		_ = client.Close() // Ignore error on cleanup in error path
-		return nil, nil, fmt.Errorf("HELLO command failed: %w", err)
+		return nil, nil, false, fmt.Errorf("HELLO command failed: %w", err)
 	}
 
-	return client, conn, nil
+	// Always attempt STARTTLS opportunistically; requireTLS additionally makes it mandatory.
+	tlsUsed := false
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		tlsConfig := &tls.Config{
+			ServerName:         host,
+			InsecureSkipVerify: h.insecureSkipVerify, // In production, this should be configurable
+		}
+		if err := client.StartTLS(tlsConfig); err != nil {
+			if requireTLS {
+				_ = client.Close()
+				return nil, nil, false, fmt.Errorf("STARTTLS required but failed: %w", err)
+			}
+			// For opportunistic TLS, log the failure but continue in plaintext
+			h.logger.Warn("Opportunistic STARTTLS failed, continuing in plaintext",
+				"address", address,
+				"error", err)
+		} else {
+			// smtp.Client.StartTLS already re-sends EHLO internally per RFC 3207;
+			// calling client.Hello again here would always fail since Hello was
+			// already called above.
+			tlsUsed = true
+			h.logger.Debug("STARTTLS negotiated successfully", "address", address)
+		}
+	} else if requireTLS {
+		_ = client.Close()
+		return nil, nil, false, fmt.Errorf("STARTTLS required but not supported by server")
+	}
+
+	return client, conn, tlsUsed, nil
 }
 
 // GetFailedQueueRetentionHours returns the failed queue retention setting
