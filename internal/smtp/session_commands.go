@@ -532,9 +532,11 @@ func (ch *CommandHandler) HandleSTARTTLS(ctx context.Context) error {
 		return fmt.Errorf("454 4.7.0 TLS handshake failed")
 	}
 
-	// Update connection and state
+	// Rebind the session's buffered reader/writer and all component connection
+	// references onto the TLS connection, discarding any pre-TLS buffered input
+	// (STARTTLS command-injection defense).
+	ch.session.upgradeToTLS(tlsConn)
 	ch.conn = tlsConn
-	ch.session.conn = tlsConn
 	ch.state.SetTLSActive(ctx, true)
 
 	// Reset session state after TLS upgrade

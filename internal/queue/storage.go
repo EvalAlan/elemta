@@ -5,8 +5,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+// validateMessageID rejects IDs that could escape the queue directory or
+// otherwise produce an unexpected on-disk path. Message IDs are used verbatim
+// as filenames, so any separator, parent reference, or empty value is refused
+// before it reaches filepath.Join — defense in depth behind the API router.
+func validateMessageID(id string) error {
+	if id == "" {
+		return fmt.Errorf("empty message ID")
+	}
+	if len(id) > 255 {
+		return fmt.Errorf("message ID too long")
+	}
+	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") || strings.ContainsRune(id, 0) {
+		return fmt.Errorf("invalid characters in message ID %q", id)
+	}
+	return nil
+}
 
 // FileStorageBackend implements StorageBackend using the filesystem
 type FileStorageBackend struct {
@@ -22,6 +40,9 @@ func NewFileStorageBackend(queueDir string) *FileStorageBackend {
 
 // Store saves a message to the storage backend with secure permissions and atomic operations
 func (fs *FileStorageBackend) Store(msg Message) error {
+	if err := validateMessageID(msg.ID); err != nil {
+		return err
+	}
 	// Ensure queue directory exists with secure permissions
 	queuePath := filepath.Join(fs.queueDir, string(msg.QueueType))
 	if err := os.MkdirAll(queuePath, 0700); err != nil {
@@ -45,6 +66,9 @@ func (fs *FileStorageBackend) Store(msg Message) error {
 
 // Retrieve loads a message from the storage backend
 func (fs *FileStorageBackend) Retrieve(id string) (Message, error) {
+	if err := validateMessageID(id); err != nil {
+		return Message{}, err
+	}
 	// Try to find the message in any queue
 	queueTypes := []QueueType{Active, Deferred, Hold, Failed}
 
@@ -91,6 +115,9 @@ func (fs *FileStorageBackend) Update(msg Message) error {
 
 // Delete removes a message from the storage backend
 func (fs *FileStorageBackend) Delete(id string) error {
+	if err := validateMessageID(id); err != nil {
+		return err
+	}
 	// Try to find the message in any queue
 	queueTypes := []QueueType{Active, Deferred, Hold, Failed}
 
@@ -204,6 +231,9 @@ func (fs *FileStorageBackend) DeleteAll(queueType QueueType) error {
 
 // Move transfers a message between queues with atomic operations
 func (fs *FileStorageBackend) Move(id string, fromQueue, toQueue QueueType) error {
+	if err := validateMessageID(id); err != nil {
+		return err
+	}
 	// Construct file paths
 	fromPath := filepath.Join(fs.queueDir, string(fromQueue), id+".json")
 	toPath := filepath.Join(fs.queueDir, string(toQueue), id+".json")
@@ -250,6 +280,9 @@ func (fs *FileStorageBackend) Move(id string, fromQueue, toQueue QueueType) erro
 
 // StoreContent saves message content data with secure permissions and atomic operations
 func (fs *FileStorageBackend) StoreContent(id string, data []byte) error {
+	if err := validateMessageID(id); err != nil {
+		return err
+	}
 	// Ensure data directory exists with secure permissions
 	dataDir := filepath.Join(fs.queueDir, "data")
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
@@ -267,6 +300,9 @@ func (fs *FileStorageBackend) StoreContent(id string, data []byte) error {
 
 // RetrieveContent loads message content data
 func (fs *FileStorageBackend) RetrieveContent(id string) ([]byte, error) {
+	if err := validateMessageID(id); err != nil {
+		return nil, err
+	}
 	contentPath := filepath.Join(fs.queueDir, "data", id)
 
 	// #nosec G304 -- contentPath is derived from queueDir and internal message id
@@ -280,6 +316,9 @@ func (fs *FileStorageBackend) RetrieveContent(id string) ([]byte, error) {
 
 // DeleteContent removes message content data
 func (fs *FileStorageBackend) DeleteContent(id string) error {
+	if err := validateMessageID(id); err != nil {
+		return err
+	}
 	contentPath := filepath.Join(fs.queueDir, "data", id)
 
 	if err := os.Remove(contentPath); err != nil && !os.IsNotExist(err) {
