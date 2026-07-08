@@ -219,3 +219,58 @@ func contains(s, substr string) bool {
 			s[len(s)-len(substr):] == substr ||
 			contains(s[1:], substr))))
 }
+
+func TestValidateMessageID(t *testing.T) {
+	valid := []string{
+		"1700000000000000000-2a2b3c4d",
+		generateUniqueID(),
+		"simple-id_123",
+	}
+	for _, id := range valid {
+		if err := validateMessageID(id); err != nil {
+			t.Errorf("validateMessageID(%q) = %v, want nil", id, err)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"../../etc/passwd",
+		"a/b",
+		"a\\b",
+		"foo..bar",
+		"nul\x00byte",
+	}
+	for _, id := range invalid {
+		if err := validateMessageID(id); err == nil {
+			t.Errorf("validateMessageID(%q) = nil, want error", id)
+		}
+	}
+}
+
+func TestFileStorageBackendRejectsTraversalID(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "elemta_queue_traversal_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	backend := NewFileStorageBackend(tmpDir)
+	if _, err := backend.Retrieve("../../../etc/passwd"); err == nil {
+		t.Fatal("expected Retrieve to reject a path-traversal ID")
+	}
+	if err := backend.Delete("../../secret"); err == nil {
+		t.Fatal("expected Delete to reject a path-traversal ID")
+	}
+}
+
+func TestGenerateUniqueIDNoCollisions(t *testing.T) {
+	const n = 10000
+	seen := make(map[string]struct{}, n)
+	for i := 0; i < n; i++ {
+		id := generateUniqueID()
+		if _, dup := seen[id]; dup {
+			t.Fatalf("generateUniqueID produced a duplicate: %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+}

@@ -134,6 +134,37 @@ func (s *Session) initializeComponents() {
 	s.logger.DebugContext(context.Background(), "Session components initialized")
 }
 
+// upgradeToTLS rebinds the session's buffered reader/writer and all component
+// connection references onto the freshly negotiated TLS connection.
+//
+// This is security-critical: the pre-TLS bufio.Reader is discarded rather than
+// reused, so any commands a client pipelined in cleartext together with the
+// STARTTLS command are dropped instead of being executed inside the TLS session
+// (the STARTTLS command-injection / SMTP-smuggling class, CVE-2011-0411). Reads
+// after this point come only from the encrypted stream.
+func (s *Session) upgradeToTLS(tlsConn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.conn = tlsConn
+	// Fresh reader/writer over the TLS conn; the old reader's buffered plaintext
+	// (anything sent after STARTTLS but before the handshake) is intentionally lost.
+	s.reader = bufio.NewReader(tlsConn)
+	s.writer = bufio.NewWriter(tlsConn)
+
+	// Repoint components that captured the plaintext conn/reader at construction.
+	if s.commandHandler != nil {
+		s.commandHandler.conn = tlsConn
+	}
+	if s.authHandler != nil {
+		s.authHandler.conn = tlsConn
+	}
+	if s.dataHandler != nil {
+		s.dataHandler.conn = tlsConn
+		s.dataHandler.reader = s.reader
+	}
+}
+
 // SetTLSManager sets the TLS manager for the session
 func (s *Session) SetTLSManager(tlsManager TLSHandler) {
 	s.mu.Lock()
