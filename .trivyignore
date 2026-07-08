@@ -1,0 +1,6 @@
+# GO-2026-5932: golang.org/x/crypto/openpgp is unmaintained upstream (no fixed
+# version exists; x/crypto is already at the latest release). Elemta does not
+# import the openpgp package anywhere — `go mod why golang.org/x/crypto/openpgp`
+# reports "main module does not need package", and govulncheck (which performs
+# reachability analysis) passes clean. Revisit if a fixed x/crypto version ships.
+GO-2026-5932
