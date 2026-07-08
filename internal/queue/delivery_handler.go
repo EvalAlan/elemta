@@ -28,7 +28,7 @@ type SMTPDeliveryHandler struct {
 	retryDNS                  bool
 	maxMXLookups              int
 	failedQueueRetentionHours int
-	insecureSkipVerify        bool // test-only: bypass TLS certificate verification
+	tlsConfig                 *tls.Config // optional template for outbound STARTTLS; nil = secure defaults
 	mtastsManager             mtastsEnforcer
 }
 
@@ -363,11 +363,7 @@ func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, addre
 	// Always attempt STARTTLS opportunistically; requireTLS additionally makes it mandatory.
 	tlsUsed := false
 	if ok, _ := client.Extension("STARTTLS"); ok {
-		tlsConfig := &tls.Config{
-			ServerName:         host,
-			InsecureSkipVerify: h.insecureSkipVerify, // In production, this should be configurable
-		}
-		if err := client.StartTLS(tlsConfig); err != nil {
+		if err := client.StartTLS(h.outboundTLSConfig(host)); err != nil {
 			if requireTLS {
 				_ = client.Close()
 				return nil, nil, false, fmt.Errorf("STARTTLS required but failed: %w", err)
@@ -389,6 +385,21 @@ func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, addre
 	}
 
 	return client, conn, tlsUsed, nil
+}
+
+// outboundTLSConfig builds the TLS config for STARTTLS with the given server name.
+// If a template was injected (e.g. by tests or future operator config), it is cloned
+// and given the per-host ServerName; otherwise secure defaults are used.
+func (h *SMTPDeliveryHandler) outboundTLSConfig(host string) *tls.Config {
+	if h.tlsConfig != nil {
+		cfg := h.tlsConfig.Clone()
+		cfg.ServerName = host
+		return cfg
+	}
+	return &tls.Config{
+		ServerName: host,
+		MinVersion: tls.VersionTLS12,
+	}
 }
 
 // GetFailedQueueRetentionHours returns the failed queue retention setting
