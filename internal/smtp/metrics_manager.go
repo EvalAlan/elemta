@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+
+	"github.com/busybox42/elemta/internal/queue"
 )
 
 // MetricsManager handles all metrics-related functionality
@@ -12,6 +14,13 @@ type MetricsManager struct {
 	metricsServer *http.Server
 	config        *Config
 	logger        *slog.Logger
+	queueManager  queue.QueueManager
+}
+
+// SetQueueManager wires the queue manager so queue-size gauges are fed from its
+// authoritative, incrementally-maintained stats rather than re-scanning disk.
+func (m *MetricsManager) SetQueueManager(qm queue.QueueManager) {
+	m.queueManager = qm
 }
 
 // NewMetricsManager creates a new metrics manager
@@ -32,11 +41,18 @@ func (m *MetricsManager) Start() error {
 	return nil
 }
 
-// UpdateQueueSizes updates queue size metrics
+// UpdateQueueSizes updates queue size metrics. When a queue manager is wired it
+// uses the authoritative in-memory stats; otherwise it falls back to a disk scan.
 func (m *MetricsManager) UpdateQueueSizes() {
-	if m.metrics != nil {
-		m.metrics.UpdateQueueSizes(m.config)
+	if m.metrics == nil {
+		return
 	}
+	if m.queueManager != nil {
+		stats := m.queueManager.GetStats()
+		m.metrics.SetQueueSizes(stats.ActiveCount, stats.DeferredCount, stats.HoldCount, stats.FailedCount)
+		return
+	}
+	m.metrics.UpdateQueueSizes(m.config)
 }
 
 // Shutdown gracefully shuts down the metrics server
