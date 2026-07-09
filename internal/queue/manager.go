@@ -193,15 +193,26 @@ func extractQueueDir(storage StorageBackend) string {
 	return "" // Unknown storage type
 }
 
-// updateStatsLoop periodically updates queue statistics
+// updateStatsLoop periodically refreshes queue statistics.
+//
+// The frequent tick only refreshes the four queue counts via the storage
+// backend's Count() (a directory listing / indexed count — no per-message read
+// or JSON unmarshal), which is what makes this cheap at high queue depth. A
+// full reconcile (which also recomputes TotalSize by reading every message) runs
+// far less often to correct any drift in the incrementally-maintained size.
 func (m *Manager) updateStatsLoop() {
-	// Use a shorter interval for tests to make them more responsive
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	countTicker := time.NewTicker(5 * time.Second)
+	defer countTicker.Stop()
+	reconcileTicker := time.NewTicker(5 * time.Minute)
+	defer reconcileTicker.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-countTicker.C:
+			if err := m.refreshCounts(); err != nil {
+				m.logger.Error("Failed to refresh queue counts", "error", err)
+			}
+		case <-reconcileTicker.C:
 			if err := m.UpdateStats(); err != nil {
 				m.logger.Error("Failed to update queue stats", "error", err)
 			}
@@ -210,6 +221,36 @@ func (m *Manager) updateStatsLoop() {
 			return
 		}
 	}
+}
+
+// refreshCounts updates only the per-queue counts using the backend's cheap
+// Count(), preserving the incrementally-maintained TotalSize. O(1) unmarshals.
+func (m *Manager) refreshCounts() error {
+	active, err := m.storageBackend.Count(Active)
+	if err != nil {
+		return fmt.Errorf("failed to count active queue: %w", err)
+	}
+	deferred, err := m.storageBackend.Count(Deferred)
+	if err != nil {
+		return fmt.Errorf("failed to count deferred queue: %w", err)
+	}
+	hold, err := m.storageBackend.Count(Hold)
+	if err != nil {
+		return fmt.Errorf("failed to count hold queue: %w", err)
+	}
+	failed, err := m.storageBackend.Count(Failed)
+	if err != nil {
+		return fmt.Errorf("failed to count failed queue: %w", err)
+	}
+
+	m.statsLock.Lock()
+	m.queueStats.ActiveCount = active
+	m.queueStats.DeferredCount = deferred
+	m.queueStats.HoldCount = hold
+	m.queueStats.FailedCount = failed
+	m.queueStats.LastUpdated = time.Now()
+	m.statsLock.Unlock()
+	return nil
 }
 
 // UpdateStats updates the queue statistics
