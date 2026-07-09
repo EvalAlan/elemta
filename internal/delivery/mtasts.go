@@ -34,6 +34,11 @@ type MTASTSPolicy struct {
 
 	// expiresAt is when this policy entry becomes stale.
 	expiresAt time.Time
+
+	// negative marks a cached "no policy for this domain" result, so the
+	// common no-MTA-STS case does not trigger a DNS+HTTPS fetch on every
+	// message. A negative entry is never returned as an enforceable policy.
+	negative bool
 }
 
 // IsEnforced returns true if the policy is in enforce mode and not expired.
@@ -60,14 +65,25 @@ func (p *MTASTSPolicy) MatchesMX(mxHost string) bool {
 	return false
 }
 
+// negativeCacheTTL is how long a "no MTA-STS policy" result is remembered before
+// re-attempting discovery. Short enough that a newly-published policy is picked
+// up promptly, long enough to spare the DNS+HTTPS fetch on the per-message path.
+const negativeCacheTTL = 10 * time.Minute
+
+// defaultMaxCacheSize bounds the policy cache when the config does not specify
+// one, so a long-lived standalone manager cannot grow unbounded (the background
+// cleanup loop is only started by the delivery.Manager).
+const defaultMaxCacheSize = 1000
+
 // MTASTSManager manages MTA-STS policy discovery, caching, and enforcement.
 type MTASTSManager struct {
-	config     *Config
-	logger     *slog.Logger
-	cache      map[string]*MTASTSPolicy
-	mu         sync.RWMutex
-	httpClient *http.Client
-	metrics    *MTASTSMetrics
+	config       *Config
+	logger       *slog.Logger
+	cache        map[string]*MTASTSPolicy
+	mu           sync.RWMutex
+	httpClient   *http.Client
+	metrics      *MTASTSMetrics
+	maxCacheSize int
 }
 
 // MTASTSMetrics tracks MTA-STS policy fetch/cache statistics.
@@ -84,10 +100,15 @@ type MTASTSMetrics struct {
 
 // NewMTASTSManager creates a new MTA-STS policy manager.
 func NewMTASTSManager(config *Config) *MTASTSManager {
+	maxCacheSize := defaultMaxCacheSize
+	if config != nil && config.MTASTSCacheSize > 0 {
+		maxCacheSize = config.MTASTSCacheSize
+	}
 	return &MTASTSManager{
-		config: config,
-		logger: slog.Default().With("component", "mtasts-manager"),
-		cache:  make(map[string]*MTASTSPolicy),
+		config:       config,
+		maxCacheSize: maxCacheSize,
+		logger:       slog.Default().With("component", "mtasts-manager"),
+		cache:        make(map[string]*MTASTSPolicy),
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
@@ -125,7 +146,10 @@ func (m *MTASTSManager) GetPolicy(ctx context.Context, domain string) (*MTASTSPo
 			m.metrics.mu.Lock()
 			m.metrics.CacheHits++
 			m.metrics.mu.Unlock()
-			m.logger.Debug("MTA-STS policy cache hit", "domain", domain)
+			m.logger.Debug("MTA-STS policy cache hit", "domain", domain, "negative", policy.negative)
+			if policy.negative {
+				return nil, nil
+			}
 			return policy, nil
 		}
 		// Expired — remove from cache
@@ -144,15 +168,19 @@ func (m *MTASTSManager) GetPolicy(ctx context.Context, domain string) (*MTASTSPo
 		m.metrics.mu.Lock()
 		m.metrics.FetchErrors++
 		m.metrics.mu.Unlock()
-		m.logger.Warn("MTA-STS policy fetch failed", "domain", domain, "error", err)
-		return nil, err
+		// Cache the miss so the (common) no-policy case doesn't re-run a
+		// DNS+HTTPS fetch for every message to this domain. Delivery is allowed
+		// on a nil policy, matching the previous soft-fail behavior.
+		m.cacheStore(domain, &MTASTSPolicy{
+			negative:  true,
+			fetchedAt: time.Now(),
+			expiresAt: time.Now().Add(negativeCacheTTL),
+		})
+		m.logger.Debug("MTA-STS policy not found; caching negative result", "domain", domain, "error", err)
+		return nil, nil
 	}
 
-	// Cache the policy
-	m.mu.Lock()
-	m.cache[domain] = policy
-	m.metrics.CacheSize = len(m.cache)
-	m.mu.Unlock()
+	m.cacheStore(domain, policy)
 
 	m.metrics.mu.Lock()
 	m.metrics.PoliciesFetched++
@@ -165,6 +193,36 @@ func (m *MTASTSManager) GetPolicy(ctx context.Context, domain string) (*MTASTSPo
 		"mx_count", len(policy.MX))
 
 	return policy, nil
+}
+
+// cacheStore inserts an entry, enforcing the cache size bound. When full it
+// first drops expired entries, then evicts the entry closest to expiry, so a
+// long-lived standalone manager (no background cleanup) stays bounded.
+func (m *MTASTSManager) cacheStore(domain string, policy *MTASTSPolicy) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.cache[domain]; !exists && len(m.cache) >= m.maxCacheSize {
+		now := time.Now()
+		var oldestKey string
+		var oldestExpiry time.Time
+		for k, p := range m.cache {
+			if now.After(p.expiresAt) {
+				delete(m.cache, k) // drop expired opportunistically
+				continue
+			}
+			if oldestKey == "" || p.expiresAt.Before(oldestExpiry) {
+				oldestKey, oldestExpiry = k, p.expiresAt
+			}
+		}
+		// If nothing expired was freed and we're still at capacity, evict soonest-to-expire.
+		if len(m.cache) >= m.maxCacheSize && oldestKey != "" {
+			delete(m.cache, oldestKey)
+		}
+	}
+
+	m.cache[domain] = policy
+	m.metrics.CacheSize = len(m.cache)
 }
 
 // fetchPolicy attempts to discover and fetch the MTA-STS policy for a domain.

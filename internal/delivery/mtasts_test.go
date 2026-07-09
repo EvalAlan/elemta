@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -412,5 +413,64 @@ func TestMTASTSManagerGetStats(t *testing.T) {
 	}
 	if _, ok := stats["cache_size"]; !ok {
 		t.Error("Expected stats to contain cache_size key")
+	}
+}
+
+func TestMTASTSNegativeCaching(t *testing.T) {
+	config := DefaultConfig()
+	config.MTASTSEnabled = true
+	mgr := NewMTASTSManager(config)
+
+	// example.invalid has no MTA-STS policy; the fetch will fail. GetPolicy
+	// should return (nil, nil) and cache a negative result so a second call is
+	// served from cache without another fetch.
+	ctx := context.Background()
+	p, err := mgr.GetPolicy(ctx, "example.invalid")
+	if err != nil {
+		t.Fatalf("expected nil error on no-policy domain, got %v", err)
+	}
+	if p != nil {
+		t.Fatalf("expected nil policy for no-policy domain, got %+v", p)
+	}
+
+	mgr.mu.RLock()
+	entry, exists := mgr.cache["example.invalid"]
+	mgr.mu.RUnlock()
+	if !exists || !entry.negative {
+		t.Fatalf("expected a negative cache entry for example.invalid")
+	}
+
+	missesBefore := mgr.metrics.CacheMisses
+	hitsBefore := mgr.metrics.CacheHits
+	if _, err := mgr.GetPolicy(ctx, "example.invalid"); err != nil {
+		t.Fatalf("second GetPolicy errored: %v", err)
+	}
+	if mgr.metrics.CacheHits != hitsBefore+1 {
+		t.Errorf("expected a cache hit on the second lookup")
+	}
+	if mgr.metrics.CacheMisses != missesBefore {
+		t.Errorf("expected no additional cache miss (no refetch) on the second lookup")
+	}
+}
+
+func TestMTASTSCacheBounded(t *testing.T) {
+	config := DefaultConfig()
+	config.MTASTSEnabled = true
+	config.MTASTSCacheSize = 10
+	mgr := NewMTASTSManager(config)
+
+	for i := 0; i < 100; i++ {
+		mgr.cacheStore(fmt.Sprintf("d%d.example.com", i), &MTASTSPolicy{
+			Mode:      "none",
+			fetchedAt: time.Now(),
+			expiresAt: time.Now().Add(time.Hour),
+		})
+	}
+
+	mgr.mu.RLock()
+	size := len(mgr.cache)
+	mgr.mu.RUnlock()
+	if size > 10 {
+		t.Errorf("expected cache bounded to 10, got %d", size)
 	}
 }
