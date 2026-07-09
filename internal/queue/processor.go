@@ -2,8 +2,11 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/textproto"
 	"strings"
 	"sync"
 	"time"
@@ -28,8 +31,11 @@ func DefaultProcessorConfig() ProcessorConfig {
 		Enabled:       true,
 		Interval:      10 * time.Second,
 		MaxConcurrent: 5,
-		MaxRetries:    5,
-		RetrySchedule: []int{60, 300, 900, 3600, 10800, 21600}, // 1m, 5m, 15m, 1h, 3h, 6h
+		// MaxRetries spans the extended backoff schedule so a briefly-unreachable
+		// or greylisting destination stays queued ~4 days before bouncing, rather
+		// than being abandoned after a few hours.
+		MaxRetries:    len(defaultRetrySchedule),
+		RetrySchedule: defaultRetrySchedule,
 		CleanupAge:    24 * time.Hour,
 	}
 }
@@ -110,6 +116,9 @@ type Processor struct {
 // NewProcessor creates a new queue processor
 func NewProcessor(manager *Manager, config ProcessorConfig, handler DeliveryHandler) *Processor {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Honor the operator-configured retry schedule for deferred backoff.
+	manager.SetRetrySchedule(config.RetrySchedule)
 
 	baseLogger := slog.Default().With("component", "queue-processor")
 	return &Processor{
@@ -589,71 +598,82 @@ func (p *Processor) moveToFailed(msg Message, reason string) {
 	}
 }
 
-// isTemporaryFailure determines if a delivery error is temporary (4xx) or permanent (5xx)
+// isTemporaryFailure determines whether a delivery error should be retried
+// (temporary) or bounced (permanent).
+//
+// Classification order, most authoritative first:
+//  1. explicit Temporary() interface,
+//  2. typed net.Error / net.OpError / DNS errors — network-layer failures are
+//     temporary (a downstream outage must not bounce the whole active queue),
+//  3. typed textproto.Error — the real SMTP reply code decides (4xx temporary,
+//     5xx permanent), rather than substring-matching digits that may appear in
+//     free text,
+//  4. substring fallback for errors that carry a code/keyword but no type.
+//
+// The default is TEMPORARY: an unrecognized error is retried (bounded by the
+// max queue lifetime, see calculateNextRetry) instead of silently bouncing
+// legitimate mail. Only a clearly-permanent 5xx returns false.
 func (p *Processor) isTemporaryFailure(err error) bool {
 	if err == nil {
 		return false
 	}
 
-	// Check for explicit temporary error interface
-	if tempErr, ok := err.(interface{ Temporary() bool }); ok && tempErr.Temporary() {
+	// (1) Explicit temporary marker (e.g. TemporaryError).
+	var tempErr interface{ Temporary() bool }
+	if errors.As(err, &tempErr) && tempErr.Temporary() {
 		return true
+	}
+
+	// (2) Network-layer failures: dial/timeout/reset/refused/DNS. All temporary.
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+
+	// (3) SMTP reply code from the server, authoritatively typed.
+	var protoErr *textproto.Error
+	if errors.As(err, &protoErr) {
+		// 4yz = transient negative completion; 5yz = permanent.
+		return protoErr.Code >= 400 && protoErr.Code < 500
 	}
 
 	errStr := err.Error()
 	errLower := strings.ToLower(errStr)
 
-	// DEBUG: Log the actual error string for troubleshooting
-	p.logger.Debug("isTemporaryFailure checking error", "error_string", errStr)
-
-	// Check for explicit 4xx SMTP response codes
-	// These indicate temporary failures that should be retried
-	if strings.Contains(errStr, " 452") || // Insufficient system storage
-		strings.Contains(errStr, " 450") || // Mailbox unavailable
-		strings.Contains(errStr, " 451") || // Local error in processing
-		strings.Contains(errStr, " 421") || // Service not available
-		strings.Contains(errStr, " 454") || // Temporary authentication failure
-		strings.HasPrefix(errStr, "452") ||
-		strings.HasPrefix(errStr, "450") ||
-		strings.HasPrefix(errStr, "451") ||
-		strings.HasPrefix(errStr, "421") ||
-		strings.HasPrefix(errStr, "454") {
-		return true
+	// (4a) Clearly-permanent 5xx replies stringified into the error chain.
+	for _, code := range []string{"550", "551", "552", "553", "554"} {
+		if strings.Contains(errStr, code+" ") || strings.HasPrefix(errStr, code) {
+			return false
+		}
 	}
 
-	// Check for common temporary failure patterns
+	// (4b) Transient signals in free-text errors, including bare network phrases
+	// that don't surface as typed errors once wrapped with fmt.Errorf.
 	tempPatterns := []string{
-		"temporary",
-		"try again",
-		"busy",
-		"throttled",
-		"rate limit",
-		"connection timeout",
-		"network error",
-		"dns",
-		"insufficient system storage",
-		"mailbox unavailable",
-		"local error",
-		"service not available",
+		"450", "451", "452", "421", "454",
+		"temporary", "try again", "busy", "throttled", "rate limit",
+		"timeout", "timed out", "connection refused", "connection reset",
+		"broken pipe", "eof", "no route to host", "network is unreachable",
+		"network error", "no such host", "dns", "greylist",
+		"insufficient system storage", "mailbox unavailable", "local error",
+		"service not available", "i/o timeout",
 	}
-
 	for _, pattern := range tempPatterns {
 		if strings.Contains(errLower, pattern) {
 			return true
 		}
 	}
 
-	// Check for 5xx codes which are permanent failures
-	if strings.Contains(errStr, "550 ") || // Mailbox unavailable (permanent)
-		strings.Contains(errStr, "551 ") || // User not local
-		strings.Contains(errStr, "552 ") || // Exceeded storage allocation
-		strings.Contains(errStr, "553 ") || // Mailbox name not allowed
-		strings.Contains(errStr, "554 ") { // Transaction failed
-		return false
-	}
-
-	// Default to permanent failure for unknown errors
-	return false
+	// Default: retry rather than bounce. Bounded by max queue lifetime.
+	return true
 }
 
 // logMetrics logs current processing metrics

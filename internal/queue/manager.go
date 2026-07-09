@@ -23,6 +23,38 @@ type Manager struct {
 	statsLock                 sync.RWMutex
 	stopCh                    chan struct{}
 	storageBackend            StorageBackend
+	retrySchedule             []int // per-attempt backoff in seconds; last entry repeats
+}
+
+// defaultRetrySchedule backs off from 1 minute to 6 hours and, with the default
+// MaxRetries, keeps a message queued for roughly four days before it is bounced —
+// matching the common 4–5 day norm for MTAs rather than giving up after hours.
+var defaultRetrySchedule = []int{
+	60,    // 1m
+	300,   // 5m
+	900,   // 15m
+	3600,  // 1h
+	10800, // 3h
+	21600, // 6h
+	21600, // 6h
+	21600, // 6h
+	21600, // 6h
+	43200, // 12h
+	43200, // 12h
+	43200, // 12h
+	43200, // 12h
+}
+
+// SetRetrySchedule overrides the per-attempt backoff schedule (seconds). Called
+// by the processor so the operator-configured schedule is actually honored;
+// empty input keeps the current schedule.
+func (m *Manager) SetRetrySchedule(schedule []int) {
+	if len(schedule) == 0 {
+		return
+	}
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.retrySchedule = append([]int(nil), schedule...)
 }
 
 // Ensure Manager implements QueueManager interface
@@ -417,7 +449,7 @@ func (m *Manager) MoveMessage(id string, targetQueue QueueType, reason string) e
 		case Deferred:
 			msg.LastError = reason
 			msg.RetryCount++ // Increment retry count when moving to deferred queue
-			msg.NextRetry = calculateNextRetry(msg.RetryCount)
+			msg.NextRetry = m.calculateNextRetry(msg.RetryCount)
 		}
 	}
 
@@ -604,33 +636,26 @@ func extractDomain(addr string) string {
 	return strings.ToLower(addr[at+1:])
 }
 
-// calculateNextRetry determines when to retry a message based on retry count
-// Uses exponential backoff with some randomness
-func calculateNextRetry(retryCount int) time.Time {
+// calculateNextRetry determines when to retry a message based on retry count,
+// using the configured (or default) backoff schedule with ±10% jitter. Attempts
+// beyond the schedule length repeat the final interval.
+func (m *Manager) calculateNextRetry(retryCount int) time.Time {
 	if retryCount <= 0 {
 		retryCount = 1
 	}
 
-	// Base delay in seconds - exponential with retry count
-	// 1: 60s, 2: 5m, 3: 15m, 4: 1h, 5: 3h, 6+: 6h
-	var delaySeconds int
-
-	switch retryCount {
-	case 1:
-		delaySeconds = 60
-	case 2:
-		delaySeconds = 300
-	case 3:
-		delaySeconds = 900
-	case 4:
-		delaySeconds = 3600
-	case 5:
-		delaySeconds = 10800
-	default:
-		delaySeconds = 21600
+	schedule := m.retrySchedule
+	if len(schedule) == 0 {
+		schedule = defaultRetrySchedule
 	}
 
-	// Add some randomness (±10%)
+	idx := retryCount - 1
+	if idx >= len(schedule) {
+		idx = len(schedule) - 1
+	}
+	delaySeconds := schedule[idx]
+
+	// Add some randomness (±10%) to avoid retry stampedes against a shared destination.
 	jitter := float64(delaySeconds) * 0.1
 	// #nosec G404 -- jitter for retry delay does not require cryptographic randomness
 	delaySeconds = delaySeconds + int(jitter*(2.0*rand.Float64()-1.0))

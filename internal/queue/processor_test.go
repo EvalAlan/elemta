@@ -204,6 +204,12 @@ func TestProcessor(t *testing.T) {
 	})
 
 	t.Run("ConcurrencyLimit", func(t *testing.T) {
+		// Use an isolated manager: this subtest asserts an exact global delivery
+		// count, so it must not observe deferred messages promoted from earlier
+		// subtests that share the outer manager and fast retry schedule.
+		manager := NewManager(t.TempDir(), 24)
+		defer manager.Stop()
+
 		// Create fresh mock handler for this test
 		mockHandler := NewMockDeliveryHandler(0) // Default: immediate deletion
 
@@ -318,12 +324,25 @@ func TestProcessorConfig(t *testing.T) {
 			t.Errorf("Expected default max concurrent 5, got %d", config.MaxConcurrent)
 		}
 
-		if config.MaxRetries != 5 {
-			t.Errorf("Expected default max retries 5, got %d", config.MaxRetries)
+		// MaxRetries spans the full backoff schedule so mail stays queued for
+		// days before bouncing, rather than being abandoned after a few hours.
+		if config.MaxRetries != len(config.RetrySchedule) {
+			t.Errorf("Expected default max retries to match schedule length %d, got %d",
+				len(config.RetrySchedule), config.MaxRetries)
 		}
 
 		if len(config.RetrySchedule) == 0 {
 			t.Error("Expected default retry schedule to be non-empty")
+		}
+
+		// The cumulative schedule should keep a message queued for at least ~3 days.
+		var totalSeconds int
+		for _, s := range config.RetrySchedule {
+			totalSeconds += s
+		}
+		if minLifetime := 3 * 24 * 60 * 60; totalSeconds < minLifetime {
+			t.Errorf("Expected retry schedule to span at least ~3 days (%ds), got %ds",
+				minLifetime, totalSeconds)
 		}
 	})
 }
