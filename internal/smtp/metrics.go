@@ -1,6 +1,7 @@
 package smtp
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -41,6 +42,7 @@ type Metrics struct {
 	DeliveryAttempts  prometheus.Counter
 	DeliverySuccesses prometheus.Counter
 	DeliveryFailures  prometheus.Counter
+	DeliveryDeferred  prometheus.Counter
 	DeliveryDuration  prometheus.Histogram
 
 	// TLS metrics
@@ -136,6 +138,10 @@ func newMetrics() *Metrics {
 		DeliveryFailures: promauto.NewCounter(prometheus.CounterOpts{
 			Name: "elemta_delivery_failures_total",
 			Help: "Total number of failed deliveries",
+		}),
+		DeliveryDeferred: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "elemta_delivery_deferred_total",
+			Help: "Total number of deferred deliveries (temporary failures queued for retry)",
 		}),
 		DeliveryDuration: promauto.NewHistogram(prometheus.HistogramOpts{
 			Name:    "elemta_delivery_duration_seconds",
@@ -236,20 +242,57 @@ func StartMetricsServer(addr string) *http.Server {
 	return server
 }
 
-// UpdateQueueSizes updates the queue size metrics
+// The Metrics type implements queue.MetricsRecorder so the queue processor can
+// feed Prometheus delivery counters directly. The ctx is unused (Prometheus
+// counters are process-local and non-blocking) and no error is ever returned.
+
+// IncrDelivered records a successful delivery.
+func (m *Metrics) IncrDelivered(_ context.Context) error {
+	m.DeliverySuccesses.Inc()
+	return nil
+}
+
+// IncrFailed records a permanent delivery failure (bounced).
+func (m *Metrics) IncrFailed(_ context.Context) error {
+	m.DeliveryFailures.Inc()
+	return nil
+}
+
+// IncrDeferred records a temporary delivery failure queued for retry.
+func (m *Metrics) IncrDeferred(_ context.Context) error {
+	m.DeliveryDeferred.Inc()
+	return nil
+}
+
+// AddRecentError is a no-op for Prometheus: a bounded recent-error list is a
+// Valkey concern, not a metrics counter. Present to satisfy queue.MetricsRecorder.
+func (m *Metrics) AddRecentError(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+// SetQueueSizes sets the queue-size gauges directly from authoritative counts.
+func (m *Metrics) SetQueueSizes(active, deferred, hold, failed int) {
+	m.QueueSize.WithLabelValues("active").Set(float64(active))
+	m.QueueSize.WithLabelValues("deferred").Set(float64(deferred))
+	m.QueueSize.WithLabelValues("hold").Set(float64(hold))
+	m.QueueSize.WithLabelValues("failed").Set(float64(failed))
+}
+
+// UpdateQueueSizes updates the queue size metrics by scanning the spool.
+// Fallback path used only when no queue manager is wired in.
 func (m *Metrics) UpdateQueueSizes(config *Config) {
-	// Update queue sizes for different queue types
-	for _, queueType := range []string{"active", "deferred", "held", "failed"} {
+	// Queue directory names must match the on-disk QueueType values ("hold",
+	// not "held"), and message metadata files ARE the ".json" files we count.
+	for _, queueType := range []string{"active", "deferred", "hold", "failed"} {
 		queueDir := filepath.Join(config.QueueDir, queueType)
 		files, err := os.ReadDir(queueDir)
 		if err != nil {
 			continue
 		}
 
-		// Count only message files, not metadata files
 		count := 0
 		for _, file := range files {
-			if filepath.Ext(file.Name()) != ".json" {
+			if filepath.Ext(file.Name()) == ".json" {
 				count++
 			}
 		}
