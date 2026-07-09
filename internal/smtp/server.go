@@ -435,6 +435,12 @@ func NewServer(config *Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Feed queue-size gauges from the queue manager's authoritative stats, and
+	// fan delivery events out to Prometheus alongside any Valkey recorder.
+	metricsManager.SetQueueManager(queueManager)
+	if queueProcessor != nil {
+		queueProcessor.AddMetricsRecorder(metrics)
+	}
 	resourceManager, resourceLimits := initResourceManager(config, slogger)
 	rootCtx, rootCancel, _, cancel, errGroup, gctx, workerPool := initConcurrency(slogger, resourceLimits)
 

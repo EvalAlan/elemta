@@ -96,12 +96,12 @@ type Processor struct {
 	bounceEngine BounceEngine
 
 	// Metrics
-	metricsLock     sync.RWMutex
-	processedCount  int64
-	deliveredCount  int64
-	failedCount     int64
-	retryCount      int64
-	metricsRecorder MetricsRecorder
+	metricsLock      sync.RWMutex
+	processedCount   int64
+	deliveredCount   int64
+	failedCount      int64
+	retryCount       int64
+	metricsRecorders []MetricsRecorder
 
 	// New field for processing messages
 	processingMessages map[string]bool
@@ -135,9 +135,26 @@ func NewProcessor(manager *Manager, config ProcessorConfig, handler DeliveryHand
 	}
 }
 
-// SetMetricsRecorder sets the metrics recorder for the processor
+// SetMetricsRecorder replaces the processor's metrics recorders with a single one.
 func (p *Processor) SetMetricsRecorder(recorder MetricsRecorder) {
-	p.metricsRecorder = recorder
+	p.metricsRecorders = []MetricsRecorder{recorder}
+}
+
+// AddMetricsRecorder appends an additional metrics recorder; delivery events are
+// fanned out to every registered recorder (e.g. Valkey and Prometheus together).
+func (p *Processor) AddMetricsRecorder(recorder MetricsRecorder) {
+	if recorder != nil {
+		p.metricsRecorders = append(p.metricsRecorders, recorder)
+	}
+}
+
+// recordMetric fans a recorder callback out to all registered recorders.
+func (p *Processor) recordMetric(fn func(MetricsRecorder) error) {
+	for _, r := range p.metricsRecorders {
+		if err := fn(r); err != nil {
+			p.logger.Debug("metrics recorder error", "error", err)
+		}
+	}
 }
 
 // SetBounceEngine sets the bounce engine for DSN generation on permanent failures
@@ -390,12 +407,8 @@ func (p *Processor) handleDeliverySuccess(msg Message, result *DeliveryResult) {
 	p.deliveredCount++
 	p.metricsLock.Unlock()
 
-	// Record to external metrics store (Valkey)
-	if p.metricsRecorder != nil {
-		if err := p.metricsRecorder.IncrDelivered(p.ctx); err != nil {
-			p.logger.Debug("Failed to record delivered metric", "error", err)
-		}
-	}
+	// Record to all metrics recorders (Valkey, Prometheus).
+	p.recordMetric(func(r MetricsRecorder) error { return r.IncrDelivered(p.ctx) })
 
 	// Record successful attempt (ignore error if message already deleted)
 	if err := p.manager.AddAttempt(msg.ID, "delivered", ""); err != nil {
@@ -470,12 +483,8 @@ func (p *Processor) handleDeliveryFailure(msg Message, deliveryErr error, startT
 	if err := p.manager.MoveMessage(msg.ID, Deferred, deliveryErr.Error()); err != nil {
 		logger.Error("Failed to move message to deferred queue", "error", err)
 	} else {
-		// Record deferred to external metrics store (Valkey)
-		if p.metricsRecorder != nil {
-			if err := p.metricsRecorder.IncrDeferred(p.ctx); err != nil {
-				logger.Debug("Failed to record deferred metric", "error", err)
-			}
-		}
+		// Record deferred to all metrics recorders (Valkey, Prometheus).
+		p.recordMetric(func(r MetricsRecorder) error { return r.IncrDeferred(p.ctx) })
 		// Log deferral with timing information
 		p.msgLogger.LogDeferral(logging.MessageContext{
 			MessageID:      msg.ID,
@@ -545,20 +554,15 @@ func (p *Processor) moveToFailed(msg Message, reason string) {
 		}
 	}
 
-	// Record to external metrics store (Valkey)
-	if p.metricsRecorder != nil {
-		if err := p.metricsRecorder.IncrFailed(p.ctx); err != nil {
-			p.logger.Debug("Failed to record failed metric", "error", err)
-		}
-		// Record the error details
-		recipient := ""
-		if len(msg.To) > 0 {
-			recipient = strings.Join(msg.To, ", ")
-		}
-		if err := p.metricsRecorder.AddRecentError(p.ctx, msg.ID, recipient, reason); err != nil {
-			p.logger.Debug("Failed to record error details", "error", err)
-		}
+	// Record to all metrics recorders (Valkey, Prometheus).
+	recipient := ""
+	if len(msg.To) > 0 {
+		recipient = strings.Join(msg.To, ", ")
 	}
+	p.recordMetric(func(r MetricsRecorder) error { return r.IncrFailed(p.ctx) })
+	p.recordMetric(func(r MetricsRecorder) error {
+		return r.AddRecentError(p.ctx, msg.ID, recipient, reason)
+	})
 
 	// Log comprehensive bounce information
 	p.msgLogger.LogBounce(logging.MessageContext{
