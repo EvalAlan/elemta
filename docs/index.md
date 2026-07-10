@@ -21,6 +21,7 @@ This index lists the **maintained** docs for the current codebase.
 - [Troubleshooting](troubleshooting.md)
 - [Production Deployment](production-deployment.md)
 - [Native Install Spec v1](native-install-spec-v1.md)
+- [Releasing](releasing.md)
 
 ## Security / Governance
 
