@@ -129,8 +129,12 @@ func DefaultSecurityConfig() SecurityConfig {
 		DevelopmentMode: false,
 
 		SignatureVerification: SignatureConfig{
-			Enabled:             true,
-			Required:            true,
+			Enabled: true,
+			// Not required by default: requiring signatures with no trusted
+			// certificates configured fails ValidateSecurityConfig, so the
+			// default config could never pass its own validation. Deployments
+			// that require signatures must also configure trusted certificates.
+			Required:            false,
 			TrustedCertificates: []string{},
 			TrustedKeys:         []string{},
 			SignatureCacheSize:  1000,
@@ -257,15 +261,17 @@ func StrictSecurityConfig() SecurityConfig {
 
 // LoadSecurityConfig loads security configuration from file
 func LoadSecurityConfig(configPath string) (*SecurityConfig, error) {
+	// Validate the path before any filesystem access so traversal attempts
+	// are rejected even when the target file doesn't exist
+	if strings.Contains(configPath, "..") {
+		return nil, fmt.Errorf("invalid config file path: path traversal attempt detected")
+	}
+
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// Return default config if file doesn't exist
 		config := DefaultSecurityConfig()
 		return &config, nil
-	}
-
-	if strings.Contains(configPath, "..") {
-		return nil, fmt.Errorf("invalid config file path: path traversal attempt detected")
 	}
 	// #nosec G304 -- configPath traversal is checked above
 	data, err := os.ReadFile(configPath)
