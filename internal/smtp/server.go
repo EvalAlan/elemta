@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/busybox42/elemta/internal/dkim"
 	deliverymetrics "github.com/busybox42/elemta/internal/metrics"
 	"github.com/busybox42/elemta/internal/plugin"
 	"github.com/busybox42/elemta/internal/queue"
@@ -204,6 +205,21 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 
 		slogger.Info("Creating LMTP delivery handler", "host", deliveryHost, "port", deliveryPort, "max_per_domain", maxPerDomain)
 		lmtpHandler := newDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours)
+
+		// Build the DKIM signer (if enabled) and attach it to the remote SMTP
+		// delivery handler. Local LMTP delivery is intentionally not signed.
+		dkimSigner, err := dkim.NewSigner(config.DKIM, slogger)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to initialize DKIM signer: %w", err)
+		}
+		if dkimSigner != nil {
+			if smtpHandler, ok := lmtpHandler.(*queue.SMTPDeliveryHandler); ok {
+				smtpHandler.SetDKIMSigner(dkimSigner)
+				slogger.Info("DKIM outbound signing enabled")
+			} else {
+				slogger.Info("DKIM signing configured but active delivery handler is not the remote SMTP handler; signing will apply only on the remote SMTP path")
+			}
+		}
 
 		processorConfig := queue.ProcessorConfig{
 			Enabled:       config.QueueProcessorEnabled,

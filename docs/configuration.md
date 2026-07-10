@@ -147,6 +147,14 @@ file = "/var/log/elemta/elemta.log"
 - `[tls].key_file`
 - optional `[tls.letsencrypt]`
 
+### DKIM (outbound signing)
+
+- `[dkim].enabled`
+- `[dkim].header_canonicalization` / `[dkim].body_canonicalization` (default `relaxed`)
+- `[[dkim.domains]]` blocks with `domain`, `selector`, `private_key_path`, optional `headers_to_sign`
+
+See [DKIM Signing](dkim-signing.md) for key generation, DNS setup, and details.
+
 ---
 
 ## Compatibility notes
@@ -160,6 +168,7 @@ file = "/var/log/elemta/elemta.log"
 ## Related docs
 
 - [Installation](installation.md)
+- [DKIM Signing](dkim-signing.md)
 - [SMTP Server](smtp_server.md)
 - [Queue Management](queue_management.md)
 - [Queue Backend Runbook](queue-backend-runbook.md)
