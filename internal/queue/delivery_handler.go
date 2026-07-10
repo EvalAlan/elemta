@@ -38,6 +38,12 @@ func (e *PermanentError) Error() string   { return e.msg }
 func (e *PermanentError) Unwrap() error   { return e.err }
 func (e *PermanentError) Permanent() bool { return true }
 
+// newRequireTLSError reports an RFC 8689 delivery failure as permanent so the
+// processor bounces it rather than retrying insecurely.
+func newRequireTLSError(format string, args ...interface{}) *PermanentError {
+	return &PermanentError{msg: "550 5.7.30 REQUIRETLS: " + fmt.Sprintf(format, args...)}
+}
+
 func smtpFailureOutcome(err error) (RecipientDeliveryStatus, string, string) {
 	status := RecipientTemporaryFailure
 	var smtpErr *textproto.Error
@@ -398,19 +404,44 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 		"recipients", recipients,
 		"require_tls", requireTLS)
 
-	client, conn, tlsUsed, err := h.connectSMTPWithMetadata(ctx, address, requireTLS)
+	client, conn, tlsUsed, nextHopRequireTLS, err := h.connectSMTPWithRequireTLS(ctx, address, requireTLS)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to connect to %s: %w", address, err)
 	}
 	defer func() { _ = client.Close() }()
 
-	if err := h.mtastsManager.EnforcePolicy(ctx, domain, mxHost, tlsUsed); err != nil {
-		return "", "", nil, fmt.Errorf("MTA-STS policy check failed for %s: %w", domain, err)
+	// REQUIRETLS is stricter than MTA-STS: it already mandates verified TLS and
+	// next-hop support, so do not apply the overlapping policy a second time.
+	if !requireTLS {
+		if err := h.mtastsManager.EnforcePolicy(ctx, domain, mxHost, tlsUsed); err != nil {
+			return "", "", nil, fmt.Errorf("MTA-STS policy check failed for %s: %w", domain, err)
+		}
 	}
 
 	sender := strings.Trim(msg.From, "<>")
-	if err := client.Mail(sender); err != nil {
-		return "", "", nil, fmt.Errorf("MAIL FROM failed: %w", err)
+	text := client.Text
+	if text == nil {
+		if requireTLS {
+			return "", "", nil, newRequireTLSError("cannot send MAIL FROM with REQUIRETLS parameter: no text connection available")
+		}
+		if err := client.Mail(sender); err != nil {
+			return "", "", nil, fmt.Errorf("MAIL FROM failed: %w", err)
+		}
+	} else {
+		mailFromCmd := "MAIL FROM:<%s>"
+		if requireTLS && nextHopRequireTLS {
+			mailFromCmd += " REQUIRETLS"
+		}
+		id, err := text.Cmd(mailFromCmd, sender)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("MAIL FROM command failed: %w", err)
+		}
+		text.StartResponse(id)
+		_, _, err = text.ReadResponse(250)
+		text.EndResponse(id)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("MAIL FROM failed: %w", err)
+		}
 	}
 
 	outcomes := make([]RecipientOutcome, 0, len(recipients))
@@ -477,9 +508,15 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 	return deliveryIP, deliveryHost, outcomes, nil
 }
 
-// connectSMTPWithMetadata establishes a connection to the SMTP server and returns connection metadata
-// along with whether the connection is protected by TLS.
+// connectSMTPWithMetadata is retained for callers that do not need the next-hop extension state.
 func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, address string, requireTLS bool) (*smtp.Client, net.Conn, bool, error) {
+	client, conn, tlsUsed, _, err := h.connectSMTPWithRequireTLS(ctx, address, requireTLS)
+	return client, conn, tlsUsed, err
+}
+
+// connectSMTPWithRequireTLS establishes an SMTP connection and reports whether
+// the next hop advertised REQUIRETLS after STARTTLS.
+func (h *SMTPDeliveryHandler) connectSMTPWithRequireTLS(ctx context.Context, address string, requireTLS bool) (*smtp.Client, net.Conn, bool, bool, error) {
 	// Use an injected dial function in tests; production uses a bounded net.Dialer.
 	dial := h.dialContext
 	if dial == nil {
@@ -488,7 +525,7 @@ func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, addre
 	}
 	conn, err := dial(ctx, "tcp", address)
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("failed to dial %s: %w", address, err)
+		return nil, nil, false, false, fmt.Errorf("failed to dial %s: %w", address, err)
 	}
 
 	// Extract hostname for TLS verification
@@ -498,14 +535,14 @@ func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, addre
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		_ = conn.Close() // Ignore error on cleanup in error path
-		return nil, nil, false, fmt.Errorf("failed to create SMTP client: %w", err)
+		return nil, nil, false, false, fmt.Errorf("failed to create SMTP client: %w", err)
 	}
 
 	// Send EHLO/HELO
 	hostname := "localhost"
 	if err := client.Hello(hostname); err != nil {
 		_ = client.Close() // Ignore error on cleanup in error path
-		return nil, nil, false, fmt.Errorf("HELLO command failed: %w", err)
+		return nil, nil, false, false, fmt.Errorf("HELLO command failed: %w", err)
 	}
 
 	// Always attempt STARTTLS opportunistically; requireTLS additionally makes it mandatory.
@@ -514,7 +551,7 @@ func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, addre
 		if err := client.StartTLS(h.outboundTLSConfig(host)); err != nil {
 			if requireTLS {
 				_ = client.Close()
-				return nil, nil, false, fmt.Errorf("STARTTLS required but failed: %w", err)
+				return nil, nil, false, false, newRequireTLSError("STARTTLS required but failed against %s: %v", address, err)
 			}
 			// For opportunistic TLS, log the failure but continue in plaintext
 			h.logger.Warn("Opportunistic STARTTLS failed, continuing in plaintext",
@@ -529,10 +566,16 @@ func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, addre
 		}
 	} else if requireTLS {
 		_ = client.Close()
-		return nil, nil, false, fmt.Errorf("STARTTLS required but not supported by server")
+		return nil, nil, false, false, newRequireTLSError("STARTTLS required but not supported by server %s", address)
 	}
 
-	return client, conn, tlsUsed, nil
+	nextHopSupportsRequireTLS, _ := client.Extension("REQUIRETLS")
+	if requireTLS && !nextHopSupportsRequireTLS {
+		_ = client.Close()
+		return nil, nil, false, false, newRequireTLSError("next-hop %s does not advertise REQUIRETLS", address)
+	}
+
+	return client, conn, tlsUsed, nextHopSupportsRequireTLS, nil
 }
 
 // outboundTLSConfig builds the TLS config for STARTTLS with the given server name.

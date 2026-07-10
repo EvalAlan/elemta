@@ -1699,8 +1699,10 @@ func (dh *DataHandler) saveMessage(ctx context.Context, data []byte, metadata *M
 		return fmt.Errorf("failed to save message: %w", err)
 	}
 
-	// Store DSN and REQUIRETLS annotations on the queued message
-	// TODO: REQUIRETLS delivery enforcement (RFC 8689)
+	// Store DSN and REQUIRETLS annotations on the queued message. Delivery-time
+	// enforcement of REQUIRETLS (RFC 8689) happens in the queue package's
+	// SMTPDeliveryHandler, which mandates TLS and next-hop REQUIRETLS support
+	// before sending mail carrying the require_tls annotation.
 	dh.saveDSNAnnotations(ctx, msgID)
 
 	// Log message reception with timing
