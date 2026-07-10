@@ -15,7 +15,15 @@ import (
 	"time"
 
 	"github.com/busybox42/elemta/internal/delivery"
+	"github.com/busybox42/elemta/internal/dkim"
 )
+
+// messageSigner signs outbound message content for a given signing domain.
+// Satisfied by *dkim.Signer; abstracted so tests can inject a stub. A nil
+// signer means signing is disabled and content passes through unchanged.
+type messageSigner interface {
+	Sign(content []byte, signingDomain string) ([]byte, error)
+}
 
 // mtastsEnforcer checks outbound delivery against a domain's MTA-STS policy.
 // Satisfied by *delivery.MTASTSManager; abstracted so tests can inject a stub
@@ -106,6 +114,7 @@ type SMTPDeliveryHandler struct {
 	resolver                  mxResolver
 	dialContext               func(context.Context, string, string) (net.Conn, error)
 	mxRetrySleep              func(context.Context, time.Duration) error
+	signer                    messageSigner // optional DKIM signer; nil = signing disabled
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -121,6 +130,52 @@ func NewSMTPDeliveryHandler(failedQueueRetentionHours int) *SMTPDeliveryHandler 
 	}
 }
 
+// SetDKIMSigner attaches a DKIM signer to the handler. A nil signer leaves
+// signing disabled. Kept as an explicit setter so signing can be wired in from
+// the server without changing the constructor signature.
+func (h *SMTPDeliveryHandler) SetDKIMSigner(s *dkim.Signer) {
+	// Store as nil interface when the concrete pointer is nil so the interface
+	// comparison `h.signer == nil` in signContent works correctly.
+	if s == nil {
+		h.signer = nil
+		return
+	}
+	h.signer = s
+}
+
+// signContent applies DKIM signing to the message before delivery. Signing
+// happens once here — before recipients are grouped by domain — so the same
+// signed bytes are delivered to every MX and a message is never signed
+// per-domain. The signing domain is the envelope-from domain, falling back to
+// the From header domain when the envelope-from is empty (e.g. bounces).
+//
+// dkim.Signer.Sign is idempotent: if the content already carries a signature
+// for the chosen domain it is returned unchanged, so a delivery retry does not
+// double-sign. A signing error is logged and delivery proceeds with the
+// unsigned content rather than failing the message outright.
+func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) []byte {
+	if h.signer == nil {
+		return content
+	}
+
+	signingDomain := dkim.DomainFromAddress(msg.From)
+	if signingDomain == "" {
+		signingDomain = dkim.FromHeaderDomain(content)
+	}
+	if signingDomain == "" {
+		h.logger.Debug("No signing domain resolved for message, delivering unsigned", "message_id", msg.ID)
+		return content
+	}
+
+	signed, err := h.signer.Sign(content, signingDomain)
+	if err != nil {
+		h.logger.Warn("DKIM signing failed, delivering unsigned",
+			"message_id", msg.ID, "domain", signingDomain, "error", err)
+		return content
+	}
+	return signed
+}
+
 // DeliverMessage attempts to deliver a message via SMTP
 func (h *SMTPDeliveryHandler) DeliverMessage(ctx context.Context, msg Message, content []byte) error {
 	_, err := h.DeliverMessageWithMetadata(ctx, msg, content)
@@ -130,6 +185,10 @@ func (h *SMTPDeliveryHandler) DeliverMessage(ctx context.Context, msg Message, c
 // DeliverMessageWithMetadata attempts to deliver a message via SMTP and returns delivery metadata
 func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, msg Message, content []byte) (*DeliveryResult, error) {
 	requireTLS := messageRequiresTLS(msg)
+
+	// DKIM-sign once, before recipients are grouped, so identical signed bytes
+	// go to every MX and retries never double-sign.
+	content = h.signContent(msg, content)
 
 	// Group recipients by domain for efficient delivery
 	domainGroups := h.groupRecipientsByDomain(msg.To)
