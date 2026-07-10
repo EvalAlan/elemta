@@ -13,7 +13,10 @@ const state = {
     selectedMessages: new Set(),
     currentMessageId: null,
     refreshInterval: null,
-    refreshRate: 30000
+    refreshRate: 30000,
+    refreshErrorStreak: 0,
+    autoRefreshInFlight: false,
+    autoRefreshPaused: false
 };
 
 // ============================================================================
@@ -291,8 +294,10 @@ async function refreshAllData() {
             loadRecentActivity()
         ]);
         updateLastUpdated();
+        return true;
     } catch (error) {
         console.error('Error refreshing data:', error);
+        return false;
     } finally {
         showRefreshIndicator(false);
     }
@@ -301,6 +306,7 @@ async function refreshAllData() {
 async function loadQueueStats() {
     try {
         const response = await fetch(`${API_BASE}/queue/stats`);
+        if (!response.ok) throw new Error(`Queue stats failed: ${response.status}`);
         const stats = await response.json();
 
         document.getElementById('stat-active').textContent = stats.active_count || 0;
@@ -312,8 +318,10 @@ async function loadQueueStats() {
         document.getElementById('badge-deferred').textContent = stats.deferred_count || 0;
         document.getElementById('badge-hold').textContent = stats.hold_count || 0;
         document.getElementById('badge-failed').textContent = stats.failed_count || 0;
+        return true;
     } catch (error) {
         console.error('Error loading queue stats:', error);
+        return false;
     }
 }
 
@@ -325,9 +333,11 @@ async function loadQueueObservability() {
         const snapshot = await response.json();
         state.queueObservability = snapshot;
         renderQueueObservability(snapshot);
+        return true;
     } catch (error) {
         console.error('Error loading queue observability:', error);
         renderQueueObservability(null);
+        return false;
     }
 }
 
@@ -394,6 +404,7 @@ async function loadQueue(queueType) {
     showRefreshIndicator(true);
     try {
         const response = await fetch(`${API_BASE}/queue/${queueType}`);
+        if (!response.ok) throw new Error(`Queue load failed: ${response.status}`);
         const messages = await response.json();
 
         state.allMessages = messages || [];
@@ -401,11 +412,13 @@ async function loadQueue(queueType) {
         state.selectedMessages.clear();
 
         applyFilters();
+        return true;
     } catch (error) {
         console.error('Error loading queue:', error);
         showToast('Failed to load queue data', 'error');
         document.getElementById('messages-tbody').innerHTML =
             '<tr><td colspan="9" class="loading-cell">Failed to load messages</td></tr>';
+        return false;
     } finally {
         showRefreshIndicator(false);
     }
@@ -414,12 +427,13 @@ async function loadQueue(queueType) {
 async function loadRecentActivity() {
     try {
         const response = await fetch(`${API_BASE}/queue/active`);
+        if (!response.ok) throw new Error(`Recent activity failed: ${response.status}`);
         const messages = await response.json();
 
         const container = document.getElementById('recent-activity');
         if (!messages || messages.length === 0) {
             container.innerHTML = '<div class="loading-placeholder">No recent activity</div>';
-            return;
+            return true;
         }
 
         const recentMessages = messages.slice(0, 5);
@@ -436,8 +450,10 @@ async function loadRecentActivity() {
                 </div>
             </div>
         `).join('');
+        return true;
     } catch (error) {
         console.error('Error loading recent activity:', error);
+        return false;
     }
 }
 
@@ -1089,11 +1105,13 @@ async function refreshLogs() {
                 </tbody>
             </table>
         `;
+        return true;
 
     } catch (error) {
         console.error('Error fetching logs:', error);
         container.innerHTML = '<div class="log-entry error"><span class="log-message">Failed to load logs</span></div>';
         showToast('Failed to load logs', 'error');
+        return false;
     }
 }
 
@@ -1329,19 +1347,95 @@ function updateDefaultPageSize() {
 // ============================================================================
 function startAutoRefresh() {
     if (state.refreshInterval) {
-        clearInterval(state.refreshInterval);
+        clearTimeout(state.refreshInterval);
+        state.refreshInterval = null;
     }
 
-    if (state.refreshRate > 0) {
-        state.refreshInterval = setInterval(() => {
-            // Keep all major views live, not just queue table rows.
-            loadQueueStats();
-            loadQueueObservability();
-            loadQueue(state.currentQueue);
-            loadRecentActivity();
-            refreshHealth();
-            updateLastUpdated();
-        }, state.refreshRate);
+    if (state.refreshRate <= 0 || state.autoRefreshPaused) {
+        updateAutoRefreshToggle();
+        return;
+    }
+
+    scheduleNextAutoRefresh(state.refreshRate);
+    updateAutoRefreshToggle();
+}
+
+function scheduleNextAutoRefresh(delayMs) {
+    if (state.refreshInterval) {
+        clearTimeout(state.refreshInterval);
+    }
+
+    const jitter = Math.floor(Math.random() * 1500);
+    state.refreshInterval = setTimeout(autoRefreshTick, delayMs + jitter);
+}
+
+async function autoRefreshTick() {
+    if (state.autoRefreshPaused || state.refreshRate <= 0) {
+        return;
+    }
+
+    if (state.autoRefreshInFlight) {
+        scheduleNextAutoRefresh(Math.max(5000, Math.floor(state.refreshRate / 2)));
+        return;
+    }
+
+    state.autoRefreshInFlight = true;
+
+    try {
+        // Keep all major views live, not just queue table rows.
+        const results = await Promise.all([
+            loadQueueStats(),
+            loadQueueObservability(),
+            loadQueue(state.currentQueue),
+            loadRecentActivity(),
+            refreshHealth()
+        ]);
+        updateLastUpdated();
+
+        if (results.some(ok => ok === false)) {
+            throw new Error('Auto-refresh payload failed');
+        }
+
+        state.refreshErrorStreak = 0;
+        scheduleNextAutoRefresh(state.refreshRate);
+    } catch (error) {
+        console.error('Auto-refresh failed:', error);
+        state.refreshErrorStreak += 1;
+
+        const backoff = Math.min(300000, state.refreshRate * Math.pow(2, state.refreshErrorStreak));
+        scheduleNextAutoRefresh(backoff);
+    } finally {
+        state.autoRefreshInFlight = false;
+        updateAutoRefreshToggle();
+    }
+}
+
+function toggleAutoRefreshPause() {
+    state.autoRefreshPaused = !state.autoRefreshPaused;
+    if (state.autoRefreshPaused && state.refreshInterval) {
+        clearTimeout(state.refreshInterval);
+        state.refreshInterval = null;
+    }
+    startAutoRefresh();
+}
+
+function updateAutoRefreshToggle() {
+    const btn = document.getElementById('auto-refresh-toggle');
+    if (!btn) return;
+
+    if (state.refreshRate <= 0) {
+        btn.textContent = 'Auto-refresh disabled';
+        btn.disabled = true;
+        return;
+    }
+
+    btn.disabled = false;
+    if (state.autoRefreshPaused) {
+        btn.textContent = 'Resume Auto-refresh';
+    } else if (state.refreshErrorStreak > 0) {
+        btn.textContent = `Auto-refresh retrying (${state.refreshErrorStreak})`;
+    } else {
+        btn.textContent = 'Pause Auto-refresh';
     }
 }
 
@@ -2027,6 +2121,7 @@ async function revokeAPIKey(keyId) {
 async function refreshHealth() {
     try {
         const response = await fetch(`${API_BASE}/health`);
+        if (!response.ok) throw new Error(`Health failed: ${response.status}`);
         const health = await response.json();
 
         // Update status cards
@@ -2085,10 +2180,12 @@ async function refreshHealth() {
         document.getElementById('smtp-tls').textContent = smtp.tls_enabled ? 'Yes' : 'No';
         document.getElementById('smtp-timeout-5m').textContent = throughput.timeout_errors_5m || 0;
         document.getElementById('smtp-conn-close-5m').textContent = throughput.conn_close_errors_5m || 0;
+        return true;
 
     } catch (error) {
         console.error('Error loading health:', error);
         showToast('Failed to load health data', 'error');
+        return false;
     }
 }
 
@@ -2217,10 +2314,12 @@ async function refreshReports() {
         // Update recent errors + aggregated reasons
         renderRecentErrors(stats.recent_errors || []);
         renderTopErrorReasons(stats.top_error_reasons || []);
+        return true;
 
     } catch (error) {
         console.error('Error loading reports:', error);
         showToast('Failed to load reports: ' + error.message, 'error');
+        return false;
     }
 }
 
