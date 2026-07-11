@@ -2,6 +2,7 @@ package smtp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"log/slog"
 	"net"
@@ -100,8 +101,7 @@ func TestDSNMailFromRETFull(t *testing.T) {
 	assert.Equal(t, "user@example.com", addr)
 
 	dsnParams := state.GetDSNParams()
-	require.NotNil(t, dsnParams)
-	assert.Equal(t, DSNReturnFull, dsnParams.Return)
+	require.Nil(t, dsnParams, "parsing must not mutate session state")
 }
 
 // TestDSNMailFromRETHdrs tests MAIL FROM with RET=HDRS
@@ -119,8 +119,7 @@ func TestDSNMailFromRETHdrs(t *testing.T) {
 	assert.Equal(t, "user@example.com", addr)
 
 	dsnParams := state.GetDSNParams()
-	require.NotNil(t, dsnParams)
-	assert.Equal(t, DSNReturnHeaders, dsnParams.Return)
+	require.Nil(t, dsnParams, "parsing must not mutate session state")
 }
 
 // TestDSNMailFromRETInvalid tests MAIL FROM with invalid RET value
@@ -154,8 +153,7 @@ func TestDSNMailFromENVID(t *testing.T) {
 	assert.Equal(t, "user@example.com", addr)
 
 	dsnParams := state.GetDSNParams()
-	require.NotNil(t, dsnParams)
-	assert.Equal(t, "abc123", dsnParams.EnvID)
+	require.Nil(t, dsnParams, "parsing must not mutate session state")
 }
 
 // TestDSNMailFromENVIDTooLong tests MAIL FROM with ENVID exceeding max length
@@ -191,9 +189,7 @@ func TestDSNMailFromCombinedParams(t *testing.T) {
 	assert.Equal(t, int64(5000), size)
 
 	dsnParams := state.GetDSNParams()
-	require.NotNil(t, dsnParams)
-	assert.Equal(t, DSNReturnFull, dsnParams.Return)
-	assert.Equal(t, "test-env-123", dsnParams.EnvID)
+	require.Nil(t, dsnParams, "parsing must not mutate session state")
 }
 
 // TestDSNRcptToNOTIFYSuccess tests RCPT TO with NOTIFY=SUCCESS
@@ -211,9 +207,7 @@ func TestDSNRcptToNOTIFYSuccess(t *testing.T) {
 	assert.Equal(t, "user@example.com", addr)
 
 	rcptParams := state.GetAllDSNRecipientParams()
-	require.NotNil(t, rcptParams)
-	require.Contains(t, rcptParams, "user@example.com")
-	assert.Contains(t, rcptParams["user@example.com"].Notify, DSNNotifySuccess)
+	require.Nil(t, rcptParams, "parsing must not mutate session state")
 }
 
 // TestDSNRcptToNOTIFYNever tests RCPT TO with NOTIFY=NEVER
@@ -231,8 +225,7 @@ func TestDSNRcptToNOTIFYNever(t *testing.T) {
 	assert.Equal(t, "user@example.com", addr)
 
 	rcptParams := state.GetAllDSNRecipientParams()
-	require.NotNil(t, rcptParams)
-	assert.Contains(t, rcptParams["user@example.com"].Notify, DSNNotifyNever)
+	require.Nil(t, rcptParams, "parsing must not mutate session state")
 }
 
 // TestDSNRcptToNOTIFYNeverCombined tests that NOTIFY=NEVER,SUCCESS is rejected
@@ -266,12 +259,7 @@ func TestDSNRcptToNOTIFYMultiple(t *testing.T) {
 	assert.Equal(t, "user@example.com", addr)
 
 	rcptParams := state.GetAllDSNRecipientParams()
-	require.NotNil(t, rcptParams)
-	params := rcptParams["user@example.com"]
-	assert.Len(t, params.Notify, 3)
-	assert.Contains(t, params.Notify, DSNNotifySuccess)
-	assert.Contains(t, params.Notify, DSNNotifyFailure)
-	assert.Contains(t, params.Notify, DSNNotifyDelay)
+	require.Nil(t, rcptParams, "parsing must not mutate session state")
 }
 
 // TestDSNRcptToORCPT tests RCPT TO with ORCPT parameter
@@ -289,8 +277,7 @@ func TestDSNRcptToORCPT(t *testing.T) {
 	assert.Equal(t, "user@example.com", addr)
 
 	rcptParams := state.GetAllDSNRecipientParams()
-	require.NotNil(t, rcptParams)
-	assert.Equal(t, "rfc822;orig@example.com", rcptParams["user@example.com"].ORCPT)
+	require.Nil(t, rcptParams, "parsing must not mutate session state")
 }
 
 // TestDSNRcptToInvalidNOTIFY tests RCPT TO with invalid NOTIFY value
@@ -369,7 +356,7 @@ func TestREQUIRETLSWithTLS(t *testing.T) {
 	addr, _, err := ch.parseMailFrom(ctx, "FROM:<user@example.com> REQUIRETLS")
 	require.NoError(t, err)
 	assert.Equal(t, "user@example.com", addr)
-	assert.True(t, state.IsRequireTLS())
+	assert.False(t, state.IsRequireTLS(), "parsing must not mutate session state")
 }
 
 // TestDSNRcptToCombinedParams tests RCPT TO with both NOTIFY and ORCPT
@@ -387,10 +374,28 @@ func TestDSNRcptToCombinedParams(t *testing.T) {
 	assert.Equal(t, "user@example.com", addr)
 
 	rcptParams := state.GetAllDSNRecipientParams()
-	require.NotNil(t, rcptParams)
-	params := rcptParams["user@example.com"]
-	assert.Len(t, params.Notify, 2)
-	assert.Contains(t, params.Notify, DSNNotifySuccess)
-	assert.Contains(t, params.Notify, DSNNotifyFailure)
-	assert.Equal(t, "rfc822;orig@example.com", params.ORCPT)
+	require.Nil(t, rcptParams, "parsing must not mutate session state")
+}
+
+func TestDSNHandlerCommitsOnlyAcceptedEnvelope(t *testing.T) {
+	ctx := context.Background()
+	config := createTestConfig(t)
+	config.Auth = nil
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	state := NewSessionState(logger)
+	session := &Session{config: config, logger: logger, state: state, writer: bufio.NewWriter(&bytes.Buffer{}), sessionID: "test", remoteAddr: "127.0.0.1:12345"}
+	ch := NewCommandHandler(session, state, nil, nil, config, nil, logger)
+
+	require.NoError(t, ch.HandleMAIL(ctx, "FROM:<first@example.com> RET=FULL ENVID=old"))
+	require.NoError(t, ch.HandleRCPT(ctx, "TO:<one@example.com> NOTIFY=FAILURE ORCPT=rfc822;old@example.com"))
+	require.Error(t, ch.HandleMAIL(ctx, "FROM:<bad@example.com> RET=INVALID"))
+	assert.Equal(t, "first@example.com", state.GetMailFrom())
+	assert.Equal(t, "old", state.GetDSNParams().EnvID)
+	assert.Contains(t, state.GetAllDSNRecipientParams(), "one@example.com")
+
+	require.NoError(t, ch.HandleMAIL(ctx, "FROM:<second@example.com>"))
+	assert.Equal(t, "second@example.com", state.GetMailFrom())
+	assert.Nil(t, state.GetDSNParams())
+	assert.Nil(t, state.GetAllDSNRecipientParams())
+	assert.Empty(t, state.GetRecipients())
 }

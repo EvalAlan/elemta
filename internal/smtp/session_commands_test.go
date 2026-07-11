@@ -190,7 +190,7 @@ func TestHandleMAIL(t *testing.T) {
 		wantErr    bool
 	}{
 		{"valid address", "MAIL FROM:<sender@example.com>", "250", false},
-		{"valid address no brackets", "MAIL FROM:sender@example.com", "250", false},
+		{"address without brackets", "MAIL FROM:sender@example.com", "501", true},
 		{"empty sender", "MAIL FROM:<>", "250", false}, // Null sender is valid
 		{"missing FROM", "MAIL sender@example.com", "501", true},
 		{"invalid format", "MAIL", "501", true},
@@ -1254,11 +1254,10 @@ func TestParseMailFromSizeParameter(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:       "SIZE without brackets",
-			args:       "FROM:user@example.com SIZE=1000000",
-			expectAddr: "user@example.com",
-			expectSize: 1000000,
-			wantErr:    false,
+			name:        "SIZE without brackets",
+			args:        "FROM:user@example.com SIZE=1000000",
+			wantErr:     true,
+			errContains: "501 5.5.4 Syntax",
 		},
 		{
 			name:       "SIZE=0",
@@ -1295,7 +1294,7 @@ func TestParseMailFromSizeParameter(t *testing.T) {
 			expectAddr:  "",
 			expectSize:  0,
 			wantErr:     true,
-			errContains: "501 5.5.4 SIZE parameter must be non-negative",
+			errContains: "501 5.5.4 Invalid SIZE parameter",
 		},
 		{
 			name:        "SIZE too large",
@@ -1303,7 +1302,7 @@ func TestParseMailFromSizeParameter(t *testing.T) {
 			expectAddr:  "",
 			expectSize:  0,
 			wantErr:     true,
-			errContains: "552 5.3.4 SIZE parameter exceeds reasonable limit",
+			errContains: "552 5.3.4 Message size exceeds fixed maximum message size",
 		},
 	}
 
