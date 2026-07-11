@@ -14,7 +14,7 @@ func TestIsTemporaryFailureClassification(t *testing.T) {
 	temp := []error{
 		&TemporaryError{msg: "mock"},
 		&net.OpError{Op: "dial", Err: errors.New("connection refused")},
-		&net.DNSError{Err: "no such host", Name: "x", IsNotFound: true},
+		&net.DNSError{Err: "no such host", Name: "target.invalid", IsNotFound: true},
 		&textproto.Error{Code: 451, Msg: "try later"},
 		fmt.Errorf("failed to connect: %w", errors.New("connection refused")),
 		errors.New("450 4.2.0 greylisted, try again"),
@@ -29,6 +29,7 @@ func TestIsTemporaryFailureClassification(t *testing.T) {
 	}
 
 	perm := []error{
+		&PermanentError{msg: "recipient domain does not exist", err: &net.DNSError{Err: "no such host", Name: "x", IsNotFound: true}},
 		&textproto.Error{Code: 550, Msg: "no such user"},
 		errors.New("550 5.1.1 user unknown"),
 		errors.New("554 5.7.1 rejected"),
