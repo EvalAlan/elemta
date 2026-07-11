@@ -367,20 +367,25 @@ type RateLimitConfig struct {
 
 // RateLimitMiddleware provides per-IP rate limiting
 type RateLimitMiddleware struct {
-	limiters        map[string]*rate.Limiter
-	mu              sync.RWMutex
-	rate            rate.Limit
-	burst           int
-	cleanupInterval time.Duration
-	enabled         bool
-	stopCleanup     chan struct{}
-	trustedProxies  []*net.IPNet
+	limiters          map[string]*rate.Limiter
+	mu                sync.RWMutex
+	rate              rate.Limit
+	burst             int
+	cleanupInterval   time.Duration
+	enabled           bool
+	stopCleanup       chan struct{}
+	cleanupDone       chan struct{}
+	stopOnce          sync.Once
+	beforeCleanupDone func()
+	trustedProxies    []*net.IPNet
 }
 
 // NewRateLimitMiddleware creates a new rate limit middleware
 func NewRateLimitMiddleware(config RateLimitConfig) *RateLimitMiddleware {
 	if !config.Enabled {
-		return &RateLimitMiddleware{enabled: false}
+		done := make(chan struct{})
+		close(done)
+		return &RateLimitMiddleware{enabled: false, cleanupDone: done}
 	}
 
 	requestsPerSecond := config.RequestsPerSecond
@@ -420,6 +425,7 @@ func NewRateLimitMiddleware(config RateLimitConfig) *RateLimitMiddleware {
 		cleanupInterval: 5 * time.Minute,
 		enabled:         true,
 		stopCleanup:     make(chan struct{}),
+		cleanupDone:     make(chan struct{}),
 		trustedProxies:  trustedProxies,
 	}
 
@@ -430,12 +436,14 @@ func NewRateLimitMiddleware(config RateLimitConfig) *RateLimitMiddleware {
 // Stop stops the rate limiter cleanup goroutine
 func (rl *RateLimitMiddleware) Stop() {
 	if rl.enabled && rl.stopCleanup != nil {
-		close(rl.stopCleanup)
+		rl.stopOnce.Do(func() { close(rl.stopCleanup) })
+		<-rl.cleanupDone
 	}
 }
 
 // cleanupLoop periodically removes idle limiters to prevent memory leaks
 func (rl *RateLimitMiddleware) cleanupLoop() {
+	defer close(rl.cleanupDone)
 	ticker := time.NewTicker(rl.cleanupInterval)
 	defer ticker.Stop()
 
@@ -450,6 +458,9 @@ func (rl *RateLimitMiddleware) cleanupLoop() {
 			}
 			rl.mu.Unlock()
 		case <-rl.stopCleanup:
+			if rl.beforeCleanupDone != nil {
+				rl.beforeCleanupDone()
+			}
 			return
 		}
 	}
