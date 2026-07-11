@@ -3,10 +3,12 @@ package queue
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/smtp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,59 @@ type mtastsEnforcer interface {
 	EnforcePolicy(ctx context.Context, domain, mxHost string, tlsUsed bool) error
 }
 
+type mxResolver interface {
+	LookupMX(ctx context.Context, name string) ([]*net.MX, error)
+}
+
+// PermanentError marks a delivery failure that must not be retried.
+type PermanentError struct {
+	msg string
+	err error
+}
+
+func (e *PermanentError) Error() string   { return e.msg }
+func (e *PermanentError) Unwrap() error   { return e.err }
+func (e *PermanentError) Permanent() bool { return true }
+
+type domainFailure struct {
+	domain string
+	err    error
+}
+
+// domainFailuresError preserves the aggregate retry classification without
+// exposing individual permanent errors through Unwrap. A mixed aggregate must
+// remain temporary even when one of its constituent failures is permanent.
+type domainFailuresError struct {
+	message   string
+	permanent bool
+}
+
+func (e *domainFailuresError) Error() string   { return e.message }
+func (e *domainFailuresError) Permanent() bool { return e.permanent }
+func (e *domainFailuresError) Temporary() bool { return !e.permanent }
+
+func aggregateDomainFailures(failures []domainFailure) error {
+	if len(failures) == 0 {
+		return nil
+	}
+	ordered := append([]domainFailure(nil), failures...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].domain < ordered[j].domain })
+
+	allPermanent := true
+	parts := make([]string, 0, len(ordered))
+	classifier := &Processor{}
+	for _, failure := range ordered {
+		parts = append(parts, fmt.Sprintf("%s: %v", failure.domain, failure.err))
+		if classifier.isTemporaryFailure(failure.err) {
+			allPermanent = false
+		}
+	}
+	return &domainFailuresError{
+		message:   "delivery failures: " + strings.Join(parts, "; "),
+		permanent: allPermanent,
+	}
+}
+
 // SMTPDeliveryHandler implements DeliveryHandler for SMTP delivery
 type SMTPDeliveryHandler struct {
 	logger                    *slog.Logger
@@ -30,6 +85,9 @@ type SMTPDeliveryHandler struct {
 	failedQueueRetentionHours int
 	tlsConfig                 *tls.Config // optional template for outbound STARTTLS; nil = secure defaults
 	mtastsManager             mtastsEnforcer
+	resolver                  mxResolver
+	dialContext               func(context.Context, string, string) (net.Conn, error)
+	mxRetrySleep              func(context.Context, time.Duration) error
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -41,6 +99,7 @@ func NewSMTPDeliveryHandler(failedQueueRetentionHours int) *SMTPDeliveryHandler 
 		maxMXLookups:              3,
 		failedQueueRetentionHours: failedQueueRetentionHours,
 		mtastsManager:             delivery.NewMTASTSManager(&delivery.Config{MTASTSEnabled: true}),
+		resolver:                  net.DefaultResolver,
 	}
 }
 
@@ -57,19 +116,26 @@ func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 	// Group recipients by domain for efficient delivery
 	domainGroups := h.groupRecipientsByDomain(msg.To)
 
-	var lastError error
+	domains := make([]string, 0, len(domainGroups))
+	for domain := range domainGroups {
+		domains = append(domains, domain)
+	}
+	sort.Strings(domains)
+
+	var failures []domainFailure
 	delivered := 0
 	var firstSuccessfulIP string
 	var firstSuccessfulHost string
 
-	for domain, recipients := range domainGroups {
+	for _, domain := range domains {
+		recipients := domainGroups[domain]
 		ip, host, err := h.deliverToDomainWithMetadata(ctx, msg, domain, recipients, content, requireTLS)
 		if err != nil {
 			h.logger.Error("Failed to deliver to domain",
 				"domain", domain,
 				"recipients", recipients,
 				"error", err)
-			lastError = err
+			failures = append(failures, domainFailure{domain: domain, err: err})
 		} else {
 			delivered += len(recipients)
 			h.logger.Info("Successfully delivered to domain",
@@ -84,7 +150,7 @@ func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 		}
 	}
 
-	return h.buildDeliveryResult(msg.To, delivered, firstSuccessfulIP, firstSuccessfulHost, lastError)
+	return h.buildDeliveryResult(msg.To, delivered, firstSuccessfulIP, firstSuccessfulHost, aggregateDomainFailures(failures))
 }
 
 // buildDeliveryResult constructs a DeliveryResult from delivery statistics
@@ -99,7 +165,7 @@ func (h *SMTPDeliveryHandler) buildDeliveryResult(recipients []string, delivered
 
 	switch {
 	case delivered > 0 && delivered < len(recipients):
-		result.Error = fmt.Errorf("partial delivery: %d/%d recipients delivered, last error: %v",
+		result.Error = fmt.Errorf("partial delivery: %d/%d recipients delivered: %w",
 			delivered, len(recipients), lastError)
 		return result, result.Error
 	case delivered == 0:
@@ -184,26 +250,74 @@ func (h *SMTPDeliveryHandler) lookupMX(ctx context.Context, domain string) ([]*n
 	var err error
 
 	for attempt := 0; attempt < h.maxMXLookups; attempt++ {
-		mxRecords, err = net.LookupMX(domain)
+		resolver := h.resolver
+		if resolver == nil {
+			resolver = net.DefaultResolver
+		}
+		mxRecords, err = resolver.LookupMX(ctx, domain)
 		if err == nil {
 			break
+		}
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return nil, &PermanentError{msg: fmt.Sprintf("domain %s does not exist: %v", domain, err), err: err}
 		}
 
 		h.logger.Debug("MX lookup attempt failed",
 			"domain", domain,
 			"attempt", attempt+1,
 			"error", err)
+		if attempt+1 == h.maxMXLookups {
+			break
+		}
 
-		// Wait before retry (with context cancellation check)
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(time.Duration(attempt+1) * time.Second):
-			// Continue to next attempt
+		// Wait before retry (with an injectable seam for deterministic tests).
+		sleep := h.mxRetrySleep
+		if sleep == nil {
+			sleep = func(ctx context.Context, delay time.Duration) error {
+				timer := time.NewTimer(delay)
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-timer.C:
+					return nil
+				}
+			}
+		}
+		if sleepErr := sleep(ctx, time.Duration(attempt+1)*time.Second); sleepErr != nil {
+			return nil, sleepErr
 		}
 	}
 
-	return mxRecords, err
+	if err != nil {
+		return nil, err
+	}
+	// RFC 5321 section 5.1: an empty, successful answer means the domain
+	// itself is the implicit MX. It is not equivalent to NXDOMAIN.
+	if len(mxRecords) == 0 {
+		return []*net.MX{{Host: domain, Pref: 0}}, nil
+	}
+	// Copy resolver-owned storage before filtering or sorting it.
+	mxRecords = append([]*net.MX(nil), mxRecords...)
+	if len(mxRecords) == 1 && mxRecords[0].Host == "." && mxRecords[0].Pref == 0 {
+		return nil, &PermanentError{msg: fmt.Sprintf("domain %s accepts no mail (Null MX)", domain)}
+	}
+
+	// A dot is only authoritative as the sole preference-zero record. Ignore it
+	// when usable MX records exist. If it is the only malformed record, defer
+	// rather than permanently rejecting mail or attempting to dial the root.
+	usable := mxRecords[:0]
+	for _, mx := range mxRecords {
+		if mx.Host != "." {
+			usable = append(usable, mx)
+		}
+	}
+	if len(usable) == 0 {
+		return nil, &TemporaryError{msg: fmt.Sprintf("domain %s returned malformed Null MX", domain)}
+	}
+	sort.SliceStable(usable, func(i, j int) bool { return usable[i].Pref < usable[j].Pref })
+	return usable, nil
 }
 
 // attemptDeliveryToHostWithMetadata attempts delivery to a specific SMTP host and returns delivery metadata
@@ -332,13 +446,13 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 // connectSMTPWithMetadata establishes a connection to the SMTP server and returns connection metadata
 // along with whether the connection is protected by TLS.
 func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, address string, requireTLS bool) (*smtp.Client, net.Conn, bool, error) {
-	// Create dialer with context support
-	dialer := &net.Dialer{
-		Timeout: h.timeout,
+	// Use an injected dial function in tests; production uses a bounded net.Dialer.
+	dial := h.dialContext
+	if dial == nil {
+		dialer := &net.Dialer{Timeout: h.timeout}
+		dial = dialer.DialContext
 	}
-
-	// Dial with context
-	conn, err := dialer.DialContext(ctx, "tcp", address)
+	conn, err := dial(ctx, "tcp", address)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("failed to dial %s: %w", address, err)
 	}

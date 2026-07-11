@@ -622,6 +622,12 @@ func (p *Processor) isTemporaryFailure(err error) bool {
 		return false
 	}
 
+	// An explicit permanent marker takes precedence over wrapped network errors
+	// (notably NXDOMAIN, which net.DNSError also reports as a net.Error).
+	var permanent interface{ Permanent() bool }
+	if errors.As(err, &permanent) && permanent.Permanent() {
+		return false
+	}
 	// (1) Explicit temporary marker (e.g. TemporaryError).
 	var tempErr interface{ Temporary() bool }
 	if errors.As(err, &tempErr) && tempErr.Temporary() {
