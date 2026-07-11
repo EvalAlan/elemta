@@ -1,12 +1,109 @@
 package queue
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestFileStorageBackendRejectsInvalidPathComponents(t *testing.T) {
+	invalidIDs := []string{"", "..", "../escape", "/absolute", `a/b`, `a\b`, "nul\x00byte", string(make([]byte, 256))}
+	invalidQueues := []QueueType{"", "..", "../escape", "/absolute", `a/b`, `a\b`, QueueType("nul\x00byte")}
+
+	for _, id := range invalidIDs {
+		t.Run(fmt.Sprintf("id_%q", id), func(t *testing.T) {
+			fs := NewFileStorageBackend(t.TempDir())
+			msg := Message{ID: id, QueueType: Active}
+			if err := fs.Store(msg); err == nil {
+				t.Error("Store accepted invalid ID")
+			}
+			if err := fs.Update(msg); err == nil {
+				t.Error("Update accepted invalid ID")
+			}
+			if _, err := fs.Retrieve(id); err == nil {
+				t.Error("Retrieve accepted invalid ID")
+			}
+			if err := fs.Delete(id); err == nil {
+				t.Error("Delete accepted invalid ID")
+			}
+			if err := fs.Move(id, Active, Failed); err == nil {
+				t.Error("Move accepted invalid ID")
+			}
+		})
+	}
+
+	for _, queueType := range invalidQueues {
+		t.Run(fmt.Sprintf("queue_%q", queueType), func(t *testing.T) {
+			fs := NewFileStorageBackend(t.TempDir())
+			msg := Message{ID: "safe-id", QueueType: queueType}
+			if err := fs.Store(msg); err == nil {
+				t.Error("Store accepted invalid queue type")
+			}
+			if err := fs.Update(msg); err == nil {
+				t.Error("Update accepted invalid queue type")
+			}
+			if err := fs.Move("safe-id", queueType, Active); err == nil {
+				t.Error("Move accepted invalid source queue")
+			}
+			if err := fs.Move("safe-id", Active, queueType); err == nil {
+				t.Error("Move accepted invalid destination queue")
+			}
+			if _, err := fs.List(queueType); err == nil {
+				t.Error("List accepted invalid queue type")
+			}
+			if _, err := fs.Count(queueType); err == nil {
+				t.Error("Count accepted invalid queue type")
+			}
+			if err := fs.DeleteAll(queueType); err == nil {
+				t.Error("DeleteAll accepted invalid queue type")
+			}
+		})
+	}
+}
+
+func TestFileStorageBackendRejectsCorruptMetadataIdentity(t *testing.T) {
+	root := t.TempDir()
+	fs := NewFileStorageBackend(root)
+	if err := fs.EnsureDirectories(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(Message{ID: "different-id", QueueType: Failed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, string(Active), "expected-id.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Retrieve("expected-id"); err == nil {
+		t.Fatal("Retrieve accepted mismatched metadata identity")
+	}
+	if err := fs.Move("expected-id", Active, Failed); err == nil {
+		t.Fatal("Move accepted mismatched metadata identity")
+	}
+}
+
+func FuzzFileStorageMessagePathContained(f *testing.F) {
+	for _, seed := range []string{"safe-id", "../escape", "/tmp/x", `a\b`, "", "nul\x00byte"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, id string) {
+		root := t.TempDir()
+		fs := NewFileStorageBackend(root)
+		err := fs.Store(Message{ID: id, QueueType: Active})
+		if err != nil {
+			return
+		}
+		path := filepath.Join(root, string(Active), id+".json")
+		rel, err := filepath.Rel(root, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			t.Fatalf("successful Store resolved outside root: id=%q path=%q", id, path)
+		}
+	})
+}
 
 func TestFileStorageBackendSecurity(t *testing.T) {
 	// Create temporary directory for testing
@@ -166,8 +263,64 @@ func TestFileStorageBackendSecurity(t *testing.T) {
 		if err == nil {
 			t.Error("Expected symlink attack to be detected, but operation succeeded")
 		}
-		if err != nil && !contains(err.Error(), "symlink attack detected") {
+		if err != nil && !contains(err.Error(), "symlink") {
 			t.Errorf("Expected symlink attack error, got: %v", err)
+		}
+	})
+
+	t.Run("SymlinkedQueueDirectoryFailsClosed", func(t *testing.T) {
+		root, outside := t.TempDir(), t.TempDir()
+		data, _ := json.Marshal(Message{ID: "victim", QueueType: Active})
+		outsideFile := filepath.Join(outside, "victim.json")
+		if err := os.WriteFile(outsideFile, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(root, string(Active))); err != nil {
+			t.Fatal(err)
+		}
+		fs := NewFileStorageBackend(root)
+		operations := map[string]func() error{
+			"Retrieve":  func() error { _, err := fs.Retrieve("victim"); return err },
+			"Store":     func() error { return fs.Store(Message{ID: "new", QueueType: Active}) },
+			"Update":    func() error { return fs.Update(Message{ID: "victim", QueueType: Active}) },
+			"Delete":    func() error { return fs.Delete("victim") },
+			"Move":      func() error { return fs.Move("victim", Active, Failed) },
+			"List":      func() error { _, err := fs.List(Active); return err },
+			"Count":     func() error { _, err := fs.Count(Active); return err },
+			"DeleteAll": func() error { return fs.DeleteAll(Active) },
+		}
+		for name, operation := range operations {
+			if err := operation(); err == nil {
+				t.Errorf("%s followed symlink", name)
+			}
+		}
+		got, err := os.ReadFile(outsideFile)
+		if err != nil || string(got) != string(data) {
+			t.Fatalf("external file touched: data=%q err=%v", got, err)
+		}
+		if _, err := os.Stat(filepath.Join(outside, "new.json")); !os.IsNotExist(err) {
+			t.Fatalf("external file created: %v", err)
+		}
+	})
+
+	t.Run("SymlinkedDataDirectoryFailsClosed", func(t *testing.T) {
+		root, outside := t.TempDir(), t.TempDir()
+		if err := os.Symlink(outside, filepath.Join(root, "data")); err != nil {
+			t.Fatal(err)
+		}
+		fs := NewFileStorageBackend(root)
+		if err := fs.StoreContent("victim", []byte("bad")); err == nil {
+			t.Error("StoreContent followed symlink")
+		}
+		if _, err := fs.RetrieveContent("victim"); err == nil {
+			t.Error("RetrieveContent followed symlink")
+		}
+		if err := fs.DeleteContent("victim"); err == nil {
+			t.Error("DeleteContent followed symlink")
+		}
+		entries, err := os.ReadDir(outside)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("external directory touched: %v %v", entries, err)
 		}
 	})
 
@@ -260,6 +413,111 @@ func TestFileStorageBackendRejectsTraversalID(t *testing.T) {
 	}
 	if err := backend.Delete("../../secret"); err == nil {
 		t.Fatal("expected Delete to reject a path-traversal ID")
+	}
+}
+
+func TestFileStorageBackendCleanupDeletesExactQueueEntry(t *testing.T) {
+	root := t.TempDir()
+	fs := NewFileStorageBackend(root)
+	old := Message{ID: "duplicate", QueueType: Active, CreatedAt: time.Now().Add(-3 * time.Hour)}
+	fresh := Message{ID: "duplicate", QueueType: Failed, CreatedAt: time.Now()}
+	if err := fs.Store(old); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Store(fresh); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := fs.Cleanup(1)
+	if err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted=%d, want 1", deleted)
+	}
+	if _, err := os.Stat(filepath.Join(root, string(Active), "duplicate.json")); !os.IsNotExist(err) {
+		t.Fatalf("old active entry still exists: %v", err)
+	}
+	got, err := fs.Retrieve("duplicate")
+	if err != nil || got.QueueType != Failed {
+		t.Fatalf("fresh duplicate was removed: %#v, %v", got, err)
+	}
+}
+
+func TestFileStorageBackendCleanupPropagatesListError(t *testing.T) {
+	root := t.TempDir()
+	fs := NewFileStorageBackend(root)
+	if err := fs.EnsureDirectories(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, string(Active), "broken.json"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Cleanup(1); err == nil {
+		t.Fatal("Cleanup silently ignored corrupt queue entry")
+	}
+}
+
+func TestFileStorageBackendEnsureDirectoriesRejectsSymlinkRootAndParent(t *testing.T) {
+	t.Run("root", func(t *testing.T) {
+		parent, outside := t.TempDir(), t.TempDir()
+		root := filepath.Join(parent, "queue")
+		if err := os.Symlink(outside, root); err != nil {
+			t.Fatal(err)
+		}
+		if err := NewFileStorageBackend(root).EnsureDirectories(); err == nil {
+			t.Fatal("accepted symlink root")
+		}
+		entries, _ := os.ReadDir(outside)
+		if len(entries) != 0 {
+			t.Fatalf("created children through root symlink: %v", entries)
+		}
+	})
+	t.Run("parent", func(t *testing.T) {
+		base, outside := t.TempDir(), t.TempDir()
+		parent := filepath.Join(base, "parent")
+		if err := os.Symlink(outside, parent); err != nil {
+			t.Fatal(err)
+		}
+		if err := NewFileStorageBackend(filepath.Join(parent, "queue")).EnsureDirectories(); err == nil {
+			t.Fatal("accepted symlink parent")
+		}
+		entries, _ := os.ReadDir(outside)
+		if len(entries) != 0 {
+			t.Fatalf("created children through parent symlink: %v", entries)
+		}
+	})
+}
+
+func TestFileStorageBackendConcurrentQueueSwapDoesNotEscape(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	fs := NewFileStorageBackend(root)
+	if err := fs.EnsureDirectories(); err != nil {
+		t.Fatal(err)
+	}
+	active := filepath.Join(root, string(Active))
+	parked := filepath.Join(root, "active.parked")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 500; i++ {
+			if os.Rename(active, parked) != nil {
+				continue
+			}
+			_ = os.Symlink(outside, active)
+			_ = os.Remove(active)
+			_ = os.Rename(parked, active)
+		}
+	}()
+	for i := 0; i < 500; i++ {
+		_ = fs.Store(Message{ID: fmt.Sprintf("swap-%d", i), QueueType: Active, CreatedAt: time.Now()})
+	}
+	<-done
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("descriptor-relative operations escaped queue root: %v", entries)
 	}
 }
 

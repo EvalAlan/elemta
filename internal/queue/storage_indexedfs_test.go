@@ -460,7 +460,7 @@ func TestIndexedFSRecoverySkipsCorruptedMessageFiles(t *testing.T) {
 		t.Fatalf("write corrupt file: %v", err)
 	}
 
-	// Recovery should succeed — corrupt file is skipped by List
+	// Recovery should succeed, but fail closed for this queue when List detects corruption.
 	idx := filepath.Join(root, "index")
 	backend, err := NewIndexedFSStorageBackend(root, IndexedFSConfig{
 		IndexPath:         idx,
@@ -471,8 +471,8 @@ func TestIndexedFSRecoverySkipsCorruptedMessageFiles(t *testing.T) {
 	}
 
 	state := readIndexedFSIndex(t, idx)
-	if _, ok := state.Messages[validMsg.ID]; !ok {
-		t.Fatalf("expected valid message in rebuilt index")
+	if _, ok := state.Messages[validMsg.ID]; ok {
+		t.Fatalf("corrupt queue must not be partially indexed")
 	}
 	// Corrupt file should NOT appear in index (List skips it)
 	if _, ok := state.Messages["corrupt"]; ok {
