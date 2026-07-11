@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -78,7 +80,29 @@ type Server struct {
 	rateLimiter    *RateLimitMiddleware
 	corsMiddleware *CORSMiddleware
 	metricsStore   MetricsStore
+
+	lifecycleMu     sync.Mutex
+	lifecycleState  serverLifecycleState
+	ready           chan struct{}
+	stopDone        chan struct{}
+	stopErr         error
+	listenerFactory func() (net.Listener, error)
 }
+
+type serverLifecycleState uint8
+
+const (
+	serverStateNew serverLifecycleState = iota
+	serverStateStarting
+	serverStateRunning
+	serverStateStopping
+	serverStateStopped
+)
+
+var (
+	ErrServerAlreadyStarted = errors.New("api server already started")
+	ErrServerStopped        = errors.New("api server stopped during startup")
+)
 
 const inheritedHTTPFDEnv = "ELEMTA_INHERITED_HTTP_FD"
 
@@ -354,6 +378,19 @@ func (s *Server) initializeAuth() error {
 
 // Start starts the API server
 func (s *Server) Start() error {
+	s.lifecycleMu.Lock()
+	s.initLifecycleLocked()
+	if s.lifecycleState != serverStateNew {
+		err := ErrServerAlreadyStarted
+		if s.lifecycleState == serverStateStopping || s.lifecycleState == serverStateStopped {
+			err = ErrServerStopped
+		}
+		s.lifecycleMu.Unlock()
+		return err
+	}
+	s.lifecycleState = serverStateStarting
+	s.lifecycleMu.Unlock()
+
 	r := mux.NewRouter()
 
 	// Apply CORS middleware first - before any other middleware
@@ -517,8 +554,8 @@ func (s *Server) Start() error {
 		api.HandleFunc("/queue/{type}/flush", s.handleFlushQueue).Methods("POST")
 	}
 
-	// Create HTTP server
-	s.httpServer = &http.Server{
+	// Create the HTTP server locally; lifecycle publication is atomic below.
+	httpServer := &http.Server{
 		Addr:              s.listenAddr,
 		Handler:           r,
 		ReadTimeout:       15 * time.Second,
@@ -526,24 +563,70 @@ func (s *Server) Start() error {
 		WriteTimeout:      15 * time.Second,
 	}
 
-	listener, err := s.createListener()
-	if err != nil {
-		return fmt.Errorf("failed to create API listener: %w", err)
+	listenerFactory := s.listenerFactory
+	if listenerFactory == nil {
+		listenerFactory = s.createListener
 	}
+	listener, err := listenerFactory()
+	if err != nil {
+		s.finishStop(nil)
+		return fmt.Errorf("failed to create api listener: %w", err)
+	}
+
+	s.lifecycleMu.Lock()
+	if s.lifecycleState == serverStateStopping {
+		s.lifecycleMu.Unlock()
+		_ = listener.Close()
+		s.finishStop(nil)
+		return ErrServerStopped
+	}
+	s.httpServer = httpServer
 	s.listener = listener
 
-	// Start server in a goroutine
-	go func() {
+	// Start Serve before publishing readiness, so Stop can always wait on Shutdown.
+	go func(server *http.Server, ln net.Listener) {
 		log.Printf("Starting API server on %s", s.listenAddr)
 		if s.authMiddleware != nil {
 			log.Printf("Authentication enabled")
 		}
-		if err := s.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Printf("API server error: %v", err)
 		}
-	}()
+	}(httpServer, listener)
+	s.lifecycleState = serverStateRunning
+	close(s.ready)
+	s.lifecycleMu.Unlock()
 
 	return nil
+}
+
+func (s *Server) initLifecycleLocked() {
+	if s.ready == nil {
+		s.ready = make(chan struct{})
+	}
+	if s.stopDone == nil {
+		s.stopDone = make(chan struct{})
+	}
+}
+
+// Ready is closed once the listener and HTTP server are published for use. It
+// signals publication readiness, not that Serve will remain healthy afterward.
+func (s *Server) Ready() <-chan struct{} {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	s.initLifecycleLocked()
+	return s.ready
+}
+
+func (s *Server) finishStop(err error) {
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
+	}
+	s.lifecycleMu.Lock()
+	s.stopErr = err
+	s.lifecycleState = serverStateStopped
+	close(s.stopDone)
+	s.lifecycleMu.Unlock()
 }
 
 func (s *Server) requireAuthIfConfigured(next http.Handler) http.Handler {
@@ -553,22 +636,53 @@ func (s *Server) requireAuthIfConfigured(next http.Handler) http.Handler {
 	return s.authMiddleware.RequireAuth(next)
 }
 
-// Stop stops the API server
+// Stop stops the API server. It is idempotent and waits for an in-progress
+// startup before returning.
 func (s *Server) Stop() error {
-	// Stop rate limiter cleanup goroutine
-	if s.rateLimiter != nil {
-		s.rateLimiter.Stop()
+	s.lifecycleMu.Lock()
+	s.initLifecycleLocked()
+	switch s.lifecycleState {
+	case serverStateStopped:
+		err := s.stopErr
+		s.lifecycleMu.Unlock()
+		return err
+	case serverStateStopping:
+		done := s.stopDone
+		s.lifecycleMu.Unlock()
+		<-done
+		s.lifecycleMu.Lock()
+		err := s.stopErr
+		s.lifecycleMu.Unlock()
+		return err
+	case serverStateNew:
+		s.lifecycleState = serverStateStopping
+		s.lifecycleMu.Unlock()
+		s.finishStop(nil)
+		return nil
+	case serverStateStarting:
+		s.lifecycleState = serverStateStopping
+		done := s.stopDone
+		s.lifecycleMu.Unlock()
+		<-done
+		s.lifecycleMu.Lock()
+		err := s.stopErr
+		s.lifecycleMu.Unlock()
+		return err
 	}
 
-	if s.httpServer == nil {
-		return nil
-	}
+	s.lifecycleState = serverStateStopping
+	httpServer := s.httpServer
+	s.lifecycleMu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	err := httpServer.Shutdown(ctx)
 
-	err := s.httpServer.Shutdown(ctx)
+	s.lifecycleMu.Lock()
+	s.httpServer = nil
 	s.listener = nil
+	s.lifecycleMu.Unlock()
+	s.finishStop(err)
 	return err
 }
 
@@ -606,12 +720,15 @@ func (s *Server) createListener() (net.Listener, error) {
 }
 
 func (s *Server) startReplacementProcess() (*os.Process, error) {
+	s.lifecycleMu.Lock()
 	tcpListener, ok := s.listener.(*net.TCPListener)
 	if !ok {
+		s.lifecycleMu.Unlock()
 		return nil, fmt.Errorf("listener does not support graceful restart handoff")
 	}
 
 	listenerFile, err := tcpListener.File()
+	s.lifecycleMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to duplicate listener file descriptor: %w", err)
 	}
