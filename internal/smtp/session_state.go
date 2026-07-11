@@ -203,6 +203,28 @@ func (ss *SessionState) SetMailFrom(ctx context.Context, mailFrom string) error 
 	return nil
 }
 
+// AcceptMail atomically installs a newly accepted MAIL transaction. DSN state
+// belongs to an envelope and must never leak from a previous envelope.
+func (ss *SessionState) AcceptMail(ctx context.Context, mailFrom string, declaredSize int64, smtpUTF8 bool, dsn *DSNParams, requireTLS bool) error {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	if ss.phase != PhaseInit && ss.phase != PhaseMail && ss.phase != PhaseRcpt {
+		return fmt.Errorf("cannot set MAIL FROM in phase %s", ss.phase)
+	}
+	ss.mailFrom = mailFrom
+	ss.phase = PhaseRcpt
+	ss.rcptTo = ss.rcptTo[:0]
+	ss.declaredSize = declaredSize
+	ss.smtputf8 = smtpUTF8
+	ss.dsnParams = dsn
+	ss.dsnRecipientParams = nil
+	ss.requireTLS = requireTLS
+	ss.lastActivityTime = time.Now()
+	ss.logger.DebugContext(ctx, "MAIL transaction accepted", "mail_from", mailFrom)
+	return nil
+}
+
 // GetMailFrom returns the MAIL FROM address (thread-safe)
 func (ss *SessionState) GetMailFrom() string {
 	ss.mu.RLock()

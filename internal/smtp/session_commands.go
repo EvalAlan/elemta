@@ -226,15 +226,18 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 		return fmt.Errorf("530 5.7.0 Authentication required")
 	}
 
-	// Parse MAIL FROM command with SIZE parameter (RFC 1870)
-	mailFrom, declaredSize, err := ch.parseMailFrom(ctx, args)
+	// Parse without mutating session state; extensions are committed only after acceptance.
+	parsed, err := ch.parseMailFromParams(args)
 	if err != nil {
 		return err
 	}
+	mailFrom, declaredSize := parsed.addr, parsed.size
 
-	// Validate email address
 	if err := ch.validateEmailAddress(ctx, mailFrom); err != nil {
 		return fmt.Errorf("553 5.1.3 Invalid sender address: %s", mailFrom)
+	}
+	if containsNonASCII(mailFrom) && !parsed.smtpUTF8 {
+		return fmt.Errorf("553 5.6.7 SMTPUTF8 is required for non-ASCII sender address")
 	}
 
 	// RFC 1870: Check declared SIZE against server's maximum
@@ -250,21 +253,13 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 			declaredSize, ch.config.MaxSize)
 	}
 
-	// Set mail from in state
-	if err := ch.state.SetMailFrom(ctx, mailFrom); err != nil {
-		ch.logger.ErrorContext(ctx, "Failed to set MAIL FROM in session state",
-			"mail_from", mailFrom,
-			"error", err,
-		)
-		return fmt.Errorf("503 5.5.1 Bad sequence of commands")
+	var dsn *DSNParams
+	if parsed.hasDSN {
+		dsn = parsed.dsn
 	}
-
-	// Store declared size for buffer pre-allocation optimization
-	ch.state.SetDeclaredSize(ctx, declaredSize)
-
-	// Transition to RCPT phase to allow RCPT TO commands
-	if err := ch.state.SetPhase(ctx, PhaseRcpt); err != nil {
-		ch.logger.ErrorContext(ctx, "Failed to transition to RCPT phase",
+	// Commit the complete envelope only after every check has succeeded.
+	if err := ch.state.AcceptMail(ctx, mailFrom, declaredSize, parsed.smtpUTF8, dsn, parsed.requireTLS); err != nil {
+		ch.logger.ErrorContext(ctx, "Failed to set MAIL FROM in session state",
 			"mail_from", mailFrom,
 			"error", err,
 		)
@@ -289,15 +284,18 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 func (ch *CommandHandler) HandleRCPT(ctx context.Context, args string) error {
 	ch.logger.DebugContext(ctx, "Processing RCPT command", "args", args)
 
-	// Parse RCPT TO command
-	rcptTo, err := ch.parseRcptTo(ctx, args)
+	// Parse without mutating recipient DSN state.
+	parsed, err := ch.parseRcptToParams(args)
 	if err != nil {
 		return err
 	}
+	rcptTo := parsed.addr
 
-	// Validate email address
 	if err := ch.validateEmailAddress(ctx, rcptTo); err != nil {
 		return fmt.Errorf("553 5.1.3 Invalid recipient address: %s", rcptTo)
+	}
+	if containsNonASCII(rcptTo) && !ch.state.IsSMTPUTF8() {
+		return fmt.Errorf("553 5.6.7 SMTPUTF8 is required for non-ASCII recipient address")
 	}
 
 	// Check relay permissions
@@ -312,6 +310,9 @@ func (ch *CommandHandler) HandleRCPT(ctx context.Context, args string) error {
 			"error", err,
 		)
 		return fmt.Errorf("503 5.5.1 Bad sequence of commands")
+	}
+	if parsed.hasDSN {
+		ch.state.SetDSNRecipientParams(ctx, rcptTo, parsed.dsn)
 	}
 
 	ch.logger.InfoContext(ctx, "rcpt_to_accepted",
@@ -765,265 +766,323 @@ func (ch *CommandHandler) validateDomainName(ctx context.Context, domain string)
 	return nil
 }
 
-// parseMailFrom parses the MAIL FROM command
-// parseMailFrom parses the MAIL FROM command and extracts address and SIZE parameter
-// Returns: (address, declaredSize, error)
-// declaredSize is 0 if SIZE parameter is not specified
-func (ch *CommandHandler) parseMailFrom(ctx context.Context, args string) (string, int64, error) {
-	if args == "" {
-		return "", 0, fmt.Errorf("501 5.5.4 Syntax: MAIL FROM:<address>")
-	}
-
-	// Handle MAIL FROM:<address>
-	if !strings.HasPrefix(strings.ToUpper(args), "FROM:") {
-		return "", 0, fmt.Errorf("501 5.5.4 Syntax: MAIL FROM:<address>")
-	}
-
-	// Extract address part (case-insensitive removal of "FROM:")
-	addr := args[5:] // Skip "FROM:" or "from:" or any case variation (already validated above)
-	addr = strings.TrimSpace(addr)
-
-	// Store the full parameter string for parsing ESMTP parameters
-	params := addr
-
-	// Handle angle brackets and ESMTP parameters
-	// Format: <address> SIZE=xxx BODY=8BITMIME SMTPUTF8 etc.
-	if strings.HasPrefix(addr, "<") {
-		// Find the closing bracket
-		endBracket := strings.Index(addr, ">")
-		if endBracket > 0 {
-			// Extract just the address inside the brackets
-			addr = addr[1:endBracket]
-			// Parameters are after the closing bracket
-			if endBracket+1 < len(params) {
-				params = strings.TrimSpace(params[endBracket+1:])
-			} else {
-				params = ""
-			}
-		} else {
-			// Malformed, try to extract what we can
-			addr = strings.TrimPrefix(addr, "<")
-			params = ""
-		}
-	} else {
-		// No angle brackets - address might have space-separated parameters
-		// Take only the first space-separated token
-		if spaceIdx := strings.Index(addr, " "); spaceIdx > 0 {
-			params = strings.TrimSpace(addr[spaceIdx+1:])
-			addr = addr[:spaceIdx]
-		} else {
-			params = ""
-		}
-	}
-
-	// Parse ESMTP parameters (RFC 1870 SIZE, RFC 6531 SMTPUTF8, RFC 3461 DSN, RFC 8689 REQUIRETLS)
-	var declaredSize int64 = 0
-
-	if params != "" {
-		upperParams := strings.ToUpper(params)
-
-		// Check for SMTPUTF8 parameter
-		if strings.Contains(upperParams, "SMTPUTF8") {
-			ch.state.SetSMTPUTF8(ctx, true)
-			ch.logger.DebugContext(ctx, "SMTPUTF8 requested for this message")
-		}
-
-		// Parse SIZE parameter (RFC 1870)
-		// Format: SIZE=<size-value>
-		if strings.Contains(upperParams, "SIZE=") {
-			// Extract SIZE parameter
-			sizeIdx := strings.Index(upperParams, "SIZE=")
-			if sizeIdx >= 0 {
-				sizeParam := params[sizeIdx+5:] // Skip "SIZE="
-
-				// SIZE value is terminated by space or end of string
-				var sizeStr string
-				if spaceIdx := strings.Index(sizeParam, " "); spaceIdx > 0 {
-					sizeStr = sizeParam[:spaceIdx]
-				} else {
-					sizeStr = sizeParam
-				}
-
-				// Validate and parse SIZE value
-				sizeValue, err := strconv.ParseInt(sizeStr, 10, 64)
-				if err != nil {
-					ch.logger.WarnContext(ctx, "Invalid SIZE parameter",
-						"size_param", sizeStr,
-						"error", err,
-					)
-					return "", 0, fmt.Errorf("501 5.5.4 Invalid SIZE parameter syntax")
-				}
-
-				// Validate SIZE is non-negative and reasonable
-				if sizeValue < 0 {
-					ch.logger.WarnContext(ctx, "Negative SIZE parameter",
-						"size_value", sizeValue,
-					)
-					return "", 0, fmt.Errorf("501 5.5.4 SIZE parameter must be non-negative")
-				}
-
-				// RFC 1870: SIZE=0 is valid (means size is unknown)
-				// Very large sizes (> 10GB) are suspicious
-				if sizeValue > 10*1024*1024*1024 { // 10GB sanity check
-					ch.logger.WarnContext(ctx, "Unreasonably large SIZE parameter",
-						"size_value", sizeValue,
-					)
-					return "", 0, fmt.Errorf("552 5.3.4 SIZE parameter exceeds reasonable limit")
-				}
-
-				declaredSize = sizeValue
-				ch.logger.DebugContext(ctx, "SIZE parameter parsed",
-					"declared_size", declaredSize,
-				)
-			}
-		}
-
-		// Parse DSN parameters (RFC 3461)
-		dsnParams := &DSNParams{}
-		hasDSN := false
-
-		// Parse RET parameter (RFC 3461 Section 4.3)
-		if strings.Contains(upperParams, "RET=") {
-			retIdx := strings.Index(upperParams, "RET=")
-			retParam := upperParams[retIdx+4:]
-			if spaceIdx := strings.Index(retParam, " "); spaceIdx > 0 {
-				retParam = retParam[:spaceIdx]
-			}
-			switch retParam {
-			case "FULL":
-				dsnParams.Return = DSNReturnFull
-				hasDSN = true
-			case "HDRS":
-				dsnParams.Return = DSNReturnHeaders
-				hasDSN = true
-			default:
-				return "", 0, fmt.Errorf("501 5.5.4 Invalid RET parameter: must be FULL or HDRS")
-			}
-		}
-
-		// Parse ENVID parameter (RFC 3461 Section 4.4)
-		if strings.Contains(upperParams, "ENVID=") {
-			envIdx := strings.Index(upperParams, "ENVID=")
-			envParam := params[envIdx+6:] // Use original case for ENVID value
-			if spaceIdx := strings.Index(envParam, " "); spaceIdx > 0 {
-				envParam = envParam[:spaceIdx]
-			}
-			if len(envParam) > 100 {
-				return "", 0, fmt.Errorf("501 5.5.4 ENVID parameter too long (max 100 characters)")
-			}
-			dsnParams.EnvID = envParam
-			hasDSN = true
-		}
-
-		if hasDSN {
-			ch.state.SetDSNParams(ctx, dsnParams)
-		}
-
-		// Parse REQUIRETLS parameter (RFC 8689)
-		if strings.Contains(upperParams, "REQUIRETLS") {
-			if !ch.state.IsTLSActive() {
-				return "", 0, fmt.Errorf("530 5.7.4 REQUIRETLS requires an active TLS connection")
-			}
-			ch.state.SetRequireTLS(ctx, true)
-			ch.logger.DebugContext(ctx, "REQUIRETLS requested for this message")
-		}
-	}
-
-	return addr, declaredSize, nil
+type mailFromParams struct {
+	addr                         string
+	size                         int64
+	dsn                          *DSNParams
+	hasDSN, smtpUTF8, requireTLS bool
 }
 
-// parseRcptTo parses the RCPT TO command with DSN parameters (RFC 3461)
+func (ch *CommandHandler) parseMailFrom(ctx context.Context, args string) (string, int64, error) {
+	p, err := ch.parseMailFromParams(args)
+	return p.addr, p.size, err
+}
+
+func (ch *CommandHandler) parseMailFromParams(args string) (mailFromParams, error) {
+	var p mailFromParams
+	addr, fields, err := parseSMTPPath(args, "FROM:", true)
+	if err != nil {
+		return p, fmt.Errorf("501 5.5.4 Syntax: MAIL FROM:<address>")
+	}
+	p.addr, p.dsn = addr, &DSNParams{}
+	seen := map[string]bool{}
+	for _, field := range fields {
+		key, value, hasValue := strings.Cut(field, "=")
+		key = strings.ToUpper(key)
+		if seen[key] {
+			return p, fmt.Errorf("501 5.5.4 Duplicate %s parameter", key)
+		}
+		seen[key] = true
+		switch key {
+		case "SIZE":
+			if !hasValue || !isASCIIDecimal(value) {
+				return p, fmt.Errorf("501 5.5.4 Invalid SIZE parameter syntax")
+			}
+			p.size, err = strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return p, fmt.Errorf("501 5.5.4 Invalid SIZE parameter syntax")
+			}
+			if ch.config.MaxSize >= 0 && p.size > ch.config.MaxSize {
+				return p, fmt.Errorf("552 5.3.4 Message size exceeds fixed maximum message size")
+			}
+		case "SMTPUTF8":
+			if hasValue {
+				return p, fmt.Errorf("501 5.5.4 Invalid SMTPUTF8 parameter")
+			}
+			p.smtpUTF8 = true
+		case "BODY":
+			if !hasValue || (strings.ToUpper(value) != "7BIT" && strings.ToUpper(value) != "8BITMIME") {
+				return p, fmt.Errorf("501 5.5.4 Invalid BODY parameter")
+			}
+		case "RET":
+			if !hasValue {
+				return p, fmt.Errorf("501 5.5.4 Invalid RET parameter")
+			}
+			switch strings.ToUpper(value) {
+			case "FULL":
+				p.dsn.Return = DSNReturnFull
+			case "HDRS":
+				p.dsn.Return = DSNReturnHeaders
+			default:
+				return p, fmt.Errorf("501 5.5.4 Invalid RET parameter: must be FULL or HDRS")
+			}
+			p.hasDSN = true
+		case "ENVID":
+			if !hasValue || len(value) > 100 || !validXText(value) {
+				return p, fmt.Errorf("501 5.5.4 Invalid ENVID parameter")
+			}
+			p.dsn.EnvID, p.hasDSN = value, true
+		case "REQUIRETLS":
+			if hasValue {
+				return p, fmt.Errorf("501 5.5.4 Invalid REQUIRETLS parameter")
+			}
+			p.requireTLS = true
+		default:
+			return p, fmt.Errorf("555 5.5.4 Unsupported MAIL FROM parameter: %s", key)
+		}
+	}
+	if p.requireTLS && !ch.state.IsTLSActive() {
+		return p, fmt.Errorf("530 5.7.4 REQUIRETLS requires an active TLS connection")
+	}
+	return p, nil
+}
+
+type rcptToParams struct {
+	addr   string
+	dsn    *DSNRecipientParams
+	hasDSN bool
+}
+
 func (ch *CommandHandler) parseRcptTo(ctx context.Context, args string) (string, error) {
-	if args == "" {
-		return "", fmt.Errorf("501 5.5.4 Syntax: RCPT TO:<address>")
+	p, err := ch.parseRcptToParams(args)
+	return p.addr, err
+}
+func (ch *CommandHandler) parseRcptToParams(args string) (rcptToParams, error) {
+	var p rcptToParams
+	addr, fields, err := parseSMTPPath(args, "TO:", false)
+	if err != nil {
+		return p, fmt.Errorf("501 5.5.4 Syntax: RCPT TO:<address>")
 	}
-
-	// Handle RCPT TO:<address>
-	if !strings.HasPrefix(strings.ToUpper(args), "TO:") {
-		return "", fmt.Errorf("501 5.5.4 Syntax: RCPT TO:<address>")
-	}
-
-	// Extract address (case-insensitive removal of "TO:")
-	addr := args[3:] // Skip "TO:" or "to:" or any case variation (already validated above)
-	addr = strings.TrimSpace(addr)
-
-	// Extract ESMTP parameters after closing bracket
-	var params string
-	if strings.HasPrefix(addr, "<") {
-		endBracket := strings.Index(addr, ">")
-		if endBracket > 0 {
-			if endBracket+1 < len(addr) {
-				params = strings.TrimSpace(addr[endBracket+1:])
-			}
-			addr = addr[1:endBracket]
-		} else {
-			addr = strings.TrimPrefix(addr, "<")
+	p.addr, p.dsn = addr, &DSNRecipientParams{}
+	seen := map[string]bool{}
+	for _, field := range fields {
+		key, value, ok := strings.Cut(field, "=")
+		key = strings.ToUpper(key)
+		if seen[key] {
+			return p, fmt.Errorf("501 5.5.4 Duplicate %s parameter", key)
 		}
-	} else {
-		if spaceIdx := strings.Index(addr, " "); spaceIdx > 0 {
-			params = strings.TrimSpace(addr[spaceIdx+1:])
-			addr = addr[:spaceIdx]
-		}
-	}
-
-	// Parse DSN recipient parameters (RFC 3461)
-	if params != "" {
-		upperParams := strings.ToUpper(params)
-		rcptDSN := &DSNRecipientParams{}
-		hasDSN := false
-
-		// Parse NOTIFY parameter (RFC 3461 Section 4.1)
-		if strings.Contains(upperParams, "NOTIFY=") {
-			notifyIdx := strings.Index(upperParams, "NOTIFY=")
-			notifyParam := upperParams[notifyIdx+7:]
-			if spaceIdx := strings.Index(notifyParam, " "); spaceIdx > 0 {
-				notifyParam = notifyParam[:spaceIdx]
+		seen[key] = true
+		switch key {
+		case "NOTIFY":
+			if !ok || value == "" {
+				return p, fmt.Errorf("501 5.5.4 Invalid NOTIFY value")
 			}
-
-			notifyValues := strings.Split(notifyParam, ",")
-			var notifyTypes []DSNNotifyType
-			hasNever := false
-			for _, v := range notifyValues {
-				v = strings.TrimSpace(v)
+			values, conditions := strings.Split(strings.ToUpper(value), ","), map[string]bool{}
+			for _, v := range values {
+				if conditions[v] {
+					return p, fmt.Errorf("501 5.5.4 Duplicate NOTIFY condition: %s", v)
+				}
+				conditions[v] = true
 				switch v {
 				case "NEVER":
-					hasNever = true
-					notifyTypes = append(notifyTypes, DSNNotifyNever)
+					p.dsn.Notify = append(p.dsn.Notify, DSNNotifyNever)
 				case "SUCCESS":
-					notifyTypes = append(notifyTypes, DSNNotifySuccess)
+					p.dsn.Notify = append(p.dsn.Notify, DSNNotifySuccess)
 				case "FAILURE":
-					notifyTypes = append(notifyTypes, DSNNotifyFailure)
+					p.dsn.Notify = append(p.dsn.Notify, DSNNotifyFailure)
 				case "DELAY":
-					notifyTypes = append(notifyTypes, DSNNotifyDelay)
+					p.dsn.Notify = append(p.dsn.Notify, DSNNotifyDelay)
 				default:
-					return "", fmt.Errorf("501 5.5.4 Invalid NOTIFY value: %s", v)
+					return p, fmt.Errorf("501 5.5.4 Invalid NOTIFY value: %s", v)
 				}
 			}
-			// NEVER must be used alone
-			if hasNever && len(notifyTypes) > 1 {
-				return "", fmt.Errorf("501 5.5.4 NOTIFY=NEVER must not be combined with other values")
+			if conditions["NEVER"] && len(values) > 1 {
+				return p, fmt.Errorf("501 5.5.4 NOTIFY=NEVER must not be combined with other values")
 			}
-			rcptDSN.Notify = notifyTypes
-			hasDSN = true
-		}
-
-		// Parse ORCPT parameter (RFC 3461 Section 4.2)
-		if strings.Contains(upperParams, "ORCPT=") {
-			orcptIdx := strings.Index(upperParams, "ORCPT=")
-			orcptParam := params[orcptIdx+6:] // Use original case
-			if spaceIdx := strings.Index(orcptParam, " "); spaceIdx > 0 {
-				orcptParam = orcptParam[:spaceIdx]
+		case "ORCPT":
+			if !ok || !validORCPT(value) {
+				return p, fmt.Errorf("501 5.5.4 Invalid ORCPT parameter")
 			}
-			rcptDSN.ORCPT = orcptParam
-			hasDSN = true
-		}
-
-		if hasDSN {
-			ch.state.SetDSNRecipientParams(ctx, addr, rcptDSN)
+			p.dsn.ORCPT = value
+		default:
+			return p, fmt.Errorf("555 5.5.4 Unsupported RCPT TO parameter: %s", key)
 		}
 	}
+	p.hasDSN = len(fields) > 0
+	return p, nil
+}
 
-	return addr, nil
+func parseSMTPPath(args, prefix string, allowNull bool) (string, []string, error) {
+	if len(args) < len(prefix)+2 || !strings.EqualFold(args[:len(prefix)], prefix) || args[len(prefix)] != '<' {
+		return "", nil, fmt.Errorf("invalid path")
+	}
+	rest, quoted, escaped, close := args[len(prefix):], false, false, -1
+	for i := 1; i < len(rest); i++ {
+		b := rest[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if quoted && b == '\\' {
+			escaped = true
+			continue
+		}
+		if b == '"' {
+			quoted = !quoted
+			continue
+		}
+		if b == '>' && !quoted {
+			close = i
+			break
+		}
+	}
+	if close < 0 || quoted || escaped {
+		return "", nil, fmt.Errorf("unterminated path")
+	}
+	addr := rest[1:close]
+	if addr == "" && !allowNull {
+		return "", nil, fmt.Errorf("null forward path")
+	}
+	if addr != "" && !validSMTPMailbox(addr) {
+		return "", nil, fmt.Errorf("invalid mailbox")
+	}
+	tail := rest[close+1:]
+	if tail == "" {
+		return addr, nil, nil
+	}
+	if tail[0] != ' ' && tail[0] != '\t' {
+		return "", nil, fmt.Errorf("path trailing junk")
+	}
+	fields, start := []string{}, 0
+	for i := 0; i <= len(tail); i++ {
+		if i < len(tail) && tail[i] != ' ' && tail[i] != '\t' {
+			continue
+		}
+		if start < i {
+			fields = append(fields, tail[start:i])
+		}
+		start = i + 1
+	}
+	return addr, fields, nil
+}
+
+func isASCIIDecimal(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range s {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+func containsNonASCII(s string) bool {
+	for i := range s {
+		if s[i] >= 0x80 {
+			return true
+		}
+	}
+	return false
+}
+func validXText(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b == '+' {
+			if i+2 >= len(s) || !isHex(s[i+1]) || !isHex(s[i+2]) {
+				return false
+			}
+			i += 2
+		} else if b < 33 || b > 126 || b == '=' {
+			return false
+		}
+	}
+	return true
+}
+func isHex(b byte) bool { return b >= '0' && b <= '9' || b >= 'A' && b <= 'F' || b >= 'a' && b <= 'f' }
+func validORCPT(s string) bool {
+	typ, text, ok := strings.Cut(s, ";")
+	if !ok || typ == "" || !validXText(text) {
+		return false
+	}
+	for i := range typ {
+		b := typ[i]
+		if !(b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-') {
+			return false
+		}
+	}
+	return true
+}
+func validSMTPMailbox(s string) bool {
+	quoted, escaped, at := false, false, -1
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if escaped {
+			if b < 32 || b > 126 {
+				return false
+			}
+			escaped = false
+			continue
+		}
+		if quoted && b == '\\' {
+			escaped = true
+			continue
+		}
+		if b == '"' {
+			if i != 0 && !(quoted && i > 0) {
+				return false
+			}
+			quoted = !quoted
+			continue
+		}
+		if !quoted && b == '@' {
+			if at >= 0 {
+				return false
+			}
+			at = i
+			continue
+		}
+		if !quoted && (b <= 32 || b == '<' || b == '>') {
+			return false
+		}
+	}
+	if quoted || escaped || at <= 0 || at == len(s)-1 {
+		return false
+	}
+	local, domain := s[:at], s[at+1:]
+	if local[0] == '"' {
+		if len(local) < 2 || local[len(local)-1] != '"' {
+			return false
+		}
+	} else {
+		if strings.ContainsAny(local, "\"(),:;<>@[\\] ") || strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
+			return false
+		}
+	}
+	if domain[0] == '[' {
+		if domain[len(domain)-1] != ']' {
+			return false
+		}
+		return net.ParseIP(strings.TrimPrefix(domain[1:len(domain)-1], "IPv6:")) != nil
+	}
+	if strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+		return false
+	}
+	for _, label := range strings.Split(domain, ".") {
+		if label == "" || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := range label {
+			b := label[i]
+			if !(b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' || b >= 0x80) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // validateEmailAddress validates an email address
