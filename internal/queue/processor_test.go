@@ -242,8 +242,12 @@ func TestProcessor(t *testing.T) {
 		}
 		defer limitedProcessor.Stop()
 
-		// Wait for processing
-		time.Sleep(1 * time.Second)
+		// Wait for processing. A fixed sleep made this test fail on slower CI
+		// runners while the fifth delivery was still in flight.
+		deadline := time.Now().Add(5 * time.Second)
+		for len(mockHandler.GetDeliveries()) < 5 && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
 
 		// All messages should be delivered
 		deliveries := mockHandler.GetDeliveries()

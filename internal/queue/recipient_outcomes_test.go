@@ -222,13 +222,16 @@ func (m *metricCapture) AddRecentError(_ context.Context, _, _, detail string) e
 func TestRecipientReductionUpdateFailurePreservesEnvelopeAndObservesDuplicateRisk(t *testing.T) {
 	base := NewFileStorageBackend(t.TempDir())
 	wrapped := &updateFailBackend{StorageBackend: base}
-	m := NewManagerWithStorage(wrapped, 0)
+	m := NewManagerWithStorage(wrapped, 24)
 	defer m.Stop()
 	id, err := m.EnqueueMessage("sender@example.test", []string{"accepted@example.test", "later@example.test"}, "s", []byte("body"), PriorityNormal, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, _ := m.GetMessage(id)
+	original, err := m.GetMessage(id)
+	if err != nil {
+		t.Fatalf("get enqueued message: %v", err)
+	}
 	wrapped.fail = true
 	metrics := &metricCapture{}
 	var logs bytes.Buffer

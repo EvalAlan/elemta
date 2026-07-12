@@ -151,7 +151,20 @@ func (fs *FileStorageBackend) recordEnqueueTombstoneLocked(msg Message, content 
 }
 
 func (fs *FileStorageBackend) tombstoneFor(id string) (*enqueueTombstone, error) {
-	raw, err := os.ReadFile(filepath.Join(fs.queueDir, "tmp", ".consumed-"+id+".json"))
+	root, err := openRoot(fs.queueDir, false)
+	if err != nil {
+		return nil, fmt.Errorf("open queue root: %w", err)
+	}
+	defer root.Close()
+	dir, err := openChildDir(root, "tmp", false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open tombstone directory: %w", err)
+	}
+	defer dir.Close()
+	raw, err := readFileAt(dir, ".consumed-"+id+".json")
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -661,8 +674,10 @@ func (fs *FileStorageBackend) EnsureDirectories() error {
 	return nil
 }
 
-// Kept for callers in this package; paths are intentionally unsupported now:
-// all atomic writes must be relative to an already trusted directory descriptor.
+// writeFileAtomic remains as a package compatibility shim for older tests.
+// All production writes use trusted directory descriptors.
+//
+//nolint:unused
 func (fs *FileStorageBackend) writeFileAtomic(_ string, _ []byte, _ os.FileMode) error {
 	return fmt.Errorf("path-based atomic writes are disabled")
 }

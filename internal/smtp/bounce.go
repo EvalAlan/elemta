@@ -178,7 +178,7 @@ func (be *BounceEngine) hasNotifyNever(msg queue.Message) bool {
 	return false
 }
 
-// buildDSNBounce constructs an RFC 3462 compliant DSN bounce message
+//nolint:unused // retained for package tests and compatibility
 func (be *BounceEngine) buildDSNBounce(msg queue.Message, failureReason string) ([]byte, error) {
 	return be.buildDSNBounceAt(msg, failureReason, time.Now())
 }
