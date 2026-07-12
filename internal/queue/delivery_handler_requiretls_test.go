@@ -265,7 +265,7 @@ func TestDeliverToAddressWithMetadata_MTASTSPolicyAllowsDelivery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, _, err := h.deliverToAddressWithMetadata(ctx, addr, msg, []string{"recipient@example.com"}, []byte("Subject: test\r\n\r\nbody\r\n"), false, "example.com", "mail.example.com")
+	_, _, _, err := h.deliverToAddressWithMetadata(ctx, addr, msg, []string{"recipient@example.com"}, []byte("Subject: test\r\n\r\nbody\r\n"), false, "example.com", "mail.example.com")
 	if err != nil {
 		t.Fatalf("expected delivery to succeed when MTA-STS policy allows it, got: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestDeliverToAddressWithMetadata_MTASTSPolicyViolationBlocksDelivery(t *tes
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, _, err := h.deliverToAddressWithMetadata(ctx, addr, msg, []string{"recipient@example.com"}, []byte("Subject: test\r\n\r\nbody\r\n"), false, "example.com", "mail.example.com")
+	_, _, _, err := h.deliverToAddressWithMetadata(ctx, addr, msg, []string{"recipient@example.com"}, []byte("Subject: test\r\n\r\nbody\r\n"), false, "example.com", "mail.example.com")
 	if err == nil {
 		t.Fatal("expected delivery to fail when the MTA-STS policy check fails")
 	}

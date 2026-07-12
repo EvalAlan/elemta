@@ -346,8 +346,19 @@ func (m *Manager) GetMessage(id string) (Message, error) {
 
 // EnqueueMessage adds a new message to the queue
 func (m *Manager) EnqueueMessage(from string, to []string, subject string, data []byte, priority Priority, receivedAt time.Time) (string, error) {
-	// Generate a unique ID for the message
-	id := generateUniqueID()
+	return m.enqueueMessageWithID(generateUniqueID(), from, to, subject, data, priority, receivedAt)
+}
+
+// EnqueueMessageWithID atomically creates or verifies a complete caller-named
+// queue entry. Conflicting reuse of an ID fails loudly.
+func (m *Manager) EnqueueMessageWithID(id, from string, to []string, subject string, data []byte, priority Priority, receivedAt time.Time) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", fmt.Errorf("message ID is required")
+	}
+	return m.enqueueMessageWithID(id, from, to, subject, data, priority, receivedAt)
+}
+
+func (m *Manager) enqueueMessageWithID(id, from string, to []string, subject string, data []byte, priority Priority, receivedAt time.Time) (string, error) {
 
 	m.logger.Info("message_accepted",
 		"event_type", "message_accepted",
@@ -389,18 +400,23 @@ func (m *Manager) EnqueueMessage(from string, to []string, subject string, data 
 	// Set file path in message metadata
 	msg.FilePath = filepath.Join(m.queueDir, "data", id)
 
-	// Store message metadata first
-	// NOTE: Postgres backend enforces FK(queue_contents.id -> queue_messages.id),
-	// so metadata must exist before content insert.
-	if err := m.storageBackend.Store(msg); err != nil {
-		return "", fmt.Errorf("failed to store message metadata: %w", err)
-	}
-
-	// Store message content second
-	if err := m.storageBackend.StoreContent(id, data); err != nil {
-		// Try to clean up metadata on error (best effort)
-		_ = m.storageBackend.Delete(id)
-		return "", fmt.Errorf("failed to store message content: %w", err)
+	if atomic, ok := m.storageBackend.(AtomicEnqueueStorage); ok {
+		created, err := atomic.CreateMessageIfAbsent(msg, data)
+		if err != nil {
+			return "", fmt.Errorf("idempotent enqueue failed: %w", err)
+		}
+		if !created {
+			return id, nil
+		}
+	} else {
+		// Legacy custom backends retain the historical two-step behavior.
+		if err := m.storageBackend.Store(msg); err != nil {
+			return "", fmt.Errorf("failed to store message metadata: %w", err)
+		}
+		if err := m.storageBackend.StoreContent(id, data); err != nil {
+			_ = m.storageBackend.Delete(id)
+			return "", fmt.Errorf("failed to store message content: %w", err)
+		}
 	}
 
 	// Update stats atomically
@@ -435,14 +451,27 @@ func (m *Manager) DeleteMessage(id string) error {
 		return fmt.Errorf("message not found: %w", err)
 	}
 
-	// Delete message metadata
-	if err := m.storageBackend.Delete(id); err != nil {
-		return fmt.Errorf("failed to delete message: %w", err)
+	content, contentErr := m.storageBackend.RetrieveContent(id)
+	if contentErr != nil {
+		return fmt.Errorf("failed to read content for idempotency tombstone: %w", contentErr)
 	}
-
-	// Delete message content
-	if err := m.storageBackend.DeleteContent(id); err != nil {
-		m.logger.Warn("Failed to delete message content", "id", id, "error", err)
+	if atomic, ok := m.storageBackend.(AtomicTombstoneDeleteStorage); ok {
+		if err := atomic.DeleteMessageWithTombstone(msg, content); err != nil {
+			return fmt.Errorf("failed to atomically consume message: %w", err)
+		}
+	} else {
+		// Filesystem backends serialize this ledger write with enqueue's per-ID lock.
+		if ledger, ok := m.storageBackend.(IdempotencyLedgerStorage); ok {
+			if err := ledger.RecordEnqueueTombstone(msg, content); err != nil {
+				return fmt.Errorf("failed to record idempotency tombstone: %w", err)
+			}
+		}
+		if err := m.storageBackend.Delete(id); err != nil {
+			return fmt.Errorf("failed to delete message: %w", err)
+		}
+		if err := m.storageBackend.DeleteContent(id); err != nil {
+			m.logger.Warn("Failed to delete message content", "id", id, "error", err)
+		}
 	}
 
 	// Update stats
