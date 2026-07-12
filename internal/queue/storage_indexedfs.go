@@ -83,7 +83,8 @@ func (b *IndexedFSStorageBackend) CreateMessageIfAbsent(msg Message, content []b
 	}
 	// A matching consumed tombstone is a successful idempotent no-op, not a
 	// live index entry. This also repairs an index left behind by a crash.
-	if _, liveErr := b.FileStorageBackend.Retrieve(msg.ID); liveErr != nil {
+	// Bypass the index deliberately: this code repairs an index after a crash.
+	if _, liveErr := b.FileStorageBackend.Retrieve(msg.ID); liveErr != nil { //nolint:staticcheck // embedded selector is intentional
 		if tomb, tombErr := b.tombstoneFor(msg.ID); tombErr != nil {
 			return false, tombErr
 		} else if tomb != nil {

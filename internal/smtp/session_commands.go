@@ -773,6 +773,7 @@ type mailFromParams struct {
 	hasDSN, smtpUTF8, requireTLS bool
 }
 
+//nolint:unused // retained for package tests and compatibility
 func (ch *CommandHandler) parseMailFrom(ctx context.Context, args string) (string, int64, error) {
 	p, err := ch.parseMailFromParams(args)
 	return p.addr, p.size, err
@@ -853,10 +854,12 @@ type rcptToParams struct {
 	hasDSN bool
 }
 
+//nolint:unused // retained for package tests and compatibility
 func (ch *CommandHandler) parseRcptTo(ctx context.Context, args string) (string, error) {
 	p, err := ch.parseRcptToParams(args)
 	return p.addr, err
 }
+
 func (ch *CommandHandler) parseRcptToParams(args string) (rcptToParams, error) {
 	var p rcptToParams
 	addr, fields, err := parseSMTPPath(args, "TO:", false)

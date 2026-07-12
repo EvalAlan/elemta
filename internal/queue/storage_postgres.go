@@ -172,7 +172,7 @@ func (p *PostgresStorageBackend) CreateMessageIfAbsent(msg Message, content []by
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(postgresEnqueueLockSQL, msg.ID); err != nil {
 		return false, err
 	}
@@ -233,7 +233,7 @@ func (p *PostgresStorageBackend) DeleteMessageWithTombstone(msg Message, content
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(postgresEnqueueLockSQL, msg.ID); err != nil {
 		return err
 	}

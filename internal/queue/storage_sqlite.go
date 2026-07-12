@@ -182,7 +182,7 @@ func (s *SQLiteStorageBackend) CreateMessageIfAbsent(msg Message, content []byte
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	metadata, err := json.Marshal(msg)
 	if err != nil {
 		return false, err
@@ -250,7 +250,7 @@ func (s *SQLiteStorageBackend) DeleteMessageWithTombstone(msg Message, content [
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	metadata, err := json.Marshal(msg)
 	if err != nil {
 		return err
