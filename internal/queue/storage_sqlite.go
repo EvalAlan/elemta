@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -120,6 +121,13 @@ CREATE TABLE IF NOT EXISTS queue_contents (
   id TEXT PRIMARY KEY,
   content BLOB NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS queue_enqueue_tombstones (
+  id TEXT PRIMARY KEY,
+  metadata TEXT NOT NULL,
+  content BLOB NOT NULL,
+  consumed_at TEXT NOT NULL
+);
 `
 
 	if _, err := s.db.Exec(schema); err != nil {
@@ -166,6 +174,139 @@ func (s *SQLiteStorageBackend) Store(msg Message) error {
 	}
 
 	return nil
+}
+
+// CreateMessageIfAbsent atomically creates or verifies a complete queue entry.
+func (s *SQLiteStorageBackend) CreateMessageIfAbsent(msg Message, content []byte) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	metadata, err := json.Marshal(msg)
+	if err != nil {
+		return false, err
+	}
+	// Claim SQLite's single writer slot before reading either identity table.
+	// database/sql starts a deferred transaction; reading first would allow two
+	// clients to obtain snapshots which subsequently fail with SQLITE_BUSY when
+	// they both try to upgrade to writers.
+	res, err := tx.Exec(`INSERT OR IGNORE INTO queue_messages(id, queue_type, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`, msg.ID, string(msg.QueueType), string(metadata), msg.CreatedAt.UTC().Format(time.RFC3339Nano), msg.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return false, err
+	}
+
+	var tombMetadata string
+	var tombContent []byte
+	err = tx.QueryRow(`SELECT metadata, content FROM queue_enqueue_tombstones WHERE id = ?`, msg.ID).Scan(&tombMetadata, &tombContent)
+	if err == nil {
+		var existing Message
+		if json.Unmarshal([]byte(tombMetadata), &existing) != nil || !sameEnqueueMessage(existing, msg) || !bytes.Equal(tombContent, content) {
+			return false, fmt.Errorf("message ID %q conflicts with consumed enqueue identity", msg.ID)
+		}
+		// Repair a crash/legacy interrupted consume which left a live half behind.
+		if _, err := tx.Exec(`DELETE FROM queue_messages WHERE id = ?`, msg.ID); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(`DELETE FROM queue_contents WHERE id = ?`, msg.ID); err != nil {
+			return false, err
+		}
+		return false, tx.Commit()
+	}
+	if err != sql.ErrNoRows {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	created := n == 1
+	if !created {
+		var raw string
+		if err := tx.QueryRow(`SELECT metadata FROM queue_messages WHERE id = ?`, msg.ID).Scan(&raw); err != nil {
+			return false, err
+		}
+		var existing Message
+		if json.Unmarshal([]byte(raw), &existing) != nil || !sameEnqueueMessage(existing, msg) {
+			return false, fmt.Errorf("message ID %q conflicts with existing metadata", msg.ID)
+		}
+	}
+	var old []byte
+	err = tx.QueryRow(`SELECT content FROM queue_contents WHERE id = ?`, msg.ID).Scan(&old)
+	if err == nil && !bytes.Equal(old, content) {
+		return false, fmt.Errorf("message ID %q conflicts with existing content", msg.ID)
+	}
+	if err == sql.ErrNoRows {
+		_, err = tx.Exec(`INSERT INTO queue_contents(id, content) VALUES (?, ?)`, msg.ID, content)
+	}
+	if err != nil {
+		return false, err
+	}
+	return created, tx.Commit()
+}
+
+func (s *SQLiteStorageBackend) DeleteMessageWithTombstone(msg Message, content []byte) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	metadata, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	// Acquire the writer slot before inspecting the ledger/live pair. Never
+	// overwrite a prior consumed identity: doing so would make conflicting reuse
+	// appear valid after restart.
+	if _, err = tx.Exec(`INSERT OR IGNORE INTO queue_enqueue_tombstones(id, metadata, content, consumed_at) VALUES (?, ?, ?, ?)`, msg.ID, string(metadata), content, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	var tombMetadata string
+	var tombContent []byte
+	if err := tx.QueryRow(`SELECT metadata, content FROM queue_enqueue_tombstones WHERE id = ?`, msg.ID).Scan(&tombMetadata, &tombContent); err != nil {
+		return err
+	}
+	var tombMessage Message
+	if json.Unmarshal([]byte(tombMetadata), &tombMessage) != nil || !sameEnqueueMessage(tombMessage, msg) || !bytes.Equal(tombContent, content) {
+		return fmt.Errorf("message ID %q conflicts with consumed enqueue identity", msg.ID)
+	}
+
+	// Verify the transaction is consuming the same immutable live identity, not
+	// merely deleting whatever currently occupies the caller-provided ID.
+	var liveMetadata string
+	if err := tx.QueryRow(`SELECT metadata FROM queue_messages WHERE id = ?`, msg.ID).Scan(&liveMetadata); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("message not found: %s", msg.ID)
+		}
+		return err
+	}
+	var liveMessage Message
+	if json.Unmarshal([]byte(liveMetadata), &liveMessage) != nil || !sameEnqueueMessage(liveMessage, msg) {
+		return fmt.Errorf("message ID %q conflicts with live enqueue identity", msg.ID)
+	}
+	var liveContent []byte
+	if err := tx.QueryRow(`SELECT content FROM queue_contents WHERE id = ?`, msg.ID).Scan(&liveContent); err != nil {
+		return fmt.Errorf("content missing for message %s: %w", msg.ID, err)
+	}
+	if !bytes.Equal(liveContent, content) {
+		return fmt.Errorf("message ID %q conflicts with live content", msg.ID)
+	}
+
+	res, err := tx.Exec(`DELETE FROM queue_messages WHERE id = ?`, msg.ID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("message not found: %s", msg.ID)
+	}
+	if _, err = tx.Exec(`DELETE FROM queue_contents WHERE id = ?`, msg.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Retrieve loads a message from sqlite storage.

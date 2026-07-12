@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/smtp"
+	"net/textproto"
 	"sort"
 	"strings"
 	"sync"
@@ -36,6 +37,17 @@ type PermanentError struct {
 func (e *PermanentError) Error() string   { return e.msg }
 func (e *PermanentError) Unwrap() error   { return e.err }
 func (e *PermanentError) Permanent() bool { return true }
+
+func smtpFailureOutcome(err error) (RecipientDeliveryStatus, string, string) {
+	status := RecipientTemporaryFailure
+	var smtpErr *textproto.Error
+	if errors.As(err, &smtpErr) && smtpErr.Code >= 500 && smtpErr.Code < 600 {
+		status = RecipientPermanentFailure
+	}
+	diagnostic := err.Error()
+	enhanced := enhancedStatus(diagnostic)
+	return status, enhanced, diagnostic
+}
 
 type domainFailure struct {
 	domain string
@@ -124,20 +136,41 @@ func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 
 	var failures []domainFailure
 	delivered := 0
+	var outcomes []RecipientOutcome
 	var firstSuccessfulIP string
 	var firstSuccessfulHost string
 
 	for _, domain := range domains {
 		recipients := domainGroups[domain]
-		ip, host, err := h.deliverToDomainWithMetadata(ctx, msg, domain, recipients, content, requireTLS)
+		ip, host, domainOutcomes, err := h.deliverToDomainWithMetadata(ctx, msg, domain, recipients, content, requireTLS)
+		if len(domainOutcomes) > 0 {
+			outcomes = append(outcomes, domainOutcomes...)
+			for _, outcome := range domainOutcomes {
+				if outcome.Status == RecipientDelivered {
+					delivered++
+				}
+			}
+		}
 		if err != nil {
 			h.logger.Error("Failed to deliver to domain",
 				"domain", domain,
 				"recipients", recipients,
 				"error", err)
 			failures = append(failures, domainFailure{domain: domain, err: err})
+			status := RecipientTemporaryFailure
+			if !(&Processor{}).isTemporaryFailure(err) {
+				status = RecipientPermanentFailure
+			}
+			for _, recipient := range recipients[len(domainOutcomes):] {
+				outcomes = append(outcomes, RecipientOutcome{Recipient: recipient, Status: status, Diagnostic: err.Error(), Route: domain})
+			}
 		} else {
-			delivered += len(recipients)
+			if len(domainOutcomes) == 0 {
+				delivered += len(recipients)
+			}
+			for _, recipient := range recipients[len(domainOutcomes):] {
+				outcomes = append(outcomes, RecipientOutcome{Recipient: recipient, Status: RecipientDelivered, Route: host})
+			}
 			h.logger.Info("Successfully delivered to domain",
 				"domain", domain,
 				"recipients", len(recipients))
@@ -150,7 +183,9 @@ func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 		}
 	}
 
-	return h.buildDeliveryResult(msg.To, delivered, firstSuccessfulIP, firstSuccessfulHost, aggregateDomainFailures(failures))
+	result, err := h.buildDeliveryResult(msg.To, delivered, firstSuccessfulIP, firstSuccessfulHost, aggregateDomainFailures(failures))
+	result.RecipientOutcomes = outcomes
+	return result, err
 }
 
 // buildDeliveryResult constructs a DeliveryResult from delivery statistics
@@ -213,21 +248,24 @@ func (h *SMTPDeliveryHandler) groupRecipientsByDomain(recipients []string) map[s
 }
 
 // deliverToDomainWithMetadata delivers messages to all recipients in a specific domain and returns delivery metadata
-func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, msg Message, domain string, recipients []string, content []byte, requireTLS bool) (string, string, error) {
+func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, msg Message, domain string, recipients []string, content []byte, requireTLS bool) (string, string, []RecipientOutcome, error) {
 	// Look up MX records for the domain
 	mxRecords, err := h.lookupMX(ctx, domain)
 	if err != nil {
-		return "", "", fmt.Errorf("MX lookup failed for %s: %w", domain, err)
+		return "", "", nil, fmt.Errorf("MX lookup failed for %s: %w", domain, err)
 	}
 
 	if len(mxRecords) == 0 {
-		return "", "", fmt.Errorf("no MX records found for domain %s", domain)
+		return "", "", nil, fmt.Errorf("no MX records found for domain %s", domain)
 	}
 
 	// Try each MX record in order of preference
 	var lastError error
 	for _, mx := range mxRecords {
-		ip, host, err := h.attemptDeliveryToHostWithMetadata(ctx, mx.Host, msg, recipients, content, requireTLS, domain)
+		ip, host, hostOutcomes, err := h.attemptDeliveryToHostWithMetadata(ctx, mx.Host, msg, recipients, content, requireTLS, domain)
+		if len(hostOutcomes) > 0 {
+			return ip, host, hostOutcomes, err
+		}
 		if err != nil {
 			h.logger.Warn("Delivery failed to MX host",
 				"host", mx.Host,
@@ -238,10 +276,10 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 		}
 
 		// Success - return the IP and host
-		return ip, host, nil
+		return ip, host, nil, nil
 	}
 
-	return "", "", fmt.Errorf("delivery failed to all MX hosts for domain %s: %w", domain, lastError)
+	return "", "", nil, fmt.Errorf("delivery failed to all MX hosts for domain %s: %w", domain, lastError)
 }
 
 // lookupMX performs MX record lookup with retries
@@ -321,7 +359,7 @@ func (h *SMTPDeliveryHandler) lookupMX(ctx context.Context, domain string) ([]*n
 }
 
 // attemptDeliveryToHostWithMetadata attempts delivery to a specific SMTP host and returns delivery metadata
-func (h *SMTPDeliveryHandler) attemptDeliveryToHostWithMetadata(ctx context.Context, host string, msg Message, recipients []string, content []byte, requireTLS bool, domain string) (string, string, error) {
+func (h *SMTPDeliveryHandler) attemptDeliveryToHostWithMetadata(ctx context.Context, host string, msg Message, recipients []string, content []byte, requireTLS bool, domain string) (string, string, []RecipientOutcome, error) {
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
@@ -333,7 +371,10 @@ func (h *SMTPDeliveryHandler) attemptDeliveryToHostWithMetadata(ctx context.Cont
 	for _, port := range ports {
 		address := net.JoinHostPort(host, port)
 
-		ip, hostIP, err := h.deliverToAddressWithMetadata(ctx, address, msg, recipients, content, requireTLS, domain, host)
+		ip, hostIP, outcomes, err := h.deliverToAddressWithMetadata(ctx, address, msg, recipients, content, requireTLS, domain, host)
+		if len(outcomes) > 0 {
+			return ip, hostIP, outcomes, err
+		}
 		if err != nil {
 			h.logger.Debug("Delivery attempt failed",
 				"address", address,
@@ -343,104 +384,97 @@ func (h *SMTPDeliveryHandler) attemptDeliveryToHostWithMetadata(ctx context.Cont
 		}
 
 		// Success - return the IP and host
-		return ip, hostIP, nil
+		return ip, hostIP, nil, nil
 	}
 
-	return "", "", fmt.Errorf("delivery failed to all ports for host %s: %w", host, lastError)
+	return "", "", nil, fmt.Errorf("delivery failed to all ports for host %s: %w", host, lastError)
 }
 
 // deliverToAddressWithMetadata performs the actual SMTP delivery to a specific address and returns delivery metadata
-func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, address string, msg Message, recipients []string, content []byte, requireTLS bool, domain string, mxHost string) (string, string, error) {
+func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, address string, msg Message, recipients []string, content []byte, requireTLS bool, domain string, mxHost string) (string, string, []RecipientOutcome, error) {
 	h.logger.Debug("Attempting SMTP delivery",
 		"address", address,
 		"from", msg.From,
 		"recipients", recipients,
 		"require_tls", requireTLS)
 
-	// Connect to SMTP server and capture connection info
 	client, conn, tlsUsed, err := h.connectSMTPWithMetadata(ctx, address, requireTLS)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to connect to %s: %w", address, err)
+		return "", "", nil, fmt.Errorf("failed to connect to %s: %w", address, err)
 	}
 	defer func() { _ = client.Close() }()
 
-	// Enforce the domain's MTA-STS policy (if any) now that we know whether TLS was used
 	if err := h.mtastsManager.EnforcePolicy(ctx, domain, mxHost, tlsUsed); err != nil {
-		return "", "", fmt.Errorf("MTA-STS policy check failed for %s: %w", domain, err)
+		return "", "", nil, fmt.Errorf("MTA-STS policy check failed for %s: %w", domain, err)
 	}
 
-	// Set sender (strip angle brackets if present to avoid parameter issues)
 	sender := strings.Trim(msg.From, "<>")
-
-	// Use the Text() method to get the underlying textproto connection
-	// and send raw MAIL FROM without ESMTP extensions
-	text := client.Text
-	if text == nil {
-		// Fallback to standard Mail() if we can't get the text connection
-		if err := client.Mail(sender); err != nil {
-			return "", "", fmt.Errorf("MAIL FROM failed: %w", err)
-		}
-	} else {
-		// Send raw MAIL FROM command without SIZE or other extensions
-		id, err := text.Cmd("MAIL FROM:<%s>", sender)
-		if err != nil {
-			return "", "", fmt.Errorf("MAIL FROM command failed: %w", err)
-		}
-		text.StartResponse(id)
-		_, _, err = text.ReadResponse(250)
-		text.EndResponse(id)
-		if err != nil {
-			return "", "", fmt.Errorf("MAIL FROM failed: %w", err)
-		}
+	if err := client.Mail(sender); err != nil {
+		return "", "", nil, fmt.Errorf("MAIL FROM failed: %w", err)
 	}
 
-	// Set recipients
+	outcomes := make([]RecipientOutcome, 0, len(recipients))
+	accepted := make([]int, 0, len(recipients))
 	for _, recipient := range recipients {
+		outcome := RecipientOutcome{Recipient: recipient, Route: mxHost}
 		if err := client.Rcpt(recipient); err != nil {
-			return "", "", fmt.Errorf("RCPT TO failed for %s: %w", recipient, err)
+			outcome.Status, outcome.EnhancedStatusCode, outcome.Diagnostic = smtpFailureOutcome(err)
+		} else {
+			outcome.Status = RecipientDelivered // provisional until DATA completes
+			accepted = append(accepted, len(outcomes))
+		}
+		outcomes = append(outcomes, outcome)
+	}
+
+	var dataErr error
+	if len(accepted) > 0 {
+		writer, err := client.Data()
+		if err == nil {
+			_, err = writer.Write(content)
+			if err == nil {
+				err = writer.Close()
+			}
+		}
+		dataErr = err
+		if dataErr != nil {
+			status, enhanced, diagnostic := smtpFailureOutcome(dataErr)
+			for _, i := range accepted {
+				outcomes[i].Status = status
+				outcomes[i].EnhancedStatusCode = enhanced
+				outcomes[i].Diagnostic = diagnostic
+			}
 		}
 	}
 
-	// Send message data
-	writer, err := client.Data()
-	if err != nil {
-		return "", "", fmt.Errorf("DATA command failed: %w", err)
-	}
-
-	if _, err := writer.Write(content); err != nil {
-		return "", "", fmt.Errorf("failed to write message data: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return "", "", fmt.Errorf("failed to close data writer: %w", err)
-	}
-
-	// Quit gracefully
-	if err := client.Quit(); err != nil {
-		h.logger.Warn("QUIT command failed", "error", err)
-	}
-
-	h.logger.Info("SMTP delivery successful",
-		"address", address,
-		"from", msg.From,
-		"recipients", len(recipients),
-		"tls_used", tlsUsed)
-
-	// Capture delivery IP and host from connection
-	deliveryIP := ""
-	deliveryHost := ""
+	_ = client.Quit()
+	deliveryIP, deliveryHost := "", ""
 	if conn != nil {
 		remoteAddr := conn.RemoteAddr().String()
-		if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
-			deliveryIP = host
-			deliveryHost = host
+		deliveryIP = remoteAddr
+		if host, _, splitErr := net.SplitHostPort(remoteAddr); splitErr == nil {
+			deliveryIP, deliveryHost = host, host
 		} else {
-			deliveryIP = remoteAddr
 			deliveryHost = remoteAddr
 		}
 	}
 
-	return deliveryIP, deliveryHost, nil
+	var temporary, permanent int
+	for _, outcome := range outcomes {
+		switch outcome.Status {
+		case RecipientTemporaryFailure:
+			temporary++
+		case RecipientPermanentFailure:
+			permanent++
+		}
+	}
+	if temporary+permanent > 0 {
+		err := error(&TemporaryError{msg: "one or more SMTP recipients temporarily failed"})
+		if temporary == 0 {
+			err = &PermanentError{msg: "all SMTP recipients permanently failed"}
+		}
+		return deliveryIP, deliveryHost, outcomes, err
+	}
+	return deliveryIP, deliveryHost, outcomes, nil
 }
 
 // connectSMTPWithMetadata establishes a connection to the SMTP server and returns connection metadata
@@ -564,11 +598,16 @@ func (m *MockDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 	defer m.mutex.Unlock()
 
 	if m.shouldFail {
+		outcomes := make([]RecipientOutcome, 0, len(msg.To))
+		for _, recipient := range msg.To {
+			outcomes = append(outcomes, RecipientOutcome{Recipient: recipient, Status: RecipientTemporaryFailure, Diagnostic: "mock delivery failure"})
+		}
 		return &DeliveryResult{
-			Success:         false,
-			Error:           &TemporaryError{msg: "mock delivery failure"},
-			DeliveryTime:    time.Now(),
-			ResponseMessage: "mock delivery failed",
+			Success:           false,
+			Error:             &TemporaryError{msg: "mock delivery failure"},
+			DeliveryTime:      time.Now(),
+			ResponseMessage:   "mock delivery failed",
+			RecipientOutcomes: outcomes,
 		}, &TemporaryError{msg: "mock delivery failure"}
 	}
 
@@ -587,13 +626,18 @@ func (m *MockDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 	m.deliveries = append(m.deliveries, msg)
 	m.logger.Info("Mock delivery successful", "message_id", msg.ID)
 
+	outcomes := make([]RecipientOutcome, 0, len(msg.To))
+	for _, recipient := range msg.To {
+		outcomes = append(outcomes, RecipientOutcome{Recipient: recipient, Status: RecipientDelivered, Route: "localhost"})
+	}
 	return &DeliveryResult{
-		Success:         true,
-		Error:           nil,
-		DeliveryIP:      "127.0.0.1",
-		DeliveryHost:    "localhost",
-		DeliveryTime:    time.Now(),
-		ResponseMessage: "mock delivery successful",
+		Success:           true,
+		Error:             nil,
+		DeliveryIP:        "127.0.0.1",
+		DeliveryHost:      "localhost",
+		DeliveryTime:      time.Now(),
+		ResponseMessage:   "mock delivery successful",
+		RecipientOutcomes: outcomes,
 	}, nil
 }
 

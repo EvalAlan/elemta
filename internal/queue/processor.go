@@ -2,6 +2,9 @@ package queue
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -43,12 +46,74 @@ func DefaultProcessorConfig() ProcessorConfig {
 // DeliveryHandler defines the interface for actual message delivery
 // DeliveryResult contains metadata about a delivery attempt
 type DeliveryResult struct {
-	Success         bool
-	Error           error
-	DeliveryIP      string
-	DeliveryHost    string
-	DeliveryTime    time.Time
-	ResponseMessage string
+	Success           bool
+	Error             error
+	DeliveryIP        string
+	DeliveryHost      string
+	DeliveryTime      time.Time
+	ResponseMessage   string
+	RecipientOutcomes []RecipientOutcome
+}
+
+type RecipientDeliveryStatus string
+
+const (
+	RecipientDelivered        RecipientDeliveryStatus = "delivered"
+	RecipientTemporaryFailure RecipientDeliveryStatus = "temporary_failure"
+	RecipientPermanentFailure RecipientDeliveryStatus = "permanent_failure"
+)
+
+// RecipientOutcome is the protocol-level disposition of one envelope recipient.
+type RecipientOutcome struct {
+	Recipient          string
+	Status             RecipientDeliveryStatus
+	EnhancedStatusCode string
+	Diagnostic         string
+	Route              string
+}
+
+// normalizeDeliveryResult enforces a deterministic, panic-free handler contract.
+// Missing/malformed recipient entries are conservatively treated as temporary.
+func normalizeDeliveryResult(msg Message, result *DeliveryResult, deliveryErr error) (*DeliveryResult, error) {
+	if result == nil {
+		result = &DeliveryResult{}
+	}
+	if deliveryErr == nil {
+		deliveryErr = result.Error
+	}
+	if deliveryErr == nil && !result.Success {
+		deliveryErr = errors.New("delivery handler returned an unsuccessful result without an error")
+	}
+	// Match by occurrence, not address. Duplicate envelope recipients are valid.
+	byRecipient := make(map[string][]RecipientOutcome, len(result.RecipientOutcomes))
+	expected := make(map[string]int, len(msg.To))
+	for _, recipient := range msg.To {
+		expected[recipient]++
+	}
+	for _, outcome := range result.RecipientOutcomes {
+		if outcome.Recipient == "" || expected[outcome.Recipient] == 0 || len(byRecipient[outcome.Recipient]) >= expected[outcome.Recipient] {
+			continue
+		}
+		switch outcome.Status {
+		case RecipientDelivered, RecipientTemporaryFailure, RecipientPermanentFailure:
+			byRecipient[outcome.Recipient] = append(byRecipient[outcome.Recipient], outcome)
+		}
+	}
+	normalized := make([]RecipientOutcome, 0, len(msg.To))
+	for _, recipient := range msg.To {
+		if occurrences := byRecipient[recipient]; len(occurrences) > 0 {
+			normalized = append(normalized, occurrences[0])
+			byRecipient[recipient] = occurrences[1:]
+			continue
+		}
+		// An absent, unknown, duplicate, or otherwise malformed recipient outcome
+		// is never promoted by an aggregate error. Only a valid explicit outcome
+		// can permanently fail (or deliver) a recipient.
+		normalized = append(normalized, RecipientOutcome{Recipient: recipient, Status: RecipientTemporaryFailure})
+	}
+	result.RecipientOutcomes = normalized
+	result.Error = deliveryErr
+	return result, deliveryErr
 }
 
 type DeliveryHandler interface {
@@ -74,6 +139,27 @@ type ClaimingStorageBackend interface {
 // BounceEngine defines the interface for generating DSN bounce messages
 type BounceEngine interface {
 	GenerateBounceIfNeeded(ctx context.Context, msg Message, failureReason string) *BounceResult
+}
+
+type idempotentBounceEngine interface {
+	GenerateBounceIdempotent(context.Context, Message, string, string) *BounceResult
+}
+
+const dsnHandoffAnnotation = "recipient_dsn_handoff_v2"
+const recipientOccurrencesAnnotation = "recipient_occurrences_v1"
+
+type dsnRecipient struct {
+	Occurrence string `json:"occurrence"`
+	Address    string `json:"address"`
+	Diagnostic string `json:"diagnostic,omitempty"`
+}
+
+type dsnHandoff struct {
+	ID        string         `json:"id"`
+	State     string         `json:"state"`
+	Permanent []dsnRecipient `json:"permanent"`
+	Temporary []dsnRecipient `json:"temporary,omitempty"`
+	Delivered []dsnRecipient `json:"delivered,omitempty"`
 }
 
 // BounceResult contains the result of a bounce generation attempt
@@ -361,6 +447,10 @@ func (p *Processor) processMessage(msg Message) {
 
 	logger.Debug("Processing message")
 	startTime := time.Now()
+	// A durable DSN intent always wins over another remote delivery attempt.
+	if p.resumeDSNHandoff(msg, startTime) {
+		return
+	}
 
 	// Get message content
 	content, err := p.manager.GetMessageContent(msg.ID)
@@ -375,13 +465,326 @@ func (p *Processor) processMessage(msg Message) {
 	defer cancel()
 
 	deliveryResult, deliveryErr := p.handler.DeliverMessageWithMetadata(ctx, msg, content)
+	deliveryResult, deliveryErr = normalizeDeliveryResult(msg, deliveryResult, deliveryErr)
 
-	if deliveryErr == nil && deliveryResult != nil && deliveryResult.Success {
+	if p.handleRecipientOutcomes(msg, deliveryResult, deliveryErr, startTime) {
+		return
+	}
+
+	if deliveryErr == nil && deliveryResult.Success {
 		p.handleDeliverySuccess(msg, deliveryResult)
 		return
 	}
 
 	p.handleDeliveryFailure(msg, deliveryErr, startTime)
+}
+
+// handleRecipientOutcomes persists only retryable recipients before deferral.
+func (p *Processor) handleRecipientOutcomes(msg Message, result *DeliveryResult, deliveryErr error, startTime time.Time) bool {
+	occurrences := recipientOccurrences(msg)
+	var delivered, temporary, permanent []string
+	var deliveredR, temporaryR, permanentR []dsnRecipient
+	var firstPermanent *RecipientOutcome
+	for i, outcome := range result.RecipientOutcomes {
+		r := dsnRecipient{Occurrence: occurrences[i], Address: outcome.Recipient, Diagnostic: outcome.Diagnostic}
+		switch outcome.Status {
+		case RecipientDelivered:
+			delivered = append(delivered, outcome.Recipient)
+			deliveredR = append(deliveredR, r)
+		case RecipientTemporaryFailure:
+			temporary = append(temporary, outcome.Recipient)
+			temporaryR = append(temporaryR, r)
+		case RecipientPermanentFailure:
+			// NOTIFY belongs to an occurrence. Prefer its narrow persisted key;
+			// address-keyed annotations are only a compatibility fallback.
+			if notifyNeverForOccurrence(msg.Annotations, r) {
+				deliveredR = append(deliveredR, r) // complete without DSN enqueue
+				continue
+			}
+			permanent = append(permanent, outcome.Recipient)
+			permanentR = append(permanentR, r)
+			if firstPermanent == nil {
+				copy := outcome
+				firstPermanent = &copy
+			}
+		}
+	}
+	if len(temporary) == 0 && len(permanent) == 0 {
+		p.handleDeliverySuccess(msg, result)
+		return true
+	}
+	if len(permanent) > 0 && strings.TrimSpace(msg.From) != "" && strings.TrimSpace(msg.From) != "<>" && p.bounceEngine != nil {
+		failed := msg
+		failed.To = append([]string(nil), permanent...)
+		failed.Annotations = dsnAnnotationsForRecipients(msg.Annotations, permanentR)
+		// BounceEngine's current callback accepts only one free-text reason, so it
+		// cannot carry enhanced status and route as structured per-recipient DSN
+		// fields. Preserve the most useful recipient-specific value: diagnostic,
+		// falling back to enhanced status, before the aggregate delivery error.
+		reason := "permanent recipient delivery failure"
+		if firstPermanent != nil && firstPermanent.Diagnostic != "" {
+			reason = firstPermanent.Diagnostic
+		} else if firstPermanent != nil && firstPermanent.EnhancedStatusCode != "" {
+			reason = firstPermanent.EnhancedStatusCode
+		} else if deliveryErr != nil {
+			reason = deliveryErr.Error()
+		}
+		if msg.Annotations == nil {
+			msg.Annotations = make(map[string]string)
+		}
+		h := dsnHandoff{State: "pending", Permanent: permanentR, Temporary: temporaryR, Delivered: deliveredR}
+		sum := sha256.Sum256([]byte(msg.ID + "\x00" + occurrenceList(permanentR)))
+		h.ID = "dsn-" + hex.EncodeToString(sum[:16])
+		encoded, _ := json.Marshal(h)
+		msg.Annotations[dsnHandoffAnnotation] = string(encoded)
+		if err := p.manager.storageBackend.Update(msg); err != nil {
+			p.logger.Error("Failed to persist DSN handoff intent", "message_id", msg.ID, "error", err)
+			return true
+		}
+		bounceResult := p.generateBounce(failed, reason, h.ID)
+		if bounceResult == nil || bounceResult.Error != nil {
+			p.logger.Warn("DSN bounce handoff failed", "message_id", msg.ID)
+			return true
+		}
+		h.State = "complete"
+		encoded, _ = json.Marshal(h)
+		msg.Annotations[dsnHandoffAnnotation] = string(encoded)
+		if err := p.manager.storageBackend.Update(msg); err != nil {
+			p.logger.Error("DSN handed off but marker persistence failed", "message_id", msg.ID, "error", err, "duplicate_risk", true)
+			return true
+		}
+	}
+	if len(temporary) == 0 {
+		p.observePartial(msg, result, delivered, len(temporary), len(permanent))
+		p.finalizeNoTemporary(msg, len(permanent))
+		return true
+	}
+	msg.To = append([]string(nil), temporary...)
+	if msg.Annotations == nil {
+		msg.Annotations = make(map[string]string)
+	}
+	tempOccurrences := make([]string, len(temporaryR))
+	for i := range temporaryR {
+		tempOccurrences[i] = temporaryR[i].Occurrence
+	}
+	encodedOccurrences, _ := json.Marshal(tempOccurrences)
+	msg.Annotations[recipientOccurrencesAnnotation] = string(encodedOccurrences)
+	delete(msg.Annotations, dsnHandoffAnnotation)
+	msg.UpdatedAt = time.Now()
+	if err := p.manager.storageBackend.Update(msg); err != nil {
+		p.logger.Error("Failed to persist reduced recipient envelope after remote acceptance",
+			"message_id", msg.ID, "error", err, "duplicate_risk", true)
+		p.recordMetric(func(r MetricsRecorder) error {
+			return r.AddRecentError(p.ctx, msg.ID, strings.Join(msg.To, ", "), "duplicate_risk: reduced recipient envelope persistence failed: "+err.Error())
+		})
+		return true
+	}
+	if deliveryErr == nil {
+		deliveryErr = errors.New("temporary recipient delivery failure")
+	}
+	p.observePartial(msg, result, delivered, len(temporary), len(permanent))
+	p.handleDeliveryFailure(msg, deliveryErr, startTime)
+	return true
+}
+
+func recipientOccurrences(msg Message) []string {
+	var ids []string
+	if msg.Annotations != nil {
+		_ = json.Unmarshal([]byte(msg.Annotations[recipientOccurrencesAnnotation]), &ids)
+	}
+	if len(ids) != len(msg.To) {
+		ids = make([]string, len(msg.To))
+		for i := range ids {
+			ids[i] = fmt.Sprintf("%s:%d", msg.ID, i)
+		}
+	}
+	return ids
+}
+
+func occurrenceList(recipients []dsnRecipient) string {
+	parts := make([]string, len(recipients))
+	for i := range recipients {
+		parts[i] = recipients[i].Occurrence
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func notifyNeverForOccurrence(annotations map[string]string, recipient dsnRecipient) bool {
+	value, ok := annotations["dsn_notify_occurrence:"+recipient.Occurrence]
+	if !ok {
+		value = annotations["dsn_notify:"+recipient.Address]
+	}
+	for _, token := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(token), "NEVER") {
+			return true
+		}
+	}
+	return false
+}
+
+func dsnAnnotationsForRecipients(src map[string]string, recipients []dsnRecipient) map[string]string {
+	out := make(map[string]string)
+	allowed := make(map[string]bool, len(recipients))
+	for _, r := range recipients {
+		allowed[r.Address] = true
+	}
+	for key, value := range src {
+		if strings.HasPrefix(key, "dsn_notify:") {
+			if allowed[strings.TrimPrefix(key, "dsn_notify:")] {
+				out[key] = value
+			}
+			continue
+		}
+		if strings.HasPrefix(key, "dsn_orcpt:") {
+			if allowed[strings.TrimPrefix(key, "dsn_orcpt:")] {
+				out[key] = value
+			}
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func validateDSNHandoff(msg Message, h dsnHandoff) error {
+	if strings.TrimSpace(h.ID) == "" {
+		return errors.New("missing handoff ID")
+	}
+	if h.State != "pending" && h.State != "complete" {
+		return fmt.Errorf("unknown handoff state %q", h.State)
+	}
+	if len(h.Permanent) == 0 {
+		return errors.New("empty permanent occurrence set")
+	}
+	seen := make(map[string]bool)
+	expectedIDs := recipientOccurrences(msg)
+	expected := make(map[string]string, len(expectedIDs))
+	for i, id := range expectedIDs {
+		expected[id] = msg.To[i]
+	}
+	for _, set := range [][]dsnRecipient{h.Permanent, h.Temporary, h.Delivered} {
+		for _, r := range set {
+			if strings.TrimSpace(r.Occurrence) == "" || strings.TrimSpace(r.Address) == "" || seen[r.Occurrence] {
+				return errors.New("malformed or duplicate recipient occurrence")
+			}
+			if address, ok := expected[r.Occurrence]; !ok || address != r.Address {
+				return fmt.Errorf("recipient occurrence %q is not bound to current envelope", r.Occurrence)
+			}
+			seen[r.Occurrence] = true
+		}
+	}
+	if len(seen) != len(expected) {
+		return errors.New("handoff sets do not partition current envelope")
+	}
+	sum := sha256.Sum256([]byte(msg.ID + "\x00" + occurrenceList(h.Permanent)))
+	if h.ID != "dsn-"+hex.EncodeToString(sum[:16]) {
+		return errors.New("handoff ID does not match permanent occurrence set")
+	}
+	return nil
+}
+
+func (p *Processor) quarantineInvalidDSNHandoff(msg Message, err error) {
+	p.logger.Error("invalid DSN handoff annotation", "event_type", "dsn_handoff_corrupt", "message_id", msg.ID, "error", err)
+	if moveErr := p.manager.MoveMessage(msg.ID, Hold, "invalid DSN handoff: "+err.Error()); moveErr != nil {
+		p.logger.Error("failed to quarantine invalid DSN handoff", "event_type", "dsn_handoff_quarantine_failed", "message_id", msg.ID, "error", moveErr)
+	}
+}
+
+func (p *Processor) generateBounce(msg Message, reason, id string) *BounceResult {
+	if engine, ok := p.bounceEngine.(idempotentBounceEngine); ok {
+		return engine.GenerateBounceIdempotent(p.ctx, msg, reason, id)
+	}
+	return p.bounceEngine.GenerateBounceIfNeeded(p.ctx, msg, reason)
+}
+
+func (p *Processor) resumeDSNHandoff(msg Message, startTime time.Time) bool {
+	if msg.Annotations == nil || msg.Annotations[dsnHandoffAnnotation] == "" {
+		return false
+	}
+	var h dsnHandoff
+	if err := json.Unmarshal([]byte(msg.Annotations[dsnHandoffAnnotation]), &h); err != nil {
+		p.quarantineInvalidDSNHandoff(msg, fmt.Errorf("invalid JSON: %w", err))
+		return true
+	}
+	if err := validateDSNHandoff(msg, h); err != nil {
+		p.quarantineInvalidDSNHandoff(msg, err)
+		return true
+	}
+	if h.State == "pending" {
+		failed := msg
+		failed.To = make([]string, len(h.Permanent))
+		failed.Annotations = dsnAnnotationsForRecipients(msg.Annotations, h.Permanent)
+		reason := "permanent recipient delivery failure"
+		for i := range h.Permanent {
+			failed.To[i] = h.Permanent[i].Address
+			if i == 0 && h.Permanent[i].Diagnostic != "" {
+				reason = h.Permanent[i].Diagnostic
+			}
+		}
+		result := p.generateBounce(failed, reason, h.ID)
+		if result == nil || result.Error != nil {
+			return true
+		}
+		h.State = "complete"
+		encoded, _ := json.Marshal(h)
+		msg.Annotations[dsnHandoffAnnotation] = string(encoded)
+		if err := p.manager.storageBackend.Update(msg); err != nil {
+			p.logger.Error("DSN resume completion marker update failed", "event_type", "dsn_handoff_resume_update_failed", "message_id", msg.ID, "error", err, "duplicate_risk", true)
+			return true
+		}
+	}
+	result := &DeliveryResult{DeliveryTime: time.Now()}
+	delivered := make([]string, len(h.Delivered))
+	for i := range h.Delivered {
+		delivered[i] = h.Delivered[i].Address
+	}
+	p.observePartial(msg, result, delivered, len(h.Temporary), len(h.Permanent))
+	if len(h.Temporary) == 0 {
+		p.finalizeNoTemporary(msg, len(h.Permanent))
+		return true
+	}
+	msg.To = make([]string, len(h.Temporary))
+	ids := make([]string, len(h.Temporary))
+	for i := range h.Temporary {
+		msg.To[i], ids[i] = h.Temporary[i].Address, h.Temporary[i].Occurrence
+	}
+	encoded, _ := json.Marshal(ids)
+	msg.Annotations[recipientOccurrencesAnnotation] = string(encoded)
+	delete(msg.Annotations, dsnHandoffAnnotation)
+	if err := p.manager.storageBackend.Update(msg); err != nil {
+		p.logger.Error("DSN resume recipient reduction update failed", "event_type", "dsn_handoff_resume_update_failed", "message_id", msg.ID, "error", err, "duplicate_risk", true)
+		return true
+	}
+	p.handleDeliveryFailure(msg, errors.New("temporary recipient delivery failure"), startTime)
+	return true
+}
+
+func (p *Processor) observePartial(msg Message, result *DeliveryResult, delivered []string, temporary, permanent int) {
+	if len(delivered) == 0 {
+		return
+	}
+	p.msgLogger.LogDelivery(logging.MessageContext{MessageID: msg.ID, QueueID: msg.ID, From: msg.From, To: delivered, Subject: msg.Subject, Size: msg.Size, ReceptionTime: msg.ReceivedAt, ProcessingTime: msg.CreatedAt, DeliveryTime: result.DeliveryTime, DeliveryIP: result.DeliveryIP, DeliveryHost: result.DeliveryHost, RetryCount: msg.RetryCount, DeliveryMethod: "lmtp"})
+	if err := p.manager.AddAttempt(msg.ID, "partial", fmt.Sprintf("delivered=%d temporary=%d permanent=%d", len(delivered), temporary, permanent)); err != nil {
+		p.logger.Debug("Could not record partial delivery attempt", "message_id", msg.ID, "error", err)
+	}
+}
+
+func (p *Processor) finalizeNoTemporary(msg Message, permanent int) {
+	p.metricsLock.Lock()
+	if permanent > 0 {
+		p.failedCount++
+	} else {
+		p.deliveredCount++
+	}
+	p.metricsLock.Unlock()
+	if permanent > 0 {
+		p.recordMetric(func(r MetricsRecorder) error { return r.IncrFailed(p.ctx) })
+	} else {
+		p.recordMetric(func(r MetricsRecorder) error { return r.IncrDelivered(p.ctx) })
+	}
+	if err := p.manager.DeleteMessage(msg.ID); err != nil {
+		p.logger.Error("Failed to finalize recipient delivery outcomes", "message_id", msg.ID, "error", err)
+	}
 }
 
 // handleDeliverySuccess processes a successful message delivery

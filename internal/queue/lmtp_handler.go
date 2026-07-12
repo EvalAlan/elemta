@@ -3,6 +3,7 @@ package queue
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -182,45 +183,56 @@ func (h *LMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 	h.logger.Debug("Sending MAIL FROM", "raw_from", msg.From, "cleaned_sender", sender)
 	mailFromResp, err := sendCommand(fmt.Sprintf("MAIL FROM:<%s>\r\n", sender))
 	if err != nil {
-		return nil, fmt.Errorf("MAIL FROM failed: %w", err)
+		return lmtpPreFinalFailure(msg, addr, "MAIL FROM failed: "+err.Error(), RecipientTemporaryFailure)
 	}
 	if !strings.HasPrefix(mailFromResp, "250 ") {
-		return nil, fmt.Errorf("server rejected sender: %s", mailFromResp)
+		return lmtpPreFinalFailure(msg, addr, mailFromResp, statusForResponse(mailFromResp))
 	}
 
 	// Send RCPT TO for each recipient
 	var acceptedRecipients []string
+	var acceptedIndexes []int
 	var failedRecipients []string
+	outcomes := make([]RecipientOutcome, len(msg.To))
 
-	for _, recipient := range msg.To {
+	for i, recipient := range msg.To {
+		outcomes[i] = RecipientOutcome{Recipient: recipient, Route: addr}
 		rcptResp, err := sendCommand(fmt.Sprintf("RCPT TO:<%s>\r\n", recipient))
 		if err != nil {
 			h.logger.Error("RCPT TO command failed", "recipient", recipient, "error", err)
 			failedRecipients = append(failedRecipients, recipient)
+			outcomes[i].Status, outcomes[i].Diagnostic = RecipientTemporaryFailure, err.Error()
 			continue
 		}
 
 		if strings.HasPrefix(rcptResp, "250 ") {
 			acceptedRecipients = append(acceptedRecipients, recipient)
+			acceptedIndexes = append(acceptedIndexes, i)
 			h.logger.Debug("Recipient accepted", "recipient", recipient)
 		} else {
 			h.logger.Error("Recipient rejected", "recipient", recipient, "response", rcptResp)
 			failedRecipients = append(failedRecipients, recipient)
+			status := RecipientTemporaryFailure
+			if strings.HasPrefix(rcptResp, "5") {
+				status = RecipientPermanentFailure
+			}
+			outcomes[i].Status, outcomes[i].EnhancedStatusCode, outcomes[i].Diagnostic = status, enhancedStatus(rcptResp), rcptResp
 		}
 	}
 
 	// Check if any recipients were accepted
 	if len(acceptedRecipients) == 0 {
-		return nil, fmt.Errorf("all recipients rejected: %v", failedRecipients)
+		err := fmt.Errorf("all recipients rejected: %v", failedRecipients)
+		return &DeliveryResult{RecipientOutcomes: outcomes, Error: err, DeliveryTime: time.Now()}, err
 	}
 
 	// Send DATA
 	dataResp, err := sendCommand("DATA\r\n")
 	if err != nil {
-		return nil, fmt.Errorf("DATA command failed: %w", err)
+		return lmtpOutcomesFailure(msg, addr, outcomes, acceptedRecipients, err.Error(), RecipientTemporaryFailure)
 	}
 	if !strings.HasPrefix(dataResp, "354 ") {
-		return nil, fmt.Errorf("server rejected DATA command: %s", dataResp)
+		return lmtpOutcomesFailure(msg, addr, outcomes, acceptedRecipients, dataResp, statusForResponse(dataResp))
 	}
 
 	// Send message content
@@ -239,19 +251,28 @@ func (h *LMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 
 	// Read response for each accepted recipient (LMTP returns per-recipient responses)
 	deliveredCount := 0
-	for range acceptedRecipients {
+	for acceptedPosition, recipient := range acceptedRecipients {
+		outcomeIndex := acceptedIndexes[acceptedPosition]
 		resp, err := reader.ReadString('\n')
 		if err != nil {
-			return nil, fmt.Errorf("failed to read delivery response: %w", err)
+			outcomes[outcomeIndex].Status, outcomes[outcomeIndex].Diagnostic = RecipientTemporaryFailure, err.Error()
+			continue
 		}
 		resp = strings.TrimSpace(resp)
 		h.logger.Debug("Delivery response", "response", resp)
 
-		if strings.HasPrefix(resp, "250 ") {
+		status := RecipientTemporaryFailure
+		if strings.HasPrefix(resp, "2") {
+			status = RecipientDelivered
 			deliveredCount++
 		} else {
-			h.logger.Error("Delivery failed for recipient", "response", resp)
+			if strings.HasPrefix(resp, "5") {
+				status = RecipientPermanentFailure
+			}
+			failedRecipients = append(failedRecipients, recipient)
+			h.logger.Error("Delivery failed for recipient", "recipient", recipient, "response", resp)
 		}
+		outcomes[outcomeIndex].Status, outcomes[outcomeIndex].EnhancedStatusCode, outcomes[outcomeIndex].Diagnostic = status, enhancedStatus(resp), resp
 	}
 
 	// Send QUIT
@@ -264,7 +285,14 @@ func (h *LMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 
 	// Check delivery success
 	if deliveredCount == 0 {
-		return nil, fmt.Errorf("delivery failed for all accepted recipients")
+		deliveryErr := fmt.Errorf("delivery failed for all accepted recipients")
+		return &DeliveryResult{
+			Success:           false,
+			Error:             deliveryErr,
+			DeliveryTime:      time.Now(),
+			ResponseMessage:   "Delivered to 0 recipients",
+			RecipientOutcomes: outcomes,
+		}, deliveryErr
 	} else if deliveredCount < len(acceptedRecipients) {
 		h.logger.Warn("Partial delivery success",
 			"delivered", deliveredCount,
@@ -293,11 +321,12 @@ func (h *LMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 
 	// Create delivery result
 	result := &DeliveryResult{
-		Success:         deliveredCount > 0,
-		DeliveryIP:      deliveryIP,
-		DeliveryHost:    deliveryHost,
-		DeliveryTime:    time.Now(),
-		ResponseMessage: fmt.Sprintf("Delivered to %d/%d recipients", deliveredCount, len(msg.To)),
+		Success:           deliveredCount > 0,
+		DeliveryIP:        deliveryIP,
+		DeliveryHost:      deliveryHost,
+		DeliveryTime:      time.Now(),
+		ResponseMessage:   fmt.Sprintf("Delivered to %d/%d recipients", deliveredCount, len(msg.To)),
+		RecipientOutcomes: outcomes,
 	}
 
 	// Return error if some recipients failed but we had partial success
@@ -308,6 +337,66 @@ func (h *LMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 	}
 
 	return result, nil
+}
+
+func enhancedStatus(response string) string {
+	fields := strings.Fields(response)
+	for _, field := range fields[1:] {
+		parts := strings.Split(field, ".")
+		if len(parts) == 3 && (parts[0] == "2" || parts[0] == "4" || parts[0] == "5") && allDigits(parts[1]) && allDigits(parts[2]) {
+			return field
+		}
+	}
+	return ""
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func statusForResponse(response string) RecipientDeliveryStatus {
+	if strings.HasPrefix(strings.TrimSpace(response), "5") {
+		return RecipientPermanentFailure
+	}
+	return RecipientTemporaryFailure
+}
+
+func lmtpPreFinalFailure(msg Message, route, diagnostic string, status RecipientDeliveryStatus) (*DeliveryResult, error) {
+	return lmtpOutcomesFailure(msg, route, nil, msg.To, diagnostic, status)
+}
+
+func lmtpOutcomesFailure(msg Message, route string, prior []RecipientOutcome, pending []string, diagnostic string, status RecipientDeliveryStatus) (*DeliveryResult, error) {
+	outcomes := append([]RecipientOutcome(nil), prior...)
+	if len(outcomes) == 0 {
+		outcomes = make([]RecipientOutcome, len(pending))
+		for i, recipient := range pending {
+			outcomes[i] = RecipientOutcome{Recipient: recipient, Status: status, EnhancedStatusCode: enhancedStatus(diagnostic), Diagnostic: diagnostic, Route: route}
+		}
+	} else {
+		// Accepted recipients already have occurrence slots. Resolve those slots
+		// rather than appending duplicates and leaving zero-status placeholders.
+		for _, recipient := range pending {
+			for i := range outcomes {
+				if outcomes[i].Recipient == recipient && outcomes[i].Status == "" {
+					outcomes[i].Status = status
+					outcomes[i].EnhancedStatusCode = enhancedStatus(diagnostic)
+					outcomes[i].Diagnostic = diagnostic
+					outcomes[i].Route = route
+					break
+				}
+			}
+		}
+	}
+	err := errors.New(diagnostic)
+	return &DeliveryResult{Error: err, DeliveryTime: time.Now(), RecipientOutcomes: outcomes}, err
 }
 
 // domainLimiter implements a simple in-memory per-domain in-flight limiter

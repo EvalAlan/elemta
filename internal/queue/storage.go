@@ -1,10 +1,12 @@
 package queue
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -32,8 +34,156 @@ func validateQueueType(q QueueType) error {
 
 type FileStorageBackend struct{ queueDir string }
 
+type enqueueTombstone struct {
+	Message Message `json:"message"`
+	Content []byte  `json:"content"`
+}
+
 func NewFileStorageBackend(queueDir string) *FileStorageBackend {
 	return &FileStorageBackend{queueDir: queueDir}
+}
+
+func sameEnqueueMessage(a, b Message) bool {
+	// Queue placement and delivery bookkeeping are mutable after enqueue. These
+	// are the immutable caller-supplied identity fields.
+	if a.ID != b.ID || a.From != b.From || a.Domain != b.Domain || a.Subject != b.Subject || a.Size != b.Size || a.Priority != b.Priority || !a.ReceivedAt.Equal(b.ReceivedAt) || len(a.To) != len(b.To) {
+		return false
+	}
+	for i := range a.To {
+		if a.To[i] != b.To[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// CreateMessageIfAbsent uses mkdir as a cross-process per-ID claim. Content is
+// published first; a crash can leave content-only data, which retry verifies and
+// completes. Metadata-only entries from older writers are safely repaired.
+func (fs *FileStorageBackend) CreateMessageIfAbsent(msg Message, content []byte) (bool, error) {
+	if err := validateMessageID(msg.ID); err != nil {
+		return false, err
+	}
+	if err := fs.EnsureDirectories(); err != nil {
+		return false, err
+	}
+	lock, err := acquireEnqueueLock(filepath.Join(fs.queueDir, "tmp", ".enqueue-"+msg.ID))
+	if err != nil {
+		return false, fmt.Errorf("claim enqueue ID: %w", err)
+	}
+	defer lock()
+	if raw, readErr := os.ReadFile(filepath.Join(fs.queueDir, "tmp", ".consumed-"+msg.ID+".json")); readErr == nil {
+		var tomb enqueueTombstone
+		if json.Unmarshal(raw, &tomb) != nil || !sameEnqueueMessage(tomb.Message, msg) || !bytes.Equal(tomb.Content, content) {
+			return false, fmt.Errorf("message ID %q conflicts with consumed enqueue identity", msg.ID)
+		}
+		return false, nil
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return false, fmt.Errorf("read enqueue tombstone: %w", readErr)
+	}
+	existing, metaErr := fs.Retrieve(msg.ID)
+	existingContent, contentErr := fs.RetrieveContent(msg.ID)
+	if metaErr == nil {
+		if !sameEnqueueMessage(existing, msg) {
+			return false, fmt.Errorf("message ID %q conflicts with existing metadata", msg.ID)
+		}
+		if contentErr == nil {
+			if !bytes.Equal(existingContent, content) {
+				return false, fmt.Errorf("message ID %q conflicts with existing content", msg.ID)
+			}
+			return false, nil
+		}
+		if err := fs.StoreContent(msg.ID, content); err != nil {
+			return false, fmt.Errorf("repair missing content: %w", err)
+		}
+		return false, nil
+	}
+	if contentErr == nil && !bytes.Equal(existingContent, content) {
+		return false, fmt.Errorf("message ID %q has conflicting orphan content", msg.ID)
+	}
+	if contentErr != nil {
+		if err := fs.StoreContent(msg.ID, content); err != nil {
+			return false, err
+		}
+	}
+	if err := fs.Store(msg); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RecordEnqueueTombstone is called before deletion, under the same stable per-ID
+// lock used by enqueue, so a retry observes either the live entry or its ledger.
+func (fs *FileStorageBackend) RecordEnqueueTombstone(msg Message, content []byte) error {
+	if err := fs.EnsureDirectories(); err != nil {
+		return err
+	}
+	release, err := acquireEnqueueLock(filepath.Join(fs.queueDir, "tmp", ".enqueue-"+msg.ID))
+	if err != nil {
+		return err
+	}
+	defer release()
+	return fs.recordEnqueueTombstoneLocked(msg, content)
+}
+
+func (fs *FileStorageBackend) recordEnqueueTombstoneLocked(msg Message, content []byte) error {
+	payload, err := json.Marshal(enqueueTombstone{Message: msg, Content: content})
+	if err != nil {
+		return err
+	}
+	root, err := openRoot(fs.queueDir, false)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	dir, err := openChildDir(root, "tmp", false)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := atomicWriteAt(dir, ".consumed-"+msg.ID+".json", payload, 0600); err != nil {
+		return fmt.Errorf("publish enqueue tombstone: %w", err)
+	}
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("sync tombstone directory: %w", err)
+	}
+	return nil
+}
+
+func (fs *FileStorageBackend) tombstoneFor(id string) (*enqueueTombstone, error) {
+	raw, err := os.ReadFile(filepath.Join(fs.queueDir, "tmp", ".consumed-"+id+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read enqueue tombstone: %w", err)
+	}
+	var tomb enqueueTombstone
+	if err := json.Unmarshal(raw, &tomb); err != nil || tomb.Message.ID != id {
+		return nil, fmt.Errorf("corrupt enqueue tombstone for %q", id)
+	}
+	return &tomb, nil
+}
+
+func (fs *FileStorageBackend) suppressConsumed(msg Message) error {
+	tomb, err := fs.tombstoneFor(msg.ID)
+	if err != nil {
+		return err
+	}
+	if tomb == nil {
+		return nil
+	}
+	if !sameEnqueueMessage(tomb.Message, msg) {
+		return fmt.Errorf("live message %q conflicts with consumed enqueue identity", msg.ID)
+	}
+	content, contentErr := fs.RetrieveContent(msg.ID)
+	if contentErr == nil && !bytes.Equal(tomb.Content, content) {
+		return fmt.Errorf("live message %q conflicts with consumed enqueue content", msg.ID)
+	}
+	if contentErr != nil && !errors.Is(contentErr, os.ErrNotExist) && !strings.Contains(contentErr.Error(), "no such file") {
+		return fmt.Errorf("verify consumed message %q content: %w", msg.ID, contentErr)
+	}
+	return fmt.Errorf("message not found: %s (consumed)", msg.ID)
 }
 
 func messageName(id string) (string, error) {
@@ -152,6 +302,9 @@ func (fs *FileStorageBackend) Retrieve(id string) (Message, error) {
 		if e != nil {
 			return Message{}, fmt.Errorf("failed to read message file: %w", e)
 		}
+		if e := fs.suppressConsumed(msg); e != nil {
+			return Message{}, e
+		}
 		return msg, nil
 	}
 	return Message{}, fmt.Errorf("message not found: %s", id)
@@ -177,6 +330,9 @@ func (fs *FileStorageBackend) deleteInQueue(root *os.File, q QueueType, id strin
 	defer dir.Close()
 	if err := deleteAt(dir, name, false); err != nil {
 		return fmt.Errorf("failed to delete message file: %w", err)
+	}
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("failed to sync queue directory: %w", err)
 	}
 	return nil
 }
@@ -253,7 +409,22 @@ func (fs *FileStorageBackend) List(q QueueType) ([]Message, error) {
 		return nil, err
 	}
 	defer dir.Close()
-	return listAt(dir, q)
+	messages, err := listAt(dir, q)
+	if err != nil {
+		return nil, err
+	}
+	visible := messages[:0]
+	for _, msg := range messages {
+		err := fs.suppressConsumed(msg)
+		if err == nil {
+			visible = append(visible, msg)
+			continue
+		}
+		if strings.Contains(err.Error(), "conflicts") || strings.Contains(err.Error(), "corrupt") {
+			return nil, err
+		}
+	}
+	return visible, nil
 }
 func (fs *FileStorageBackend) Count(q QueueType) (int, error) {
 	m, err := fs.List(q)
@@ -400,7 +571,30 @@ func (fs *FileStorageBackend) DeleteContent(id string) error {
 	if err := deleteAt(dir, id, true); err != nil {
 		return fmt.Errorf("failed to delete content file: %w", err)
 	}
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("failed to sync content directory: %w", err)
+	}
 	return nil
+}
+
+// DeleteMessageWithTombstone enforces the crash ordering: durable tombstone,
+// metadata unlink+directory sync, then content unlink+directory sync.
+func (fs *FileStorageBackend) DeleteMessageWithTombstone(msg Message, content []byte) error {
+	if err := fs.EnsureDirectories(); err != nil {
+		return err
+	}
+	release, err := acquireEnqueueLock(filepath.Join(fs.queueDir, "tmp", ".enqueue-"+msg.ID))
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := fs.recordEnqueueTombstoneLocked(msg, content); err != nil {
+		return err
+	}
+	if err := fs.Delete(msg.ID); err != nil && !strings.Contains(err.Error(), "message not found") {
+		return err
+	}
+	return fs.DeleteContent(msg.ID)
 }
 
 func (fs *FileStorageBackend) Cleanup(hours int) (int, error) {

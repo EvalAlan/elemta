@@ -27,6 +27,7 @@ type IndexedFSStorageBackend struct {
 	cfg       IndexedFSConfig
 	indexPath string
 	indexFile string
+	indexLock string
 	mu        sync.Mutex
 }
 
@@ -49,6 +50,7 @@ func NewIndexedFSStorageBackend(queueDir string, cfg IndexedFSConfig) (*IndexedF
 		cfg:                cfg,
 		indexPath:          indexPath,
 		indexFile:          filepath.Join(indexPath, "messages.json"),
+		indexLock:          filepath.Join(indexPath, ".messages.lock"),
 	}
 	if cfg.RecoveryOnStartup {
 		if err := b.rebuildIndexFromDisk(); err != nil {
@@ -74,6 +76,30 @@ func (b *IndexedFSStorageBackend) Store(msg Message) error {
 	})
 }
 
+func (b *IndexedFSStorageBackend) CreateMessageIfAbsent(msg Message, content []byte) (bool, error) {
+	created, err := b.FileStorageBackend.CreateMessageIfAbsent(msg, content)
+	if err != nil {
+		return false, err
+	}
+	// A matching consumed tombstone is a successful idempotent no-op, not a
+	// live index entry. This also repairs an index left behind by a crash.
+	if _, liveErr := b.FileStorageBackend.Retrieve(msg.ID); liveErr != nil {
+		if tomb, tombErr := b.tombstoneFor(msg.ID); tombErr != nil {
+			return false, tombErr
+		} else if tomb != nil {
+			if err := b.updateIndex(func(s *indexedFSIndexState) { delete(s.Messages, msg.ID) }); err != nil {
+				return false, err
+			}
+			return false, nil
+		}
+		return false, liveErr
+	}
+	if err := b.updateIndex(func(s *indexedFSIndexState) { s.Messages[msg.ID] = indexedFSIndexEntry{QueueType: msg.QueueType} }); err != nil {
+		return false, err
+	}
+	return created, nil
+}
+
 func (b *IndexedFSStorageBackend) Update(msg Message) error {
 	if err := b.FileStorageBackend.Update(msg); err != nil {
 		return err
@@ -89,6 +115,18 @@ func (b *IndexedFSStorageBackend) Delete(id string) error {
 	}
 	return b.updateIndex(func(s *indexedFSIndexState) {
 		delete(s.Messages, id)
+	})
+}
+
+// DeleteMessageWithTombstone leaves index removal until the tombstone and both
+// queue unlinks are durable. A crash before this final index rewrite is healed
+// because indexed retrieval suppresses the tombstoned live/stale entry.
+func (b *IndexedFSStorageBackend) DeleteMessageWithTombstone(msg Message, content []byte) error {
+	if err := b.FileStorageBackend.DeleteMessageWithTombstone(msg, content); err != nil {
+		return err
+	}
+	return b.updateIndex(func(s *indexedFSIndexState) {
+		delete(s.Messages, msg.ID)
 	})
 }
 
@@ -226,18 +264,14 @@ func (b *IndexedFSStorageBackend) List(queueType QueueType) ([]Message, error) {
 // if corruption or divergence is detected. Returns nil if the index is healthy
 // or was successfully repaired.
 func (b *IndexedFSStorageBackend) ValidateIndexIntegrity() error {
-	state, err := b.readIndexUnlocked()
+	state, err := b.loadIndexSnapshot()
 	if err != nil {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		return b.rebuildIndexFromDiskUnlocked()
+		return b.rebuildIndexFromDisk()
 	}
 
 	// Check 1: checksum validation (detects truncated/garbage writes)
 	if !b.verifyChecksum(state) {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		return b.rebuildIndexFromDiskUnlocked()
+		return b.rebuildIndexFromDisk()
 	}
 
 	// Check 2: disk divergence — verify every indexed entry has a file
@@ -268,6 +302,11 @@ func (b *IndexedFSStorageBackend) ValidateIndexIntegrity() error {
 func (b *IndexedFSStorageBackend) Maintenance() (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	release, err := acquireEnqueueLock(b.indexLock)
+	if err != nil {
+		return 0, fmt.Errorf("lock index: %w", err)
+	}
+	defer release()
 
 	state, err := b.readIndexUnlocked()
 	if err != nil {
@@ -331,6 +370,11 @@ func (b *IndexedFSStorageBackend) verifyChecksum(state indexedFSIndexState) bool
 func (b *IndexedFSStorageBackend) ensureIndexFile() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	release, err := acquireEnqueueLock(b.indexLock)
+	if err != nil {
+		return fmt.Errorf("lock index: %w", err)
+	}
+	defer release()
 	if _, err := os.Stat(b.indexFile); err == nil {
 		return nil
 	}
@@ -341,6 +385,11 @@ func (b *IndexedFSStorageBackend) ensureIndexFile() error {
 func (b *IndexedFSStorageBackend) updateIndex(mut func(*indexedFSIndexState)) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	release, err := acquireEnqueueLock(b.indexLock)
+	if err != nil {
+		return fmt.Errorf("lock index: %w", err)
+	}
+	defer release()
 	state, err := b.readIndexUnlocked()
 	if err != nil {
 		return err
@@ -352,6 +401,11 @@ func (b *IndexedFSStorageBackend) updateIndex(mut func(*indexedFSIndexState)) er
 func (b *IndexedFSStorageBackend) loadIndexSnapshot() (indexedFSIndexState, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	release, err := acquireEnqueueLock(b.indexLock)
+	if err != nil {
+		return indexedFSIndexState{}, fmt.Errorf("lock index: %w", err)
+	}
+	defer release()
 	return b.readIndexUnlocked()
 }
 
@@ -414,12 +468,25 @@ func (b *IndexedFSStorageBackend) writeIndexUnlocked(state indexedFSIndexState) 
 	if err := os.Rename(tmpName, b.indexFile); err != nil {
 		return fmt.Errorf("rename index: %w", err)
 	}
+	dir, err := os.Open(b.indexPath)
+	if err != nil {
+		return fmt.Errorf("open index directory: %w", err)
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("sync index directory: %w", err)
+	}
 	return nil
 }
 
 func (b *IndexedFSStorageBackend) rebuildIndexFromDisk() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	release, err := acquireEnqueueLock(b.indexLock)
+	if err != nil {
+		return fmt.Errorf("lock index: %w", err)
+	}
+	defer release()
 	return b.rebuildIndexFromDiskUnlocked()
 }
 

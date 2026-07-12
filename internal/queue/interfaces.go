@@ -112,6 +112,21 @@ type StorageBackend interface {
 	Cleanup(retentionHours int) (int, error)
 }
 
+// AtomicEnqueueStorage creates a complete metadata/content pair or verifies an
+// existing pair. Implementations must serialize by ID across backend clients.
+type AtomicEnqueueStorage interface {
+	CreateMessageIfAbsent(msg Message, content []byte) (created bool, err error)
+}
+
+// IdempotencyLedgerStorage durably records an enqueue identity before deletion.
+type IdempotencyLedgerStorage interface {
+	RecordEnqueueTombstone(msg Message, content []byte) error
+}
+
+type AtomicTombstoneDeleteStorage interface {
+	DeleteMessageWithTombstone(msg Message, content []byte) error
+}
+
 // DeliveryBackend defines the interface for delivery implementations
 type DeliveryBackend interface {
 	// Delivery operations

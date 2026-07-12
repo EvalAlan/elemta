@@ -61,6 +61,15 @@ type BounceResult = queue.BounceResult
 // Returns nil if no bounce was needed (e.g., DSN not requested or NOTIFY=NEVER).
 // Returns a BounceResult with the bounce ID if a bounce was successfully queued.
 func (be *BounceEngine) GenerateBounceIfNeeded(ctx context.Context, msg queue.Message, failureReason string) *BounceResult {
+	return be.generateBounce(ctx, msg, failureReason, "")
+}
+
+// GenerateBounceIdempotent uses a stable queue ID to close the enqueue/marker crash gap.
+func (be *BounceEngine) GenerateBounceIdempotent(ctx context.Context, msg queue.Message, failureReason, handoffID string) *BounceResult {
+	return be.generateBounce(ctx, msg, failureReason, handoffID)
+}
+
+func (be *BounceEngine) generateBounce(ctx context.Context, msg queue.Message, failureReason, handoffID string) *BounceResult {
 	// Check if DSN annotations exist on the message
 	if len(msg.Annotations) == 0 {
 		return &BounceResult{BounceGenerated: false}
@@ -82,7 +91,14 @@ func (be *BounceEngine) GenerateBounceIfNeeded(ctx context.Context, msg queue.Me
 	}
 
 	// Generate the bounce message
-	bounceContent, err := be.buildDSNBounce(msg, failureReason)
+	bounceTime := time.Now()
+	if handoffID != "" {
+		bounceTime = msg.UpdatedAt
+		if bounceTime.IsZero() {
+			bounceTime = msg.CreatedAt
+		}
+	}
+	bounceContent, err := be.buildDSNBounceAt(msg, failureReason, bounceTime)
 	if err != nil {
 		be.logger.ErrorContext(ctx, "Failed to build DSN bounce",
 			"message_id", msg.ID,
@@ -93,14 +109,29 @@ func (be *BounceEngine) GenerateBounceIfNeeded(ctx context.Context, msg queue.Me
 
 	// Queue the bounce message
 	// Bounces go to the original sender (msg.From) from the postmaster
-	bounceID, err := be.queueManager.EnqueueMessage(
-		"postmaster@"+be.hostname,
-		[]string{msg.From},
-		"Delivery Status Notification (Failure)",
-		bounceContent,
-		queue.PriorityHigh,
-		time.Now(),
-	)
+	var bounceID string
+	if handoffID != "" {
+		if manager, ok := be.queueManager.(interface {
+			EnqueueMessageWithID(string, string, []string, string, []byte, queue.Priority, time.Time) (string, error)
+		}); ok {
+			receivedAt := time.Now()
+			if handoffID != "" {
+				receivedAt = bounceTime
+			}
+			bounceID, err = manager.EnqueueMessageWithID(handoffID, "postmaster@"+be.hostname, []string{msg.From}, "Delivery Status Notification (Failure)", bounceContent, queue.PriorityHigh, receivedAt)
+		} else {
+			err = fmt.Errorf("queue manager does not support idempotent enqueue")
+		}
+	} else {
+		bounceID, err = be.queueManager.EnqueueMessage(
+			"postmaster@"+be.hostname,
+			[]string{msg.From},
+			"Delivery Status Notification (Failure)",
+			bounceContent,
+			queue.PriorityHigh,
+			time.Now(),
+		)
+	}
 	if err != nil {
 		be.logger.ErrorContext(ctx, "Failed to queue bounce message",
 			"message_id", msg.ID,
@@ -149,7 +180,13 @@ func (be *BounceEngine) hasNotifyNever(msg queue.Message) bool {
 
 // buildDSNBounce constructs an RFC 3462 compliant DSN bounce message
 func (be *BounceEngine) buildDSNBounce(msg queue.Message, failureReason string) ([]byte, error) {
-	now := time.Now()
+	return be.buildDSNBounceAt(msg, failureReason, time.Now())
+}
+
+func (be *BounceEngine) buildDSNBounceAt(msg queue.Message, failureReason string, now time.Time) ([]byte, error) {
+	if now.IsZero() {
+		now = time.Unix(0, 0).UTC()
+	}
 	boundary := fmt.Sprintf("elemta-boundary-%d", now.UnixNano())
 	messageID := fmt.Sprintf("<bounce-%s@%s>", msg.ID, be.hostname)
 
