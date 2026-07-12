@@ -1,6 +1,9 @@
 package queue
 
 import (
+	"database/sql"
+	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 )
@@ -75,5 +78,141 @@ func TestSQLiteStorageBackend_BasicLifecycle(t *testing.T) {
 
 	if _, err := backend.Retrieve(msg.ID); err == nil {
 		t.Fatalf("expected retrieve after delete to fail")
+	}
+}
+
+func sqliteEnqueueMessage(id string) Message {
+	return Message{ID: id, QueueType: Active, From: "a@example.test", To: []string{"b@example.test"}, Domain: "example.test", Subject: "subject", Size: 4, Priority: PriorityHigh, ReceivedAt: time.Unix(10, 0).UTC(), CreatedAt: time.Unix(20, 0).UTC(), UpdatedAt: time.Unix(20, 0).UTC()}
+}
+
+func TestSQLiteAtomicEnqueueRepairsInterruptedPairs(t *testing.T) {
+	b, err := NewSQLiteStorageBackend(t.TempDir()+"/queue.db", 5000, "WAL", "NORMAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.db.Close()
+	metaOnly := sqliteEnqueueMessage("meta-only")
+	if err := b.Store(metaOnly); err != nil {
+		t.Fatal(err)
+	}
+	created, err := b.CreateMessageIfAbsent(metaOnly, []byte("body"))
+	if err != nil || created {
+		t.Fatalf("metadata repair: created=%v err=%v", created, err)
+	}
+	if got, err := b.RetrieveContent(metaOnly.ID); err != nil || string(got) != "body" {
+		t.Fatalf("content=%q err=%v", got, err)
+	}
+	contentOnly := sqliteEnqueueMessage("content-only")
+	if err := b.StoreContent(contentOnly.ID, []byte("body")); err != nil {
+		t.Fatal(err)
+	}
+	created, err = b.CreateMessageIfAbsent(contentOnly, []byte("body"))
+	if err != nil || !created {
+		t.Fatalf("content repair: created=%v err=%v", created, err)
+	}
+	conflict := sqliteEnqueueMessage("conflict-orphan")
+	if err := b.StoreContent(conflict.ID, []byte("other")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.CreateMessageIfAbsent(conflict, []byte("body")); err == nil {
+		t.Fatal("conflicting orphan content succeeded")
+	}
+}
+
+func TestSQLiteAtomicEnqueueSeparateClientsDistinctIDs(t *testing.T) {
+	path := t.TempDir() + "/queue.db"
+	a, err := NewSQLiteStorageBackend(path, 5000, "WAL", "NORMAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := NewSQLiteStorageBackend(path, 5000, "WAL", "NORMAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.db.Close()
+	defer b.db.Close()
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i, backend := range []*SQLiteStorageBackend{a, b} {
+		wg.Add(1)
+		go func(i int, backend *SQLiteStorageBackend) {
+			defer wg.Done()
+			_, err := backend.CreateMessageIfAbsent(sqliteEnqueueMessage([]string{"one", "two"}[i]), []byte("body"))
+			errs <- err
+		}(i, backend)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSQLiteTombstoneIgnoresMutableFieldsAndCannotBeRewritten(t *testing.T) {
+	b, err := NewSQLiteStorageBackend(t.TempDir()+"/queue.db", 5000, "WAL", "NORMAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.db.Close()
+	msg := sqliteEnqueueMessage("mutable")
+	if _, err := b.CreateMessageIfAbsent(msg, []byte("body")); err != nil {
+		t.Fatal(err)
+	}
+	msg.QueueType, msg.RetryCount, msg.UpdatedAt = Deferred, 3, time.Unix(99, 0)
+	if err := b.Update(msg); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.DeleteMessageWithTombstone(msg, []byte("body")); err != nil {
+		t.Fatal(err)
+	}
+	retry := sqliteEnqueueMessage("mutable")
+	if created, err := b.CreateMessageIfAbsent(retry, []byte("body")); err != nil || created {
+		t.Fatalf("retry: created=%v err=%v", created, err)
+	}
+	conflicting := retry
+	conflicting.Subject = "changed"
+	if _, err := b.CreateMessageIfAbsent(conflicting, []byte("body")); err == nil {
+		t.Fatal("conflicting tombstone identity succeeded")
+	}
+}
+
+func TestSQLiteTombstoneSchemaMigrationIsIdempotent(t *testing.T) {
+	path := t.TempDir() + "/queue.db"
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE queue_messages (id TEXT PRIMARY KEY, queue_type TEXT NOT NULL, metadata TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE queue_contents (id TEXT PRIMARY KEY, content BLOB NOT NULL);`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	for i := 0; i < 2; i++ {
+		b, err := NewSQLiteStorageBackend(path, 5000, "WAL", "NORMAL")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema string
+		if err := b.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='queue_enqueue_tombstones'`).Scan(&schema); err != nil {
+			t.Fatal(err)
+		}
+		b.db.Close()
+	}
+}
+
+func TestSQLiteConsumedLedgerCorruptionFailsClosed(t *testing.T) {
+	b, err := NewSQLiteStorageBackend(t.TempDir()+"/queue.db", 5000, "WAL", "NORMAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.db.Close()
+	msg := sqliteEnqueueMessage("corrupt")
+	raw, _ := json.Marshal(msg)
+	if _, err := b.db.Exec(`INSERT INTO queue_enqueue_tombstones(id,metadata,content,consumed_at) VALUES(?,?,?,?)`, msg.ID, string(raw), []byte("different"), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.CreateMessageIfAbsent(msg, []byte("body")); err == nil {
+		t.Fatal("corrupt/conflicting ledger did not fail closed")
 	}
 }

@@ -160,7 +160,7 @@ func TestNullMXCausesZeroDialAttempts(t *testing.T) {
 		return nil, errors.New("unexpected dial")
 	}
 
-	_, _, err := h.deliverToDomainWithMetadata(context.Background(), Message{}, "no-mail.example", nil, nil, false)
+	_, _, _, err := h.deliverToDomainWithMetadata(context.Background(), Message{}, "no-mail.example", nil, nil, false)
 	if err == nil {
 		t.Fatal("expected Null MX failure")
 	}
