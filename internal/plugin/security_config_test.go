@@ -15,9 +15,16 @@ func TestDefaultSecurityConfig(t *testing.T) {
 	assert.True(t, cfg.Enabled)
 	assert.Equal(t, "moderate", cfg.Mode)
 	assert.False(t, cfg.DevelopmentMode)
-	assert.True(t, cfg.SignatureVerification.Required)
+	assert.True(t, cfg.SignatureVerification.Enabled)
+	// Signatures are not required by default: requiring them with no trusted
+	// certificates configured would fail ValidateSecurityConfig, making the
+	// default config invalid out of the box.
+	assert.False(t, cfg.SignatureVerification.Required)
 	assert.True(t, cfg.Sandboxing.Enabled)
 	assert.Equal(t, int64(100), cfg.Sandboxing.MaxMemoryMB)
+
+	// The default config must pass its own validation.
+	assert.NoError(t, ValidateSecurityConfig(&cfg))
 }
 
 func TestDevelopmentSecurityConfig_RelaxesDefaults(t *testing.T) {
@@ -75,7 +82,6 @@ func TestGetSecurityConfigForMode(t *testing.T) {
 func TestValidateSecurityConfig(t *testing.T) {
 	t.Run("valid default config passes", func(t *testing.T) {
 		cfg := DefaultSecurityConfig()
-		cfg.SignatureVerification.Required = false // avoid requiring cert files
 		require.NoError(t, ValidateSecurityConfig(&cfg))
 	})
 
@@ -171,13 +177,8 @@ func TestLoadSecurityConfig(t *testing.T) {
 	})
 
 	t.Run("path traversal is rejected when the target file exists", func(t *testing.T) {
-		// The traversal check only runs if os.Stat finds the file: a
-		// nonexistent path returns early with defaults regardless of its
-		// contents (see the "missing file returns defaults" case above), so
-		// a path containing ".." is only actually rejected once something
-		// exists there. The check is also a naive strings.Contains(path,
-		// ".."), so filepath.Join must be avoided since it cleans ".." away
-		// before the check ever sees it.
+		// The check is a naive strings.Contains(path, ".."), so filepath.Join
+		// must be avoided since it cleans ".." away before the check sees it.
 		parent := t.TempDir()
 		sub := filepath.Join(parent, "sub")
 		require.NoError(t, os.MkdirAll(sub, 0o750))
@@ -185,6 +186,15 @@ func TestLoadSecurityConfig(t *testing.T) {
 		require.NoError(t, os.WriteFile(target, []byte("mode = \"strict\""), 0o600))
 
 		traversalPath := sub + "/../evil.toml"
+		_, err := LoadSecurityConfig(traversalPath)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "path traversal")
+	})
+
+	t.Run("path traversal is rejected even when the target file does not exist", func(t *testing.T) {
+		// The traversal check runs before the existence check, so a traversal
+		// path never silently falls back to the default config.
+		traversalPath := filepath.Join(t.TempDir(), "sub") + "/../nope.toml"
 		_, err := LoadSecurityConfig(traversalPath)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "path traversal")
@@ -218,22 +228,14 @@ func TestLoadSecurityConfig(t *testing.T) {
 }
 
 func TestSecurityConfigManager(t *testing.T) {
-	// NOTE: DefaultSecurityConfig() sets SignatureVerification.Required=true
-	// with an empty TrustedCertificates list, which ValidateSecurityConfig
-	// itself rejects ("signature verification is required but no trusted
-	// certificates are configured"). Since LoadSecurityConfig falls back to
-	// DefaultSecurityConfig() whenever the config file doesn't exist, and
-	// NewSecurityConfigManager validates whatever LoadSecurityConfig
-	// returns, constructing a manager against a fresh path with no
-	// pre-existing config file always fails out of the box. This test pins
-	// that (surprising) current behavior; a config file with
-	// signature_verification.required=false (as used in the other subtests
-	// below) is required to get a manager off the ground today.
-	t.Run("new manager against missing file fails because defaults fail their own validation", func(t *testing.T) {
+	t.Run("new manager against missing file succeeds with defaults", func(t *testing.T) {
+		// LoadSecurityConfig falls back to DefaultSecurityConfig() when the
+		// config file doesn't exist, and the default config passes its own
+		// validation, so a manager can be constructed against a fresh path.
 		path := filepath.Join(t.TempDir(), "sec.toml")
-		_, err := NewSecurityConfigManager(path)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no trusted certificates are configured")
+		scm, err := NewSecurityConfigManager(path)
+		require.NoError(t, err)
+		assert.Equal(t, "moderate", scm.GetConfig().Mode)
 	})
 
 	t.Run("manager works when the on-disk config passes validation", func(t *testing.T) {
@@ -241,7 +243,6 @@ func TestSecurityConfigManager(t *testing.T) {
 		path := filepath.Join(dir, "sec.toml")
 
 		seed := DefaultSecurityConfig()
-		seed.SignatureVerification.Required = false
 		require.NoError(t, SaveSecurityConfig(&seed, path))
 
 		scm, err := NewSecurityConfigManager(path)
@@ -254,14 +255,12 @@ func TestSecurityConfigManager(t *testing.T) {
 		path := filepath.Join(dir, "sec.toml")
 
 		seed := DefaultSecurityConfig()
-		seed.SignatureVerification.Required = false
 		require.NoError(t, SaveSecurityConfig(&seed, path))
 
 		scm, err := NewSecurityConfigManager(path)
 		require.NoError(t, err)
 
 		newCfg := DefaultSecurityConfig()
-		newCfg.SignatureVerification.Required = false
 		newCfg.Mode = "strict"
 		require.NoError(t, scm.UpdateConfig(&newCfg))
 		assert.Equal(t, "strict", scm.GetConfig().Mode)
@@ -276,14 +275,12 @@ func TestSecurityConfigManager(t *testing.T) {
 		path := filepath.Join(dir, "sec.toml")
 
 		seed := DefaultSecurityConfig()
-		seed.SignatureVerification.Required = false
 		require.NoError(t, SaveSecurityConfig(&seed, path))
 
 		scm, err := NewSecurityConfigManager(path)
 		require.NoError(t, err)
 
 		badCfg := DefaultSecurityConfig()
-		badCfg.SignatureVerification.Required = false
 		badCfg.Sandboxing.Enabled = true
 		badCfg.Sandboxing.MaxMemoryMB = -1
 		err = scm.UpdateConfig(&badCfg)
