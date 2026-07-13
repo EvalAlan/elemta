@@ -1,0 +1,84 @@
+services:
+  elemta-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    container_name: elemta-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - "ES_SETTING_http.cors.enabled=true"
+      - "ES_SETTING_http.cors.allow-origin=*"
+      - "xpack.security.enabled=false"
+      - "xpack.monitoring.collection.enabled=true"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - elemta_network
+      - monitoring_network
+
+  elemta-kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.2
+    container_name: elemta-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elemta-elasticsearch:9200
+      - SERVER_NAME=elemta-kibana
+    depends_on:
+      elemta-elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD","curl","-f","http://localhost:5601/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - elemta_network
+      - monitoring_network
+
+  elemta-logstash:
+    image: docker.elastic.co/logstash/logstash:8.10.2
+    container_name: elemta-logstash
+    ports:
+      - "5044:5044"
+    volumes:
+      - ../../elk/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ../../elk/logstash/config:/usr/share/logstash/config:ro
+    environment:
+      - XPACK_MONITORING_ENABLED=true
+      - ELASTICSEARCH_HOSTS=http://elemta-elasticsearch:9200
+    depends_on:
+      elemta-elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD","curl","-f","http://localhost:9600/_node/pipelines?pretty"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - elemta_network
+      - monitoring_network
+
+  elemta-filebeat:
+    build:
+      context: ../../elk/filebeat
+      dockerfile: Dockerfile
+    container_name: elemta-filebeat
+    user: root
+    volumes:
+      - elemta_logs:/app/logs:ro
+    depends_on:
+      - elemta-logstash
+    networks:
+      - elemta_network
+
+volumes:
+  elasticsearch_data:
