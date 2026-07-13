@@ -380,6 +380,8 @@ services:
 networks:
   elemta_network:
     driver: bridge
+  monitoring_network:
+    driver: bridge
 
 volumes:
   elemta_queue:

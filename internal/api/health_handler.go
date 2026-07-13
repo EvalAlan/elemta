@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -52,12 +53,18 @@ type MemoryStats struct {
 
 // QueueHealth represents queue health information
 type QueueHealth struct {
-	TotalMessages   int  `json:"total_messages"`
-	ActiveCount     int  `json:"active_count"`
-	DeferredCount   int  `json:"deferred_count"`
-	HoldCount       int  `json:"hold_count"`
-	FailedCount     int  `json:"failed_count"`
-	ProcessorActive bool `json:"processor_active"`
+	TotalMessages            int    `json:"total_messages"`
+	ActiveCount              int    `json:"active_count"`
+	DeferredCount            int    `json:"deferred_count"`
+	HoldCount                int    `json:"hold_count"`
+	FailedCount              int    `json:"failed_count"`
+	ProcessorActive          bool   `json:"processor_active"`
+	OldestActiveAgeSeconds   int64  `json:"oldest_active_age_seconds"`
+	OldestDeferredAgeSeconds int64  `json:"oldest_deferred_age_seconds"`
+	OldestFailedAgeSeconds   int64  `json:"oldest_failed_age_seconds"`
+	OldestActiveAge          string `json:"oldest_active_age"`
+	OldestDeferredAge        string `json:"oldest_deferred_age"`
+	OldestFailedAge          string `json:"oldest_failed_age"`
 }
 
 // SMTPHealth represents SMTP server health
@@ -78,6 +85,8 @@ type ThroughputInfo struct {
 	BytesPerMinute    float64 `json:"bytes_per_minute"`
 	TotalProcessed    int64   `json:"total_processed"`
 	TotalBytes        int64   `json:"total_bytes"`
+	TimeoutErrors5m   int64   `json:"timeout_errors_5m"`
+	ConnCloseErrors5m int64   `json:"conn_close_errors_5m"`
 }
 
 // DeliveryStats represents delivery statistics
@@ -131,6 +140,11 @@ type DeliveryError struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+type ErrorReasonCount struct {
+	Reason string `json:"reason"`
+	Count  int64  `json:"count"`
+}
+
 // Server-level stats tracking
 var (
 	serverStartTime   = time.Now()
@@ -179,6 +193,9 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 
 	// Get queue stats
 	queueStats := s.queueMgr.GetStats()
+	oldestActiveAge := s.getOldestQueueMessageAge(queue.Active)
+	oldestDeferredAge := s.getOldestQueueMessageAge(queue.Deferred)
+	oldestFailedAge := s.getOldestQueueMessageAge(queue.Failed)
 
 	// Get metrics from Valkey store for throughput calculation
 	// Fall back to in-process atomic counters when Valkey is unavailable
@@ -196,6 +213,8 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 		totalProcessed = GetMessagesProcessed()
 		totalBytes = GetBytesProcessed()
 	}
+
+	timeoutErrors5m, connCloseErrors5m := s.getRecentConnectionErrorSignals(ctx, 5*time.Minute)
 
 	health := HealthStats{
 		Status:          "healthy",
@@ -223,12 +242,18 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 			SysMB:        float64(memStats.Sys) / 1024 / 1024,
 		},
 		Queue: QueueHealth{
-			TotalMessages:   queueStats.ActiveCount + queueStats.DeferredCount + queueStats.HoldCount + queueStats.FailedCount,
-			ActiveCount:     queueStats.ActiveCount,
-			DeferredCount:   queueStats.DeferredCount,
-			HoldCount:       queueStats.HoldCount,
-			FailedCount:     queueStats.FailedCount,
-			ProcessorActive: true,
+			TotalMessages:            queueStats.ActiveCount + queueStats.DeferredCount + queueStats.HoldCount + queueStats.FailedCount,
+			ActiveCount:              queueStats.ActiveCount,
+			DeferredCount:            queueStats.DeferredCount,
+			HoldCount:                queueStats.HoldCount,
+			FailedCount:              queueStats.FailedCount,
+			ProcessorActive:          true,
+			OldestActiveAgeSeconds:   int64(oldestActiveAge.Seconds()),
+			OldestDeferredAgeSeconds: int64(oldestDeferredAge.Seconds()),
+			OldestFailedAgeSeconds:   int64(oldestFailedAge.Seconds()),
+			OldestActiveAge:          formatOptionalDuration(oldestActiveAge),
+			OldestDeferredAge:        formatOptionalDuration(oldestDeferredAge),
+			OldestFailedAge:          formatOptionalDuration(oldestFailedAge),
 		},
 		SMTP: SMTPHealth{
 			Listening:         true,
@@ -245,6 +270,8 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 			BytesPerMinute:    calculateRate(totalBytes, uptime, time.Minute),
 			TotalProcessed:    totalProcessed,
 			TotalBytes:        totalBytes,
+			TimeoutErrors5m:   timeoutErrors5m,
+			ConnCloseErrors5m: connCloseErrors5m,
 		},
 		ServerVersion:             version.Version,
 		ConfiguredAddr:            s.listenAddr,
@@ -261,6 +288,70 @@ func (s *Server) getFailedQueueRetentionHours() int {
 		return s.queueMgr.GetFailedQueueRetentionHours()
 	}
 	return 0 // Default to immediate deletion
+}
+
+func (s *Server) getOldestQueueMessageAge(queueType queue.QueueType) time.Duration {
+	if s.queueMgr == nil {
+		return 0
+	}
+
+	messages, err := s.queueMgr.ListMessages(queueType)
+	if err != nil || len(messages) == 0 {
+		return 0
+	}
+
+	now := time.Now()
+	oldest := now
+	for _, msg := range messages {
+		ts := msg.CreatedAt
+		if ts.IsZero() {
+			ts = msg.UpdatedAt
+		}
+		if ts.IsZero() {
+			continue
+		}
+		if ts.Before(oldest) {
+			oldest = ts
+		}
+	}
+
+	if oldest.Equal(now) {
+		return 0
+	}
+
+	return now.Sub(oldest)
+}
+
+func (s *Server) getRecentConnectionErrorSignals(ctx context.Context, window time.Duration) (int64, int64) {
+	if s.metricsStore == nil {
+		return 0, 0
+	}
+
+	recentErrors, err := s.metricsStore.GetRecentErrors(ctx, 250)
+	if err != nil || len(recentErrors) == 0 {
+		return 0, 0
+	}
+
+	cutoff := time.Now().Add(-window)
+	var timeoutErrors int64
+	var connCloseErrors int64
+
+	for _, e := range recentErrors {
+		ts, err := time.Parse(time.RFC3339, e["timestamp"])
+		if err != nil || ts.Before(cutoff) {
+			continue
+		}
+
+		errText := strings.ToLower(e["error"])
+		if strings.Contains(errText, "timed out") || strings.Contains(errText, "timeout") {
+			timeoutErrors++
+		}
+		if strings.Contains(errText, "connection unexpectedly closed") || strings.Contains(errText, "connection closed") {
+			connCloseErrors++
+		}
+	}
+
+	return timeoutErrors, connCloseErrors
 }
 
 // handleDeliveryStats returns delivery statistics
@@ -280,6 +371,7 @@ func (s *Server) handleDeliveryStats(w http.ResponseWriter, r *http.Request) {
 	var byHour []HourlyStats
 	var data []TimeScaleStats
 	var recentErrors []DeliveryError
+	var topErrorReasons []ErrorReasonCount
 
 	// Try to get metrics from Valkey store
 	if s.metricsStore != nil {
@@ -388,6 +480,8 @@ func (s *Server) handleDeliveryStats(w http.ResponseWriter, r *http.Request) {
 		totalFailed += int64(queueStats.FailedCount)
 	}
 
+	topErrorReasons = buildTopErrorReasons(recentErrors, 5)
+
 	// Calculate success rate
 	total := totalDelivered + totalFailed
 	successRate := 100.0
@@ -408,13 +502,14 @@ func (s *Server) handleDeliveryStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]interface{}{
-		"total_delivered": totalDelivered,
-		"total_failed":    totalFailed,
-		"total_deferred":  totalDeferred,
-		"success_rate":    successRate,
-		"data":            data,
-		"by_hour":         byHour, // Keep for backward compatibility
-		"recent_errors":   recentErrors,
+		"total_delivered":   totalDelivered,
+		"total_failed":      totalFailed,
+		"total_deferred":    totalDeferred,
+		"success_rate":      successRate,
+		"data":              data,
+		"by_hour":           byHour, // Keep for backward compatibility
+		"recent_errors":     recentErrors,
+		"top_error_reasons": topErrorReasons,
 	})
 }
 
@@ -425,6 +520,59 @@ func extractDomain(email string) string {
 		return parts[1]
 	}
 	return "unknown"
+}
+
+func buildTopErrorReasons(errors []DeliveryError, limit int) []ErrorReasonCount {
+	if len(errors) == 0 || limit <= 0 {
+		return nil
+	}
+
+	reasonCounts := make(map[string]int64)
+	for _, e := range errors {
+		reason := normalizeErrorReason(e.Error)
+		reasonCounts[reason]++
+	}
+
+	reasons := make([]ErrorReasonCount, 0, len(reasonCounts))
+	for reason, count := range reasonCounts {
+		reasons = append(reasons, ErrorReasonCount{Reason: reason, Count: count})
+	}
+
+	sort.Slice(reasons, func(i, j int) bool {
+		if reasons[i].Count == reasons[j].Count {
+			return reasons[i].Reason < reasons[j].Reason
+		}
+		return reasons[i].Count > reasons[j].Count
+	})
+
+	if len(reasons) > limit {
+		return reasons[:limit]
+	}
+	return reasons
+}
+
+func normalizeErrorReason(raw string) string {
+	text := strings.TrimSpace(strings.ToLower(raw))
+	if text == "" {
+		return "unknown error"
+	}
+	switch {
+	case strings.Contains(text, "timeout") || strings.Contains(text, "timed out"):
+		return "timeout"
+	case strings.Contains(text, "connection unexpectedly closed") || strings.Contains(text, "connection closed"):
+		return "connection closed"
+	case strings.Contains(text, "refused"):
+		return "connection refused"
+	case strings.Contains(text, "dns") || strings.Contains(text, "no such host"):
+		return "dns / host lookup"
+	case strings.Contains(text, "tls"):
+		return "tls failure"
+	default:
+		if len(raw) > 80 {
+			return raw[:80] + "..."
+		}
+		return raw
+	}
 }
 
 // handleSendTestEmail sends a test email
@@ -481,6 +629,13 @@ func (s *Server) handleSendTestEmail(w http.ResponseWriter, r *http.Request) {
 // formatDuration formats a duration as human readable
 func formatDuration(d time.Duration) string {
 	return d.Round(time.Second).String()
+}
+
+func formatOptionalDuration(d time.Duration) string {
+	if d <= 0 {
+		return "-"
+	}
+	return formatDuration(d)
 }
 
 // getDailyStats aggregates hourly data into daily statistics

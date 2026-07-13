@@ -7,6 +7,11 @@ set -e
 
 echo "🔍 Setting up ELK Stack for Elemta SMTP Log Analysis..."
 
+# ELK services live in docker-compose-full.yml, layered on top of the base
+# compose file. Both files live under deployments/compose/, but this script
+# is expected to be run from the repository root.
+COMPOSE="docker compose -f deployments/compose/docker-compose.yml -f deployments/compose/docker-compose-full.yml"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -23,7 +28,7 @@ check_service_health() {
     echo -e "${BLUE}Waiting for $service_name to become healthy...${NC}"
     
     while [ $attempt -le $max_attempts ]; do
-        if docker-compose ps $service_name | grep -q "healthy"; then
+        if $COMPOSE ps $service_name | grep -q "healthy"; then
             echo -e "${GREEN}✅ $service_name is healthy${NC}"
             return 0
         fi
@@ -63,7 +68,7 @@ wait_for_service() {
 
 # Start ELK services
 echo -e "${BLUE}🚀 Starting ELK Stack services...${NC}"
-docker-compose up -d elemta-elasticsearch elemta-logstash elemta-kibana elemta-filebeat
+$COMPOSE up -d elemta-elasticsearch elemta-logstash elemta-kibana elemta-filebeat
 
 # Wait for Elasticsearch to be ready
 echo -e "${BLUE}📊 Waiting for Elasticsearch...${NC}"
@@ -134,6 +139,6 @@ echo -e "  • Message Delivery: ${YELLOW}event_type:message_delivery${NC}"
 
 # Show container status
 echo -e "${BLUE}📦 Container Status:${NC}"
-docker-compose ps elemta-elasticsearch elemta-logstash elemta-kibana elemta-filebeat
+$COMPOSE ps elemta-elasticsearch elemta-logstash elemta-kibana elemta-filebeat
 
 echo -e "${GREEN}✅ ELK Stack is ready for Elemta SMTP log analysis!${NC}" 
