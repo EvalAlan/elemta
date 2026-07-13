@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Release Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Build binaries
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w -X github.com/busybox42/elemta/internal/version.Version=${VERSION}" \
+            -o dist/elemta ./cmd/elemta
+          go build -trimpath -ldflags "-s -w -X github.com/busybox42/elemta/internal/version.Version=${VERSION}" \
+            -o dist/elemta-cli ./cmd/elemta-cli
+
+      - name: Package artifacts
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tar czf elemta-${VERSION}-linux-${GOARCH}.tar.gz -C dist elemta elemta-cli
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: elemta-linux-${{ matrix.goarch }}
+          path: elemta-*-linux-${{ matrix.goarch }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: elemta-linux-*
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
+          draft: false
+          prerelease: false
