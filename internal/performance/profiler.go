@@ -371,10 +371,10 @@ func (p *Profiler) GenerateAllProfiles() error {
 
 // GetMetrics returns profiler metrics
 func (p *Profiler) GetMetrics() map[string]interface{} {
-	lastProfile := time.Unix(0, p.metrics.LastProfileTime.Load())
+	lastProfileNanos := p.metrics.LastProfileTime.Load()
 	lastProfileStr := "never"
-	if !lastProfile.IsZero() {
-		lastProfileStr = lastProfile.Format(time.RFC3339)
+	if lastProfileNanos != 0 {
+		lastProfileStr = time.Unix(0, lastProfileNanos).Format(time.RFC3339)
 	}
 
 	return map[string]interface{}{
