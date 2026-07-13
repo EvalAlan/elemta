@@ -141,7 +141,7 @@ func TestConnectSMTPWithMetadata_RequireTLSButNotSupported(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, conn, tlsUsed, err := h.connectSMTPWithMetadata(ctx, addr, true)
+	client, conn, tlsUsed, _, err := h.connectSMTPWithRequireTLS(ctx, addr, true)
 	if err == nil {
 		t.Fatal("expected error when STARTTLS is required but not supported by the server")
 	}
@@ -173,7 +173,7 @@ func TestConnectSMTPWithMetadata_STARTTLSNegotiationSucceeds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, conn, tlsUsed, err := h.connectSMTPWithMetadata(ctx, addr, true)
+	client, conn, tlsUsed, _, err := h.connectSMTPWithRequireTLS(ctx, addr, true)
 	if err != nil {
 		t.Fatalf("expected successful STARTTLS negotiation, got error: %v", err)
 	}

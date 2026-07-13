@@ -508,12 +508,6 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 	return deliveryIP, deliveryHost, outcomes, nil
 }
 
-// connectSMTPWithMetadata is retained for callers that do not need the next-hop extension state.
-func (h *SMTPDeliveryHandler) connectSMTPWithMetadata(ctx context.Context, address string, requireTLS bool) (*smtp.Client, net.Conn, bool, error) {
-	client, conn, tlsUsed, _, err := h.connectSMTPWithRequireTLS(ctx, address, requireTLS)
-	return client, conn, tlsUsed, err
-}
-
 // connectSMTPWithRequireTLS establishes an SMTP connection and reports whether
 // the next hop advertised REQUIRETLS after STARTTLS.
 func (h *SMTPDeliveryHandler) connectSMTPWithRequireTLS(ctx context.Context, address string, requireTLS bool) (*smtp.Client, net.Conn, bool, bool, error) {
