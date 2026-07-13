@@ -280,7 +280,9 @@ func loadPrivateKey(path string) (crypto.Signer, crypto.Hash, error) {
 		return nil, 0, err
 	}
 
-	data, err := os.ReadFile(path) //nolint:gosec // path comes from operator config
+	// #nosec G304 -- private-key path is explicit, trusted operator configuration;
+	// permissions and key format are validated immediately before this read.
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("reading key: %w", err)
 	}
