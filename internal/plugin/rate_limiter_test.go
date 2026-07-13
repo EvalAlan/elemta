@@ -96,25 +96,19 @@ func TestMessageRateLimiter_CheckRecipientRate(t *testing.T) {
 	assert.Contains(t, reason, "recipient rate limit exceeded")
 }
 
-// NOTE: parseSize (see TestParseSize below) has a pre-existing bug: it always
-// strips the last two characters before inspecting the unit letter, so normal
-// two-letter-suffix sizes like "50MB"/"1GB"/"100B" (including the values used
-// by DefaultRateLimiterConfig itself) fail to parse as "unsupported size unit".
-// These tests document CheckVolumeRate's behavior given that bug rather than
-// asserting the (currently unreachable) intended behavior.
 func TestVolumeRateLimiter_CheckVolumeRate(t *testing.T) {
-	t.Run("default config's MaxDataPerHour does not parse, so volume checks always fail", func(t *testing.T) {
+	t.Run("default config's MaxDataPerHour parses and volume checks work", func(t *testing.T) {
 		cfg := DefaultRateLimiterConfig() // MaxDataPerHour: "1GB"
 		vrl := NewVolumeRateLimiter(cfg)
 
 		ok, reason := vrl.CheckVolumeRate("1.2.3.4", 10)
-		assert.False(t, ok)
-		assert.Contains(t, reason, "invalid volume configuration")
+		assert.True(t, ok)
+		assert.Empty(t, reason)
 	})
 
-	t.Run("size strings with the required trailing filler characters parse and enforce limits", func(t *testing.T) {
+	t.Run("data under the limit is accepted", func(t *testing.T) {
 		cfg := DefaultRateLimiterConfig()
-		cfg.MaxDataPerHour = "1000BXX" // parses to 1000 bytes/hour given the current implementation
+		cfg.MaxDataPerHour = "1000B"
 		vrl := NewVolumeRateLimiter(cfg)
 
 		ok, _ := vrl.CheckVolumeRate("1.2.3.4", 500)
@@ -123,7 +117,7 @@ func TestVolumeRateLimiter_CheckVolumeRate(t *testing.T) {
 
 	t.Run("rejects data over the parsed limit", func(t *testing.T) {
 		cfg := DefaultRateLimiterConfig()
-		cfg.MaxDataPerHour = "100BXX" // parses to 100 bytes/hour
+		cfg.MaxDataPerHour = "100B"
 		vrl := NewVolumeRateLimiter(cfg)
 
 		ok, reason := vrl.CheckVolumeRate("1.2.3.4", 1000)
@@ -214,18 +208,6 @@ func TestRateLimiterMetrics_IncrementAndGet(t *testing.T) {
 	assert.Equal(t, int64(1), metrics["total_requests_processed"])
 }
 
-// TestParseSize documents parseSize's actual (buggy) behavior: it
-// unconditionally strips the last two characters of the input before
-// checking the unit letter, then strips one more character for the unit
-// itself. This means realistic size strings with a standard two-letter
-// suffix -- "50MB", "1GB", "100B" padded to two chars, etc. -- do NOT parse
-// as one might expect; two extra filler characters are needed after the
-// unit letter for the arithmetic to land on a valid numeric prefix.
-//
-// This is a pre-existing bug in production code (also affects
-// DefaultRateLimiterConfig's own "50MB"/"1GB" values, see
-// TestVolumeRateLimiter_CheckVolumeRate). These tests pin current behavior
-// so a future fix is a deliberate, visible change rather than a silent one.
 func TestParseSize(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -233,20 +215,23 @@ func TestParseSize(t *testing.T) {
 		want    int64
 		wantErr bool
 	}{
-		// Two-letter suffixes as used throughout the config (MB, GB) are all
-		// misparsed as "unsupported size unit" because of the premature
-		// two-character strip.
-		{"two-letter MB suffix does not parse", "50MB", 0, true},
-		{"two-letter GB suffix does not parse", "1GB", 0, true},
-		{"two-letter KB suffix does not parse", "10KB", 0, true},
-		// A single-letter unit needs two extra filler characters appended
-		// for the offsets to land correctly.
-		{"bytes with filler suffix parses", "100BXX", 100, false},
-		{"kilobytes with filler suffix parses", "5KXX", 5 * 1024, false},
-		{"megabytes with filler suffix parses", "50MXX", 50 * 1024 * 1024, false},
-		{"gigabytes with filler suffix parses", "1GXX", 1024 * 1024 * 1024, false},
+		{"two-letter MB suffix", "50MB", 50 * 1024 * 1024, false},
+		{"two-letter GB suffix", "1GB", 1024 * 1024 * 1024, false},
+		{"two-letter KB suffix", "10KB", 10 * 1024, false},
+		{"plain bytes", "100B", 100, false},
+		{"single-letter kilobytes", "5K", 5 * 1024, false},
+		{"single-letter megabytes", "50M", 50 * 1024 * 1024, false},
+		{"single-letter gigabytes", "1G", 1024 * 1024 * 1024, false},
+		{"lowercase suffix", "50mb", 50 * 1024 * 1024, false},
+		{"surrounding whitespace", " 50MB ", 50 * 1024 * 1024, false},
 		{"empty string errors", "", 0, true},
+		{"whitespace-only string errors", "   ", 0, true},
 		{"unsupported unit errors", "10XXX", 0, true},
+		{"bare number without unit errors", "100", 0, true},
+		{"unit without a number errors", "GB", 0, true},
+		{"non-numeric value errors", "abcMB", 0, true},
+		{"negative size errors", "-1MB", 0, true},
+		{"overflowing size errors", "9999999999GB", 0, true},
 	}
 
 	for _, tt := range tests {
@@ -260,20 +245,6 @@ func TestParseSize(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
-}
-
-// TestParseSize_ShortInputPanics documents that inputs shorter than 3
-// characters (after accounting for the unit letter) cause parseSize to
-// panic with a slice-bounds error instead of returning an error. This is a
-// pre-existing robustness bug: any single-character or two-character
-// MaxDataPerHour/MaxMessageSize config value will crash the process instead
-// of failing gracefully.
-func TestParseSize_ShortInputPanics(t *testing.T) {
-	defer func() {
-		r := recover()
-		assert.NotNil(t, r, "expected parseSize to panic on short input (pre-existing bug)")
-	}()
-	_, _ = parseSize("1G")
 }
 
 func TestDefaultRateLimiterConfig(t *testing.T) {

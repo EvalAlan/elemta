@@ -130,13 +130,9 @@ func TestProfiler_GetMetrics_ReflectsState(t *testing.T) {
 
 	metrics := p.GetMetrics()
 	assert.Equal(t, true, metrics["enabled"])
-	// NOTE: GetMetrics intends to report "never" when no profile has been
-	// generated yet, but it checks time.Unix(0, p.metrics.LastProfileTime.Load()).IsZero(),
-	// and time.Unix(0, 0) is the Unix epoch -- not Go's zero time.Time{} --
-	// so IsZero() is always false here. This is a pre-existing bug: the
-	// "never" branch is currently unreachable, and a fresh profiler reports
-	// a formatted 1970 timestamp instead. This test pins that behavior.
-	assert.NotEqual(t, "never", metrics["last_profile"])
+	// A fresh profiler has generated no profiles yet, so last_profile
+	// reports the "never" sentinel rather than a formatted timestamp.
+	assert.Equal(t, "never", metrics["last_profile"])
 	assert.Equal(t, false, metrics["cpu_profile_active"])
 	assert.Equal(t, false, metrics["trace_active"])
 

@@ -3,6 +3,9 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -667,35 +670,55 @@ func (rm *RateLimiterMetrics) GetMetrics() map[string]int64 {
 
 // parseSize parses size strings like "50MB", "1GB" into bytes
 func parseSize(sizeStr string) (int64, error) {
+	sizeStr = strings.TrimSpace(sizeStr)
 	if sizeStr == "" {
 		return 0, fmt.Errorf("empty size string")
 	}
 
-	// Simple parser for common size units
-	// This could be enhanced to support more formats
-	sizeStr = sizeStr[:len(sizeStr)-2] // Remove last 2 characters (unit)
+	upper := strings.ToUpper(sizeStr)
 	var multiplier int64
+	var numStr string
 
-	switch sizeStr[len(sizeStr)-1:] {
-	case "B":
-		multiplier = 1
-		sizeStr = sizeStr[:len(sizeStr)-1]
-	case "K":
-		multiplier = 1024
-		sizeStr = sizeStr[:len(sizeStr)-1]
-	case "M":
-		multiplier = 1024 * 1024
-		sizeStr = sizeStr[:len(sizeStr)-1]
-	case "G":
+	switch {
+	case strings.HasSuffix(upper, "GB"):
 		multiplier = 1024 * 1024 * 1024
-		sizeStr = sizeStr[:len(sizeStr)-1]
+		numStr = upper[:len(upper)-2]
+	case strings.HasSuffix(upper, "MB"):
+		multiplier = 1024 * 1024
+		numStr = upper[:len(upper)-2]
+	case strings.HasSuffix(upper, "KB"):
+		multiplier = 1024
+		numStr = upper[:len(upper)-2]
+	case strings.HasSuffix(upper, "G"):
+		multiplier = 1024 * 1024 * 1024
+		numStr = upper[:len(upper)-1]
+	case strings.HasSuffix(upper, "M"):
+		multiplier = 1024 * 1024
+		numStr = upper[:len(upper)-1]
+	case strings.HasSuffix(upper, "K"):
+		multiplier = 1024
+		numStr = upper[:len(upper)-1]
+	case strings.HasSuffix(upper, "B"):
+		multiplier = 1
+		numStr = upper[:len(upper)-1]
 	default:
-		return 0, fmt.Errorf("unsupported size unit")
+		return 0, fmt.Errorf("unsupported size unit in %q", sizeStr)
 	}
 
-	var size int64
-	if _, err := fmt.Sscanf(sizeStr, "%d", &size); err != nil {
+	numStr = strings.TrimSpace(numStr)
+	if numStr == "" {
+		return 0, fmt.Errorf("missing numeric value in size %q", sizeStr)
+	}
+
+	size, err := strconv.ParseInt(numStr, 10, 64)
+	if err != nil {
 		return 0, fmt.Errorf("invalid size format: %v", err)
+	}
+	if size < 0 {
+		return 0, fmt.Errorf("size must not be negative: %q", sizeStr)
+	}
+	if size > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("size overflows int64: %q", sizeStr)
 	}
 
 	return size * multiplier, nil
