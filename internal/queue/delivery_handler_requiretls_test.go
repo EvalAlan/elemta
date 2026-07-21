@@ -590,7 +590,7 @@ func TestProcessor_RequireTLSFailureBouncesWithoutRetry(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if bounceEngine.calls.Load() > 0 {
+		if bounceEngine.calls.Load() == 1 && manager.GetStats().FailedCount == 1 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
