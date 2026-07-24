@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/busybox42/elemta/internal/dkim"
 	"github.com/busybox42/elemta/internal/runtimepaths"
 	"github.com/busybox42/elemta/internal/smtp"
 
@@ -216,6 +217,9 @@ type Config struct {
 
 	// Delivery configuration
 	Delivery *smtp.DeliveryConfig `toml:"delivery"`
+
+	// DKIM outbound signing configuration
+	DKIM *dkim.Config `toml:"dkim"`
 
 	// Metrics configuration
 	Metrics *smtp.MetricsConfig `toml:"metrics"`

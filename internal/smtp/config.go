@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/busybox42/elemta/internal/dkim"
 )
 
 // Config represents the main configuration for the SMTP server
@@ -82,6 +83,9 @@ type Config struct {
 
 	// Delivery configuration
 	Delivery *DeliveryConfig `toml:"delivery" json:"delivery"`
+
+	// DKIM outbound signing configuration
+	DKIM *dkim.Config `toml:"dkim" json:"dkim"`
 
 	// Memory management configuration
 	Memory *MemoryConfig `toml:"memory" json:"memory"`

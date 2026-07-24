@@ -180,6 +180,9 @@ func startServer() {
 	// Map delivery config
 	smtpConfig.Delivery = cfg.Delivery
 
+	// Map DKIM outbound signing config
+	smtpConfig.DKIM = cfg.DKIM
+
 	// Map resources config (for Valkey integration)
 	smtpConfig.Resources = cfg.Resources
 
