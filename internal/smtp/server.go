@@ -8,10 +8,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/busybox42/elemta/internal/dkim"
 	deliverymetrics "github.com/busybox42/elemta/internal/metrics"
 	"github.com/busybox42/elemta/internal/plugin"
 	"github.com/busybox42/elemta/internal/queue"
@@ -116,10 +118,16 @@ func initPlugins(config *Config, slogger *slog.Logger) (*plugin.Manager, *plugin
 
 type deliveryHandlerFactory func(host string, port int, maxPerDomain int, failedQueueRetentionHours int) queue.DeliveryHandler
 
+type smtpDeliveryHandlerFactory func(failedQueueRetentionHours int) *queue.SMTPDeliveryHandler
+
 type metricsStoreFactory func(addr string) (queue.MetricsRecorder, error)
 
 var newDeliveryHandler deliveryHandlerFactory = func(host string, port int, maxPerDomain int, failedQueueRetentionHours int) queue.DeliveryHandler {
 	return queue.NewLMTPDeliveryHandler(host, port, maxPerDomain, failedQueueRetentionHours)
+}
+
+var newSMTPDeliveryHandler smtpDeliveryHandlerFactory = func(failedQueueRetentionHours int) *queue.SMTPDeliveryHandler {
+	return queue.NewSMTPDeliveryHandler(failedQueueRetentionHours)
 }
 
 var newQueueMetricsStore metricsStoreFactory = func(addr string) (queue.MetricsRecorder, error) {
@@ -153,6 +161,14 @@ func initAuthenticator(config *Config, slogger *slog.Logger) (Authenticator, err
 
 // initQueueSystem initializes the queue manager and optional queue processor.
 func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *queue.Processor, error) {
+	// Validate and load DKIM before starting queue resources. This applies even
+	// when queue processing is disabled and leaves no manager goroutine/backend
+	// to clean up if DKIM configuration is invalid.
+	dkimSigner, err := dkim.NewSigner(config.DKIM, slogger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize DKIM signer: %w", err)
+	}
+
 	queueManager, err := queue.NewManagerFromBackend(
 		config.QueueDir,
 		config.QueueBackend,
@@ -202,8 +218,33 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			maxPerDomain = 10
 		}
 
-		slogger.Info("Creating LMTP delivery handler", "host", deliveryHost, "port", deliveryPort, "max_per_domain", maxPerDomain)
-		lmtpHandler := newDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours)
+		deliveryMode := "lmtp"
+		if config.Delivery != nil && strings.TrimSpace(config.Delivery.Mode) != "" {
+			deliveryMode = strings.ToLower(strings.TrimSpace(config.Delivery.Mode))
+		}
+
+		var deliveryHandler queue.DeliveryHandler
+		switch deliveryMode {
+		case "lmtp":
+			slogger.Info("Creating LMTP delivery handler", "host", deliveryHost, "port", deliveryPort, "max_per_domain", maxPerDomain)
+			deliveryHandler = newDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours)
+		case "smtp":
+			slogger.Info("Creating SMTP delivery handler", "max_per_domain", maxPerDomain)
+			deliveryHandler = newSMTPDeliveryHandler(config.FailedQueueRetentionHours)
+		default:
+			return nil, nil, fmt.Errorf("unsupported delivery mode %q (want smtp or lmtp)", deliveryMode)
+		}
+
+		// Attach the already-validated DKIM signer only to remote SMTP delivery.
+		// Local LMTP delivery is intentionally not signed.
+		if dkimSigner != nil {
+			if smtpHandler, ok := deliveryHandler.(*queue.SMTPDeliveryHandler); ok {
+				smtpHandler.SetDKIMSigner(dkimSigner)
+				slogger.Info("DKIM outbound signing enabled")
+			} else {
+				slogger.Info("DKIM signing configured but active delivery handler is not the remote SMTP handler; signing will apply only on the remote SMTP path")
+			}
+		}
 
 		processorConfig := queue.ProcessorConfig{
 			Enabled:       config.QueueProcessorEnabled,
@@ -219,7 +260,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			"interval", processorConfig.Interval,
 			"workers", processorConfig.MaxConcurrent)
 
-		queueProcessor = queue.NewProcessor(queueManager, processorConfig, lmtpHandler)
+		queueProcessor = queue.NewProcessor(queueManager, processorConfig, deliveryHandler)
 
 		// Set up bounce engine for DSN generation on permanent failures
 		bounceEngine := NewBounceEngine(queueManager, config.Hostname, slogger)
