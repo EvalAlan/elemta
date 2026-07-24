@@ -40,11 +40,6 @@ var DefaultHeadersToSign = []string{
 	"References",
 }
 
-// signingHeaderName is the DKIM signature header. Presence of a signature from
-// our own domain is used as the "already signed" guard so retries do not
-// double-sign.
-const signingHeaderName = "DKIM-Signature"
-
 // DomainConfig is the per-domain signing configuration.
 type DomainConfig struct {
 	// Domain is the signing domain (the d= tag). Matched against the
@@ -132,9 +127,23 @@ func NewSigner(cfg *Config, logger *slog.Logger) (*Signer, error) {
 			return nil, fmt.Errorf("dkim: domain %q: %w", domain, err)
 		}
 
-		headerKeys := dc.HeadersToSign
-		if len(headerKeys) == 0 {
-			headerKeys = DefaultHeadersToSign
+		configuredHeaders := dc.HeadersToSign
+		if len(configuredHeaders) == 0 {
+			configuredHeaders = DefaultHeadersToSign
+		}
+		headerKeys := make([]string, len(configuredHeaders))
+		hasFrom := false
+		for i, header := range configuredHeaders {
+			headerKeys[i] = strings.TrimSpace(header)
+			if !validHeaderFieldName(headerKeys[i]) {
+				return nil, fmt.Errorf("dkim: domain %q headers_to_sign contains invalid header name %q", domain, header)
+			}
+			if strings.EqualFold(headerKeys[i], "From") {
+				hasFrom = true
+			}
+		}
+		if !hasFrom {
+			return nil, fmt.Errorf("dkim: domain %q headers_to_sign must include From", domain)
 		}
 
 		s.keys[domain] = domainKey{
@@ -162,11 +171,9 @@ func NewSigner(cfg *Config, logger *slog.Logger) (*Signer, error) {
 // Behaviour:
 //   - If no key is configured for the domain, content is returned unchanged and
 //     a debug line is logged (not an error — the message is still deliverable).
-//   - If content already carries a DKIM-Signature from the selected domain, it
-//     is returned unchanged. This makes signing idempotent, so a delivery retry
-//     never double-signs.
-//   - A signing failure returns the original content and an error; callers may
-//     choose to deliver unsigned rather than fail the message.
+//   - A signing failure returns the original content and an error. Elemta's SMTP
+//     delivery path treats that error as a failed attempt rather than sending
+//     unsigned mail for a configured signing domain.
 func (s *Signer) Sign(content []byte, signingDomain string) ([]byte, error) {
 	if s == nil {
 		return content, nil
@@ -178,11 +185,6 @@ func (s *Signer) Sign(content []byte, signingDomain string) ([]byte, error) {
 	s.mu.RUnlock()
 	if !ok {
 		s.logger.Debug("No DKIM key configured for domain, skipping signing", "domain", domain)
-		return content, nil
-	}
-
-	if hasSignatureForDomain(content, domain) {
-		s.logger.Debug("Message already DKIM-signed for domain, skipping", "domain", domain)
 		return content, nil
 	}
 
@@ -216,63 +218,8 @@ func (s *Signer) HasKeyFor(domain string) bool {
 	return ok
 }
 
-// hasSignatureForDomain scans the message header block for an existing
-// DKIM-Signature whose d= tag matches domain. Only the header block (up to the
-// first blank line) is inspected. Folded continuation lines are reassembled so
-// a d= tag on a continuation line is still detected.
-func hasSignatureForDomain(content []byte, domain string) bool {
-	headerEnd := bytes.Index(content, []byte("\r\n\r\n"))
-	if headerEnd == -1 {
-		if idx := bytes.Index(content, []byte("\n\n")); idx != -1 {
-			headerEnd = idx
-		} else {
-			headerEnd = len(content)
-		}
-	}
-	header := content[:headerEnd]
-
-	lowerPrefix := strings.ToLower(signingHeaderName) + ":"
-	lines := strings.Split(strings.ReplaceAll(string(header), "\r\n", "\n"), "\n")
-
-	var current strings.Builder
-	var fields []string
-	flush := func() {
-		if current.Len() > 0 {
-			fields = append(fields, current.String())
-			current.Reset()
-		}
-	}
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		if line[0] == ' ' || line[0] == '\t' {
-			current.WriteString(" ")
-			current.WriteString(strings.TrimSpace(line))
-			continue
-		}
-		flush()
-		current.WriteString(line)
-	}
-	flush()
-
-	target := "d=" + domain
-	for _, f := range fields {
-		if !strings.HasPrefix(strings.ToLower(f), lowerPrefix) {
-			continue
-		}
-		// Normalise whitespace inside the DKIM-Signature tag list before
-		// comparing the d= tag.
-		normalized := strings.ToLower(strings.Join(strings.Fields(f), ""))
-		if strings.Contains(normalized, target+";") || strings.HasSuffix(normalized, target) {
-			return true
-		}
-	}
-	return false
-}
-
 // loadPrivateKey reads, permission-checks and parses a PEM private key. It
-// returns a crypto.Signer and the hash to use (SHA-256 for RSA/ECDSA; Ed25519
+// returns a crypto.Signer and the hash to use (SHA-256 for RSA; Ed25519
 // signs without a separate hash so crypto.Hash(0) is returned and go-msgauth
 // handles the ed25519 special case internally).
 func loadPrivateKey(path string) (crypto.Signer, crypto.Hash, error) {
@@ -306,7 +253,7 @@ func parsePrivateKeyBlock(block *pem.Block) (crypto.Signer, crypto.Hash, error) 
 		return key, crypto.SHA256, nil
 	}
 
-	// PKCS#8 (RSA, ECDSA, Ed25519).
+	// PKCS#8 (RSA or Ed25519). go-msgauth does not support ECDSA DKIM keys.
 	if parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
 		switch key := parsed.(type) {
 		case *rsa.PrivateKey:
@@ -315,15 +262,14 @@ func parsePrivateKeyBlock(block *pem.Block) (crypto.Signer, crypto.Hash, error) 
 			// dkim.Sign special-cases ed25519; the hash value is ignored for it.
 			return key, crypto.Hash(0), nil
 		case *ecdsa.PrivateKey:
-			return key, crypto.SHA256, nil
+			return nil, 0, fmt.Errorf("ECDSA DKIM keys are not supported")
 		default:
 			return nil, 0, fmt.Errorf("unsupported PKCS#8 key type %T", parsed)
 		}
 	}
 
-	// SEC1 EC key.
-	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
-		return key, crypto.SHA256, nil
+	if _, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return nil, 0, fmt.Errorf("ECDSA DKIM keys are not supported")
 	}
 
 	return nil, 0, fmt.Errorf("unrecognised private key format")
@@ -345,6 +291,21 @@ func validateKeyPermissions(path string) error {
 			path, info.Mode().Perm())
 	}
 	return nil
+}
+
+// validHeaderFieldName reports whether name is an RFC 5322 field-name: one or
+// more printable US-ASCII characters except colon. Names are trimmed before
+// validation so accepted configuration is exactly what reaches go-msgauth.
+func validHeaderFieldName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if name[i] < 33 || name[i] > 126 || name[i] == ':' {
+			return false
+		}
+	}
+	return true
 }
 
 // parseCanonicalization maps a config string to a dkim.Canonicalization,
