@@ -2,12 +2,15 @@ package dkim
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,37 +182,119 @@ func TestSignSkipsUnconfiguredDomain(t *testing.T) {
 	}
 }
 
-// TestRetryDoesNotDoubleSign signs a message, then signs the already-signed
-// output again (simulating a delivery retry). The second pass must be a no-op:
-// exactly one DKIM-Signature for the domain.
-func TestRetryDoesNotDoubleSign(t *testing.T) {
+// TestSignDoesNotTrustExistingSameDomainSignature verifies that untrusted
+// message input cannot suppress Elemta's signature merely by supplying a
+// DKIM-Signature with the configured d= domain.
+func TestSignDoesNotTrustExistingSameDomainSignature(t *testing.T) {
 	dir := t.TempDir()
-	keyPath, pub := writeRSAKey(t, dir)
+	keyPath, _ := writeRSAKey(t, dir)
 	s := newTestSigner(t, &Config{
 		Enabled: true,
 		Domains: []DomainConfig{{Domain: "example.com", Selector: "sel1", PrivateKeyPath: keyPath}},
 	})
 
-	first, err := s.Sign([]byte(testMessage), "example.com")
+	forged := []byte("DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=attacker; b=invalid\r\n" + testMessage)
+	signed, err := s.Sign(forged, "example.com")
 	if err != nil {
-		t.Fatalf("first Sign: %v", err)
+		t.Fatalf("Sign: %v", err)
 	}
-	second, err := s.Sign(first, "example.com")
+	if bytes.Equal(signed, forged) {
+		t.Fatal("forged same-domain signature suppressed Elemta signing")
+	}
+	if n := countHeader(signed, "DKIM-Signature:"); n != 2 {
+		t.Fatalf("expected forged and Elemta signatures, got %d", n)
+	}
+	if !bytes.Contains(signed, []byte("s=sel1")) {
+		t.Fatal("output does not contain Elemta's configured selector")
+	}
+}
+
+func TestNewSignerRejectsECDSAKey(t *testing.T) {
+	dir := t.TempDir()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		t.Fatalf("second Sign: %v", err)
+		t.Fatalf("generate ecdsa: %v", err)
 	}
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatalf("marshal ecdsa: %v", err)
+	}
+	keyPath := filepath.Join(dir, "ecdsa.key")
+	writeKeyFile(t, keyPath, "PRIVATE KEY", der, 0o600)
 
-	if !bytes.Equal(first, second) {
-		t.Fatal("retry re-signed an already-signed message")
+	_, err = NewSigner(&Config{
+		Enabled: true,
+		Domains: []DomainConfig{{Domain: "example.com", Selector: "sel1", PrivateKeyPath: keyPath}},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected unsupported ECDSA key to fail during startup")
 	}
-	if n := countHeader(second, "DKIM-Signature:"); n != 1 {
-		t.Fatalf("expected exactly 1 DKIM-Signature after retry, got %d", n)
+	if !strings.Contains(err.Error(), "ECDSA") {
+		t.Fatalf("expected ECDSA error, got: %v", err)
 	}
+}
 
-	// The single signature must still verify.
-	vs := verifyWithKey(t, second, "sel1", "example.com", rsaDNSRecord(t, pub))
-	if len(vs) != 1 || vs[0].Err != nil {
-		t.Fatalf("post-retry verification failed: %+v", vs)
+func TestNewSignerRejectsHeadersWithoutFrom(t *testing.T) {
+	dir := t.TempDir()
+	keyPath, _ := writeRSAKey(t, dir)
+
+	_, err := NewSigner(&Config{
+		Enabled: true,
+		Domains: []DomainConfig{{
+			Domain:         "example.com",
+			Selector:       "sel1",
+			PrivateKeyPath: keyPath,
+			HeadersToSign:  []string{"Subject"},
+		}},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected headers_to_sign without From to fail during startup")
+	}
+	if !strings.Contains(err.Error(), "From") {
+		t.Fatalf("expected missing From error, got: %v", err)
+	}
+}
+
+func TestNewSignerRejectsInvalidHeadersToSign(t *testing.T) {
+	dir := t.TempDir()
+	keyPath, _ := writeRSAKey(t, dir)
+
+	for _, header := range []string{"", " ", "Subject:extra", "Sub\nject", "Sübject"} {
+		t.Run(fmt.Sprintf("%q", header), func(t *testing.T) {
+			_, err := NewSigner(&Config{
+				Enabled: true,
+				Domains: []DomainConfig{{
+					Domain:         "example.com",
+					Selector:       "sel1",
+					PrivateKeyPath: keyPath,
+					HeadersToSign:  []string{"From", header},
+				}},
+			}, nil)
+			if err == nil {
+				t.Fatal("expected invalid header name to fail during startup")
+			}
+			if !strings.Contains(err.Error(), "invalid header") {
+				t.Fatalf("expected invalid header error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestNewSignerNormalizesHeadersToSign(t *testing.T) {
+	dir := t.TempDir()
+	keyPath, _ := writeRSAKey(t, dir)
+
+	s := newTestSigner(t, &Config{
+		Enabled: true,
+		Domains: []DomainConfig{{
+			Domain:         "example.com",
+			Selector:       "sel1",
+			PrivateKeyPath: keyPath,
+			HeadersToSign:  []string{" From ", "Subject"},
+		}},
+	})
+	if _, err := s.Sign([]byte(testMessage), "example.com"); err != nil {
+		t.Fatalf("headers accepted at startup must sign successfully: %v", err)
 	}
 }
 
