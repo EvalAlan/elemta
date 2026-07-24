@@ -1,13 +1,86 @@
 package smtp
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/busybox42/elemta/internal/dkim"
 	"github.com/busybox42/elemta/internal/queue"
 	"github.com/stretchr/testify/require"
-	"log/slog"
 )
+
+func writeDeliveryTestDKIMKey(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "dkim.key")
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600))
+	return path
+}
+
+func TestInitQueueSystemRejectsInvalidDKIMWhenProcessorDisabled(t *testing.T) {
+	cfg := createTestConfig(t)
+	cfg.QueueProcessorEnabled = false
+	cfg.DKIM = &dkim.Config{
+		Enabled: true,
+		Domains: []dkim.DomainConfig{{
+			Domain:         "example.com",
+			Selector:       "sel1",
+			PrivateKeyPath: writeDeliveryTestDKIMKey(t),
+			HeadersToSign:  []string{"Subject"},
+		}},
+	}
+
+	manager, _, err := initQueueSystem(cfg, slog.Default())
+	if manager != nil {
+		defer manager.Stop()
+	}
+	require.ErrorContains(t, err, "headers_to_sign must include From")
+}
+
+func TestInitQueueSystem_SMTPModeAttachesDKIMSigner(t *testing.T) {
+	oldMetricsFactory := newQueueMetricsStore
+	defer func() { newQueueMetricsStore = oldMetricsFactory }()
+	newQueueMetricsStore = func(string) (queue.MetricsRecorder, error) {
+		return &deliveryMetricsStub{}, nil
+	}
+
+	cfg := createTestConfig(t)
+	cfg.QueueProcessorEnabled = true
+	cfg.QueueProcessInterval = 1
+	cfg.QueueWorkers = 1
+	cfg.Delivery = &DeliveryConfig{Mode: "smtp"}
+	cfg.DKIM = &dkim.Config{
+		Enabled: true,
+		Domains: []dkim.DomainConfig{{
+			Domain:         "example.com",
+			Selector:       "sel1",
+			PrivateKeyPath: writeDeliveryTestDKIMKey(t),
+		}},
+	}
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	manager, _, err := initQueueSystem(cfg, logger)
+	require.NoError(t, err)
+	defer manager.Stop()
+
+	output := logs.String()
+	require.True(t, strings.Contains(output, "Creating SMTP delivery handler"), output)
+	require.True(t, strings.Contains(output, "DKIM outbound signing enabled"), output)
+	require.False(t, strings.Contains(output, "active delivery handler is not the remote SMTP handler"), output)
+}
 
 // TestDeliveryHandlerFactoryEnsuresMockUsed verifies that the injection seam
 // allows substituting a mock delivery handler.

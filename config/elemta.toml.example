@@ -95,6 +95,11 @@ listen_addr = "0.0.0.0:8080"
 metrics_path = "/metrics"
 health_path = "/health"
 
+# Use remote SMTP delivery for outbound mail. DKIM signing is intentionally not
+# applied when mode is "lmtp" because that path is local delivery to Dovecot.
+[delivery]
+mode = "smtp"
+
 # Outbound DKIM signing configuration.
 # Signs mail on the remote SMTP delivery path (not local LMTP delivery) to
 # improve deliverability to Gmail/Yahoo/Outlook. Publish the matching public
@@ -117,7 +122,9 @@ body_canonicalization = "relaxed"
   private_key_path = "/etc/elemta/dkim/example.com.key"
   # Optional per-domain override of the signed header set. When omitted, a
   # sensible default is used (From, To, Cc, Subject, Date, Message-ID,
-  # MIME-Version, Content-Type, Reply-To, In-Reply-To, References).
+  # MIME-Version, Content-Type, Reply-To, In-Reply-To, References). Custom lists
+  # must contain valid RFC 5322 field names and include From; Elemta rejects the
+  # configuration at startup otherwise.
   # headers_to_sign = ["From", "To", "Subject", "Date", "Message-ID"]
 
 [server]

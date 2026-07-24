@@ -16,9 +16,10 @@ This document covers the outbound **signing** path. Inbound DKIM/DMARC/ARC
   an administrative boundary where DKIM matters.
 - A message is signed **once**, before recipients are grouped by domain, so the
   exact same signed bytes are delivered to every recipient MX.
-- Signing is **idempotent**. If a message already carries a `DKIM-Signature`
-  for the chosen signing domain, it is left untouched, so a delivery **retry
-  never double-signs**.
+- Existing `DKIM-Signature` headers are preserved, but they never suppress
+  Elemta's configured signature. Each queue attempt reloads the original stored
+  content and adds one fresh Elemta signature, so retries do not accumulate
+  signatures from earlier attempts.
 - The signing domain is selected by matching the **envelope-from** domain
   against the configured domains. When the envelope-from is empty (for example,
   a bounce/DSN with a null return path), the **From header** domain is used as a
@@ -77,9 +78,13 @@ For Ed25519 use `k=ed25519` and the base64 of the raw 32-byte public key.
 
 ## Configuration
 
-Add a top-level `[dkim]` section:
+Select remote SMTP delivery and add a top-level `[dkim]` section. DKIM signing
+does not run in local `lmtp` mode.
 
 ```toml
+[delivery]
+mode = "smtp"
+
 [dkim]
 enabled = true
 header_canonicalization = "relaxed"   # default: relaxed
@@ -108,7 +113,7 @@ body_canonicalization = "relaxed"     # default: relaxed
 | `domain` | `[[dkim.domains]]` | The signing domain (the `d=` tag). |
 | `selector` | `[[dkim.domains]]` | The DKIM selector (the `s=` tag). |
 | `private_key_path` | `[[dkim.domains]]` | Path to the PEM RSA or Ed25519 private key. |
-| `headers_to_sign` | `[[dkim.domains]]` | Optional. Overrides the default signed header set for this domain. |
+| `headers_to_sign` | `[[dkim.domains]]` | Optional. Overrides the default signed header set for this domain. Entries must be valid RFC 5322 field names and must include `From` (case-insensitive), or startup fails. |
 
 Default signed headers (when `headers_to_sign` is omitted): `From`, `To`, `Cc`,
 `Subject`, `Date`, `Message-ID`, `MIME-Version`, `Content-Type`, `Reply-To`,

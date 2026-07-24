@@ -2,6 +2,7 @@ package queue
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -68,27 +69,35 @@ func TestSignContentUsesEnvelopeFrom(t *testing.T) {
 	h.SetDKIMSigner(newTestSigner(t, "example.com"))
 
 	msg := Message{ID: "m1", From: "alice@example.com"}
-	out := h.signContent(msg, []byte(dkimTestMessage))
+	out, err := h.signContent(msg, []byte(dkimTestMessage))
+	if err != nil {
+		t.Fatalf("signContent: %v", err)
+	}
 	if countSignatures(out) != 1 {
 		t.Fatalf("expected 1 signature, got %d", countSignatures(out))
 	}
 }
 
-// TestSignContentRetryDoesNotDoubleSign feeds already-signed content back
-// through signContent (as a retry would) and asserts no second signature.
-func TestSignContentRetryDoesNotDoubleSign(t *testing.T) {
+// TestSignContentRetriesStartFromStoredContent models the processor retry path:
+// each attempt reloads the original stored message rather than feeding the
+// previous attempt's signed bytes back into the signer.
+func TestSignContentRetriesStartFromStoredContent(t *testing.T) {
 	h := NewSMTPDeliveryHandler(0)
 	h.SetDKIMSigner(newTestSigner(t, "example.com"))
 	msg := Message{ID: "m1", From: "alice@example.com"}
 
-	first := h.signContent(msg, []byte(dkimTestMessage))
-	second := h.signContent(msg, first)
-
-	if !bytes.Equal(first, second) {
-		t.Fatal("retry produced different bytes (re-signed)")
+	first, err := h.signContent(msg, []byte(dkimTestMessage))
+	if err != nil {
+		t.Fatalf("first signContent: %v", err)
 	}
-	if n := countSignatures(second); n != 1 {
-		t.Fatalf("expected exactly 1 signature after retry, got %d", n)
+	second, err := h.signContent(msg, []byte(dkimTestMessage))
+	if err != nil {
+		t.Fatalf("second signContent: %v", err)
+	}
+
+	if countSignatures(first) != 1 || countSignatures(second) != 1 {
+		t.Fatalf("each delivery attempt must carry one Elemta signature; got %d and %d",
+			countSignatures(first), countSignatures(second))
 	}
 }
 
@@ -99,7 +108,10 @@ func TestSignContentFallsBackToFromHeader(t *testing.T) {
 	h.SetDKIMSigner(newTestSigner(t, "example.com"))
 
 	msg := Message{ID: "bounce", From: ""} // empty envelope-from
-	out := h.signContent(msg, []byte(dkimTestMessage))
+	out, err := h.signContent(msg, []byte(dkimTestMessage))
+	if err != nil {
+		t.Fatalf("signContent: %v", err)
+	}
 	if countSignatures(out) != 1 {
 		t.Fatalf("expected signing via From header fallback, got %d signatures", countSignatures(out))
 	}
@@ -112,7 +124,10 @@ func TestSignContentSkipsUnconfiguredDomain(t *testing.T) {
 	h.SetDKIMSigner(newTestSigner(t, "other.test"))
 
 	msg := Message{ID: "m1", From: "alice@example.com"}
-	out := h.signContent(msg, []byte(dkimTestMessage))
+	out, err := h.signContent(msg, []byte(dkimTestMessage))
+	if err != nil {
+		t.Fatalf("signContent: %v", err)
+	}
 	if countSignatures(out) != 0 {
 		t.Fatal("message for unconfigured domain must not be signed")
 	}
@@ -122,8 +137,25 @@ func TestSignContentSkipsUnconfiguredDomain(t *testing.T) {
 func TestSignContentNilSignerPassThrough(t *testing.T) {
 	h := NewSMTPDeliveryHandler(0)
 	msg := Message{ID: "m1", From: "alice@example.com"}
-	out := h.signContent(msg, []byte(dkimTestMessage))
+	out, err := h.signContent(msg, []byte(dkimTestMessage))
+	if err != nil {
+		t.Fatalf("signContent: %v", err)
+	}
 	if !bytes.Equal(out, []byte(dkimTestMessage)) {
 		t.Fatal("nil signer must pass content through unchanged")
+	}
+}
+
+func TestDeliveryFailsWhenConfiguredDKIMSigningFails(t *testing.T) {
+	h := NewSMTPDeliveryHandler(0)
+	h.SetDKIMSigner(newTestSigner(t, "example.com"))
+	msg := Message{ID: "m1", From: "alice@example.com"}
+
+	_, err := h.DeliverMessageWithMetadata(context.Background(), msg, []byte("malformed"))
+	if err == nil {
+		t.Fatal("expected DKIM signing failure to stop delivery")
+	}
+	if !strings.Contains(err.Error(), "dkim signing failed") {
+		t.Fatalf("expected DKIM signing error, got: %v", err)
 	}
 }

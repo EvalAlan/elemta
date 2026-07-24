@@ -149,13 +149,13 @@ func (h *SMTPDeliveryHandler) SetDKIMSigner(s *dkim.Signer) {
 // per-domain. The signing domain is the envelope-from domain, falling back to
 // the From header domain when the envelope-from is empty (e.g. bounces).
 //
-// dkim.Signer.Sign is idempotent: if the content already carries a signature
-// for the chosen domain it is returned unchanged, so a delivery retry does not
-// double-sign. A signing error is logged and delivery proceeds with the
-// unsigned content rather than failing the message outright.
-func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) []byte {
+// Each queue attempt starts from the original stored content, so retries receive
+// one fresh signature without trusting message-supplied DKIM headers. If signing
+// is configured for the message domain, a signing error fails the delivery
+// attempt rather than silently downgrading it to unsigned mail.
+func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) ([]byte, error) {
 	if h.signer == nil {
-		return content
+		return content, nil
 	}
 
 	signingDomain := dkim.DomainFromAddress(msg.From)
@@ -164,16 +164,14 @@ func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) []byte {
 	}
 	if signingDomain == "" {
 		h.logger.Debug("No signing domain resolved for message, delivering unsigned", "message_id", msg.ID)
-		return content
+		return content, nil
 	}
 
 	signed, err := h.signer.Sign(content, signingDomain)
 	if err != nil {
-		h.logger.Warn("DKIM signing failed, delivering unsigned",
-			"message_id", msg.ID, "domain", signingDomain, "error", err)
-		return content
+		return nil, fmt.Errorf("dkim signing failed for message %q and domain %q: %w", msg.ID, signingDomain, err)
 	}
-	return signed
+	return signed, nil
 }
 
 // DeliverMessage attempts to deliver a message via SMTP
@@ -186,9 +184,15 @@ func (h *SMTPDeliveryHandler) DeliverMessage(ctx context.Context, msg Message, c
 func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, msg Message, content []byte) (*DeliveryResult, error) {
 	requireTLS := messageRequiresTLS(msg)
 
-	// DKIM-sign once, before recipients are grouped, so identical signed bytes
-	// go to every MX and retries never double-sign.
-	content = h.signContent(msg, content)
+	// DKIM-sign once per delivery attempt, before recipients are grouped, so
+	// identical signed bytes go to every MX. A configured-domain signing failure
+	// aborts this attempt; the queue processor treats unknown delivery errors as
+	// temporary and retries from the original stored content.
+	var err error
+	content, err = h.signContent(msg, content)
+	if err != nil {
+		return nil, err
+	}
 
 	// Group recipients by domain for efficient delivery
 	domainGroups := h.groupRecipientsByDomain(msg.To)
