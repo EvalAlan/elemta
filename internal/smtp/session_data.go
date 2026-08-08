@@ -1515,7 +1515,7 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, view *scanCon
 
 	// For external connections, use enhanced validator for comprehensive content analysis
 	// Separate headers and body to avoid false positives on legitimate headers
-	headers, body := dh.separateHeadersAndBody(content)
+	headers, _ := dh.separateHeadersAndBody(content)
 
 	// Validate headers separately (more permissive for legitimate headers)
 	if headers != "" {
@@ -1535,23 +1535,27 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, view *scanCon
 		}
 	}
 
-	// Validate body content (strict validation for message body)
-	if body != "" {
-		bodyValidationResult := dh.enhancedValidator.ValidateSMTPParameter("DATA_LINE", body)
-		if !bodyValidationResult.Valid {
-			result.Passed = false
-			result.Threats = append(result.Threats, fmt.Sprintf("Body validation failed: %s", bodyValidationResult.ErrorMessage))
-
-			LogSecurityEvent(dh.logger, "content_analysis_failed", bodyValidationResult.SecurityThreat,
-				bodyValidationResult.ErrorMessage, body[:min(200, len(body))], dh.conn.RemoteAddr().String())
-
-			dh.logger.WarnContext(ctx, "Body analysis failed",
-				"error_type", bodyValidationResult.ErrorType,
-				"security_threat", bodyValidationResult.SecurityThreat,
-				"security_score", bodyValidationResult.SecurityScore,
-			)
-		}
-	}
+	// The message body is deliberately not validated as a block here.
+	//
+	// Everything this pass used to contribute is already enforced per line by
+	// validateLineContent as the data arrives: RFC 5321 line length (1000 MUST,
+	// 2000 SHOULD) and dangerous control characters both reject there.
+	//
+	// What it added on top was a pair of regexes matching a blank line followed
+	// by a header line, intended as header-injection detection. Those match
+	// ordinary mail — a forwarded message ("---------- Forwarded message
+	// ---------" then "From:"), or a quoted reply containing "To:" after a
+	// blank line — so enforcing them refuses common legitimate traffic. They
+	// also guard something unreachable: content below the header/body separator
+	// cannot become a header at the next hop, because the separator is
+	// unambiguous and preserved on relay.
+	//
+	// None of this had ever run in production. The block was called as
+	// ValidateSMTPParameter("DATA_LINE", body), which applies the *per-line*
+	// 1000-octet limit to the whole body, so any external sender with a body
+	// over 1000 octets was rejected as "line_too_long" before reaching the
+	// injection patterns at all. Loopback and Docker peers take the internal
+	// branch above, which is why no test or local run ever saw it.
 
 	// Check for executable attachments (enhanced check)
 	if strings.Contains(content, "Content-Type: application/") {
