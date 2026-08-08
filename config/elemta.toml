@@ -6,6 +6,14 @@ listen_addr = ":2525"
 local_domains = ["example.com", "evil-admin.com", "localhost", "mail.example.com"]
 max_size = 52428800  # 50MB
 
+# Enforce RFC 5321 CRLF line endings in DATA (default: true).
+# This is the primary defence against SMTP smuggling: a bare LF that this
+# server treats as ordinary content may be read as a line terminator by a
+# downstream server, letting an attacker inject extra messages.
+# Set to false only if you must accept mail from legacy senders that emit
+# bare LF, and understand that doing so re-opens that vector.
+strict_line_endings = true
+
 [server]
 hostname = "mail.example.com"
 listen = ":2525"  # Internal SMTP port (non-privileged)
@@ -80,6 +88,37 @@ port = 2424
 timeout = 30
 retry_delay = 60
 
+# Content scanning.
+#
+# These sections must name the sidecar containers explicitly. When the
+# sections are absent the built-in defaults assume localhost, which is only
+# correct if the scanners run inside this container — in this compose setup
+# they do not, so scanning would silently fail to connect and every message
+# would pass unscanned.
+#
+# reject_on_failure / reject_on_spam stay false so that a scanner outage
+# degrades to delivering unscanned mail rather than refusing it.
+[antivirus]
+enabled = true
+reject_on_failure = false
+
+[antivirus.clamav]
+enabled = true
+address = "elemta-clamav:3310"
+timeout = 30
+scan_limit = 26214400  # 25MB
+
+[antispam]
+enabled = true
+reject_on_spam = false
+
+[antispam.rspamd]
+enabled = true
+address = "http://elemta-rspamd:11333"
+timeout = 30
+scan_limit = 26214400  # 25MB
+threshold = 6.0
+
 # Rate Limiting Configuration - More permissive for testing
 [rate_limiter]
 enabled = true
@@ -131,7 +170,7 @@ max_memory_usage = 2147483648  # 2GB total memory limit
 memory_warning_threshold = 0.75  # 75% warning threshold
 memory_critical_threshold = 0.90  # 90% critical threshold
 gc_threshold = 0.80  # 80% force garbage collection
-monitoring_interval = 5  # Memory monitoring interval in seconds
+monitoring_interval = 5  # Seconds
 per_connection_memory_limit = 52428800  # 50MB per session (ELE-16 requirement)
 max_goroutines = 2000
 goroutine_leak_detection = true

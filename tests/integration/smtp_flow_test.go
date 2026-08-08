@@ -31,8 +31,8 @@ func createIntegrationTestConfig(t *testing.T, enableTLS bool, enableAuth bool) 
 		Hostname:          "integration.test.example.com",
 		ListenAddr:        "127.0.0.1:0",
 		LocalDomains:      []string{"integration.test.example.com", "example.com", "localhost"},
-		MaxSize:           10 * 1024 * 1024, // 10MB for integration tests
-		StrictLineEndings: false,            // More lenient for integration tests
+		MaxSize:           10 * 1024 * 1024,    // 10MB for integration tests
+		StrictLineEndings: smtp.BoolPtr(false), // More lenient for integration tests
 		QueueDir:          t.TempDir(),
 	}
 

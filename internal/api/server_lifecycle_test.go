@@ -47,6 +47,35 @@ func TestServerLifecycleReadinessAndStopClosesListener(t *testing.T) {
 	}
 }
 
+// TestServerLifecycleStopClosesListenerBeforeServeIsScheduled pins the race
+// that made the test above fail roughly one run in five.
+//
+// Start hands the listener to http.Server.Serve on a new goroutine, and
+// Shutdown only closes listeners Serve has already registered. A Stop that
+// landed before that goroutine was scheduled therefore had nothing to close
+// and returned while the port was still accepting connections. Stopping
+// immediately, with no chance for the goroutine to run, reproduces it.
+func TestServerLifecycleStopClosesListenerBeforeServeIsScheduled(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		s := newLifecycleTestServer()
+		require.NoError(t, s.Start())
+
+		s.lifecycleMu.Lock()
+		ln := s.listener
+		s.lifecycleMu.Unlock()
+		require.NotNil(t, ln)
+		addr := ln.Addr().String()
+
+		require.NoError(t, s.Stop())
+
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			t.Fatalf("iteration %d: listener on %s still accepting after Stop returned", i, addr)
+		}
+	}
+}
+
 func TestServerLifecycleConcurrentStartIsDeterministic(t *testing.T) {
 	s := newLifecycleTestServer()
 	const callers = 12

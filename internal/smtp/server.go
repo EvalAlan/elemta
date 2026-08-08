@@ -295,6 +295,8 @@ func initResourceManager(config *Config, slogger *slog.Logger) (*ResourceManager
 		var memoryConfig *MemoryConfig
 		if config.Memory != nil {
 			memoryConfig = config.Memory
+			// [memory] is operator-supplied and may be partially filled in.
+			memoryConfig.ApplyDefaults()
 			slogger.Info("Using memory configuration",
 				"total_mb", memoryConfig.MaxMemoryUsage/(1024*1024),
 				"per_conn_mb", memoryConfig.PerConnectionMemoryLimit/(1024*1024))
@@ -348,16 +350,46 @@ func initResourceManager(config *Config, slogger *slog.Logger) (*ResourceManager
 		resourceManager = NewResourceManager(resourceLimits, slogger)
 		memoryManager := NewMemoryManager(memoryConfig, slogger)
 		resourceManager.SetMemoryManager(memoryManager)
+		reconcileMessageSizeLimit(config, memoryConfig, slogger)
 		slogger.Info("Resource manager initialized with memory protection enabled")
 	} else {
 		resourceLimits = DefaultResourceLimits()
 		resourceManager = NewResourceManager(resourceLimits, slogger)
-		memoryManager := NewMemoryManager(DefaultMemoryConfig(), slogger)
+		defaultMemory := DefaultMemoryConfig()
+		memoryManager := NewMemoryManager(defaultMemory, slogger)
 		resourceManager.SetMemoryManager(memoryManager)
+		reconcileMessageSizeLimit(config, defaultMemory, slogger)
 		slogger.Info("Resource manager initialized with default memory protection")
 	}
 
 	return resourceManager, resourceLimits
+}
+
+// reconcileMessageSizeLimit makes the advertised message size match the size
+// the server will actually accept.
+//
+// DATA is buffered in memory, so a session cannot exceed
+// PerConnectionMemoryLimit no matter what max_size says. When max_size is the
+// larger of the two, the server would advertise "250-SIZE <max_size>" in EHLO,
+// accept a matching SIZE= on MAIL FROM, and then reject the message part-way
+// through DATA with a 552 — after the client had already sent most of it.
+//
+// Clamping max_size here keeps EHLO, the RFC 1870 SIZE check and the DATA
+// reader all working from one number, and tells the operator which knob to
+// turn if they wanted the larger value.
+func reconcileMessageSizeLimit(config *Config, memoryConfig *MemoryConfig, logger *slog.Logger) {
+	perConnLimit := memoryConfig.PerConnectionMemoryLimit
+	if perConnLimit <= 0 || config.MaxSize <= perConnLimit {
+		return
+	}
+
+	logger.Warn("max_size exceeds the per-connection memory limit; clamping advertised message size",
+		"configured_max_size", config.MaxSize,
+		"per_connection_memory_limit", perConnLimit,
+		"effective_max_size", perConnLimit,
+		"remedy", "raise [memory].per_connection_memory_limit (and max_memory_usage), or lower max_size",
+	)
+	config.MaxSize = perConnLimit
 }
 
 // initConcurrency initializes the context hierarchy and worker pool.
@@ -623,8 +655,10 @@ func (s *Server) setupQueueDirectories() error {
 		return fmt.Errorf("failed to create queue directory: %w", err)
 	}
 
-	// Create subdirectories for different queue types with secure permissions
-	queueTypes := []string{"active", "deferred", "held", "failed", "data", "tmp", "quarantine"}
+	// Create subdirectories for different queue types with secure permissions.
+	// "spool" holds in-flight DATA for messages larger than the spool
+	// threshold, on the same filesystem as the queue.
+	queueTypes := []string{"active", "deferred", "held", "failed", "data", "tmp", "quarantine", "spool"}
 
 	for _, qType := range queueTypes {
 		qDir := filepath.Join(s.config.QueueDir, qType)
@@ -632,6 +666,17 @@ func (s *Server) setupQueueDirectories() error {
 			return fmt.Errorf("failed to create %s queue directory: %w", qType, err)
 		}
 		s.slogger.Info("Created secure queue directory", "path", qDir, "mode", "0700")
+	}
+
+	// Sessions remove their own spool files, but a crash or kill mid-DATA
+	// leaves them behind. Without this sweep they accumulate across restarts
+	// until they fill the queue filesystem.
+	spoolDir := filepath.Join(s.config.QueueDir, "spool")
+	if removed, err := SweepOrphanedSpools(spoolDir); err != nil {
+		s.slogger.Warn("Failed to sweep orphaned message spools", "path", spoolDir, "error", err)
+	} else if removed > 0 {
+		s.slogger.Info("Removed orphaned message spools from a previous run",
+			"path", spoolDir, "count", removed)
 	}
 
 	return nil
