@@ -383,41 +383,41 @@ func LoadConfig(configPath string) (*Config, error) {
 // ApplyDefaults fills in default values for any unset configuration fields.
 // It is shared by LoadConfig and by callers that construct a Config from the
 // top-level elemta configuration, so both paths get identical defaults.
-func (config *Config) ApplyDefaults() {
-	if config.Hostname == "" {
+func (c *Config) ApplyDefaults() {
+	if c.Hostname == "" {
 		hostname, err := os.Hostname()
 		if err == nil {
-			config.Hostname = hostname
+			c.Hostname = hostname
 		} else {
-			config.Hostname = "localhost.localdomain"
+			c.Hostname = "localhost.localdomain"
 		}
 	}
 
-	if config.ListenAddr == "" {
-		config.ListenAddr = ":2525"
+	if c.ListenAddr == "" {
+		c.ListenAddr = ":2525"
 	}
-	if config.QueueDir == "" {
-		config.QueueDir = "./queue"
+	if c.QueueDir == "" {
+		c.QueueDir = "./queue"
 	}
-	if config.MaxSize == 0 {
-		config.MaxSize = 50 * 1024 * 1024 // 50MB - increased default
+	if c.MaxSize == 0 {
+		c.MaxSize = 50 * 1024 * 1024 // 50MB - increased default
 	}
-	if config.MaxWorkers == 0 {
-		config.MaxWorkers = 10
+	if c.MaxWorkers == 0 {
+		c.MaxWorkers = 10
 	}
-	if config.MaxRetries == 0 {
-		config.MaxRetries = 10
+	if c.MaxRetries == 0 {
+		c.MaxRetries = 10
 	}
-	if config.MaxQueueTime == 0 {
-		config.MaxQueueTime = 172800
+	if c.MaxQueueTime == 0 {
+		c.MaxQueueTime = 172800
 	}
-	if len(config.RetrySchedule) == 0 {
-		config.RetrySchedule = []int{60, 300, 900, 3600, 10800, 21600, 43200}
+	if len(c.RetrySchedule) == 0 {
+		c.RetrySchedule = []int{60, 300, 900, 3600, 10800, 21600, 43200}
 	}
 
 	// Set default TLS configuration if not provided
-	if config.TLS == nil {
-		config.TLS = &TLSConfig{
+	if c.TLS == nil {
+		c.TLS = &TLSConfig{
 			Enabled:    false,
 			ListenAddr: ":2465",
 			MinVersion: "tls1.2",
@@ -432,8 +432,8 @@ func (config *Config) ApplyDefaults() {
 	}
 
 	// Set default authentication configuration if not provided
-	if config.Auth == nil {
-		config.Auth = &AuthConfig{
+	if c.Auth == nil {
+		c.Auth = &AuthConfig{
 			Enabled:        false,
 			Required:       false,
 			DataSourceType: "sqlite",
@@ -442,8 +442,8 @@ func (config *Config) ApplyDefaults() {
 	}
 
 	// Set default resource configuration if not provided
-	if config.Resources == nil {
-		config.Resources = &ResourceConfig{
+	if c.Resources == nil {
+		c.Resources = &ResourceConfig{
 			MaxCPU:            0, // Use all available CPUs
 			MaxMemory:         0, // No memory limit
 			MaxConnections:    1000,
@@ -455,8 +455,8 @@ func (config *Config) ApplyDefaults() {
 	}
 
 	// Set default cache configuration if not provided
-	if config.Cache == nil {
-		config.Cache = &CacheConfig{
+	if c.Cache == nil {
+		c.Cache = &CacheConfig{
 			Enabled:  false,
 			Type:     "memory",
 			MaxItems: 10000,
@@ -466,12 +466,12 @@ func (config *Config) ApplyDefaults() {
 	}
 
 	// Set default antivirus configuration if not provided
-	if config.Antivirus == nil {
+	if c.Antivirus == nil {
 		enabled := true
 		if os.Getenv("ELEMTA_DISABLE_CLAMAV") == "true" {
 			enabled = false
 		}
-		config.Antivirus = &AntivirusConfig{
+		c.Antivirus = &AntivirusConfig{
 			Enabled:         enabled,
 			RejectOnFailure: false,
 			ClamAV: &ClamAVConfig{
@@ -484,8 +484,8 @@ func (config *Config) ApplyDefaults() {
 	}
 
 	// Set default antispam configuration if not provided
-	if config.Antispam == nil {
-		config.Antispam = &AntispamConfig{
+	if c.Antispam == nil {
+		c.Antispam = &AntispamConfig{
 			Enabled:      true,
 			RejectOnSpam: false,
 			SpamAssassin: &SpamAssassinConfig{
@@ -507,8 +507,8 @@ func (config *Config) ApplyDefaults() {
 	}
 
 	// Set default rules configuration if not provided
-	if config.Rules == nil {
-		config.Rules = &RulesConfig{
+	if c.Rules == nil {
+		c.Rules = &RulesConfig{
 			Enabled:       false,
 			Path:          "./rules",
 			DefaultAction: "accept",
@@ -516,8 +516,8 @@ func (config *Config) ApplyDefaults() {
 	}
 
 	// Set default plugin configuration if not provided
-	if config.Plugins == nil {
-		config.Plugins = &PluginConfig{
+	if c.Plugins == nil {
+		c.Plugins = &PluginConfig{
 			Enabled:    false,
 			PluginPath: "./plugins",
 			Plugins:    []string{},
@@ -525,28 +525,28 @@ func (config *Config) ApplyDefaults() {
 	}
 
 	// Set default metrics configuration if not provided
-	if config.Metrics == nil {
-		config.Metrics = &MetricsConfig{
+	if c.Metrics == nil {
+		c.Metrics = &MetricsConfig{
 			Enabled:    true,
 			ListenAddr: ":8080",
 		}
 	}
 
 	// Set default API configuration if not provided
-	if config.API == nil {
-		config.API = &APIConfig{
+	if c.API == nil {
+		c.API = &APIConfig{
 			Enabled:    false,
 			ListenAddr: ":8081",
 		}
 	}
 
-	if config.SessionTimeout == 0 {
-		config.SessionTimeout = 5 * time.Minute
+	if c.SessionTimeout == 0 {
+		c.SessionTimeout = 5 * time.Minute
 	}
 
 	// RFC 5321 compliance is strict unless the operator explicitly opts out.
-	if config.StrictLineEndings == nil {
-		config.StrictLineEndings = BoolPtr(true)
+	if c.StrictLineEndings == nil {
+		c.StrictLineEndings = BoolPtr(true)
 	}
 }
 
