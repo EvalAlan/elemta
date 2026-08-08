@@ -43,23 +43,22 @@ func ContentHashOfFile(path string) (string, error) {
 	return ContentHashFromReader(f)
 }
 
-// hashSeekable digests a reader and rewinds it, so the caller can go on to
-// write the same bytes.
+// ContentOpener returns a fresh reader over a message body.
 //
-// This is the shape DKIM signing needs as well: one pass to compute a digest
-// over the body, a rewind, and a second pass to emit it.
-func hashSeekable(r io.ReadSeeker) (string, error) {
-	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return "", fmt.Errorf("rewind before hashing: %w", err)
+// Identity is settled in one pass over the body and the body written in
+// another, so the source has to be readable twice. An opener expresses that
+// more simply than a seeker, and composes: a body that is a header prefix
+// followed by a spool file is one call to io.MultiReader, which is not
+// seekable but is trivially re-openable.
+//
+// The caller closes each reader it is given.
+type ContentOpener func() (io.ReadCloser, error)
+
+// OpenerForBytes adapts an in-memory body to a ContentOpener.
+func OpenerForBytes(data []byte) ContentOpener {
+	return func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(data)), nil
 	}
-	hash, err := ContentHashFromReader(r)
-	if err != nil {
-		return "", err
-	}
-	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return "", fmt.Errorf("rewind after hashing: %w", err)
-	}
-	return hash, nil
 }
 
 // contentSource is the body being enqueued, held either as a slice the caller
@@ -68,9 +67,9 @@ func hashSeekable(r io.ReadSeeker) (string, error) {
 // Identity checks and storage both go through it, so the enqueue path reads the
 // same for a small in-memory message and a large spooled one.
 type contentSource struct {
-	data   []byte
-	reader io.ReadSeeker
-	hash   string
+	data []byte
+	open ContentOpener
+	hash string
 }
 
 // contentFromBytes wraps a body the caller already holds.
@@ -78,11 +77,9 @@ func contentFromBytes(data []byte) *contentSource {
 	return &contentSource{data: data}
 }
 
-// contentFromReader wraps a body that should not be brought into memory. The
-// reader must be seekable: identity is checked in one pass and the body written
-// in another.
-func contentFromReader(r io.ReadSeeker) *contentSource {
-	return &contentSource{reader: r}
+// contentFromOpener wraps a body that should not be brought into memory.
+func contentFromOpener(open ContentOpener) *contentSource {
+	return &contentSource{open: open}
 }
 
 // Hash returns the identity digest, computing it at most once.
@@ -90,8 +87,13 @@ func (c *contentSource) Hash() (string, error) {
 	if c.hash != "" {
 		return c.hash, nil
 	}
-	if c.reader != nil {
-		h, err := hashSeekable(c.reader)
+	if c.open != nil {
+		r, err := c.open()
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = r.Close() }()
+		h, err := ContentHashFromReader(r)
 		if err != nil {
 			return "", err
 		}
@@ -108,31 +110,22 @@ func (c *contentSource) Hash() (string, error) {
 // on the legacy path where a tombstone predates content hashes and identity can
 // only be settled by comparing bodies.
 func (c *contentSource) Bytes() ([]byte, error) {
-	if c.data != nil || c.reader == nil {
+	if c.open == nil {
 		return c.data, nil
 	}
-	if _, err := c.reader.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("rewind before read: %w", err)
-	}
-	data, err := io.ReadAll(c.reader)
+	r, err := c.open()
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.reader.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("rewind after read: %w", err)
-	}
-	return data, nil
+	defer func() { _ = r.Close() }()
+	return io.ReadAll(r)
 }
 
-// Reader returns the body positioned at the start, ready to be written out.
-func (c *contentSource) Reader() (io.Reader, error) {
-	if c.reader != nil {
-		if _, err := c.reader.Seek(0, io.SeekStart); err != nil {
-			return nil, fmt.Errorf("rewind before write: %w", err)
-		}
-		return c.reader, nil
+// Reader returns a fresh reader over the body, ready to be written out. The
+// caller closes it.
+func (c *contentSource) Reader() (io.ReadCloser, error) {
+	if c.open != nil {
+		return c.open()
 	}
-	return bytesReader(c.data), nil
+	return io.NopCloser(bytes.NewReader(c.data)), nil
 }
-
-func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
