@@ -23,8 +23,8 @@ func createTestConfig(t *testing.T) *smtp.Config {
 		ListenAddr:        ":2525",
 		QueueDir:          queueDir,
 		LocalDomains:      []string{"test.example.com", "example.com", "localhost"},
-		MaxSize:           1024 * 1024, // 1MB for testing
-		StrictLineEndings: false,       // Disable strict CRLF validation for testing
+		MaxSize:           1024 * 1024,         // 1MB for testing
+		StrictLineEndings: smtp.BoolPtr(false), // Disable strict CRLF validation for testing
 		Auth: &smtp.AuthConfig{
 			Enabled: false, // Disable auth for testing
 		},

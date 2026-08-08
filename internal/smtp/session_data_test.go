@@ -20,7 +20,7 @@ func TestReadMessageDataSimple(t *testing.T) {
 	config := createTestConfig(t)
 	config.Auth = nil
 	config.LocalDomains = []string{"test.example.com", "example.com"}
-	config.StrictLineEndings = false // Disable strict CRLF validation for testing
+	config.StrictLineEndings = BoolPtr(false) // Disable strict CRLF validation for testing
 	server, err := NewServer(config)
 	require.NoError(t, err)
 	defer func() { _ = server.Close() }()
@@ -740,7 +740,7 @@ func (m *mockAddr) String() string  { return m.addr }
 func TestValidateLineEndings_StrictMode(t *testing.T) {
 	ctx := context.Background()
 	config := createTestConfig(t)
-	config.StrictLineEndings = true // Enable strict mode
+	config.StrictLineEndings = BoolPtr(true) // Enable strict mode
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	tests := []struct {
@@ -839,7 +839,7 @@ func TestValidateLineEndings_StrictMode(t *testing.T) {
 func TestValidateLineEndings_LegacyMode(t *testing.T) {
 	ctx := context.Background()
 	config := createTestConfig(t)
-	config.StrictLineEndings = false // Disable strict mode (legacy)
+	config.StrictLineEndings = BoolPtr(false) // Disable strict mode (legacy)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	tests := []struct {
@@ -909,7 +909,7 @@ func TestValidateLineEndings_LegacyMode(t *testing.T) {
 // TestIsValidEndOfData_StrictMode tests end-of-data marker validation in strict mode
 func TestIsValidEndOfData_StrictMode(t *testing.T) {
 	config := createTestConfig(t)
-	config.StrictLineEndings = true // Enable strict mode
+	config.StrictLineEndings = BoolPtr(true) // Enable strict mode
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	tests := []struct {
@@ -994,7 +994,7 @@ func TestIsValidEndOfData_StrictMode(t *testing.T) {
 // TestIsValidEndOfData_LegacyMode tests end-of-data marker validation in legacy mode
 func TestIsValidEndOfData_LegacyMode(t *testing.T) {
 	config := createTestConfig(t)
-	config.StrictLineEndings = false // Disable strict mode (legacy)
+	config.StrictLineEndings = BoolPtr(false) // Disable strict mode (legacy)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	tests := []struct {

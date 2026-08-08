@@ -23,8 +23,8 @@ func createFunctionalTestConfig(t *testing.T) *smtp.Config {
 		ListenAddr:        ":0", // Use random available port
 		QueueDir:          queueDir,
 		LocalDomains:      []string{"test.example.com", "example.com"},
-		MaxSize:           1024 * 1024, // 1MB
-		StrictLineEndings: false,       // Match working tests
+		MaxSize:           1024 * 1024,         // 1MB
+		StrictLineEndings: smtp.BoolPtr(false), // Match working tests
 	}
 	return config
 }
