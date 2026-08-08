@@ -208,11 +208,44 @@ type LetsEncryptConfig struct {
 
 // CertRenewalConfig represents certificate renewal configuration
 type CertRenewalConfig struct {
-	AutoRenew      bool          `yaml:"auto_renew" toml:"auto_renew"`
-	RenewalDays    int           `yaml:"renewal_days" toml:"renewal_days"`       // Renew this many days before expiration
-	CheckInterval  time.Duration `yaml:"check_interval" toml:"check_interval"`   // How often to check certificate status
-	ForceRenewal   bool          `yaml:"force_renewal" toml:"force_renewal"`     // Force renewal on startup
-	RenewalTimeout time.Duration `yaml:"renewal_timeout" toml:"renewal_timeout"` // Timeout for renewal operations
+	AutoRenew    bool `yaml:"auto_renew" toml:"auto_renew"`
+	RenewalDays  int  `yaml:"renewal_days" toml:"renewal_days"` // Renew this many days before expiration
+	ForceRenewal bool `yaml:"force_renewal" toml:"force_renewal"`
+
+	// Seconds-valued TOML forms. These are ints rather than time.Duration
+	// because pelletier/go-toml (used by internal/config, the path the server
+	// takes) cannot decode a duration string, and decodes a bare integer as
+	// nanoseconds. See MemoryConfig.MonitoringIntervalSeconds.
+	CheckIntervalSeconds  int `yaml:"check_interval_seconds" toml:"check_interval"`
+	RenewalTimeoutSeconds int `yaml:"renewal_timeout_seconds" toml:"renewal_timeout"`
+
+	// Resolved runtime values, derived by ApplyDefaults.
+	CheckInterval  time.Duration `yaml:"-" toml:"-"`
+	RenewalTimeout time.Duration `yaml:"-" toml:"-"`
+}
+
+// ApplyDefaults resolves the seconds-valued TOML fields into durations and
+// fills in defaults for anything unset.
+func (c *CertRenewalConfig) ApplyDefaults() {
+	if c.CheckIntervalSeconds > 0 {
+		c.CheckInterval = time.Duration(c.CheckIntervalSeconds) * time.Second
+	}
+	if c.CheckInterval <= 0 {
+		c.CheckInterval = 24 * time.Hour
+	}
+	c.CheckIntervalSeconds = int(c.CheckInterval / time.Second)
+
+	if c.RenewalTimeoutSeconds > 0 {
+		c.RenewalTimeout = time.Duration(c.RenewalTimeoutSeconds) * time.Second
+	}
+	if c.RenewalTimeout <= 0 {
+		c.RenewalTimeout = 5 * time.Minute
+	}
+	c.RenewalTimeoutSeconds = int(c.RenewalTimeout / time.Second)
+
+	if c.RenewalDays <= 0 {
+		c.RenewalDays = 30
+	}
 }
 
 // ResourceConfig represents resource limits
@@ -418,18 +451,17 @@ func (c *Config) ApplyDefaults() {
 	// Set default TLS configuration if not provided
 	if c.TLS == nil {
 		c.TLS = &TLSConfig{
-			Enabled:    false,
-			ListenAddr: ":2465",
-			MinVersion: "tls1.2",
-			RenewalConfig: &CertRenewalConfig{
-				AutoRenew:      true,
-				RenewalDays:    30,
-				CheckInterval:  24 * time.Hour,
-				ForceRenewal:   false,
-				RenewalTimeout: 5 * time.Minute,
-			},
+			Enabled:       false,
+			ListenAddr:    ":2465",
+			MinVersion:    "tls1.2",
+			RenewalConfig: &CertRenewalConfig{AutoRenew: true},
 		}
 	}
+	if c.TLS.RenewalConfig == nil {
+		c.TLS.RenewalConfig = &CertRenewalConfig{AutoRenew: true}
+	}
+	// Resolves the seconds-valued TOML fields into durations.
+	c.TLS.RenewalConfig.ApplyDefaults()
 
 	// Set default authentication configuration if not provided
 	if c.Auth == nil {
@@ -599,11 +631,13 @@ func DefaultConfig() *Config {
 			MinVersion:     "tls1.2",
 			EnableStartTLS: true, // Enable STARTTLS by default when TLS is enabled
 			RenewalConfig: &CertRenewalConfig{
-				AutoRenew:      true,
-				RenewalDays:    30,
-				CheckInterval:  24 * time.Hour,
-				ForceRenewal:   false,
-				RenewalTimeout: 5 * time.Minute,
+				AutoRenew:             true,
+				RenewalDays:           30,
+				ForceRenewal:          false,
+				CheckIntervalSeconds:  int(24 * time.Hour / time.Second),
+				RenewalTimeoutSeconds: int(5 * time.Minute / time.Second),
+				CheckInterval:         24 * time.Hour,
+				RenewalTimeout:        5 * time.Minute,
 			},
 		},
 
