@@ -103,7 +103,31 @@ file = "/var/log/elemta/elemta.log"
 - `listen_addr`
 - `max_size`
 - `local_domains`
+- `allowed_relays`
 - `failed_queue_retention_hours`
+- `max_workers`, `max_retries`, `max_queue_time`, `retry_schedule`
+- `session_timeout` (duration string, e.g. `5m`)
+- `strict_line_endings` (default `true`)
+
+### RFC 5321 line endings
+
+`strict_line_endings` enforces CRLF termination inside `DATA`. It defaults to
+`true` and is the primary defence against SMTP smuggling: a bare LF that this
+server treats as ordinary message content may be interpreted as a line
+terminator by a downstream server, which lets an attacker split one submission
+into several messages and forge the envelope of the extra ones.
+
+With it enabled, a bare CR or bare LF in `DATA` is rejected with
+`500 5.5.2`, and `.\n` is not honoured as an end-of-data marker.
+
+Set it to `false` only to interoperate with legacy senders that emit bare LF,
+and only if you understand that this re-opens the vector.
+
+> Prior to this being wired through, the value was always `false` in shipped
+> binaries regardless of configuration, because the field was never mapped
+> into the SMTP server's config. Deployments upgrading from an older build
+> will see strict enforcement turn on for the first time; if that rejects
+> mail you need to accept, set `strict_line_endings = false` explicitly.
 
 ### Queue backend
 
