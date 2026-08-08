@@ -195,7 +195,7 @@ show_summary() {
     echo -e "  1. Test Roundcube login: http://localhost:8025"
     echo -e "  2. Test ManageSieve filters interface"
     echo -e "  3. Send test emails between users"
-    echo -e "  4. Run integration test suite: ./tests/integration_test_suite.sh"
+    echo -e "  4. Run integration test suite: ./tests/run_centralized_tests.sh --deployment docker-dev"
     
     echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }

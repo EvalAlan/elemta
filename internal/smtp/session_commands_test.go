@@ -1182,6 +1182,11 @@ func TestMAILFROMSizeParameter(t *testing.T) {
 func TestEHLOSizeAdvertisement(t *testing.T) {
 	config := createTestConfig(t)
 	config.MaxSize = 50 * 1024 * 1024 // 50MB
+	// The per-connection memory limit has to allow a message this large,
+	// otherwise the server clamps max_size down rather than advertising a
+	// size it would reject part-way through DATA. See
+	// reconcileMessageSizeLimit.
+	config.Memory = &MemoryConfig{PerConnectionMemoryLimit: 50 * 1024 * 1024}
 	server, err := NewServer(config)
 	require.NoError(t, err)
 	defer func() { _ = server.Close() }()
