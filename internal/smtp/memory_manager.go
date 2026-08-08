@@ -49,6 +49,43 @@ func DefaultMemoryConfig() *MemoryConfig {
 	}
 }
 
+// ApplyDefaults fills in any unset field from DefaultMemoryConfig.
+//
+// This matters because [memory] is operator-configurable via TOML: a config
+// that sets only per_connection_memory_limit would otherwise leave the
+// thresholds at 0.0, and a critical threshold of 0 means *every* connection is
+// rejected as "critical threshold exceeded" the moment the server starts.
+// Partial configuration must degrade to the defaults, not to a dead server.
+func (c *MemoryConfig) ApplyDefaults() {
+	d := DefaultMemoryConfig()
+
+	if c.MaxMemoryUsage <= 0 {
+		c.MaxMemoryUsage = d.MaxMemoryUsage
+	}
+	if c.MemoryWarningThreshold <= 0 || c.MemoryWarningThreshold > 1 {
+		c.MemoryWarningThreshold = d.MemoryWarningThreshold
+	}
+	if c.MemoryCriticalThreshold <= 0 || c.MemoryCriticalThreshold > 1 {
+		c.MemoryCriticalThreshold = d.MemoryCriticalThreshold
+	}
+	if c.GCThreshold <= 0 || c.GCThreshold > 1 {
+		c.GCThreshold = d.GCThreshold
+	}
+	// TOML decodes a bare integer into time.Duration as *nanoseconds*, so the
+	// natural-looking "monitoring_interval = 5" yields 5ns and turns the
+	// monitor goroutine into a busy loop. Anything under a second is treated
+	// as a misconfiguration; write it as a duration string ("5s") instead.
+	if c.MonitoringInterval < time.Second {
+		c.MonitoringInterval = d.MonitoringInterval
+	}
+	if c.PerConnectionMemoryLimit <= 0 {
+		c.PerConnectionMemoryLimit = d.PerConnectionMemoryLimit
+	}
+	if c.MaxGoroutines <= 0 {
+		c.MaxGoroutines = d.MaxGoroutines
+	}
+}
+
 // MemoryStats tracks memory usage statistics
 type MemoryStats struct {
 	CurrentMemoryUsage    int64     `json:"current_memory_usage"`
