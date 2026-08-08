@@ -88,6 +88,37 @@ port = 2424
 timeout = 30
 retry_delay = 60
 
+# Content scanning.
+#
+# These sections must name the sidecar containers explicitly. When the
+# sections are absent the built-in defaults assume localhost, which is only
+# correct if the scanners run inside this container — in this compose setup
+# they do not, so scanning would silently fail to connect and every message
+# would pass unscanned.
+#
+# reject_on_failure / reject_on_spam stay false so that a scanner outage
+# degrades to delivering unscanned mail rather than refusing it.
+[antivirus]
+enabled = true
+reject_on_failure = false
+
+[antivirus.clamav]
+enabled = true
+address = "elemta-clamav:3310"
+timeout = 30
+scan_limit = 26214400  # 25MB
+
+[antispam]
+enabled = true
+reject_on_spam = false
+
+[antispam.rspamd]
+enabled = true
+address = "http://elemta-rspamd:11333"
+timeout = 30
+scan_limit = 26214400  # 25MB
+threshold = 6.0
+
 # Rate Limiting Configuration - More permissive for testing
 [rate_limiter]
 enabled = true
