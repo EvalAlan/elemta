@@ -1,6 +1,6 @@
 # Plan: spool message data to disk instead of buffering in memory
 
-Status: **stage 0 done (characterisation tests + header prepend); stages 1-4 not implemented**
+Status: **stages 0-3 landed for the file backend; stage 4 blocked on streaming content scans**
 
 ## Progress
 
@@ -134,26 +134,20 @@ than a copy).
 
 ### Stage 3 — stream into and out of the queue
 
-> **Correction.** This stage was described below as additive — new reader-based
-> methods alongside the existing `[]byte` ones. That was wrong, and the reason
-> is worth writing down before anyone starts.
+> **Resolved.** This stage was originally described as additive — new
+> reader-based methods alongside the existing `[]byte` ones. That was wrong:
+> enqueue idempotency does not pass content through, it *compares* it, and
+> `enqueueTombstone` serialised the entire body into JSON so a consumed ID
+> could be checked after the message was gone.
 >
-> Enqueue idempotency does not just pass content through; it *compares* it.
-> `CreateMessageIfAbsent` decides whether a retry is the same message by
-> `bytes.Equal` against the stored content, and `enqueueTombstone` serialises
-> **the entire message body into JSON** so a consumed ID can be checked after
-> the message is gone. There are a dozen such comparisons across the file and
-> sqlite backends.
->
-> Streaming therefore requires replacing content equality with a content hash
-> everywhere, which changes the on-disk tombstone format. Existing deployments
-> have tombstones written in the current shape, so this needs a versioned
-> record and a migration, or an upgrade will start reporting "conflicts with
-> consumed enqueue identity" and **refuse legitimate mail**.
->
-> That makes stage 3 its own reviewed change with its own migration test, not a
-> continuation of stage 2. Stages 1 and 2 remove the dominant memory cost
-> without touching it.
+> Identity is now a sha256 digest, and the migration is two-way. A tombstone
+> without `content_hash` is still settled by comparing bodies, so upgrading
+> does not invalidate ledgers already on disk. New tombstones still carry the
+> body alongside the hash, because a binary rolled back to a build that
+> predates `content_hash` reads only that field and would otherwise decide
+> every retry conflicts and start refusing mail. `Content` can be dropped from
+> new tombstones once no deployment can roll back that far — until then the
+> ledger keeps its current size.
 
 - Add `StoreContentFromReader(id string, r io.Reader) error` and
   `RetrieveContentReader(id string) (io.ReadCloser, error)` to
@@ -166,7 +160,22 @@ than a copy).
 - `delivery_handler` writes from the reader straight into the `DotWriter`.
 - DKIM signs from a reader, hashing the body in one pass while writing.
 
-### Stage 4 — decouple the limits
+### Stage 4 — decouple the limits *(blocked)*
+
+The remaining materialisation is the content scans, which substring-match over
+the whole message. Streaming them means matching over a bounded window or a
+rolling buffer, which changes what a security check can see — a signature
+straddling a chunk boundary, or falling outside the window, would be missed.
+That is a detection-policy decision, not a refactor, so it wants review rather
+than a quiet change.
+
+Until then `reconcileMessageSizeLimit` still clamps, and the maximum message
+size is still bounded by memory. What stages 1-3 removed is the *duration* of
+that cost — the body is no longer resident for the whole of a slow DATA
+transfer, only for the brief processing window — and the second copy that
+prepending headers used to make.
+
+### Original stage 4 notes
 
 Once nothing holds a whole message, `reconcileMessageSizeLimit` can stop
 clamping. `max_size` becomes a policy limit and `PerConnectionMemoryLimit`
