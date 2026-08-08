@@ -134,10 +134,12 @@ func (ch *CommandHandler) HandleHELO(ctx context.Context, args string) error {
 		return fmt.Errorf("501 5.0.0 Invalid hostname: %s", args)
 	}
 
-	// Set phase to mail (allows MAIL command)
-	if err := ch.state.SetPhase(ctx, PhaseMail); err != nil {
-		return fmt.Errorf("451 4.3.0 Internal server error")
-	}
+	// RFC 5321 §4.1.4: a greeting may arrive at any point and discards the
+	// sender and recipient buffers. Recording the greeting first means Reset
+	// lands the session in PhaseMail, ready for MAIL FROM, and also clears any
+	// transaction that was in progress.
+	ch.state.SetGreeted(true)
+	ch.state.Reset(ctx)
 
 	return ch.session.write(fmt.Sprintf("250 %s Hello %s", ch.config.Hostname, args))
 }
@@ -157,10 +159,12 @@ func (ch *CommandHandler) HandleEHLO(ctx context.Context, args string) error {
 		return fmt.Errorf("501 5.0.0 Invalid hostname: %s", args)
 	}
 
-	// Set phase to mail (allows MAIL command)
-	if err := ch.state.SetPhase(ctx, PhaseMail); err != nil {
-		return fmt.Errorf("451 4.3.0 Internal server error")
-	}
+	// RFC 5321 §4.1.4: a greeting may arrive at any point and discards the
+	// sender and recipient buffers. Recording the greeting first means Reset
+	// lands the session in PhaseMail, ready for MAIL FROM, and also clears any
+	// transaction that was in progress.
+	ch.state.SetGreeted(true)
+	ch.state.Reset(ctx)
 
 	// Send EHLO response with extensions
 	// PIPELINING (RFC 2920) is supported: responses are buffered and flushed
@@ -443,6 +447,9 @@ func (ch *CommandHandler) HandleBDAT(ctx context.Context, args string) error {
 		if err := ch.session.write("250 2.0.0 Message accepted for delivery"); err != nil {
 			return fmt.Errorf("failed to write BDAT response: %w", err)
 		}
+		// End the transaction so the connection can carry another message,
+		// matching the DATA path.
+		ch.state.Reset(ctx)
 		return nil
 	}
 
@@ -540,7 +547,11 @@ func (ch *CommandHandler) HandleSTARTTLS(ctx context.Context) error {
 	ch.conn = tlsConn
 	ch.state.SetTLSActive(ctx, true)
 
-	// Reset session state after TLS upgrade
+	// RFC 3207 §4.2: the server must discard all state gathered before the
+	// upgrade, and the client must issue EHLO again. Clearing greeted before
+	// Reset sends the session back to PhaseInit rather than PhaseMail, so a
+	// MAIL FROM that skips the second EHLO is refused.
+	ch.state.SetGreeted(false)
 	ch.state.Reset(ctx)
 
 	ch.logger.InfoContext(ctx, "TLS connection established successfully")
