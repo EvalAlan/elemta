@@ -2,6 +2,7 @@ package smtp
 
 import (
 	"bufio"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -290,4 +291,158 @@ func head(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// spoolDirOf returns the directory in-flight DATA is spooled to.
+func spoolDirOf(queueDir string) string { return filepath.Join(queueDir, "spool") }
+
+// countSpoolFiles reports how many spool files are currently on disk.
+func countSpoolFiles(t *testing.T, queueDir string) int {
+	t.Helper()
+	entries, err := os.ReadDir(spoolDirOf(queueDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatalf("read spool dir: %v", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() && isSpoolFileName(e.Name()) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestMessageRoundTrip_LargeMessageSpoolsAndSurvives is the point of the whole
+// refactor: a message far larger than the spool threshold must round-trip
+// byte-for-byte, and must not leave its spool file behind.
+func TestMessageRoundTrip_LargeMessageSpoolsAndSurvives(t *testing.T) {
+	cfg := strictTestConfig(t)
+	threshold := int64(8 * 1024)
+	cfg.SpoolThresholdBytes = &threshold
+	queueDir := cfg.QueueDir
+
+	// Distinct lines, so a truncation or reordering shows up rather than being
+	// masked by repeated identical content.
+	var body strings.Builder
+	for i := 0; i < 20000; i++ {
+		fmt.Fprintf(&body, "line %06d payload\r\n", i)
+	}
+	wantBody := body.String()
+
+	conn, reader := dialGreeted(t, cfg)
+	resp := submitMessage(t, conn, reader, "Subject: large\r\n\r\n"+wantBody+".\r\n")
+	if !strings.HasPrefix(resp, "250") {
+		t.Fatalf("large message was not accepted: %s", resp)
+	}
+
+	stored := string(waitForStoredMessage(t, queueDir))
+	if !strings.HasSuffix(stored, wantBody) {
+		t.Errorf("large message body was not stored verbatim (stored %d bytes, body %d bytes)",
+			len(stored), len(wantBody))
+	}
+
+	if n := countSpoolFiles(t, queueDir); n != 0 {
+		t.Errorf("%d spool file(s) left behind after a successful delivery", n)
+	}
+}
+
+// TestMessageRoundTrip_RejectedLargeMessageLeavesNoSpool is the leak case that
+// matters most: the message is big enough to be on disk when it is refused.
+func TestMessageRoundTrip_RejectedLargeMessageLeavesNoSpool(t *testing.T) {
+	cfg := strictTestConfig(t)
+	threshold := int64(1024)
+	cfg.SpoolThresholdBytes = &threshold
+	queueDir := cfg.QueueDir
+
+	conn, reader := dialGreeted(t, cfg)
+
+	// Large enough to spool, with a bare LF that strict mode refuses.
+	body := "Subject: big and bad\r\n\r\n" + strings.Repeat("padding line\r\n", 500) + "bare\nlf\r\n.\r\n"
+	resp := submitMessage(t, conn, reader, body)
+	if strings.HasPrefix(resp, "250") {
+		t.Fatalf("expected a rejection, got %s", resp)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	if n := countSpoolFiles(t, queueDir); n != 0 {
+		t.Errorf("%d spool file(s) left behind after a rejected message", n)
+	}
+	if contents := storedContents(t, queueDir); len(contents) != 0 {
+		t.Errorf("rejected message was stored anyway (%d file(s))", len(contents))
+	}
+}
+
+// TestMessageRoundTrip_DisconnectMidLargeTransferLeavesNoSpool covers an abort
+// after the spool has already spilled to disk.
+func TestMessageRoundTrip_DisconnectMidLargeTransferLeavesNoSpool(t *testing.T) {
+	cfg := strictTestConfig(t)
+	threshold := int64(1024)
+	cfg.SpoolThresholdBytes = &threshold
+	queueDir := cfg.QueueDir
+
+	conn, reader := dialGreeted(t, cfg)
+
+	mustWrite(t, conn, "MAIL FROM:<sender@example.com>\r\n")
+	expectPrefix(t, reader, "250", "MAIL FROM")
+	mustWrite(t, conn, "RCPT TO:<user@example.com>\r\n")
+	expectPrefix(t, reader, "250", "RCPT TO")
+	mustWrite(t, conn, "DATA\r\n")
+	expectPrefix(t, reader, "354", "DATA")
+
+	mustWrite(t, conn, "Subject: aborted\r\n\r\n"+strings.Repeat("data line\r\n", 500))
+
+	// Confirm the transfer actually reached disk before aborting it. Without
+	// this the test would still pass if the spool never spilled, which would
+	// make the cleanup assertion below meaningless.
+	spilled := time.Now().Add(3 * time.Second)
+	for countSpoolFiles(t, queueDir) == 0 {
+		if time.Now().After(spilled) {
+			t.Fatal("expected the in-flight message to be spooled to disk, but no spool file appeared")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	_ = conn.Close()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if countSpoolFiles(t, queueDir) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d spool file(s) survived a mid-transfer disconnect", countSpoolFiles(t, queueDir))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if contents := storedContents(t, queueDir); len(contents) != 0 {
+		t.Errorf("aborted transfer was stored anyway (%d file(s))", len(contents))
+	}
+}
+
+// TestMessageRoundTrip_NegativeThresholdKeepsMessagesInMemory pins the escape
+// hatch for operators who need the pre-spooling behaviour.
+func TestMessageRoundTrip_NegativeThresholdKeepsMessagesInMemory(t *testing.T) {
+	cfg := strictTestConfig(t)
+	threshold := int64(-1)
+	cfg.SpoolThresholdBytes = &threshold
+	queueDir := cfg.QueueDir
+
+	conn, reader := dialGreeted(t, cfg)
+	big := strings.Repeat("in memory please\r\n", 5000)
+	resp := submitMessage(t, conn, reader, "Subject: memory\r\n\r\n"+big+".\r\n")
+	if !strings.HasPrefix(resp, "250") {
+		t.Fatalf("message was not accepted: %s", resp)
+	}
+
+	stored := string(waitForStoredMessage(t, queueDir))
+	if !strings.HasSuffix(stored, big) {
+		t.Error("message body was not stored verbatim with spooling disabled")
+	}
+	if n := countSpoolFiles(t, queueDir); n != 0 {
+		t.Errorf("a negative threshold should never touch disk, found %d spool file(s)", n)
+	}
 }

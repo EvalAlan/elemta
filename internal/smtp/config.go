@@ -95,6 +95,12 @@ type Config struct {
 
 	SessionTimeout time.Duration `yaml:"session_timeout" toml:"session_timeout"` // Deprecated: Use Timeouts.SessionTimeout
 
+	// SpoolThresholdBytes is the size above which message data is written to a
+	// spool file instead of being held in memory. Unset means
+	// DefaultSpoolThreshold; a negative value keeps every message in memory,
+	// which is the behaviour that predates spooling.
+	SpoolThresholdBytes *int64 `toml:"spool_threshold_bytes" json:"spool_threshold_bytes"`
+
 	// RFC 5321 compliance settings
 	// StrictLineEndings enforces RFC 5321 CRLF requirements. It is a pointer so
 	// that "unset" is distinguishable from an explicit false; ApplyDefaults

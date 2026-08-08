@@ -81,7 +81,8 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 			AuthTimeout:       c.Timeouts.AuthTimeout,
 		},
 
-		StrictLineEndings: c.StrictLineEndings,
+		StrictLineEndings:   c.StrictLineEndings,
+		SpoolThresholdBytes: c.SpoolThresholdBytes,
 	}
 
 	// Fields below have no counterpart in the top-level config and are left for

@@ -655,8 +655,10 @@ func (s *Server) setupQueueDirectories() error {
 		return fmt.Errorf("failed to create queue directory: %w", err)
 	}
 
-	// Create subdirectories for different queue types with secure permissions
-	queueTypes := []string{"active", "deferred", "held", "failed", "data", "tmp", "quarantine"}
+	// Create subdirectories for different queue types with secure permissions.
+	// "spool" holds in-flight DATA for messages larger than the spool
+	// threshold, on the same filesystem as the queue.
+	queueTypes := []string{"active", "deferred", "held", "failed", "data", "tmp", "quarantine", "spool"}
 
 	for _, qType := range queueTypes {
 		qDir := filepath.Join(s.config.QueueDir, qType)
@@ -664,6 +666,17 @@ func (s *Server) setupQueueDirectories() error {
 			return fmt.Errorf("failed to create %s queue directory: %w", qType, err)
 		}
 		s.slogger.Info("Created secure queue directory", "path", qDir, "mode", "0700")
+	}
+
+	// Sessions remove their own spool files, but a crash or kill mid-DATA
+	// leaves them behind. Without this sweep they accumulate across restarts
+	// until they fill the queue filesystem.
+	spoolDir := filepath.Join(s.config.QueueDir, "spool")
+	if removed, err := SweepOrphanedSpools(spoolDir); err != nil {
+		s.slogger.Warn("Failed to sweep orphaned message spools", "path", spoolDir, "error", err)
+	} else if removed > 0 {
+		s.slogger.Info("Removed orphaned message spools from a previous run",
+			"path", spoolDir, "count", removed)
 	}
 
 	return nil

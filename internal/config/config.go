@@ -127,6 +127,11 @@ type Config struct {
 	// means strict; set it to false only to interoperate with legacy senders.
 	StrictLineEndings *bool `toml:"strict_line_endings"`
 
+	// SpoolThresholdBytes is the message size above which DATA is written to a
+	// spool file rather than held in memory. Unset uses the built-in default;
+	// a negative value keeps every message in memory.
+	SpoolThresholdBytes *int64 `toml:"spool_threshold_bytes"`
+
 	// Server configuration (legacy nested structure)
 	Server struct {
 		Hostname         string   `toml:"hostname"`

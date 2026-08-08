@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -94,14 +95,45 @@ func NewDataHandler(session *Session, state *SessionState, conn net.Conn, reader
 	}
 }
 
-// ReadData reads message data from the client with streaming and progressive memory tracking
+// spoolDir returns the directory message spools are written to. It sits under
+// the queue directory so a completed spool is on the same filesystem as the
+// queue and can be renamed into place rather than copied.
+func (dh *DataHandler) spoolDir() string {
+	return filepath.Join(dh.config.QueueDir, "spool")
+}
+
+// spoolThreshold returns the size above which message data goes to disk.
+// A negative value keeps everything in memory, restoring the previous
+// behaviour for operators who need it.
+func (dh *DataHandler) spoolThreshold() int64 {
+	if dh.config.SpoolThresholdBytes != nil {
+		return *dh.config.SpoolThresholdBytes
+	}
+	return DefaultSpoolThreshold
+}
+
+// ReadData reads message data from the client into a spool, keeping small
+// messages in memory and spilling larger ones to disk.
 // RFC 5321 §3.3 - Mail transactions: DATA command processing
 // RFC 5321 §4.1.1.4 - DATA command: After client sends DATA, server responds with 354 and accepts text
-func (dh *DataHandler) ReadData(ctx context.Context) ([]byte, error) {
-	slog.LogAttrs(ctx, slog.LevelDebug, "Starting streaming message data reading with memory tracking")
+// The returned spool is owned by the caller, which must Close it on every exit
+// path; Close removes the backing file. On error the spool is closed here and
+// nil is returned.
+func (dh *DataHandler) ReadData(ctx context.Context) (*MessageSpool, error) {
+	slog.LogAttrs(ctx, slog.LevelDebug, "Starting message data reading")
 
 	startTime := time.Now()
-	var buffer bytes.Buffer
+
+	spool := NewMessageSpool(dh.spoolDir(), dh.spoolThreshold())
+	// Any return before the spool is handed to the caller must release it.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			if err := spool.Close(); err != nil {
+				dh.logger.WarnContext(ctx, "Failed to release message spool", "error", err)
+			}
+		}
+	}()
 
 	state := &DataReaderState{
 		InHeaders: true,
@@ -115,23 +147,16 @@ func (dh *DataHandler) ReadData(ctx context.Context) ([]byte, error) {
 		sessionMemoryLimit = dh.session.resourceManager.memoryManager.config.PerConnectionMemoryLimit
 	}
 
-	// Intelligent buffer pre-allocation based on SIZE parameter (RFC 1870)
-	declaredSize := dh.state.GetDeclaredSize()
-	if declaredSize > 0 {
-		// Pre-allocate with 1.2x safety margin, capped at 50% of session memory limit
-		preAllocSize := declaredSize * 12 / 10 // 1.2x multiplier
-		maxPreAlloc := sessionMemoryLimit / 2  // Cap at 50% of session limit
-
-		if preAllocSize > maxPreAlloc {
-			preAllocSize = maxPreAlloc
+	// RFC 1870: a client that declares a SIZE larger than the spool threshold
+	// is going to spill anyway, so start on disk rather than growing a heap
+	// buffer up to the threshold first and copying it out.
+	if declaredSize := dh.state.GetDeclaredSize(); declaredSize > dh.spoolThreshold() {
+		if err := spool.SpillToDisk(); err != nil {
+			return nil, fmt.Errorf("451 4.3.0 Unable to prepare message spool: %w", err)
 		}
-
-		buffer.Grow(int(preAllocSize))
-
-		slog.LogAttrs(ctx, slog.LevelDebug, "Buffer pre-allocated based on SIZE parameter",
+		slog.LogAttrs(ctx, slog.LevelDebug, "Spooling to disk from the start based on declared SIZE",
 			slog.Int64("declared_size", declaredSize),
-			slog.Int64("pre_alloc_size", preAllocSize),
-			slog.Int64("session_memory_limit", sessionMemoryLimit),
+			slog.Int64("spool_threshold", dh.spoolThreshold()),
 		)
 	}
 
@@ -280,7 +305,11 @@ func (dh *DataHandler) ReadData(ctx context.Context) ([]byte, error) {
 		// Write line to buffer with RFC 5321 §4.5.2 transparent dot-stuffing
 		// Lines starting with "." have the second "." removed during DATA reception
 		processedLine := dh.applyDotStuffing(ctx, line, state)
-		buffer.Write(processedLine)
+		if _, err := spool.Write(processedLine); err != nil {
+			dh.logger.ErrorContext(ctx, "Failed to write message data to spool", "error", err)
+			dh.state.ClearDataTransferMode(ctx)
+			return nil, fmt.Errorf("451 4.3.0 Unable to buffer message data")
+		}
 
 		// Periodic logging for large messages with memory tracking
 		if state.LineCount%1000 == 0 {
@@ -294,31 +323,19 @@ func (dh *DataHandler) ReadData(ctx context.Context) ([]byte, error) {
 		}
 	}
 
-	data := buffer.Bytes()
-	dh.state.SetDataSize(ctx, int64(len(data)))
+	size := spool.Size()
+	dh.state.SetDataSize(ctx, size)
 
-	// Final memory check before returning
-	if int64(len(data)) > sessionMemoryLimit {
-		dh.logger.WarnContext(ctx, "Final session memory limit check failed",
-			"final_size", len(data),
-			"session_memory_limit", sessionMemoryLimit,
-			"session_id", dh.session.sessionID,
-		)
-		// Clear data transfer mode on error
-		dh.state.ClearDataTransferMode(ctx)
-		return nil, fmt.Errorf("552 5.3.4 Session memory limit exceeded")
-	}
-
-	dh.logger.InfoContext(ctx, "Streaming message data reading completed with memory tracking",
+	dh.logger.InfoContext(ctx, "Message data reading completed",
 		"total_lines", state.LineCount,
-		"total_bytes", len(data),
-		"session_memory_limit", sessionMemoryLimit,
-		"memory_utilization_pct", float64(len(data))/float64(sessionMemoryLimit)*100,
+		"total_bytes", size,
+		"spooled_to_disk", spool.OnDisk(),
 		"duration", time.Since(startTime),
 		"suspicious_patterns", suspiciousPatterns,
 	)
 
-	return data, nil
+	handedOff = true
+	return spool, nil
 }
 
 // ReadBDATChunk reads exactly size bytes from the connection for a BDAT chunk
@@ -363,7 +380,7 @@ func (dh *DataHandler) ProcessBDATMessage(ctx context.Context) error {
 	data := dh.bdatBuffer.Bytes()
 	dh.state.SetDataSize(ctx, int64(len(data)))
 
-	err := dh.ProcessMessage(ctx, data)
+	err := dh.processMessageBytes(ctx, data)
 	dh.ResetBDAT()
 	return err
 }
@@ -375,8 +392,24 @@ func (dh *DataHandler) ResetBDAT() {
 	dh.bdatChunkCount = 0
 }
 
-// ProcessMessage processes the complete message with security scanning and validation
-func (dh *DataHandler) ProcessMessage(ctx context.Context, data []byte) error {
+// ProcessMessage processes a spooled message with security scanning and
+// validation.
+//
+// Stage 1 of the spooling work reads the spool back into memory here, so that
+// moving DATA reception off the heap could land and soak on its own. Stage 2
+// replaces this with a reader-based path; the seam is deliberate.
+func (dh *DataHandler) ProcessMessage(ctx context.Context, spool *MessageSpool) error {
+	data, err := spool.Bytes()
+	if err != nil {
+		dh.logger.ErrorContext(ctx, "Failed to read spooled message", "error", err)
+		return fmt.Errorf("451 4.3.0 Unable to read message data")
+	}
+	return dh.processMessageBytes(ctx, data)
+}
+
+// processMessageBytes is the byte-oriented implementation shared by the DATA
+// and BDAT paths.
+func (dh *DataHandler) processMessageBytes(ctx context.Context, data []byte) error {
 	dh.logger.DebugContext(ctx, "Starting message processing with memory tracking", "size", len(data))
 
 	startTime := time.Now()
