@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,9 @@ import (
 type QueueManager interface {
 	// Basic queue operations
 	EnqueueMessage(from string, to []string, subject string, data []byte, priority Priority, receivedAt time.Time) (string, error)
+	// EnqueueMessageStream accepts a body held in a seekable reader, so a large
+	// message is never brought into memory to be queued.
+	EnqueueMessageStream(from string, to []string, subject string, open ContentOpener, size int64, priority Priority, receivedAt time.Time) (string, error)
 	GetMessage(id string) (Message, error)
 	DeleteMessage(id string) error
 	ListMessages(queueType QueueType) ([]Message, error)
@@ -116,6 +120,20 @@ type StorageBackend interface {
 // existing pair. Implementations must serialize by ID across backend clients.
 type AtomicEnqueueStorage interface {
 	CreateMessageIfAbsent(msg Message, content []byte) (created bool, err error)
+}
+
+// AtomicEnqueueStreamStorage is AtomicEnqueueStorage for a body that should
+// stay on disk. It is optional: a backend that cannot stream is used through
+// AtomicEnqueueStorage, with the body materialised first.
+type AtomicEnqueueStreamStorage interface {
+	CreateMessageIfAbsentStream(msg Message, open ContentOpener) (created bool, err error)
+}
+
+// StreamingContentStorage reads and writes message bodies without holding them
+// in memory. Optional, for the same reason.
+type StreamingContentStorage interface {
+	StoreContentFromReader(id string, r io.Reader) error
+	RetrieveContentReader(id string) (io.ReadCloser, error)
 }
 
 // IdempotencyLedgerStorage durably records an enqueue identity before deletion.

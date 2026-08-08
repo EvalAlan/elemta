@@ -2,6 +2,7 @@ package queue
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"path/filepath"
@@ -358,6 +359,46 @@ func (m *Manager) EnqueueMessageWithID(id, from string, to []string, subject str
 	return m.enqueueMessageWithID(id, from, to, subject, data, priority, receivedAt)
 }
 
+// EnqueueMessageStream adds a message whose body is held in a seekable reader
+// rather than in memory.
+//
+// Backends that implement AtomicEnqueueStreamStorage never materialise it. The
+// rest fall back to reading it in, which is no worse than the caller having
+// passed bytes to begin with, so a backend that cannot stream is a performance
+// limit rather than an incompatibility.
+func (m *Manager) EnqueueMessageStream(from string, to []string, subject string, open ContentOpener, size int64, priority Priority, receivedAt time.Time) (string, error) {
+	return m.enqueueMessageStreamWithID(generateUniqueID(), from, to, subject, open, size, priority, receivedAt)
+}
+
+func (m *Manager) enqueueMessageStreamWithID(id, from string, to []string, subject string, open ContentOpener, size int64, priority Priority, receivedAt time.Time) (string, error) {
+	streamer, ok := m.storageBackend.(AtomicEnqueueStreamStorage)
+	if !ok {
+		r, err := open()
+		if err != nil {
+			return "", fmt.Errorf("open message body: %w", err)
+		}
+		defer func() { _ = r.Close() }()
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return "", fmt.Errorf("read message body: %w", err)
+		}
+		return m.enqueueMessageWithID(id, from, to, subject, data, priority, receivedAt)
+	}
+
+	msg := m.newEnqueueMessage(id, from, to, subject, size, priority, receivedAt)
+
+	created, err := streamer.CreateMessageIfAbsentStream(msg, open)
+	if err != nil {
+		return "", fmt.Errorf("idempotent enqueue failed: %w", err)
+	}
+	if !created {
+		return id, nil
+	}
+
+	m.recordEnqueued(msg)
+	return id, nil
+}
+
 func (m *Manager) enqueueMessageWithID(id, from string, to []string, subject string, data []byte, priority Priority, receivedAt time.Time) (string, error) {
 
 	m.logger.Info("message_accepted",
@@ -372,33 +413,7 @@ func (m *Manager) enqueueMessageWithID(id, from string, to []string, subject str
 		"enqueue_time", time.Now().Format(time.RFC3339),
 	)
 
-	// Derive primary routing domain from first recipient
-	var domain string
-	if len(to) > 0 {
-		domain = extractDomain(to[0])
-	}
-
-	now := time.Now()
-	// Create message metadata
-	msg := Message{
-		ID:          id,
-		QueueType:   Active,
-		From:        from,
-		To:          to,
-		Domain:      domain,
-		Subject:     subject,
-		Size:        int64(len(data)),
-		Priority:    priority,
-		ReceivedAt:  receivedAt,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		RetryCount:  0,
-		Annotations: make(map[string]string),
-		Attempts:    make([]Attempt, 0),
-	}
-
-	// Set file path in message metadata
-	msg.FilePath = filepath.Join(m.queueDir, "data", id)
+	msg := m.newEnqueueMessage(id, from, to, subject, int64(len(data)), priority, receivedAt)
 
 	if atomic, ok := m.storageBackend.(AtomicEnqueueStorage); ok {
 		created, err := atomic.CreateMessageIfAbsent(msg, data)
@@ -419,7 +434,41 @@ func (m *Manager) enqueueMessageWithID(id, from string, to []string, subject str
 		}
 	}
 
-	// Update stats atomically
+	m.recordEnqueued(msg)
+	return id, nil
+}
+
+// newEnqueueMessage builds the metadata for a newly accepted message. Shared by
+// the byte and streaming enqueue paths so they cannot drift.
+func (m *Manager) newEnqueueMessage(id, from string, to []string, subject string, size int64, priority Priority, receivedAt time.Time) Message {
+	var domain string
+	if len(to) > 0 {
+		domain = extractDomain(to[0])
+	}
+
+	now := time.Now()
+	msg := Message{
+		ID:          id,
+		QueueType:   Active,
+		From:        from,
+		To:          to,
+		Domain:      domain,
+		Subject:     subject,
+		Size:        size,
+		Priority:    priority,
+		ReceivedAt:  receivedAt,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		RetryCount:  0,
+		Annotations: make(map[string]string),
+		Attempts:    make([]Attempt, 0),
+	}
+	msg.FilePath = filepath.Join(m.queueDir, "data", id)
+	return msg
+}
+
+// recordEnqueued updates queue statistics for an accepted message.
+func (m *Manager) recordEnqueued(msg Message) {
 	m.statsLock.Lock()
 	m.queueStats.ActiveCount++
 	m.queueStats.LastUpdated = time.Now()
@@ -428,11 +477,9 @@ func (m *Manager) enqueueMessageWithID(id, from string, to []string, subject str
 	m.statsLock.Unlock()
 
 	m.logger.Debug("message enqueued successfully",
-		"message_id", id,
+		"message_id", msg.ID,
 		"queue_type", Active,
 		"active_count", activeCount)
-
-	return id, nil
 }
 
 // GetMessageContent retrieves the content data for a message
