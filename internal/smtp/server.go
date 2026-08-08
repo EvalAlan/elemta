@@ -29,13 +29,13 @@ type Server struct {
 	listener        net.Listener
 	running         atomic.Bool
 	pluginManager   *plugin.Manager
-	builtinPlugins  *plugin.BuiltinPlugins // Built-in plugins for spam/antivirus scanning
 	authenticator   Authenticator
 	metricsManager  *MetricsManager    // Extracted metrics management
 	queueManager    queue.QueueManager // Unified queue system
 	queueProcessor  *queue.Processor   // Queue processor for message delivery
 	tlsManager      TLSHandler
 	resourceManager *ResourceManager // Resource management and rate limiting
+	scannerManager  *ScannerManager  // Antivirus/antispam scanners used during DATA
 	slogger         *slog.Logger     // Structured logger for resource management
 
 	// Concurrency management
@@ -49,9 +49,17 @@ type Server struct {
 }
 
 // initPlugins initializes the plugin manager and builtin plugins.
-func initPlugins(config *Config, slogger *slog.Logger) (*plugin.Manager, *plugin.BuiltinPlugins) {
+// initPlugins initializes the plugin manager.
+//
+// This used to also construct plugin.BuiltinPlugins and hand it a hardcoded
+// ClamAV and Rspamd address. Nothing ever asked it to scan a message — the
+// SMTP session only checked it for nil, as a stand-in for "scanning is
+// configured", and then ran a list of hardcoded substrings instead. Content
+// scanning now goes through ScannerManager, which reads [antivirus] and
+// [antispam] from the configuration rather than embedding infrastructure
+// addresses in code.
+func initPlugins(config *Config, slogger *slog.Logger) *plugin.Manager {
 	var pluginManager *plugin.Manager
-	var builtinPlugins *plugin.BuiltinPlugins
 
 	if config.Plugins != nil && config.Plugins.Enabled {
 		pluginManager = plugin.NewManager(config.Plugins.PluginPath)
@@ -71,49 +79,11 @@ func initPlugins(config *Config, slogger *slog.Logger) (*plugin.Manager, *plugin
 				}
 			}
 		}
-	}
-
-	builtinPlugins = plugin.NewBuiltinPlugins()
-
-	if config.Plugins != nil && config.Plugins.Enabled {
-		clamAVEnabled := os.Getenv("ELEMTA_DISABLE_CLAMAV") != "true"
-
-		var pluginNames []string
-		pluginConfig := make(map[string]map[string]interface{})
-
-		if len(config.Plugins.Plugins) > 0 {
-			pluginNames = config.Plugins.Plugins
-		} else {
-			pluginNames = []string{"rspamd"}
-			if clamAVEnabled {
-				pluginNames = append(pluginNames, "clamav")
-			}
-		}
-
-		if clamAVEnabled {
-			pluginConfig["clamav"] = map[string]interface{}{
-				"host":    "elemta-clamav",
-				"port":    3310,
-				"timeout": 30,
-			}
-		}
-		pluginConfig["rspamd"] = map[string]interface{}{
-			"host":      "elemta-rspamd",
-			"port":      11334,
-			"timeout":   30,
-			"threshold": 5.0,
-		}
-
-		if err := builtinPlugins.InitBuiltinPlugins(pluginNames, pluginConfig); err != nil {
-			slogger.Warn("Failed to initialize builtin plugins", "error", err)
-		} else {
-			slogger.Info("Builtin plugins initialized successfully")
-		}
 	} else {
 		slogger.Info("Plugins disabled or not configured")
 	}
 
-	return pluginManager, builtinPlugins
+	return pluginManager
 }
 
 type deliveryHandlerFactory func(host string, port int, maxPerDomain int, failedQueueRetentionHours int) queue.DeliveryHandler
@@ -495,7 +465,7 @@ func NewServer(config *Config) (*Server, error) {
 	)
 	logServerConfigSummary(config, slogger)
 
-	pluginManager, builtinPlugins := initPlugins(config, slogger)
+	pluginManager := initPlugins(config, slogger)
 	authenticator, err := initAuthenticator(config, slogger)
 	if err != nil {
 		return nil, err
@@ -520,7 +490,6 @@ func NewServer(config *Config) (*Server, error) {
 	server := &Server{
 		config:          config,
 		pluginManager:   pluginManager,
-		builtinPlugins:  builtinPlugins,
 		authenticator:   authenticator,
 		metricsManager:  metricsManager,
 		queueManager:    queueManager,
@@ -541,12 +510,25 @@ func NewServer(config *Config) (*Server, error) {
 	}
 	server.tlsManager = tlsManager
 
+	// The scanner manager used to be initialised and then dropped: the local
+	// variable went out of scope and nothing ever scanned a message with it.
+	// ClamAV and Rspamd connected at startup and were never asked anything.
 	scannerManager := NewScannerManager(config, server)
 	if err := scannerManager.Initialize(context.Background()); err != nil {
 		slogger.Warn("Error initializing scanner manager",
 			"error", err,
 			"component", "scanner-manager",
 		)
+	}
+	server.scannerManager = scannerManager
+
+	// Say plainly when nothing will be scanned. Silence here previously looked
+	// identical to working scanners.
+	if !scannerManager.HasAntivirusScanners() {
+		slogger.Warn("No antivirus scanner is available; messages will be delivered unscanned for viruses")
+	}
+	if !scannerManager.HasAntispamScanners() {
+		slogger.Warn("No antispam scanner is available; messages will be delivered unscored for spam")
 	}
 
 	return server, nil
@@ -901,8 +883,8 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	// Set the TLS manager from the server
 	session.SetTLSManager(s.tlsManager)
 
-	// Set the builtin plugins from the server
-	session.SetBuiltinPlugins(s.builtinPlugins)
+	// Set the content scanners from the server
+	session.SetScannerManager(s.scannerManager)
 
 	// Set queue manager for message processing
 	if s.queueManager != nil {

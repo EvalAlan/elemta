@@ -17,7 +17,6 @@ import (
 	"log/slog"
 
 	"github.com/busybox42/elemta/internal/logging"
-	"github.com/busybox42/elemta/internal/plugin"
 	"github.com/busybox42/elemta/internal/queue"
 	"github.com/google/uuid"
 )
@@ -46,11 +45,15 @@ type MessageMetadata struct {
 
 // SecurityScanResult represents the result of security scanning
 type SecurityScanResult struct {
-	Passed      bool
-	Threats     []string
-	SpamScore   float64
-	VirusFound  bool
-	Quarantined bool
+	Passed bool
+	// SpamDetected records the engine's own verdict, which it reaches against
+	// its own configured threshold. Whether that verdict rejects the message is
+	// policy, held in [antispam].reject_on_spam, and is decided separately.
+	SpamDetected bool
+	Threats      []string
+	SpamScore    float64
+	VirusFound   bool
+	Quarantined  bool
 }
 
 // DataHandler manages message data processing for a session
@@ -62,7 +65,7 @@ type DataHandler struct {
 	reader            *bufio.Reader
 	config            *Config
 	queueManager      queue.QueueManager
-	builtinPlugins    *plugin.BuiltinPlugins
+	scannerManager    *ScannerManager
 	enhancedValidator *EnhancedValidator
 	msgLogger         *logging.MessageLogger
 	receptionTime     time.Time
@@ -73,7 +76,8 @@ type DataHandler struct {
 
 // NewDataHandler creates a new data handler
 func NewDataHandler(session *Session, state *SessionState, conn net.Conn, reader *bufio.Reader,
-	config *Config, queueManager queue.QueueManager, builtinPlugins *plugin.BuiltinPlugins, logger *slog.Logger) *DataHandler {
+	config *Config, queueManager queue.QueueManager,
+	scannerManager *ScannerManager, logger *slog.Logger) *DataHandler {
 	baseLogger := logger.With("component", "session-data")
 
 	// Use the existing global logger that writes to both stdout and file
@@ -88,7 +92,7 @@ func NewDataHandler(session *Session, state *SessionState, conn net.Conn, reader
 		reader:            reader,
 		config:            config,
 		queueManager:      queueManager,
-		builtinPlugins:    builtinPlugins,
+		scannerManager:    scannerManager,
 		enhancedValidator: NewEnhancedValidator(logger.With("component", "enhanced-validator")),
 		msgLogger:         msgLogger,
 		receptionTime:     time.Now(),
@@ -841,7 +845,7 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 		}
 
 		spamStatus := "No"
-		if scanResult.SpamScore > 5.0 {
+		if scanResult.SpamDetected {
 			spamStatus = "Yes"
 		}
 		additionalHeaders = append(additionalHeaders, "X-Spam-Scanned: Yes")
@@ -1312,20 +1316,18 @@ func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, met
 	// Build both views once and share them.
 	view := newScanContent(data)
 
-	// Perform antivirus scan if plugins are available
-	if dh.builtinPlugins != nil {
-		if err := dh.performAntivirusScan(ctx, view, result); err != nil {
-			dh.logger.ErrorContext(ctx, "Antivirus scan failed", "error", err)
-			return nil, err
-		}
+	// These used to be gated on builtinPlugins being non-nil, which was only
+	// ever a proxy for "plugins are configured" — the plugins themselves were
+	// never asked to scan anything. Each scan now decides for itself whether a
+	// scanner is available.
+	if err := dh.performAntivirusScan(ctx, view, result); err != nil {
+		dh.logger.ErrorContext(ctx, "Antivirus scan failed", "error", err)
+		return nil, err
 	}
 
-	// Perform spam scan if plugins are available
-	if dh.builtinPlugins != nil {
-		if err := dh.performSpamScan(ctx, view, metadata, result); err != nil {
-			dh.logger.ErrorContext(ctx, "Spam scan failed", "error", err)
-			return nil, err
-		}
+	if err := dh.performSpamScan(ctx, view, metadata, result); err != nil {
+		dh.logger.ErrorContext(ctx, "Spam scan failed", "error", err)
+		return nil, err
 	}
 
 	// Perform content analysis
@@ -1346,45 +1348,40 @@ func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, met
 
 // performAntivirusScan performs antivirus scanning
 func (dh *DataHandler) performAntivirusScan(ctx context.Context, view *scanContent, result *SecurityScanResult) error {
-	// This would integrate with actual antivirus plugins
-	// For now, perform basic threat detection
-
-	threatPatterns := []string{
-		"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*", // EICAR test
-		"malware", "virus", "trojan", // Basic patterns
+	if dh.scannerManager == nil || !dh.scannerManager.HasAntivirusScanners() {
+		return nil
 	}
 
-	for _, pattern := range threatPatterns {
-		if strings.Contains(view.lower, strings.ToLower(pattern)) {
-			result.Passed = false
-			result.VirusFound = true
-			result.Threats = append(result.Threats, "Virus detected: "+pattern)
+	results, err := dh.scannerManager.ScanForViruses(ctx, []byte(view.raw))
+	if err != nil {
+		// A scanner that is down must not take mail down with it. The message
+		// is delivered unscanned and the failure is recorded.
+		dh.logger.WarnContext(ctx, "Antivirus scan failed; delivering message unscanned",
+			"error", err,
+		)
+		return nil
+	}
 
-			// Log rejection event for virus detection
-			dh.msgLogger.LogRejection(logging.MessageContext{
-				MessageID:      "", // Will be set later when metadata is available
-				QueueID:        "",
-				From:           "",
-				To:             []string{},
-				Subject:        "",
-				Size:           int64(len(view.raw)),
-				ClientIP:       dh.session.remoteAddr,
-				ClientHostname: dh.session.remoteAddr,
-				Username:       dh.state.GetUsername(),
-				Authenticated:  dh.state.IsAuthenticated(),
-				TLSActive:      dh.state.IsTLSActive(),
-				ReceptionTime:  dh.receptionTime,
-				ProcessingTime: time.Now(),
-				VirusFound:     true,
-				VirusScanned:   true,
-				Error:          fmt.Sprintf("Message rejected due to virus: %s", pattern),
-			})
-
-			dh.logger.WarnContext(ctx, "Virus detected in message",
-				"pattern", pattern,
-				"message_id", "unknown",
-			)
+	for _, r := range results {
+		if r == nil || r.Clean {
+			continue
 		}
+
+		result.Passed = false
+		result.VirusFound = true
+		for _, infection := range r.Infections {
+			result.Threats = append(result.Threats, "Virus detected: "+infection)
+		}
+		if len(r.Infections) == 0 {
+			result.Threats = append(result.Threats, "Virus detected by "+r.Engine)
+		}
+
+		dh.logger.WarnContext(ctx, "Virus detected",
+			"event_type", "virus_detected",
+			"engine", r.Engine,
+			"infections", r.Infections,
+			"remote_addr", dh.conn.RemoteAddr().String(),
+		)
 	}
 
 	return nil
@@ -1392,93 +1389,52 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, view *scanConte
 
 // performSpamScan performs spam detection
 func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, metadata *MessageMetadata, result *SecurityScanResult) error {
-	// Basic spam scoring
-	spamScore := 0.0
-	content := view.lower
-
-	// Debug: Log the content being scanned
-	previewLength := 200
-	if len(content) < previewLength {
-		previewLength = len(content)
-	}
-	dh.logger.DebugContext(ctx, "Spam scan content",
-		"content_length", len(content),
-		"content_preview", content[:previewLength],
-		"gtube_in_content", strings.Contains(content, "xjs*c4jdbqadn1.nsbn3*2idnen*gtube-standard-anti-ube-test-email*c.34x"),
-	)
-
-	// Check for spam indicators
-	spamPatterns := map[string]float64{
-		// GTUBE test string (should always trigger spam detection)
-		"XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X": 100.0,
-		// EICAR test string (should trigger virus detection)
-		"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*": 100.0,
-		// Common spam patterns
-		"viagra":          5.0,
-		"cialis":          5.0,
-		"lottery":         3.0,
-		"winner":          2.0,
-		"congratulations": 1.0,
-		"urgent":          1.5,
-		"act now":         2.0,
-		"limited time":    1.5,
+	if dh.scannerManager == nil || !dh.scannerManager.HasAntispamScanners() {
+		return nil
 	}
 
-	for pattern, score := range spamPatterns {
-		// Convert pattern to lowercase for case-insensitive matching
-		lowerPattern := strings.ToLower(pattern)
-		if strings.Contains(content, lowerPattern) {
-			spamScore += score
+	results, err := dh.scannerManager.ScanForSpam(ctx, []byte(view.raw))
+	if err != nil {
+		dh.logger.WarnContext(ctx, "Spam scan failed; delivering message unscored",
+			"error", err,
+		)
+		return nil
+	}
 
-			// Log specific pattern detection
-			if pattern == "XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X" {
-				dh.logger.InfoContext(ctx, "spam_detected",
-					"event_type", "spam_detected",
-					"pattern", "GTUBE",
-					"spam_score", spamScore,
-					"message_id", metadata.MessageID,
-					"from_envelope", metadata.From,
-					"to_envelope", metadata.To,
-					"message_subject", metadata.Subject,
-				)
-			}
+	// Several engines may report; the highest score decides, and any engine
+	// calling the message spam is enough to mark it.
+	var highest float64
+	spam := false
+	for _, r := range results {
+		if r == nil {
+			continue
+		}
+		if r.Score > highest {
+			highest = r.Score
+		}
+		if !r.Clean {
+			spam = true
+			dh.logger.InfoContext(ctx, "spam_detected",
+				"event_type", "spam_detected",
+				"engine", r.Engine,
+				"spam_score", r.Score,
+				"threshold", r.Threshold,
+				"rules", r.Rules,
+				"message_id", metadata.MessageID,
+				"from_envelope", metadata.From,
+			)
 		}
 	}
 
-	result.SpamScore = spamScore
-
-	// Threshold for spam detection
-	if spamScore >= 5.0 {
-		result.Passed = false
-		result.Threats = append(result.Threats, fmt.Sprintf("High spam score: %.1f", spamScore))
-
-		// Log rejection event for spam detection
-		dh.msgLogger.LogRejection(logging.MessageContext{
-			MessageID:      metadata.MessageID,
-			QueueID:        metadata.MessageID,
-			From:           metadata.From,
-			To:             metadata.To,
-			Subject:        metadata.Subject,
-			Size:           metadata.Size,
-			ClientIP:       dh.session.remoteAddr,
-			ClientHostname: dh.session.remoteAddr,
-			Username:       dh.state.GetUsername(),
-			Authenticated:  dh.state.IsAuthenticated(),
-			TLSActive:      dh.state.IsTLSActive(),
-			ReceptionTime:  dh.receptionTime,
-			ProcessingTime: time.Now(),
-			SpamScore:      spamScore,
-			SpamScanned:    true,
-			Error:          fmt.Sprintf("Message rejected due to spam score: %.1f", spamScore),
-		})
-
-		dh.logger.WarnContext(ctx, "Message flagged as spam",
-			"spam_score", spamScore,
-			"message_id", metadata.MessageID,
-			"from_envelope", metadata.From,
-			"to_envelope", metadata.To,
-			"message_subject", metadata.Subject,
-		)
+	result.SpamScore = highest
+	if spam {
+		result.SpamDetected = true
+		result.Threats = append(result.Threats, fmt.Sprintf("Message identified as spam (score %.1f)", highest))
+		// Only refuse the message if the operator asked for that. Otherwise it
+		// is delivered carrying the spam headers, and filtering happens later.
+		if dh.config.Antispam != nil && dh.config.Antispam.RejectOnSpam {
+			result.Passed = false
+		}
 	}
 
 	return nil
@@ -1689,8 +1645,8 @@ func (dh *DataHandler) handleSecurityThreat(ctx context.Context, scanResult *Sec
 		return fmt.Errorf("554 5.7.1 Message rejected: virus detected")
 	}
 
-	if scanResult.SpamScore >= 10.0 {
-		dh.logger.WarnContext(ctx, "Message rejected due to high spam score",
+	if scanResult.SpamDetected {
+		dh.logger.WarnContext(ctx, "Message rejected as spam",
 			"event_type", "rejection",
 			"spam_score", scanResult.SpamScore,
 			"message_id", metadata.MessageID,
