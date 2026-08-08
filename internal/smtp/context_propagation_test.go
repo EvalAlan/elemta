@@ -31,8 +31,11 @@ func TestServerContextPropagation(t *testing.T) {
 		t.Fatalf("Failed to start server: %v", err)
 	}
 
-	// Create multiple connections
+	// Create multiple connections. sessionsMu guards the slice: the append
+	// below runs from five goroutines at once, and an unsynchronised append
+	// both races and can drop entries.
 	var sessions []*Session
+	var sessionsMu sync.Mutex
 	var wg sync.WaitGroup
 
 	// Create 5 concurrent sessions
@@ -50,7 +53,9 @@ func TestServerContextPropagation(t *testing.T) {
 
 			// Create session with server context
 			session := NewSession(server.ctx, conn, config, nil)
+			sessionsMu.Lock()
 			sessions = append(sessions, session)
+			sessionsMu.Unlock()
 
 			// Start session in goroutine
 			go func() {
@@ -59,8 +64,18 @@ func TestServerContextPropagation(t *testing.T) {
 		}()
 	}
 
-	// Wait for sessions to be created
+	// Wait for every session to actually be created before inspecting the
+	// slice. This used to be a bare sleep with wg.Wait() left until after the
+	// assertions, so the loop below could read the slice while goroutines were
+	// still appending to it.
+	wg.Wait()
+
+	// Give the session goroutines a moment to enter Handle.
 	time.Sleep(100 * time.Millisecond)
+
+	if len(sessions) != 5 {
+		t.Fatalf("expected 5 sessions to be created, got %d", len(sessions))
+	}
 
 	// Verify all sessions have contexts that derive from server
 	for i, session := range sessions {
@@ -102,8 +117,6 @@ func TestServerContextPropagation(t *testing.T) {
 			t.Errorf("Session %d context not cancelled after shutdown", i)
 		}
 	}
-
-	wg.Wait()
 }
 
 // TestSessionTimeout verifies that session contexts timeout correctly

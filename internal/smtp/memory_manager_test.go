@@ -1,6 +1,7 @@
 package smtp
 
 import (
+	"io"
 	"log/slog"
 	"os"
 	"runtime"
@@ -346,4 +347,49 @@ func BenchmarkMemoryManagerGetMemoryStats(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = mm.GetMemoryStats()
 	}
+}
+
+// TestSetMemoryManager_ClosesReplacedManager pins the goroutine leak fix.
+//
+// NewResourceManager builds a memory manager from the resource limits and
+// every caller immediately replaces it with one built from [memory] config.
+// The displaced manager used to keep its monitoring goroutine running for the
+// life of the process, forcing GC on thresholds that no longer applied.
+func TestSetMemoryManager_ClosesReplacedManager(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	cfg := DefaultMemoryConfig()
+	cfg.MonitoringInterval = 10 * time.Millisecond
+	first := NewMemoryManager(cfg, logger)
+
+	rm := NewResourceManager(DefaultResourceLimits(), logger)
+	t.Cleanup(rm.Close)
+
+	rm.SetMemoryManager(first)
+
+	second := NewMemoryManager(cfg, logger)
+	rm.SetMemoryManager(second)
+
+	// The displaced manager's monitoring goroutine must have been signalled.
+	select {
+	case <-first.shutdownChan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replaced memory manager was not shut down; its monitoring goroutine leaks")
+	}
+
+	if rm.memoryManager != second {
+		t.Error("resource manager did not adopt the new memory manager")
+	}
+}
+
+// TestMemoryManagerClose_IsIdempotent guards the panic that the leak fix would
+// otherwise introduce: Close is now reachable both from SetMemoryManager and
+// from resource manager shutdown, and closing a channel twice panics.
+func TestMemoryManagerClose_IsIdempotent(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	mm := NewMemoryManager(DefaultMemoryConfig(), logger)
+
+	mm.Close()
+	mm.Close() // must not panic
+	mm.Close()
 }

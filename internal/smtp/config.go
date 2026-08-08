@@ -95,8 +95,17 @@ type Config struct {
 
 	SessionTimeout time.Duration `yaml:"session_timeout" toml:"session_timeout"` // Deprecated: Use Timeouts.SessionTimeout
 
+	// SpoolThresholdBytes is the size above which message data is written to a
+	// spool file instead of being held in memory. Unset means
+	// DefaultSpoolThreshold; a negative value keeps every message in memory,
+	// which is the behaviour that predates spooling.
+	SpoolThresholdBytes *int64 `toml:"spool_threshold_bytes" json:"spool_threshold_bytes"`
+
 	// RFC 5321 compliance settings
-	StrictLineEndings bool `toml:"strict_line_endings" json:"strict_line_endings"` // Enforce RFC 5321 CRLF requirements (default: true)
+	// StrictLineEndings enforces RFC 5321 CRLF requirements. It is a pointer so
+	// that "unset" is distinguishable from an explicit false; ApplyDefaults
+	// resolves nil to true. Read it through StrictLineEndingsEnabled().
+	StrictLineEndings *bool `toml:"strict_line_endings" json:"strict_line_endings"`
 }
 
 // TimeoutConfig contains hierarchical timeout settings for context propagation
@@ -205,11 +214,44 @@ type LetsEncryptConfig struct {
 
 // CertRenewalConfig represents certificate renewal configuration
 type CertRenewalConfig struct {
-	AutoRenew      bool          `yaml:"auto_renew" toml:"auto_renew"`
-	RenewalDays    int           `yaml:"renewal_days" toml:"renewal_days"`       // Renew this many days before expiration
-	CheckInterval  time.Duration `yaml:"check_interval" toml:"check_interval"`   // How often to check certificate status
-	ForceRenewal   bool          `yaml:"force_renewal" toml:"force_renewal"`     // Force renewal on startup
-	RenewalTimeout time.Duration `yaml:"renewal_timeout" toml:"renewal_timeout"` // Timeout for renewal operations
+	AutoRenew    bool `yaml:"auto_renew" toml:"auto_renew"`
+	RenewalDays  int  `yaml:"renewal_days" toml:"renewal_days"` // Renew this many days before expiration
+	ForceRenewal bool `yaml:"force_renewal" toml:"force_renewal"`
+
+	// Seconds-valued TOML forms. These are ints rather than time.Duration
+	// because pelletier/go-toml (used by internal/config, the path the server
+	// takes) cannot decode a duration string, and decodes a bare integer as
+	// nanoseconds. See MemoryConfig.MonitoringIntervalSeconds.
+	CheckIntervalSeconds  int `yaml:"check_interval_seconds" toml:"check_interval"`
+	RenewalTimeoutSeconds int `yaml:"renewal_timeout_seconds" toml:"renewal_timeout"`
+
+	// Resolved runtime values, derived by ApplyDefaults.
+	CheckInterval  time.Duration `yaml:"-" toml:"-"`
+	RenewalTimeout time.Duration `yaml:"-" toml:"-"`
+}
+
+// ApplyDefaults resolves the seconds-valued TOML fields into durations and
+// fills in defaults for anything unset.
+func (c *CertRenewalConfig) ApplyDefaults() {
+	if c.CheckIntervalSeconds > 0 {
+		c.CheckInterval = time.Duration(c.CheckIntervalSeconds) * time.Second
+	}
+	if c.CheckInterval <= 0 {
+		c.CheckInterval = 24 * time.Hour
+	}
+	c.CheckIntervalSeconds = int(c.CheckInterval / time.Second)
+
+	if c.RenewalTimeoutSeconds > 0 {
+		c.RenewalTimeout = time.Duration(c.RenewalTimeoutSeconds) * time.Second
+	}
+	if c.RenewalTimeout <= 0 {
+		c.RenewalTimeout = 5 * time.Minute
+	}
+	c.RenewalTimeoutSeconds = int(c.RenewalTimeout / time.Second)
+
+	if c.RenewalDays <= 0 {
+		c.RenewalDays = 30
+	}
 }
 
 // ResourceConfig represents resource limits
@@ -368,56 +410,68 @@ func LoadConfig(configPath string) (*Config, error) {
 		}
 	}
 
-	if config.Hostname == "" {
+	config.ApplyDefaults()
+
+	if err := os.MkdirAll(config.QueueDir, 0750); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+// ApplyDefaults fills in default values for any unset configuration fields.
+// It is shared by LoadConfig and by callers that construct a Config from the
+// top-level elemta configuration, so both paths get identical defaults.
+func (c *Config) ApplyDefaults() {
+	if c.Hostname == "" {
 		hostname, err := os.Hostname()
 		if err == nil {
-			config.Hostname = hostname
+			c.Hostname = hostname
 		} else {
-			config.Hostname = "localhost.localdomain"
+			c.Hostname = "localhost.localdomain"
 		}
 	}
 
-	if config.ListenAddr == "" {
-		config.ListenAddr = ":2525"
+	if c.ListenAddr == "" {
+		c.ListenAddr = ":2525"
 	}
-	if config.QueueDir == "" {
-		config.QueueDir = "./queue"
+	if c.QueueDir == "" {
+		c.QueueDir = "./queue"
 	}
-	if config.MaxSize == 0 {
-		config.MaxSize = 50 * 1024 * 1024 // 50MB - increased default
+	if c.MaxSize == 0 {
+		c.MaxSize = 50 * 1024 * 1024 // 50MB - increased default
 	}
-	if config.MaxWorkers == 0 {
-		config.MaxWorkers = 10
+	if c.MaxWorkers == 0 {
+		c.MaxWorkers = 10
 	}
-	if config.MaxRetries == 0 {
-		config.MaxRetries = 10
+	if c.MaxRetries == 0 {
+		c.MaxRetries = 10
 	}
-	if config.MaxQueueTime == 0 {
-		config.MaxQueueTime = 172800
+	if c.MaxQueueTime == 0 {
+		c.MaxQueueTime = 172800
 	}
-	if len(config.RetrySchedule) == 0 {
-		config.RetrySchedule = []int{60, 300, 900, 3600, 10800, 21600, 43200}
+	if len(c.RetrySchedule) == 0 {
+		c.RetrySchedule = []int{60, 300, 900, 3600, 10800, 21600, 43200}
 	}
 
 	// Set default TLS configuration if not provided
-	if config.TLS == nil {
-		config.TLS = &TLSConfig{
-			Enabled:    false,
-			ListenAddr: ":2465",
-			MinVersion: "tls1.2",
-			RenewalConfig: &CertRenewalConfig{
-				AutoRenew:      true,
-				RenewalDays:    30,
-				CheckInterval:  24 * time.Hour,
-				ForceRenewal:   false,
-				RenewalTimeout: 5 * time.Minute,
-			},
+	if c.TLS == nil {
+		c.TLS = &TLSConfig{
+			Enabled:       false,
+			ListenAddr:    ":2465",
+			MinVersion:    "tls1.2",
+			RenewalConfig: &CertRenewalConfig{AutoRenew: true},
 		}
 	}
+	if c.TLS.RenewalConfig == nil {
+		c.TLS.RenewalConfig = &CertRenewalConfig{AutoRenew: true}
+	}
+	// Resolves the seconds-valued TOML fields into durations.
+	c.TLS.RenewalConfig.ApplyDefaults()
 
 	// Set default authentication configuration if not provided
-	if config.Auth == nil {
-		config.Auth = &AuthConfig{
+	if c.Auth == nil {
+		c.Auth = &AuthConfig{
 			Enabled:        false,
 			Required:       false,
 			DataSourceType: "sqlite",
@@ -426,8 +480,8 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	// Set default resource configuration if not provided
-	if config.Resources == nil {
-		config.Resources = &ResourceConfig{
+	if c.Resources == nil {
+		c.Resources = &ResourceConfig{
 			MaxCPU:            0, // Use all available CPUs
 			MaxMemory:         0, // No memory limit
 			MaxConnections:    1000,
@@ -439,8 +493,8 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	// Set default cache configuration if not provided
-	if config.Cache == nil {
-		config.Cache = &CacheConfig{
+	if c.Cache == nil {
+		c.Cache = &CacheConfig{
 			Enabled:  false,
 			Type:     "memory",
 			MaxItems: 10000,
@@ -450,12 +504,12 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	// Set default antivirus configuration if not provided
-	if config.Antivirus == nil {
+	if c.Antivirus == nil {
 		enabled := true
 		if os.Getenv("ELEMTA_DISABLE_CLAMAV") == "true" {
 			enabled = false
 		}
-		config.Antivirus = &AntivirusConfig{
+		c.Antivirus = &AntivirusConfig{
 			Enabled:         enabled,
 			RejectOnFailure: false,
 			ClamAV: &ClamAVConfig{
@@ -468,8 +522,8 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	// Set default antispam configuration if not provided
-	if config.Antispam == nil {
-		config.Antispam = &AntispamConfig{
+	if c.Antispam == nil {
+		c.Antispam = &AntispamConfig{
 			Enabled:      true,
 			RejectOnSpam: false,
 			SpamAssassin: &SpamAssassinConfig{
@@ -491,8 +545,8 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	// Set default rules configuration if not provided
-	if config.Rules == nil {
-		config.Rules = &RulesConfig{
+	if c.Rules == nil {
+		c.Rules = &RulesConfig{
 			Enabled:       false,
 			Path:          "./rules",
 			DefaultAction: "accept",
@@ -500,8 +554,8 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	// Set default plugin configuration if not provided
-	if config.Plugins == nil {
-		config.Plugins = &PluginConfig{
+	if c.Plugins == nil {
+		c.Plugins = &PluginConfig{
 			Enabled:    false,
 			PluginPath: "./plugins",
 			Plugins:    []string{},
@@ -509,30 +563,39 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	// Set default metrics configuration if not provided
-	if config.Metrics == nil {
-		config.Metrics = &MetricsConfig{
+	if c.Metrics == nil {
+		c.Metrics = &MetricsConfig{
 			Enabled:    true,
 			ListenAddr: ":8080",
 		}
 	}
 
 	// Set default API configuration if not provided
-	if config.API == nil {
-		config.API = &APIConfig{
+	if c.API == nil {
+		c.API = &APIConfig{
 			Enabled:    false,
 			ListenAddr: ":8081",
 		}
 	}
 
-	if err := os.MkdirAll(config.QueueDir, 0750); err != nil {
-		return nil, err
+	if c.SessionTimeout == 0 {
+		c.SessionTimeout = 5 * time.Minute
 	}
 
-	if config.SessionTimeout == 0 {
-		config.SessionTimeout = 5 * time.Minute
+	// RFC 5321 compliance is strict unless the operator explicitly opts out.
+	if c.StrictLineEndings == nil {
+		c.StrictLineEndings = BoolPtr(true)
 	}
+}
 
-	return &config, nil
+// BoolPtr returns a pointer to b. It exists so callers can set tri-state
+// configuration fields such as StrictLineEndings from a struct literal.
+func BoolPtr(b bool) *bool { return &b }
+
+// StrictLineEndingsEnabled reports whether RFC 5321 CRLF enforcement is active.
+// An unset value defaults to true (strict).
+func (c *Config) StrictLineEndingsEnabled() bool {
+	return c.StrictLineEndings == nil || *c.StrictLineEndings
 }
 
 // DefaultConfig returns a default configuration with sane defaults
@@ -574,11 +637,13 @@ func DefaultConfig() *Config {
 			MinVersion:     "tls1.2",
 			EnableStartTLS: true, // Enable STARTTLS by default when TLS is enabled
 			RenewalConfig: &CertRenewalConfig{
-				AutoRenew:      true,
-				RenewalDays:    30,
-				CheckInterval:  24 * time.Hour,
-				ForceRenewal:   false,
-				RenewalTimeout: 5 * time.Minute,
+				AutoRenew:             true,
+				RenewalDays:           30,
+				ForceRenewal:          false,
+				CheckIntervalSeconds:  int(24 * time.Hour / time.Second),
+				RenewalTimeoutSeconds: int(5 * time.Minute / time.Second),
+				CheckInterval:         24 * time.Hour,
+				RenewalTimeout:        5 * time.Minute,
 			},
 		},
 
@@ -620,6 +685,6 @@ func DefaultConfig() *Config {
 		SessionTimeout: 5 * time.Minute,
 
 		// RFC 5321 compliance - strict by default for security
-		StrictLineEndings: true,
+		StrictLineEndings: BoolPtr(true),
 	}
 }

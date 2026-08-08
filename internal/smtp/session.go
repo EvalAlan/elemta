@@ -299,10 +299,9 @@ func (s *Session) processCommands(ctx context.Context) error {
 					s.logger.ErrorContext(ctx, "Failed to flush after DATA error", "error", flushErr)
 				}
 
-				// Reset to INIT phase after DATA error so client can send QUIT or other commands
-				if resetErr := s.state.SetPhase(ctx, PhaseInit); resetErr != nil {
-					s.logger.WarnContext(ctx, "Failed to reset phase after DATA error", "error", resetErr)
-				}
+				// Abandon the transaction but keep the session so the client
+				// can retry or send QUIT.
+				s.state.Reset(ctx)
 				continue
 			}
 			// Send success response
@@ -315,10 +314,12 @@ func (s *Session) processCommands(ctx context.Context) error {
 				s.logger.ErrorContext(ctx, "Failed to flush after DATA", "error", flushErr)
 			}
 
-			// Reset to INIT phase after successful DATA processing
-			if resetErr := s.state.SetPhase(ctx, PhaseInit); resetErr != nil {
-				s.logger.WarnContext(ctx, "Failed to reset phase after successful DATA", "error", resetErr)
-			}
+			// End the transaction but keep the session. Reset returns a greeted
+			// client to PhaseMail so it can start another message on the same
+			// connection; this used to drop to PhaseInit, which answered the
+			// next MAIL FROM with "503 Bad sequence of commands" and broke
+			// connection reuse entirely.
+			s.state.Reset(ctx)
 			continue
 		}
 
@@ -396,15 +397,25 @@ func (s *Session) handleDataPhase(ctx context.Context) error {
 		"recipients", s.state.GetRecipientCount(),
 	)
 
-	// Read message data
-	data, err := s.dataHandler.ReadData(ctx)
+	// Read message data into a spool: small messages stay in memory, larger
+	// ones spill to a file so that the size the server accepts is not bounded
+	// by what it can afford to hold per connection.
+	spool, err := s.dataHandler.ReadData(ctx)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "Failed to read message data", "error", err)
 		return err
 	}
+	// The spool owns a temp file. This defer is the only thing standing between
+	// a rejected or failed message and an orphaned file in the queue directory,
+	// so it covers every path out of here including panics.
+	defer func() {
+		if closeErr := spool.Close(); closeErr != nil {
+			s.logger.WarnContext(ctx, "Failed to release message spool", "error", closeErr)
+		}
+	}()
 
 	// Process the complete message
-	if err := s.dataHandler.ProcessMessage(ctx, data); err != nil {
+	if err := s.dataHandler.ProcessMessage(ctx, spool); err != nil {
 		s.logger.ErrorContext(ctx, "Message processing failed", "error", err)
 		return err
 	}
@@ -413,7 +424,8 @@ func (s *Session) handleDataPhase(ctx context.Context) error {
 		"event_type", "message_received",
 		"from_envelope", s.state.GetMailFrom(),
 		"to_envelope", s.state.GetRecipients(),
-		"message_size", len(data),
+		"message_size", spool.Size(),
+		"spooled_to_disk", spool.OnDisk(),
 		"recipient_count", s.state.GetRecipientCount(),
 		"client_ip", s.remoteAddr,
 		"server_ip", s.config.Hostname,

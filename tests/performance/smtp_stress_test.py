@@ -710,27 +710,50 @@ class SMTPStressTester:
             # Connect and send malformed commands
             server = smtplib.SMTP(self.config.target_host, self.config.target_port, timeout=10)
             
-            # Send various malformed commands
+            # Send various malformed commands.
+            #
+            # Note: a command containing CR/LF cannot be tested through
+            # smtplib. Since CVE-2016-0772 its docmd refuses to transmit one,
+            # raising "command and arguments contain prohibited newline
+            # characters" client-side, so the server never sees it and the
+            # attempt is scored as a failure. Newline injection is worth
+            # exercising, but it needs a raw socket rather than smtplib; see
+            # the SMTP smuggling tests in internal/smtp for that coverage.
             malformed_commands = [
                 "INVALID_COMMAND",
                 "HELO",
                 "MAIL FROM: invalid-format",
                 "RCPT TO: malformed<>address",
                 "DATA",
-                "Subject: Malformed Test\r\n\r\nMalformed content"
+                "MAIL FROM:<unclosed@example.com",
+                "RCPT TO:<>@bad",
             ]
-            
+
             command = random.choice(malformed_commands)
-            
+
+            # docmd returns (code, message); it does not raise on a 4xx/5xx
+            # reply. The point of this scenario is that the server rejects
+            # malformed input, so a 4xx/5xx is the pass condition and a 2xx is
+            # the failure.
+            #
+            # This used to be wrapped in `except smtplib.SMTPServerException`,
+            # which is not a name smtplib defines. Every rejection therefore
+            # raised AttributeError, fell through to the generic handler and
+            # was recorded as a failed message, so a correctly hardened server
+            # scored badly on this scenario.
             try:
-                server.docmd(command)
+                code, _ = server.docmd(command)
+            except smtplib.SMTPServerDisconnected:
+                # Also expected: the server drops sessions that exceed its
+                # protocol-error limit rather than letting them continue.
                 duration = time.time() - start_time
-                return (duration, True, f"Malformed command accepted: {command}")
-            except smtplib.SMTPServerException as e:
-                # This is expected for malformed commands
-                duration = time.time() - start_time
-                return (duration, True, f"Malformed command rejected as expected: {command}")
-            
+                return (duration, True, f"Connection closed after malformed command: {command}")
+
+            duration = time.time() - start_time
+            if code >= 400:
+                return (duration, True, f"Malformed command rejected as expected ({code}): {command}")
+            return (duration, False, f"Malformed command accepted ({code}): {command}")
+
         except Exception as e:
             duration = time.time() - start_time
             return (duration, False, str(e))

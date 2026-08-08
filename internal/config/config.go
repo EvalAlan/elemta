@@ -120,7 +120,17 @@ type Config struct {
 	RetrySchedule             []int    `toml:"retry_schedule"`
 	SessionTimeout            string   `toml:"session_timeout"`
 	LocalDomains              []string `toml:"local_domains"`
+	AllowedRelays             []string `toml:"allowed_relays"`
 	FailedQueueRetentionHours int      `toml:"failed_queue_retention_hours"` // 0 = immediate deletion
+
+	// StrictLineEndings enforces RFC 5321 CRLF requirements in DATA. Unset
+	// means strict; set it to false only to interoperate with legacy senders.
+	StrictLineEndings *bool `toml:"strict_line_endings"`
+
+	// SpoolThresholdBytes is the message size above which DATA is written to a
+	// spool file rather than held in memory. Unset uses the built-in default;
+	// a negative value keeps every message in memory.
+	SpoolThresholdBytes *int64 `toml:"spool_threshold_bytes"`
 
 	// Server configuration (legacy nested structure)
 	Server struct {
@@ -226,6 +236,12 @@ type Config struct {
 
 	// Memory management configuration
 	Memory *smtp.MemoryConfig `toml:"memory"`
+
+	// Antivirus scanning configuration
+	Antivirus *smtp.AntivirusConfig `toml:"antivirus"`
+
+	// Antispam scanning configuration
+	Antispam *smtp.AntispamConfig `toml:"antispam"`
 
 	// Resource management configuration (for distributed rate limiting via Valkey)
 	Resources *smtp.ResourceConfig `toml:"resources"`

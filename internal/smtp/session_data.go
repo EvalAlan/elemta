@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -94,14 +95,45 @@ func NewDataHandler(session *Session, state *SessionState, conn net.Conn, reader
 	}
 }
 
-// ReadData reads message data from the client with streaming and progressive memory tracking
+// spoolDir returns the directory message spools are written to. It sits under
+// the queue directory so a completed spool is on the same filesystem as the
+// queue and can be renamed into place rather than copied.
+func (dh *DataHandler) spoolDir() string {
+	return filepath.Join(dh.config.QueueDir, "spool")
+}
+
+// spoolThreshold returns the size above which message data goes to disk.
+// A negative value keeps everything in memory, restoring the previous
+// behaviour for operators who need it.
+func (dh *DataHandler) spoolThreshold() int64 {
+	if dh.config.SpoolThresholdBytes != nil {
+		return *dh.config.SpoolThresholdBytes
+	}
+	return DefaultSpoolThreshold
+}
+
+// ReadData reads message data from the client into a spool, keeping small
+// messages in memory and spilling larger ones to disk.
 // RFC 5321 §3.3 - Mail transactions: DATA command processing
 // RFC 5321 §4.1.1.4 - DATA command: After client sends DATA, server responds with 354 and accepts text
-func (dh *DataHandler) ReadData(ctx context.Context) ([]byte, error) {
-	slog.LogAttrs(ctx, slog.LevelDebug, "Starting streaming message data reading with memory tracking")
+// The returned spool is owned by the caller, which must Close it on every exit
+// path; Close removes the backing file. On error the spool is closed here and
+// nil is returned.
+func (dh *DataHandler) ReadData(ctx context.Context) (*MessageSpool, error) {
+	slog.LogAttrs(ctx, slog.LevelDebug, "Starting message data reading")
 
 	startTime := time.Now()
-	var buffer bytes.Buffer
+
+	spool := NewMessageSpool(dh.spoolDir(), dh.spoolThreshold())
+	// Any return before the spool is handed to the caller must release it.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			if err := spool.Close(); err != nil {
+				dh.logger.WarnContext(ctx, "Failed to release message spool", "error", err)
+			}
+		}
+	}()
 
 	state := &DataReaderState{
 		InHeaders: true,
@@ -115,23 +147,16 @@ func (dh *DataHandler) ReadData(ctx context.Context) ([]byte, error) {
 		sessionMemoryLimit = dh.session.resourceManager.memoryManager.config.PerConnectionMemoryLimit
 	}
 
-	// Intelligent buffer pre-allocation based on SIZE parameter (RFC 1870)
-	declaredSize := dh.state.GetDeclaredSize()
-	if declaredSize > 0 {
-		// Pre-allocate with 1.2x safety margin, capped at 50% of session memory limit
-		preAllocSize := declaredSize * 12 / 10 // 1.2x multiplier
-		maxPreAlloc := sessionMemoryLimit / 2  // Cap at 50% of session limit
-
-		if preAllocSize > maxPreAlloc {
-			preAllocSize = maxPreAlloc
+	// RFC 1870: a client that declares a SIZE larger than the spool threshold
+	// is going to spill anyway, so start on disk rather than growing a heap
+	// buffer up to the threshold first and copying it out.
+	if declaredSize := dh.state.GetDeclaredSize(); declaredSize > dh.spoolThreshold() {
+		if err := spool.SpillToDisk(); err != nil {
+			return nil, fmt.Errorf("451 4.3.0 Unable to prepare message spool: %w", err)
 		}
-
-		buffer.Grow(int(preAllocSize))
-
-		slog.LogAttrs(ctx, slog.LevelDebug, "Buffer pre-allocated based on SIZE parameter",
+		slog.LogAttrs(ctx, slog.LevelDebug, "Spooling to disk from the start based on declared SIZE",
 			slog.Int64("declared_size", declaredSize),
-			slog.Int64("pre_alloc_size", preAllocSize),
-			slog.Int64("session_memory_limit", sessionMemoryLimit),
+			slog.Int64("spool_threshold", dh.spoolThreshold()),
 		)
 	}
 
@@ -241,15 +266,18 @@ func (dh *DataHandler) ReadData(ctx context.Context) ([]byte, error) {
 		if dh.isValidEndOfData(lineStr, state, &suspiciousPatterns) {
 			dh.logger.DebugContext(ctx, "Valid end-of-data marker detected")
 
-			// Fix for Go 1.24 buffering issue: discard any remaining buffered content
-			// to prevent message content from leaking into command parsing
-			if buffered := dh.reader.Buffered(); buffered > 0 {
-				dh.logger.DebugContext(ctx, "Discarding buffered content after terminator",
-					"buffered_bytes", buffered,
-				)
-				_, _ = dh.reader.Discard(buffered) // Ignore error on cleanup
-			}
-
+			// Anything still buffered here belongs to the client's next
+			// command, not to this message. The server advertises PIPELINING,
+			// so it must be left in the reader for the command loop.
+			//
+			// This used to call reader.Discard(reader.Buffered()) to stop
+			// message content being parsed as commands. That was treating a
+			// symptom: the real cause was end-of-data being detected early,
+			// because legacy mode accepts a bare-LF ".\n" as a terminator and
+			// a message body containing such a line ends the DATA phase in the
+			// middle of the message. Everything after it is then, by that
+			// parse, genuinely commands. strict_line_endings (now the default)
+			// rejects both bare LF and ".\n", which addresses the cause.
 			break
 		}
 
@@ -277,7 +305,11 @@ func (dh *DataHandler) ReadData(ctx context.Context) ([]byte, error) {
 		// Write line to buffer with RFC 5321 §4.5.2 transparent dot-stuffing
 		// Lines starting with "." have the second "." removed during DATA reception
 		processedLine := dh.applyDotStuffing(ctx, line, state)
-		buffer.Write(processedLine)
+		if _, err := spool.Write(processedLine); err != nil {
+			dh.logger.ErrorContext(ctx, "Failed to write message data to spool", "error", err)
+			dh.state.ClearDataTransferMode(ctx)
+			return nil, fmt.Errorf("451 4.3.0 Unable to buffer message data")
+		}
 
 		// Periodic logging for large messages with memory tracking
 		if state.LineCount%1000 == 0 {
@@ -291,31 +323,19 @@ func (dh *DataHandler) ReadData(ctx context.Context) ([]byte, error) {
 		}
 	}
 
-	data := buffer.Bytes()
-	dh.state.SetDataSize(ctx, int64(len(data)))
+	size := spool.Size()
+	dh.state.SetDataSize(ctx, size)
 
-	// Final memory check before returning
-	if int64(len(data)) > sessionMemoryLimit {
-		dh.logger.WarnContext(ctx, "Final session memory limit check failed",
-			"final_size", len(data),
-			"session_memory_limit", sessionMemoryLimit,
-			"session_id", dh.session.sessionID,
-		)
-		// Clear data transfer mode on error
-		dh.state.ClearDataTransferMode(ctx)
-		return nil, fmt.Errorf("552 5.3.4 Session memory limit exceeded")
-	}
-
-	dh.logger.InfoContext(ctx, "Streaming message data reading completed with memory tracking",
+	dh.logger.InfoContext(ctx, "Message data reading completed",
 		"total_lines", state.LineCount,
-		"total_bytes", len(data),
-		"session_memory_limit", sessionMemoryLimit,
-		"memory_utilization_pct", float64(len(data))/float64(sessionMemoryLimit)*100,
+		"total_bytes", size,
+		"spooled_to_disk", spool.OnDisk(),
 		"duration", time.Since(startTime),
 		"suspicious_patterns", suspiciousPatterns,
 	)
 
-	return data, nil
+	handedOff = true
+	return spool, nil
 }
 
 // ReadBDATChunk reads exactly size bytes from the connection for a BDAT chunk
@@ -360,7 +380,7 @@ func (dh *DataHandler) ProcessBDATMessage(ctx context.Context) error {
 	data := dh.bdatBuffer.Bytes()
 	dh.state.SetDataSize(ctx, int64(len(data)))
 
-	err := dh.ProcessMessage(ctx, data)
+	err := dh.processMessageBytes(ctx, data)
 	dh.ResetBDAT()
 	return err
 }
@@ -372,8 +392,24 @@ func (dh *DataHandler) ResetBDAT() {
 	dh.bdatChunkCount = 0
 }
 
-// ProcessMessage processes the complete message with security scanning and validation
-func (dh *DataHandler) ProcessMessage(ctx context.Context, data []byte) error {
+// ProcessMessage processes a spooled message with security scanning and
+// validation.
+//
+// Stage 1 of the spooling work reads the spool back into memory here, so that
+// moving DATA reception off the heap could land and soak on its own. Stage 2
+// replaces this with a reader-based path; the seam is deliberate.
+func (dh *DataHandler) ProcessMessage(ctx context.Context, spool *MessageSpool) error {
+	data, err := spool.Bytes()
+	if err != nil {
+		dh.logger.ErrorContext(ctx, "Failed to read spooled message", "error", err)
+		return fmt.Errorf("451 4.3.0 Unable to read message data")
+	}
+	return dh.processMessageBytes(ctx, data)
+}
+
+// processMessageBytes is the byte-oriented implementation shared by the DATA
+// and BDAT paths.
+func (dh *DataHandler) processMessageBytes(ctx context.Context, data []byte) error {
 	dh.logger.DebugContext(ctx, "Starting message processing with memory tracking", "size", len(data))
 
 	startTime := time.Now()
@@ -466,7 +502,7 @@ func (dh *DataHandler) isValidEndOfData(line string, state *DataReaderState, sus
 	// Check for strict RFC 5321 compliant end-of-data sequence: ".\r\n"
 	if line == ".\r\n" {
 		// Enhanced validation: Ensure previous line ended with CRLF to prevent SMTP smuggling
-		if dh.config.StrictLineEndings && !state.LastLineEndedWithCRLF && state.LineCount > 1 {
+		if dh.config.StrictLineEndingsEnabled() && !state.LastLineEndedWithCRLF && state.LineCount > 1 {
 			dh.logger.WarnContext(context.Background(), "Invalid end-of-data marker - not preceded by CRLF (security violation)",
 				"event_type", "smtp_smuggling_attempt",
 				"line", fmt.Sprintf("%q", line),
@@ -495,7 +531,7 @@ func (dh *DataHandler) isValidEndOfData(line string, state *DataReaderState, sus
 	// Check for legacy bare LF terminator: ".\n"
 	if line == ".\n" {
 		// Legacy compatibility mode check
-		if dh.config.StrictLineEndings {
+		if dh.config.StrictLineEndingsEnabled() {
 			// Strict mode: Reject bare LF terminators
 			dh.logger.WarnContext(context.Background(), "Invalid end-of-data marker with bare LF (security violation)",
 				"event_type", "smtp_smuggling_attempt",
@@ -552,17 +588,23 @@ func (dh *DataHandler) isValidEndOfData(line string, state *DataReaderState, sus
 func (dh *DataHandler) applyDotStuffing(ctx context.Context, line []byte, state *DataReaderState) []byte {
 	// RFC 5321 §4.5.2: Before sending a line of mail text, the SMTP client
 	// checks the first character of the line. If it is a period, another
-	// period is inserted at the beginning of the line. Conversely, the server
-	// removes the extra period when receiving mail data.
-
-	// Check if line starts with ".." (dot-stuffed)
-	if len(line) >= 2 && line[0] == '.' && line[1] == '.' {
+	// period is inserted at the beginning of the line. On receipt, the server
+	// deletes the leading period from *any* line that begins with one — not
+	// just from lines beginning "..". The end-of-data marker is checked before
+	// this function is reached, so a bare "." line never arrives here.
+	//
+	// Only stripping ".." left a non-conforming ".foo" intact, which the
+	// outbound side would then re-stuff to "..foo"; the receiving end saw
+	// ".foo" where the sender meant "foo". Interpreting a leading period
+	// differently from the next hop is the seam SMTP smuggling exploits, so
+	// this follows the RFC exactly.
+	if len(line) >= 1 && line[0] == '.' {
 		dh.logger.DebugContext(ctx, "Applying transparent dot-stuffing",
 			"line_number", state.LineCount,
 			"original_line", fmt.Sprintf("%q", string(line)),
 			"processed_line", fmt.Sprintf("%q", string(line[1:])),
 		)
-		return line[1:] // Remove the first dot, leaving the original content
+		return line[1:] // Remove the leading period
 	}
 
 	return line // No dot-stuffing needed
@@ -588,7 +630,7 @@ func (dh *DataHandler) validateLineEndings(ctx context.Context, line []byte, sta
 
 	// Case 2: Bare LF (no CR before LF)
 	if !hasCR && hasLF {
-		if dh.config.StrictLineEndings {
+		if dh.config.StrictLineEndingsEnabled() {
 			// Strict mode: Reject bare LF
 			dh.logger.WarnContext(ctx, "Bare LF detected in message data (RFC 5321 violation)",
 				"event_type", "rfc_violation",
@@ -761,32 +803,19 @@ func (dh *DataHandler) validateLineContent(ctx context.Context, line string, sta
 
 // addServerHeaders adds server-generated headers to the message
 func (dh *DataHandler) addServerHeaders(ctx context.Context, data []byte, metadata *MessageMetadata, scanResult *SecurityScanResult) ([]byte, error) {
-	dataStr := string(data)
-
-	// Find the end of headers
-	headerEnd := strings.Index(dataStr, "\r\n\r\n")
-	if headerEnd == -1 {
-		// Try with just LF instead of CRLF
-		headerEnd = strings.Index(dataStr, "\n\n")
-		if headerEnd == -1 {
-			// No clear header/body separation, add headers at the beginning
-			headerEnd = 0
-		}
-	}
-
-	var headers, body string
-	if headerEnd > 0 {
-		headers = dataStr[:headerEnd]
-		body = dataStr[headerEnd:]
-	} else {
-		headers = ""
-		body = dataStr
-	}
-
-	// Build additional headers
+	// Build the block this hop contributes.
+	//
+	// RFC 5321 §4.4 requires the trace record to go at the top of the mail
+	// data, so the whole block is prepended rather than spliced in at the end
+	// of the submitter's header block. Appending put this hop's Received below
+	// the sender's own headers, which reverses the trace order a downstream
+	// reader relies on and makes multi-hop loop detection unreliable.
+	//
+	// Prepending is also what allows the message body to be streamed: the
+	// server never has to parse or rebuild the submission, it just writes its
+	// own headers ahead of the bytes it received.
 	var additionalHeaders []string
 
-	// Add Received header (most important for email tracing)
 	receivedTime := time.Now().Format(time.RFC1123Z)
 	sanitizedFrom := sanitizeEmailForHeader(metadata.From)
 	sanitizedTo := make([]string, len(metadata.To))
@@ -827,23 +856,25 @@ func (dh *DataHandler) addServerHeaders(ctx context.Context, data []byte, metada
 	additionalHeaders = append(additionalHeaders, "X-Processed-By: Elemta MTA")
 	additionalHeaders = append(additionalHeaders, fmt.Sprintf("X-Message-ID: %s", metadata.MessageID))
 
-	// Combine headers
-	var finalHeaders string
-	if headers != "" {
-		finalHeaders = headers + "\r\n" + strings.Join(additionalHeaders, "\r\n")
-	} else {
-		finalHeaders = strings.Join(additionalHeaders, "\r\n")
+	prefix := strings.Join(additionalHeaders, "\r\n") + "\r\n"
+
+	// A submission with no header/body separator has no headers of its own, so
+	// this hop's block becomes the header section and needs a blank line to
+	// separate it from the content.
+	if !bytes.Contains(data, []byte("\r\n\r\n")) && !bytes.Contains(data, []byte("\n\n")) {
+		prefix += "\r\n"
 	}
 
-	// Ensure proper header/body separation
-	if body != "" {
-		if !strings.HasPrefix(body, "\r\n\r\n") && !strings.HasPrefix(body, "\n\n") {
-			finalHeaders += "\r\n"
-		}
-		return []byte(finalHeaders + body), nil
-	} else {
-		return []byte(finalHeaders + "\r\n\r\n"), nil
-	}
+	out := make([]byte, 0, len(prefix)+len(data))
+	out = append(out, prefix...)
+	out = append(out, data...)
+
+	slog.LogAttrs(ctx, slog.LevelDebug, "Server headers prepended",
+		slog.Int("header_bytes", len(prefix)),
+		slog.Int("message_bytes", len(data)),
+	)
+
+	return out, nil
 }
 
 // isInternalConnection checks if the connection is from internal Docker network
@@ -1251,6 +1282,24 @@ func (dh *DataHandler) validateFromHeader(ctx context.Context, fromHeader, mailF
 	return nil
 }
 
+// scanContent holds the message once as a string and once lowercased, so the
+// content scans share those two allocations instead of each making their own.
+//
+// The scans are substring matches over the whole message and most are
+// case-insensitive. Lowercasing inside the pattern loops meant a fresh copy of
+// the entire message per pattern: measured at roughly fifteen times the message
+// size in garbage per delivery, which for a 25MB message is several hundred
+// megabytes of allocation and about a second of CPU.
+type scanContent struct {
+	raw   string
+	lower string
+}
+
+func newScanContent(data []byte) *scanContent {
+	raw := string(data)
+	return &scanContent{raw: raw, lower: strings.ToLower(raw)}
+}
+
 // performSecurityScan performs comprehensive security scanning
 func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, metadata *MessageMetadata) (*SecurityScanResult, error) {
 	result := &SecurityScanResult{
@@ -1258,9 +1307,16 @@ func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, met
 		Threats: make([]string, 0),
 	}
 
+	// The scans below are substring matches over the whole message, most of
+	// them case-insensitive. Lowercasing per pattern allocated a fresh copy of
+	// the message every time — around fifteen times the message size in
+	// garbage per delivery, and the dominant cost of accepting a large message.
+	// Build both views once and share them.
+	view := newScanContent(data)
+
 	// Perform antivirus scan if plugins are available
 	if dh.builtinPlugins != nil {
-		if err := dh.performAntivirusScan(ctx, data, result); err != nil {
+		if err := dh.performAntivirusScan(ctx, view, result); err != nil {
 			dh.logger.ErrorContext(ctx, "Antivirus scan failed", "error", err)
 			return nil, err
 		}
@@ -1268,14 +1324,14 @@ func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, met
 
 	// Perform spam scan if plugins are available
 	if dh.builtinPlugins != nil {
-		if err := dh.performSpamScan(ctx, data, metadata, result); err != nil {
+		if err := dh.performSpamScan(ctx, view, metadata, result); err != nil {
 			dh.logger.ErrorContext(ctx, "Spam scan failed", "error", err)
 			return nil, err
 		}
 	}
 
 	// Perform content analysis
-	if err := dh.performContentAnalysis(ctx, data, result); err != nil {
+	if err := dh.performContentAnalysis(ctx, view, result); err != nil {
 		dh.logger.ErrorContext(ctx, "Content analysis failed", "error", err)
 		return nil, err
 	}
@@ -1291,7 +1347,7 @@ func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, met
 }
 
 // performAntivirusScan performs antivirus scanning
-func (dh *DataHandler) performAntivirusScan(ctx context.Context, data []byte, result *SecurityScanResult) error {
+func (dh *DataHandler) performAntivirusScan(ctx context.Context, view *scanContent, result *SecurityScanResult) error {
 	// This would integrate with actual antivirus plugins
 	// For now, perform basic threat detection
 
@@ -1300,9 +1356,8 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, data []byte, re
 		"malware", "virus", "trojan", // Basic patterns
 	}
 
-	content := string(data)
 	for _, pattern := range threatPatterns {
-		if strings.Contains(strings.ToLower(content), strings.ToLower(pattern)) {
+		if strings.Contains(view.lower, strings.ToLower(pattern)) {
 			result.Passed = false
 			result.VirusFound = true
 			result.Threats = append(result.Threats, "Virus detected: "+pattern)
@@ -1314,7 +1369,7 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, data []byte, re
 				From:           "",
 				To:             []string{},
 				Subject:        "",
-				Size:           int64(len(data)),
+				Size:           int64(len(view.raw)),
 				ClientIP:       dh.session.remoteAddr,
 				ClientHostname: dh.session.remoteAddr,
 				Username:       dh.state.GetUsername(),
@@ -1338,10 +1393,10 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, data []byte, re
 }
 
 // performSpamScan performs spam detection
-func (dh *DataHandler) performSpamScan(ctx context.Context, data []byte, metadata *MessageMetadata, result *SecurityScanResult) error {
+func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, metadata *MessageMetadata, result *SecurityScanResult) error {
 	// Basic spam scoring
 	spamScore := 0.0
-	content := strings.ToLower(string(data))
+	content := view.lower
 
 	// Debug: Log the content being scanned
 	previewLength := 200
@@ -1432,8 +1487,8 @@ func (dh *DataHandler) performSpamScan(ctx context.Context, data []byte, metadat
 }
 
 // performContentAnalysis performs comprehensive content analysis
-func (dh *DataHandler) performContentAnalysis(ctx context.Context, data []byte, result *SecurityScanResult) error {
-	content := string(data)
+func (dh *DataHandler) performContentAnalysis(ctx context.Context, view *scanContent, result *SecurityScanResult) error {
+	content := view.raw
 
 	// Check if this is an internal connection - be more permissive for internal connections
 	isInternal := dh.isInternalConnection()
@@ -1512,7 +1567,7 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, data []byte, 
 		}
 
 		for _, dangerousType := range dangerousTypes {
-			if strings.Contains(strings.ToLower(content), dangerousType) {
+			if strings.Contains(view.lower, dangerousType) {
 				result.Passed = false
 				result.Threats = append(result.Threats, fmt.Sprintf("Dangerous attachment type: %s", dangerousType))
 
@@ -1538,7 +1593,7 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, data []byte, 
 	}
 
 	for _, pattern := range maliciousPatterns {
-		if strings.Contains(strings.ToLower(content), pattern) {
+		if strings.Contains(view.lower, pattern) {
 			result.Threats = append(result.Threats, fmt.Sprintf("Malicious content pattern: %s", pattern))
 			dh.logger.WarnContext(ctx, "Malicious content pattern detected",
 				"pattern", pattern,
@@ -1554,7 +1609,7 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, data []byte, 
 	}
 
 	// Only check for .com if it's not part of an email address
-	contentLower := strings.ToLower(content)
+	contentLower := view.lower
 	for _, ext := range suspiciousExtensions {
 		if strings.Contains(contentLower, ext) {
 			// Special handling for .com - only flag if it's not in an email address
@@ -1599,14 +1654,6 @@ func (dh *DataHandler) separateHeadersAndBody(content string) (headers, body str
 	}
 
 	return headers, body
-}
-
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // handleSecurityThreat handles detected security threats

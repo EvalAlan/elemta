@@ -1052,6 +1052,14 @@ func (rm *ResourceManager) GetMemoryManager() *MemoryManager {
 
 // SetMemoryManager sets the memory manager for the resource manager
 func (rm *ResourceManager) SetMemoryManager(memoryManager *MemoryManager) {
+	// NewResourceManager always builds a memory manager from the resource
+	// limits, and every caller then replaces it with one built from the
+	// [memory] config. Without this the displaced manager's monitoring
+	// goroutine runs for the life of the process on a stale config, forcing
+	// garbage collection against thresholds that no longer apply.
+	if rm.memoryManager != nil && rm.memoryManager != memoryManager {
+		rm.memoryManager.Close()
+	}
 	rm.memoryManager = memoryManager
 }
 

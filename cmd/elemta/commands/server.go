@@ -84,10 +84,10 @@ func startServer() {
 		}
 
 		// Change to non-privileged port in dev mode if using default port 25
-		if cfg.Server.Listen == ":25" {
+		if cfg.EffectiveListenAddr() == ":25" {
 			// Try various development ports (2525-2528) to find one that works
 			devPorts := []string{":2525", ":2526", ":2527", ":2528"}
-			originalPort := cfg.Server.Listen
+			originalPort := cfg.EffectiveListenAddr()
 
 			for _, port := range devPorts {
 				// Try to listen on the port to see if it's available
@@ -95,13 +95,13 @@ func startServer() {
 				if err == nil {
 					// Close the listener, we'll reopen it in the server
 					_ = listener.Close() // Ignore error on test listener cleanup
-					cfg.Server.Listen = port
+					cfg.SetListenAddr(port)
 					slog.Info("DEV MODE: Changed listen port (non-privileged)", "original_port", originalPort, "new_port", port)
 					break
 				}
 			}
 
-			if cfg.Server.Listen == ":25" {
+			if cfg.EffectiveListenAddr() == ":25" {
 				slog.Warn("Could not find an available development port. Will try to use port 25, but this may fail without privileges.")
 			}
 		}
@@ -109,16 +109,16 @@ func startServer() {
 
 	// Override port if specified via command line
 	if portFlag > 0 {
-		// Extract host part from current listen address
+		// Extract host part from the resolved listen address
 		host := ""
-		parts := strings.Split(cfg.Server.Listen, ":")
+		parts := strings.Split(cfg.EffectiveListenAddr(), ":")
 		if len(parts) > 1 && parts[0] != "" {
 			host = parts[0]
 		}
 
 		// Create new listen address with specified port
-		cfg.Server.Listen = fmt.Sprintf("%s:%d", host, portFlag)
-		slog.Info("Overriding listen port", "address", cfg.Server.Listen)
+		cfg.SetListenAddr(fmt.Sprintf("%s:%d", host, portFlag))
+		slog.Info("Overriding listen port", "address", cfg.EffectiveListenAddr())
 	}
 
 	if noAuthRequired && cfg.Auth != nil {
@@ -126,99 +126,31 @@ func startServer() {
 		cfg.Auth.Required = false
 	}
 
-	// Create SMTP server configuration
-	slog.Debug("queue configuration",
-		"queue_dir_flat", cfg.QueueDir,
-		"queue_dir_nested", cfg.Queue.Dir)
-
-	// Use Queue.Dir if QueueDir is empty (handle both config formats)
-	queueDir := cfg.QueueDir
-	if queueDir == "" && cfg.Queue.Dir != "" {
-		slog.Debug("using nested queue directory configuration")
-		queueDir = cfg.Queue.Dir
+	// Create SMTP server configuration.
+	// All field mapping lives in config.ToSMTPConfig so that no field can be
+	// silently forgotten here; see internal/config/smtp_config.go.
+	if cfg.QueueDir == "" && cfg.Queue.Dir == "" {
+		cfg.QueueDir = runtimepaths.Detect().QueueDir // Fallback default
+		slog.Debug("using fallback queue directory", "queue_dir", cfg.QueueDir)
 	}
-	if queueDir == "" {
-		queueDir = runtimepaths.Detect().QueueDir // Fallback default
-		slog.Debug("using fallback queue directory", "queue_dir", queueDir)
+	if devMode {
+		cfg.Server.DevMode = true
 	}
 
-	smtpConfig := &smtp.Config{
-		Hostname:     cfg.Hostname,   // Use top-level hostname
-		ListenAddr:   cfg.ListenAddr, // Use top-level listen_addr
-		QueueDir:     queueDir,       // Use queue directory (prioritize flat, fallback to nested)
-		QueueBackend: cfg.Queue.Backend,
-		QueueSQLite: smtp.QueueSQLiteConfig{
-			Path:          cfg.Queue.SQLite.Path,
-			BusyTimeoutMS: cfg.Queue.SQLite.BusyTimeoutMS,
-			JournalMode:   cfg.Queue.SQLite.JournalMode,
-			Synchronous:   cfg.Queue.SQLite.Synchronous,
-		},
-		QueuePostgres: smtp.QueuePostgresConfig{
-			DSN:                    cfg.Queue.Postgres.DSN,
-			MaxOpenConns:           cfg.Queue.Postgres.MaxOpenConns,
-			MaxIdleConns:           cfg.Queue.Postgres.MaxIdleConns,
-			ConnMaxLifetimeSeconds: cfg.Queue.Postgres.ConnMaxLifetimeSeconds,
-		},
-		QueueIndexedFS: smtp.QueueIndexedFSConfig{
-			IndexPath:         cfg.Queue.IndexedFS.IndexPath,
-			ContentDir:        cfg.Queue.IndexedFS.ContentDir,
-			SyncMode:          cfg.Queue.IndexedFS.SyncMode,
-			RecoveryOnStartup: cfg.Queue.IndexedFS.RecoveryOnStartup,
-		},
-		MaxSize:                   cfg.MaxSize,      // Use top-level max_size
-		LocalDomains:              cfg.LocalDomains, // Use top-level local_domains
-		TLS:                       cfg.TLS,
-		DevMode:                   devMode || cfg.Server.DevMode,
-		FailedQueueRetentionHours: cfg.FailedQueueRetentionHours, // Use failed queue retention setting
+	smtpConfig, err := cfg.ToSMTPConfig()
+	if err != nil {
+		slog.Error("Invalid configuration", "error", err)
+		os.Exit(1)
 	}
 
-	slog.Info("SMTP Config", "hostname", smtpConfig.Hostname, "queue_dir", smtpConfig.QueueDir, "queue_backend", smtpConfig.QueueBackend, "local_domains", smtpConfig.LocalDomains)
-
-	// Map authentication config
-	smtpConfig.Auth = cfg.Auth
-
-	// Map delivery config
-	smtpConfig.Delivery = cfg.Delivery
-
-	// Map DKIM outbound signing config
-	smtpConfig.DKIM = cfg.DKIM
-
-	// Map resources config (for Valkey integration)
-	smtpConfig.Resources = cfg.Resources
-
-	// Map metrics config
-	smtpConfig.Metrics = cfg.Metrics
-	if cfg.Metrics != nil {
-		slog.Debug("metrics configuration mapped",
-			"enabled", cfg.Metrics.Enabled,
-			"listen_addr", cfg.Metrics.ListenAddr)
-	} else {
-		slog.Debug("metrics configuration not present")
-	}
-
-	if cfg.TLS != nil {
-		slog.Debug("TLS configuration present",
-			"enabled", cfg.TLS.Enabled,
-			"cert_file", cfg.TLS.CertFile,
-			"key_file", cfg.TLS.KeyFile)
-	} else {
-		slog.Debug("TLS configuration not present")
-	}
-	if smtpConfig.TLS != nil {
-		slog.Debug("SMTP TLS configuration mapped",
-			"enabled", smtpConfig.TLS.Enabled)
-	} else {
-		slog.Debug("SMTP TLS configuration not present")
-	}
-
-	// Map plugins config
-	if len(cfg.Plugins.Enabled) > 0 {
-		smtpConfig.Plugins = &smtp.PluginConfig{
-			Enabled:    true,
-			PluginPath: cfg.Plugins.Directory,
-			Plugins:    cfg.Plugins.Enabled,
-		}
-	}
+	slog.Info("SMTP Config",
+		"hostname", smtpConfig.Hostname,
+		"listen_addr", smtpConfig.ListenAddr,
+		"queue_dir", smtpConfig.QueueDir,
+		"queue_backend", smtpConfig.QueueBackend,
+		"local_domains", smtpConfig.LocalDomains,
+		"max_size", smtpConfig.MaxSize,
+		"strict_line_endings", smtpConfig.StrictLineEndingsEnabled())
 
 	// Restore certDir logic for certificate monitoring
 	certDir := "/var/elemta/certs" // Default certificate directory
@@ -230,14 +162,10 @@ func startServer() {
 		}
 	}
 
-	// Configure Queue Processor from config
-	smtpConfig.QueueProcessorEnabled = cfg.QueueProcessor.Enabled
-	smtpConfig.QueueProcessInterval = cfg.QueueProcessor.Interval
-	smtpConfig.QueueWorkers = cfg.QueueProcessor.Workers
 	slog.Info("Queue processor config",
-		"enabled", cfg.QueueProcessor.Enabled,
-		"interval", cfg.QueueProcessor.Interval,
-		"workers", cfg.QueueProcessor.Workers)
+		"enabled", smtpConfig.QueueProcessorEnabled,
+		"interval", smtpConfig.QueueProcessInterval,
+		"workers", smtpConfig.QueueWorkers)
 
 	// Create SMTP server
 	slog.Info("Creating SMTP server")
@@ -262,9 +190,9 @@ func startServer() {
 
 	// Log server configuration details
 	slog.Info("Server configuration details",
-		"hostname", cfg.Server.Hostname,
-		"listen_addr", cfg.Server.Listen,
-		"queue_dir", cfg.Queue.Dir,
+		"hostname", smtpConfig.Hostname,
+		"listen_addr", smtpConfig.ListenAddr,
+		"queue_dir", smtpConfig.QueueDir,
 		"max_size", smtpConfig.MaxSize,
 		"queue_processor", smtpConfig.QueueProcessorEnabled,
 		"tls_enabled", cfg.Server.TLS,
@@ -277,7 +205,7 @@ func startServer() {
 			return false
 		}())
 
-	slog.Info("Elemta MTA starting", "event_type", "system", "listen_addr", cfg.Server.Listen)
+	slog.Info("Elemta MTA starting", "event_type", "system", "listen_addr", smtpConfig.ListenAddr)
 	slog.Info("SMTP server started successfully")
 
 	// Wait for signal to quit
