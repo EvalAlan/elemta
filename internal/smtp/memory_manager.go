@@ -23,11 +23,25 @@ type MemoryManager struct {
 
 // MemoryConfig holds configuration for memory management
 type MemoryConfig struct {
-	MaxMemoryUsage             int64         `toml:"max_memory_usage" json:"max_memory_usage"`                         // Maximum memory usage in bytes
-	MemoryWarningThreshold     float64       `toml:"memory_warning_threshold" json:"memory_warning_threshold"`         // Warning threshold (0.0-1.0)
-	MemoryCriticalThreshold    float64       `toml:"memory_critical_threshold" json:"memory_critical_threshold"`       // Critical threshold (0.0-1.0)
-	GCThreshold                float64       `toml:"gc_threshold" json:"gc_threshold"`                                 // Force GC threshold (0.0-1.0)
-	MonitoringInterval         time.Duration `toml:"monitoring_interval" json:"monitoring_interval"`                   // Memory monitoring interval
+	MaxMemoryUsage          int64   `toml:"max_memory_usage" json:"max_memory_usage"`                   // Maximum memory usage in bytes
+	MemoryWarningThreshold  float64 `toml:"memory_warning_threshold" json:"memory_warning_threshold"`   // Warning threshold (0.0-1.0)
+	MemoryCriticalThreshold float64 `toml:"memory_critical_threshold" json:"memory_critical_threshold"` // Critical threshold (0.0-1.0)
+	GCThreshold             float64 `toml:"gc_threshold" json:"gc_threshold"`                           // Force GC threshold (0.0-1.0)
+	// MonitoringIntervalSeconds is the TOML-facing form of the monitoring
+	// interval, in whole seconds, matching the convention used by the other
+	// timeouts in elemta.toml.
+	//
+	// It is not a time.Duration because the two TOML decoders in this repo
+	// disagree about that type: BurntSushi (used by smtp.LoadConfig) accepts a
+	// duration string such as "5s", while pelletier/go-toml (used by
+	// internal/config, which is the path the server actually takes) rejects
+	// strings and decodes a bare integer as *nanoseconds*. An int of seconds
+	// means the same thing to both.
+	MonitoringIntervalSeconds int `toml:"monitoring_interval" json:"monitoring_interval_seconds"`
+
+	// MonitoringInterval is the resolved runtime value, derived from
+	// MonitoringIntervalSeconds by ApplyDefaults. It is not decoded directly.
+	MonitoringInterval         time.Duration `toml:"-" json:"monitoring_interval"`
 	PerConnectionMemoryLimit   int64         `toml:"per_connection_memory_limit" json:"per_connection_memory_limit"`   // Per-connection memory limit
 	MaxGoroutines              int           `toml:"max_goroutines" json:"max_goroutines"`                             // Maximum goroutines
 	GoroutineLeakDetection     bool          `toml:"goroutine_leak_detection" json:"goroutine_leak_detection"`         // Enable goroutine leak detection
@@ -71,13 +85,18 @@ func (c *MemoryConfig) ApplyDefaults() {
 	if c.GCThreshold <= 0 || c.GCThreshold > 1 {
 		c.GCThreshold = d.GCThreshold
 	}
-	// TOML decodes a bare integer into time.Duration as *nanoseconds*, so the
-	// natural-looking "monitoring_interval = 5" yields 5ns and turns the
-	// monitor goroutine into a busy loop. Anything under a second is treated
-	// as a misconfiguration; write it as a duration string ("5s") instead.
+	// Resolve the configured seconds into the runtime duration. A value set
+	// directly on MonitoringInterval (tests, code-built configs) is kept.
+	if c.MonitoringIntervalSeconds > 0 {
+		c.MonitoringInterval = time.Duration(c.MonitoringIntervalSeconds) * time.Second
+	}
+	// Guard the ticker: a sub-second interval here would spin the monitor
+	// goroutine. This also catches an older config that set the duration
+	// field directly to a bare integer, which meant nanoseconds.
 	if c.MonitoringInterval < time.Second {
 		c.MonitoringInterval = d.MonitoringInterval
 	}
+	c.MonitoringIntervalSeconds = int(c.MonitoringInterval / time.Second)
 	if c.PerConnectionMemoryLimit <= 0 {
 		c.PerConnectionMemoryLimit = d.PerConnectionMemoryLimit
 	}
