@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,9 +35,35 @@ func validateQueueType(q QueueType) error {
 
 type FileStorageBackend struct{ queueDir string }
 
+// enqueueTombstone records the identity of an enqueue that has been consumed,
+// so a retry of the same message can be recognised after the message itself is
+// gone.
+//
+// ContentHash was added so that identity can be checked without holding the
+// message body. Content is still written alongside it: a binary rolled back to
+// a build that predates ContentHash reads only Content, and would otherwise
+// see an empty body, decide the retry conflicts, and start refusing mail it
+// should have recognised as a duplicate. Readers prefer ContentHash and fall
+// back to Content, so tombstones written before this change keep working too.
+//
+// Content can be dropped from new tombstones once no deployment can roll back
+// to a build without ContentHash.
 type enqueueTombstone struct {
-	Message Message `json:"message"`
-	Content []byte  `json:"content"`
+	Message     Message `json:"message"`
+	Content     []byte  `json:"content,omitempty"`
+	ContentHash string  `json:"content_hash,omitempty"`
+}
+
+// matchesContent reports whether the tombstone describes the given content.
+//
+// A tombstone carrying a hash is checked against the hash, which is what lets
+// enqueue verify identity while the body is still on disk. Older tombstones
+// have only the body, and are compared byte for byte.
+func (t enqueueTombstone) matchesContent(content []byte, hash string) bool {
+	if t.ContentHash != "" {
+		return t.ContentHash == hash
+	}
+	return bytes.Equal(t.Content, content)
 }
 
 func NewFileStorageBackend(queueDir string) *FileStorageBackend {
@@ -61,6 +88,17 @@ func sameEnqueueMessage(a, b Message) bool {
 // published first; a crash can leave content-only data, which retry verifies and
 // completes. Metadata-only entries from older writers are safely repaired.
 func (fs *FileStorageBackend) CreateMessageIfAbsent(msg Message, content []byte) (bool, error) {
+	return fs.createMessageIfAbsent(msg, contentFromBytes(content))
+}
+
+// CreateMessageIfAbsentStream is CreateMessageIfAbsent for a body that should
+// stay on disk. open is called more than once: identity is settled in one pass
+// over the body and the body written in another.
+func (fs *FileStorageBackend) CreateMessageIfAbsentStream(msg Message, open ContentOpener) (bool, error) {
+	return fs.createMessageIfAbsent(msg, contentFromOpener(open))
+}
+
+func (fs *FileStorageBackend) createMessageIfAbsent(msg Message, src *contentSource) (bool, error) {
 	if err := validateMessageID(msg.ID); err != nil {
 		return false, err
 	}
@@ -72,37 +110,55 @@ func (fs *FileStorageBackend) CreateMessageIfAbsent(msg Message, content []byte)
 		return false, fmt.Errorf("claim enqueue ID: %w", err)
 	}
 	defer lock()
+
+	hash, err := src.Hash()
+	if err != nil {
+		return false, err
+	}
+
 	if raw, readErr := os.ReadFile(filepath.Join(fs.queueDir, "tmp", ".consumed-"+msg.ID+".json")); readErr == nil {
 		var tomb enqueueTombstone
-		if json.Unmarshal(raw, &tomb) != nil || !sameEnqueueMessage(tomb.Message, msg) || !bytes.Equal(tomb.Content, content) {
+		if json.Unmarshal(raw, &tomb) != nil || !sameEnqueueMessage(tomb.Message, msg) {
+			return false, fmt.Errorf("message ID %q conflicts with consumed enqueue identity", msg.ID)
+		}
+		// A tombstone written before content hashes existed can only be settled
+		// by comparing bodies, which means materialising this one.
+		var body []byte
+		if tomb.ContentHash == "" {
+			if body, err = src.Bytes(); err != nil {
+				return false, err
+			}
+		}
+		if !tomb.matchesContent(body, hash) {
 			return false, fmt.Errorf("message ID %q conflicts with consumed enqueue identity", msg.ID)
 		}
 		return false, nil
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return false, fmt.Errorf("read enqueue tombstone: %w", readErr)
 	}
+
 	existing, metaErr := fs.Retrieve(msg.ID)
-	existingContent, contentErr := fs.RetrieveContent(msg.ID)
+	existingHash, contentErr := fs.contentHash(msg.ID)
 	if metaErr == nil {
 		if !sameEnqueueMessage(existing, msg) {
 			return false, fmt.Errorf("message ID %q conflicts with existing metadata", msg.ID)
 		}
 		if contentErr == nil {
-			if !bytes.Equal(existingContent, content) {
+			if existingHash != hash {
 				return false, fmt.Errorf("message ID %q conflicts with existing content", msg.ID)
 			}
 			return false, nil
 		}
-		if err := fs.StoreContent(msg.ID, content); err != nil {
+		if err := fs.storeContentFrom(msg.ID, src); err != nil {
 			return false, fmt.Errorf("repair missing content: %w", err)
 		}
 		return false, nil
 	}
-	if contentErr == nil && !bytes.Equal(existingContent, content) {
+	if contentErr == nil && existingHash != hash {
 		return false, fmt.Errorf("message ID %q has conflicting orphan content", msg.ID)
 	}
 	if contentErr != nil {
-		if err := fs.StoreContent(msg.ID, content); err != nil {
+		if err := fs.storeContentFrom(msg.ID, src); err != nil {
 			return false, err
 		}
 	}
@@ -110,6 +166,24 @@ func (fs *FileStorageBackend) CreateMessageIfAbsent(msg Message, content []byte)
 		return false, err
 	}
 	return true, nil
+}
+
+// contentHash digests the stored body for an ID without reading it into memory.
+func (fs *FileStorageBackend) contentHash(id string) (string, error) {
+	if err := validateMessageID(id); err != nil {
+		return "", err
+	}
+	return ContentHashOfFile(filepath.Join(fs.queueDir, "data", id))
+}
+
+// storeContentFrom writes a body from either backing without materialising it.
+func (fs *FileStorageBackend) storeContentFrom(id string, src *contentSource) error {
+	r, err := src.Reader()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	return fs.StoreContentFromReader(id, r)
 }
 
 // RecordEnqueueTombstone is called before deletion, under the same stable per-ID
@@ -127,7 +201,13 @@ func (fs *FileStorageBackend) RecordEnqueueTombstone(msg Message, content []byte
 }
 
 func (fs *FileStorageBackend) recordEnqueueTombstoneLocked(msg Message, content []byte) error {
-	payload, err := json.Marshal(enqueueTombstone{Message: msg, Content: content})
+	// Content is still written alongside the hash so a rollback to a build
+	// that predates ContentHash can still settle identity. See enqueueTombstone.
+	payload, err := json.Marshal(enqueueTombstone{
+		Message:     msg,
+		Content:     content,
+		ContentHash: ContentHash(content),
+	})
 	if err != nil {
 		return err
 	}
@@ -189,9 +269,22 @@ func (fs *FileStorageBackend) suppressConsumed(msg Message) error {
 	if !sameEnqueueMessage(tomb.Message, msg) {
 		return fmt.Errorf("live message %q conflicts with consumed enqueue identity", msg.ID)
 	}
-	content, contentErr := fs.RetrieveContent(msg.ID)
-	if contentErr == nil && !bytes.Equal(tomb.Content, content) {
-		return fmt.Errorf("live message %q conflicts with consumed enqueue content", msg.ID)
+	// Prefer the hash so the stored body is digested from disk rather than
+	// read into memory; fall back to comparing bodies for tombstones written
+	// before content hashes existed.
+	var contentErr error
+	if tomb.ContentHash != "" {
+		var liveHash string
+		liveHash, contentErr = fs.contentHash(msg.ID)
+		if contentErr == nil && liveHash != tomb.ContentHash {
+			return fmt.Errorf("live message %q conflicts with consumed enqueue content", msg.ID)
+		}
+	} else {
+		var content []byte
+		content, contentErr = fs.RetrieveContent(msg.ID)
+		if contentErr == nil && !bytes.Equal(tomb.Content, content) {
+			return fmt.Errorf("live message %q conflicts with consumed enqueue content", msg.ID)
+		}
 	}
 	if contentErr != nil && !errors.Is(contentErr, os.ErrNotExist) && !strings.Contains(contentErr.Error(), "no such file") {
 		return fmt.Errorf("verify consumed message %q content: %w", msg.ID, contentErr)
@@ -520,6 +613,38 @@ func (fs *FileStorageBackend) Move(id string, from, to QueueType) error {
 		return fmt.Errorf("failed to remove source file: %w", err)
 	}
 	return nil
+}
+
+// StoreContentFromReader writes a message body straight from a reader, so a
+// large message is copied disk-to-disk rather than through the heap.
+func (fs *FileStorageBackend) StoreContentFromReader(id string, r io.Reader) error {
+	if err := validateMessageID(id); err != nil {
+		return err
+	}
+	root, err := openRoot(fs.queueDir, true)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	dir, err := openChildDir(root, "data", true)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := atomicWriteReaderAt(dir, id, r, 0600); err != nil {
+		return fmt.Errorf("failed to write content file: %w", err)
+	}
+	return nil
+}
+
+// RetrieveContentReader opens the stored body for reading. The caller closes
+// it. Delivery uses this so a message is streamed to the wire instead of being
+// loaded first.
+func (fs *FileStorageBackend) RetrieveContentReader(id string) (io.ReadCloser, error) {
+	if err := validateMessageID(id); err != nil {
+		return nil, err
+	}
+	return os.Open(filepath.Join(fs.queueDir, "data", id)) // #nosec G304 -- queue-owned path, ID validated
 }
 
 func (fs *FileStorageBackend) StoreContent(id string, data []byte) error {

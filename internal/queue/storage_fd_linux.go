@@ -3,6 +3,7 @@
 package queue
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -95,6 +96,13 @@ func unlinkFileAt(dir *os.File, name string) error {
 }
 
 func atomicWriteAt(dir *os.File, name string, data []byte, perm os.FileMode) error {
+	return atomicWriteReaderAt(dir, name, bytes.NewReader(data), perm)
+}
+
+// atomicWriteReaderAt writes from r into a temp file within the pinned
+// directory and renames it into place, so a large body never has to be held in
+// memory to be stored durably.
+func atomicWriteReaderAt(dir *os.File, name string, r io.Reader, perm os.FileMode) error {
 	var target unix.Stat_t
 	if err := unix.Fstatat(int(dir.Fd()), name, &target, unix.AT_SYMLINK_NOFOLLOW); err == nil {
 		if target.Mode&unix.S_IFMT != unix.S_IFREG {
@@ -120,7 +128,7 @@ func atomicWriteAt(dir *os.File, name string, data []byte, perm os.FileMode) err
 			_ = unix.Unlinkat(int(dir.Fd()), tmp, 0)
 		}
 	}()
-	if _, err := file.Write(data); err != nil {
+	if _, err := io.Copy(file, r); err != nil {
 		file.Close()
 		return err
 	}
