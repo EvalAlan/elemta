@@ -92,10 +92,10 @@ func (fs *FileStorageBackend) CreateMessageIfAbsent(msg Message, content []byte)
 }
 
 // CreateMessageIfAbsentStream is CreateMessageIfAbsent for a body that should
-// stay on disk. The reader must be seekable: identity is settled in one pass
-// and the body written in another.
-func (fs *FileStorageBackend) CreateMessageIfAbsentStream(msg Message, r io.ReadSeeker) (bool, error) {
-	return fs.createMessageIfAbsent(msg, contentFromReader(r))
+// stay on disk. open is called more than once: identity is settled in one pass
+// over the body and the body written in another.
+func (fs *FileStorageBackend) CreateMessageIfAbsentStream(msg Message, open ContentOpener) (bool, error) {
+	return fs.createMessageIfAbsent(msg, contentFromOpener(open))
 }
 
 func (fs *FileStorageBackend) createMessageIfAbsent(msg Message, src *contentSource) (bool, error) {
@@ -182,6 +182,7 @@ func (fs *FileStorageBackend) storeContentFrom(id string, src *contentSource) er
 	if err != nil {
 		return err
 	}
+	defer func() { _ = r.Close() }()
 	return fs.StoreContentFromReader(id, r)
 }
 

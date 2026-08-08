@@ -110,7 +110,7 @@ func TestLegacyTombstoneHonouredForStreamedContent(t *testing.T) {
 	content := []byte("Subject: streamed\r\n\r\nbody text\r\n")
 	writeLegacyTombstone(t, dir, msg, content)
 
-	created, err := fs.CreateMessageIfAbsentStream(msg, bytes.NewReader(content))
+	created, err := fs.CreateMessageIfAbsentStream(msg, OpenerForBytes(content))
 	if err != nil {
 		t.Fatalf("streamed re-enqueue should be suppressed, not fail: %v", err)
 	}

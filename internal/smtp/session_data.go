@@ -380,7 +380,7 @@ func (dh *DataHandler) ProcessBDATMessage(ctx context.Context) error {
 	data := dh.bdatBuffer.Bytes()
 	dh.state.SetDataSize(ctx, int64(len(data)))
 
-	err := dh.processMessageBytes(ctx, data)
+	err := dh.processMessageBytes(ctx, data, queue.OpenerForBytes(data))
 	dh.ResetBDAT()
 	return err
 }
@@ -404,12 +404,14 @@ func (dh *DataHandler) ProcessMessage(ctx context.Context, spool *MessageSpool) 
 		dh.logger.ErrorContext(ctx, "Failed to read spooled message", "error", err)
 		return fmt.Errorf("451 4.3.0 Unable to read message data")
 	}
-	return dh.processMessageBytes(ctx, data)
+	// Scanning still needs the whole body, but queuing does not: the spool is
+	// handed on so the queue can stream it rather than take another copy.
+	return dh.processMessageBytes(ctx, data, spool.Open)
 }
 
 // processMessageBytes is the byte-oriented implementation shared by the DATA
 // and BDAT paths.
-func (dh *DataHandler) processMessageBytes(ctx context.Context, data []byte) error {
+func (dh *DataHandler) processMessageBytes(ctx context.Context, data []byte, body queue.ContentOpener) error {
 	dh.logger.DebugContext(ctx, "Starting message processing with memory tracking", "size", len(data))
 
 	startTime := time.Now()
@@ -465,15 +467,11 @@ func (dh *DataHandler) processMessageBytes(ctx context.Context, data []byte) err
 		return dh.handleSecurityThreat(ctx, scanResult, metadata)
 	}
 
-	// Add server headers before queuing
-	enhancedData, err := dh.addServerHeaders(ctx, data, metadata, scanResult)
-	if err != nil {
-		dh.logger.ErrorContext(ctx, "Failed to add server headers", "error", err)
-		return fmt.Errorf("451 4.3.0 Message processing failed")
-	}
+	// Build this hop's headers. They are written ahead of the body rather than
+	// concatenated with it, so the body is never copied a second time.
+	headerPrefix := dh.buildServerHeaders(ctx, data, metadata, scanResult)
 
-	// Save enhanced message to queue
-	if err := dh.saveMessage(ctx, enhancedData, metadata); err != nil {
+	if err := dh.saveMessage(ctx, headerPrefix, body, metadata); err != nil {
 		dh.logger.ErrorContext(ctx, "Failed to save message", "error", err)
 		return fmt.Errorf("451 4.3.0 Message processing failed")
 	}
@@ -802,7 +800,7 @@ func (dh *DataHandler) validateLineContent(ctx context.Context, line string, sta
 }
 
 // addServerHeaders adds server-generated headers to the message
-func (dh *DataHandler) addServerHeaders(ctx context.Context, data []byte, metadata *MessageMetadata, scanResult *SecurityScanResult) ([]byte, error) {
+func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, metadata *MessageMetadata, scanResult *SecurityScanResult) []byte {
 	// Build the block this hop contributes.
 	//
 	// RFC 5321 §4.4 requires the trace record to go at the top of the mail
@@ -865,16 +863,16 @@ func (dh *DataHandler) addServerHeaders(ctx context.Context, data []byte, metada
 		prefix += "\r\n"
 	}
 
-	out := make([]byte, 0, len(prefix)+len(data))
-	out = append(out, prefix...)
-	out = append(out, data...)
-
-	slog.LogAttrs(ctx, slog.LevelDebug, "Server headers prepended",
+	slog.LogAttrs(ctx, slog.LevelDebug, "Server headers built",
 		slog.Int("header_bytes", len(prefix)),
 		slog.Int("message_bytes", len(data)),
 	)
 
-	return out, nil
+	// Only the prefix is returned. Concatenating it with the message here would
+	// allocate a second full copy of every message; instead the caller writes
+	// the prefix ahead of the body, which for a spooled message means the body
+	// never has to be copied at all.
+	return []byte(prefix)
 }
 
 // isInternalConnection checks if the connection is from internal Docker network
@@ -1733,15 +1731,30 @@ func (dh *DataHandler) handleSecurityThreat(ctx context.Context, scanResult *Sec
 }
 
 // saveMessage saves the message to the queue
-func (dh *DataHandler) saveMessage(ctx context.Context, data []byte, metadata *MessageMetadata) error {
-	// Process the message
+func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, body queue.ContentOpener, metadata *MessageMetadata) error {
+	// The stored message is this hop's headers followed by the body exactly as
+	// received. Composing them as a reader means a spooled message goes to the
+	// queue disk-to-disk, without being assembled in memory first.
+	open := func() (io.ReadCloser, error) {
+		r, err := body()
+		if err != nil {
+			return nil, err
+		}
+		return struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: io.MultiReader(bytes.NewReader(headerPrefix), r),
+			Closer: r,
+		}, nil
+	}
 
-	// Enqueue message for delivery
-	msgID, err := dh.queueManager.EnqueueMessage(
+	msgID, err := dh.queueManager.EnqueueMessageStream(
 		metadata.From,
 		metadata.To,
 		metadata.Subject,
-		data,
+		open,
+		int64(len(headerPrefix))+dh.state.GetDataSize(),
 		queue.PriorityNormal,
 		dh.receptionTime,
 	)
