@@ -2,6 +2,7 @@ package smtp
 
 import (
 	"bufio"
+	"context"
 	"net"
 	"strings"
 	"testing"
@@ -173,5 +174,42 @@ func TestLegacyMode_AcceptsBareLF(t *testing.T) {
 	}
 	if !strings.HasPrefix(resp, "250") {
 		t.Errorf("legacy mode should accept bare LF, got %q", strings.TrimSpace(resp))
+	}
+}
+
+// TestApplyDotStuffing_RemovesAnyLeadingPeriod pins RFC 5321 §4.5.2 receive
+// behaviour: the server deletes a leading period from any line that has one.
+//
+// The implementation used to strip only "..", leaving a non-conforming ".foo"
+// intact. Relaying then re-stuffed it to "..foo" and the next hop saw ".foo"
+// where the sender meant "foo" — the kind of disagreement about a leading
+// period that SMTP smuggling depends on.
+func TestApplyDotStuffing_RemovesAnyLeadingPeriod(t *testing.T) {
+	cfg := createTestConfig(t)
+	cfg.ApplyDefaults()
+
+	dh := &DataHandler{config: cfg, logger: quietLogger()}
+	state := &DataReaderState{}
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"dot-stuffed literal period", "..\r\n", ".\r\n"},
+		{"dot-stuffed leading period", "..foo\r\n", ".foo\r\n"},
+		{"non-conforming single period", ".foo\r\n", "foo\r\n"},
+		{"ordinary line untouched", "foo\r\n", "foo\r\n"},
+		{"period mid-line untouched", "foo.bar\r\n", "foo.bar\r\n"},
+		{"empty line untouched", "\r\n", "\r\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := string(dh.applyDotStuffing(context.Background(), []byte(tt.in), state))
+			if got != tt.want {
+				t.Errorf("applyDotStuffing(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
