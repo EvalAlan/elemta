@@ -672,11 +672,26 @@ func (s *Server) Stop() error {
 
 	s.lifecycleState = serverStateStopping
 	httpServer := s.httpServer
+	listener := s.listener
 	s.lifecycleMu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := httpServer.Shutdown(ctx)
+
+	// Shutdown only closes listeners that Serve has already registered with the
+	// http.Server. Start hands the listener to Serve on a new goroutine, so a
+	// Stop that arrives before that goroutine is scheduled finds nothing to
+	// close and returns while the port is still accepting connections.
+	// Closing the listener here makes "Stop returned" mean "the port is shut".
+	// Serve's own deferred Close makes the second close a no-op.
+	if listener != nil {
+		if closeErr := listener.Close(); closeErr != nil && err == nil {
+			if !errors.Is(closeErr, net.ErrClosed) {
+				err = closeErr
+			}
+		}
+	}
 
 	s.lifecycleMu.Lock()
 	s.httpServer = nil
