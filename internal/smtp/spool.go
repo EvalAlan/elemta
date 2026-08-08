@@ -203,6 +203,13 @@ func (s *MessageSpool) Reader() (io.ReadSeekCloser, error) {
 	return f, nil
 }
 
+// Open returns a fresh reader over the spooled data, satisfying
+// queue.ContentOpener so the queue can read the body more than once — once to
+// settle enqueue identity, once to write it — without it being held in memory.
+func (s *MessageSpool) Open() (io.ReadCloser, error) {
+	return s.Reader()
+}
+
 // Bytes returns the whole message as a slice.
 //
 // This defeats the point of spooling for a large message, so it is only for
