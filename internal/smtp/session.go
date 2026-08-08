@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/busybox42/elemta/internal/plugin"
 	"github.com/busybox42/elemta/internal/queue"
 	"github.com/google/uuid"
 )
@@ -39,7 +38,7 @@ type Session struct {
 	authenticator   Authenticator
 	queueManager    queue.QueueManager
 	tlsManager      TLSHandler
-	builtinPlugins  *plugin.BuiltinPlugins
+	scannerManager  *ScannerManager
 	resourceManager *ResourceManager
 	// enhancedValidator would be added here if needed
 
@@ -129,7 +128,7 @@ func (s *Session) initializeComponents() {
 
 	// Create data handler
 	s.dataHandler = NewDataHandler(s, s.state, s.conn, s.reader, s.config,
-		s.queueManager, s.builtinPlugins, s.logger)
+		s.queueManager, s.scannerManager, s.logger)
 
 	s.logger.DebugContext(context.Background(), "Session components initialized")
 }
@@ -189,14 +188,14 @@ func (s *Session) SetQueueManager(queueManager queue.QueueManager) {
 
 // Note: Queue integration is handled by the QueueManager
 
-// SetBuiltinPlugins sets the builtin plugins for the session
-func (s *Session) SetBuiltinPlugins(builtinPlugins *plugin.BuiltinPlugins) {
+// SetScannerManager provides the antivirus/antispam scanners used during DATA.
+func (s *Session) SetScannerManager(scannerManager *ScannerManager) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.builtinPlugins = builtinPlugins
+	s.scannerManager = scannerManager
 	if s.dataHandler != nil {
-		s.dataHandler.builtinPlugins = builtinPlugins
+		s.dataHandler.scannerManager = scannerManager
 	}
 }
 
