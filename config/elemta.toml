@@ -6,6 +6,14 @@ listen_addr = ":2525"
 local_domains = ["example.com", "evil-admin.com", "localhost", "mail.example.com"]
 max_size = 52428800  # 50MB
 
+# Enforce RFC 5321 CRLF line endings in DATA (default: true).
+# This is the primary defence against SMTP smuggling: a bare LF that this
+# server treats as ordinary content may be read as a line terminator by a
+# downstream server, letting an attacker inject extra messages.
+# Set to false only if you must accept mail from legacy senders that emit
+# bare LF, and understand that doing so re-opens that vector.
+strict_line_endings = true
+
 [server]
 hostname = "mail.example.com"
 listen = ":2525"  # Internal SMTP port (non-privileged)
