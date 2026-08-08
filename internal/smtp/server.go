@@ -450,6 +450,13 @@ func prepareServerConfig(config *Config) error {
 		return fmt.Errorf("config cannot be nil")
 	}
 
+	// Refuse to start on a malformed trusted_networks entry rather than guess.
+	// Dropping an entry would start refusing mail from a network the operator
+	// meant to allow; falling back to the defaults would widen trust silently.
+	if err := config.ValidateTrustedNetworks(); err != nil {
+		return err
+	}
+
 	if config.Hostname == "" {
 		hostname, err := os.Hostname()
 		if err != nil {

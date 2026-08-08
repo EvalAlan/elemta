@@ -172,6 +172,7 @@ func fullyPopulatedConfig() *Config {
 		FailedQueueRetentionHours: 48,
 		StrictLineEndings:         smtp.BoolPtr(true),
 		SpoolThresholdBytes:       int64Ptr(1 << 20),
+		TrustedNetworks:           []string{"10.0.0.0/8"},
 		TLS:                       &smtp.TLSConfig{Enabled: true},
 		Auth:                      &smtp.AuthConfig{Enabled: true},
 		Delivery:                  &smtp.DeliveryConfig{Mode: "smtp"},
