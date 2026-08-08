@@ -108,6 +108,20 @@ than a copy).
 - Memory accounting changes: the per-connection check applies to the spool's
   byte count, not to heap usage.
 
+> **Where the memory actually goes.** Benchmarking the scan path
+> (`BenchmarkSecurityScan`) found the resident copy was not the dominant cost.
+> The content scans allocated roughly **fifteen times the message size** per
+> delivery, because each lowercased the whole message inside its pattern loop.
+> An 8MB message produced ~126MB of garbage and took 331ms. Sharing one
+> lowercased copy cut that to ~58MB and 242ms.
+>
+> The remaining ~7x is `ValidateSMTPParameter("DATA_LINE", body)`, which runs
+> Unicode NFC normalisation over the entire message body. That validator is
+> named and shaped for a single SMTP line but is handed the whole message, so
+> every delivery normalises the full body. Bounding it, or applying it per line
+> as the name implies, is the next win — but it changes what a security check
+> inspects, so it wants review rather than a drive-by fix.
+
 ### Stage 2 — process from the spool
 
 - Header extraction reads only the head of the spool, not the whole message.
@@ -119,6 +133,27 @@ than a copy).
   at enqueue time via `io.MultiReader`.
 
 ### Stage 3 — stream into and out of the queue
+
+> **Correction.** This stage was described below as additive — new reader-based
+> methods alongside the existing `[]byte` ones. That was wrong, and the reason
+> is worth writing down before anyone starts.
+>
+> Enqueue idempotency does not just pass content through; it *compares* it.
+> `CreateMessageIfAbsent` decides whether a retry is the same message by
+> `bytes.Equal` against the stored content, and `enqueueTombstone` serialises
+> **the entire message body into JSON** so a consumed ID can be checked after
+> the message is gone. There are a dozen such comparisons across the file and
+> sqlite backends.
+>
+> Streaming therefore requires replacing content equality with a content hash
+> everywhere, which changes the on-disk tombstone format. Existing deployments
+> have tombstones written in the current shape, so this needs a versioned
+> record and a migration, or an upgrade will start reporting "conflicts with
+> consumed enqueue identity" and **refuse legitimate mail**.
+>
+> That makes stage 3 its own reviewed change with its own migration test, not a
+> continuation of stage 2. Stages 1 and 2 remove the dominant memory cost
+> without touching it.
 
 - Add `StoreContentFromReader(id string, r io.Reader) error` and
   `RetrieveContentReader(id string) (io.ReadCloser, error)` to
