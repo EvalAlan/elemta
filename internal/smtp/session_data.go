@@ -241,15 +241,18 @@ func (dh *DataHandler) ReadData(ctx context.Context) ([]byte, error) {
 		if dh.isValidEndOfData(lineStr, state, &suspiciousPatterns) {
 			dh.logger.DebugContext(ctx, "Valid end-of-data marker detected")
 
-			// Fix for Go 1.24 buffering issue: discard any remaining buffered content
-			// to prevent message content from leaking into command parsing
-			if buffered := dh.reader.Buffered(); buffered > 0 {
-				dh.logger.DebugContext(ctx, "Discarding buffered content after terminator",
-					"buffered_bytes", buffered,
-				)
-				_, _ = dh.reader.Discard(buffered) // Ignore error on cleanup
-			}
-
+			// Anything still buffered here belongs to the client's next
+			// command, not to this message. The server advertises PIPELINING,
+			// so it must be left in the reader for the command loop.
+			//
+			// This used to call reader.Discard(reader.Buffered()) to stop
+			// message content being parsed as commands. That was treating a
+			// symptom: the real cause was end-of-data being detected early,
+			// because legacy mode accepts a bare-LF ".\n" as a terminator and
+			// a message body containing such a line ends the DATA phase in the
+			// middle of the message. Everything after it is then, by that
+			// parse, genuinely commands. strict_line_endings (now the default)
+			// rejects both bare LF and ".\n", which addresses the cause.
 			break
 		}
 
