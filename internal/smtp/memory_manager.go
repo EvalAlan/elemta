@@ -18,6 +18,7 @@ type MemoryManager struct {
 	circuitBreaker   *MemoryCircuitBreaker
 	monitoringTicker *time.Ticker
 	shutdownChan     chan struct{}
+	closeOnce        sync.Once
 	mu               sync.RWMutex
 }
 
@@ -422,15 +423,17 @@ func (mm *MemoryManager) checkGoroutineLeaks() {
 	}
 }
 
-// Close shuts down the memory manager
+// Close shuts down the memory manager. It is safe to call more than once and
+// from any goroutine.
+//
+// The monitoring ticker is deliberately not touched here: it is created and
+// stopped by startMemoryMonitoring's own defer, and reaching into it from
+// another goroutine races with that write.
 func (mm *MemoryManager) Close() {
-	close(mm.shutdownChan)
-
-	if mm.monitoringTicker != nil {
-		mm.monitoringTicker.Stop()
-	}
-
-	mm.logger.Info("Memory manager shut down")
+	mm.closeOnce.Do(func() {
+		close(mm.shutdownChan)
+		mm.logger.Info("Memory manager shut down")
+	})
 }
 
 // Memory Circuit Breaker Methods
