@@ -555,17 +555,23 @@ func (dh *DataHandler) isValidEndOfData(line string, state *DataReaderState, sus
 func (dh *DataHandler) applyDotStuffing(ctx context.Context, line []byte, state *DataReaderState) []byte {
 	// RFC 5321 §4.5.2: Before sending a line of mail text, the SMTP client
 	// checks the first character of the line. If it is a period, another
-	// period is inserted at the beginning of the line. Conversely, the server
-	// removes the extra period when receiving mail data.
-
-	// Check if line starts with ".." (dot-stuffed)
-	if len(line) >= 2 && line[0] == '.' && line[1] == '.' {
+	// period is inserted at the beginning of the line. On receipt, the server
+	// deletes the leading period from *any* line that begins with one — not
+	// just from lines beginning "..". The end-of-data marker is checked before
+	// this function is reached, so a bare "." line never arrives here.
+	//
+	// Only stripping ".." left a non-conforming ".foo" intact, which the
+	// outbound side would then re-stuff to "..foo"; the receiving end saw
+	// ".foo" where the sender meant "foo". Interpreting a leading period
+	// differently from the next hop is the seam SMTP smuggling exploits, so
+	// this follows the RFC exactly.
+	if len(line) >= 1 && line[0] == '.' {
 		dh.logger.DebugContext(ctx, "Applying transparent dot-stuffing",
 			"line_number", state.LineCount,
 			"original_line", fmt.Sprintf("%q", string(line)),
 			"processed_line", fmt.Sprintf("%q", string(line[1:])),
 		)
-		return line[1:] // Remove the first dot, leaving the original content
+		return line[1:] // Remove the leading period
 	}
 
 	return line // No dot-stuffing needed
@@ -1602,14 +1608,6 @@ func (dh *DataHandler) separateHeadersAndBody(content string) (headers, body str
 	}
 
 	return headers, body
-}
-
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // handleSecurityThreat handles detected security threats
