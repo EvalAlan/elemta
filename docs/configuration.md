@@ -108,6 +108,45 @@ file = "/var/log/elemta/elemta.log"
 - `max_workers`, `max_retries`, `max_queue_time`, `retry_schedule`
 - `session_timeout` (duration string, e.g. `5m`)
 - `strict_line_endings` (default `true`)
+- `trusted_networks` (CIDRs; default loopback + RFC 1918)
+- `spool_threshold_bytes` (default 262144)
+
+### Trusted networks
+
+`trusted_networks` is a list of CIDRs whose peers are treated as internal.
+Internal peers take a permissive content-validation path; everyone else gets
+the full checks.
+
+Unset, it defaults to loopback and the RFC 1918 ranges the server has always
+treated as internal:
+
+```
+127.0.0.0/8    ::1/128    10.0.0.0/8    172.16.0.0/12
+```
+
+Note what is *not* in that list. `192.168.0.0/16`, link-local and IPv6 ULA are
+private addresses, but they are not trusted by default, because trusting them
+would grant more than earlier releases did. Add them explicitly if your
+deployment needs them:
+
+```toml
+trusted_networks = ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+```
+
+Setting it to an empty list trusts nothing, so every connection takes the
+external path. That is how the test suite reaches that path while connecting
+over loopback.
+
+A malformed entry fails at startup rather than being dropped: silently
+discarding one narrows trust and starts refusing mail from a network you meant
+to allow, while silently falling back to the defaults widens it.
+
+> Earlier releases matched the peer address by string prefix. That treated
+> `172.0.0.0/8` as private when only `172.16.0.0/12` is, and matched any IPv6
+> address *containing* `::1` — which includes routable addresses such as
+> `2001:db8::1`, since `::1` is a conventional first host address in a subnet.
+> Both granted the permissive path to peers that should not have had it.
+> Matching is now done on the parsed address.
 
 ### RFC 5321 line endings
 

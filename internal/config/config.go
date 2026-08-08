@@ -127,6 +127,11 @@ type Config struct {
 	// means strict; set it to false only to interoperate with legacy senders.
 	StrictLineEndings *bool `toml:"strict_line_endings"`
 
+	// TrustedNetworks lists CIDRs whose peers are treated as internal and given
+	// the permissive content-validation path. Unset uses the built-in loopback
+	// and RFC 1918 ranges; an explicitly empty list trusts nothing.
+	TrustedNetworks []string `toml:"trusted_networks"`
+
 	// SpoolThresholdBytes is the message size above which DATA is written to a
 	// spool file rather than held in memory. Unset uses the built-in default;
 	// a negative value keeps every message in memory.
