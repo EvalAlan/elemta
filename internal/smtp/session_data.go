@@ -1282,6 +1282,24 @@ func (dh *DataHandler) validateFromHeader(ctx context.Context, fromHeader, mailF
 	return nil
 }
 
+// scanContent holds the message once as a string and once lowercased, so the
+// content scans share those two allocations instead of each making their own.
+//
+// The scans are substring matches over the whole message and most are
+// case-insensitive. Lowercasing inside the pattern loops meant a fresh copy of
+// the entire message per pattern: measured at roughly fifteen times the message
+// size in garbage per delivery, which for a 25MB message is several hundred
+// megabytes of allocation and about a second of CPU.
+type scanContent struct {
+	raw   string
+	lower string
+}
+
+func newScanContent(data []byte) *scanContent {
+	raw := string(data)
+	return &scanContent{raw: raw, lower: strings.ToLower(raw)}
+}
+
 // performSecurityScan performs comprehensive security scanning
 func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, metadata *MessageMetadata) (*SecurityScanResult, error) {
 	result := &SecurityScanResult{
@@ -1289,9 +1307,16 @@ func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, met
 		Threats: make([]string, 0),
 	}
 
+	// The scans below are substring matches over the whole message, most of
+	// them case-insensitive. Lowercasing per pattern allocated a fresh copy of
+	// the message every time — around fifteen times the message size in
+	// garbage per delivery, and the dominant cost of accepting a large message.
+	// Build both views once and share them.
+	view := newScanContent(data)
+
 	// Perform antivirus scan if plugins are available
 	if dh.builtinPlugins != nil {
-		if err := dh.performAntivirusScan(ctx, data, result); err != nil {
+		if err := dh.performAntivirusScan(ctx, view, result); err != nil {
 			dh.logger.ErrorContext(ctx, "Antivirus scan failed", "error", err)
 			return nil, err
 		}
@@ -1299,14 +1324,14 @@ func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, met
 
 	// Perform spam scan if plugins are available
 	if dh.builtinPlugins != nil {
-		if err := dh.performSpamScan(ctx, data, metadata, result); err != nil {
+		if err := dh.performSpamScan(ctx, view, metadata, result); err != nil {
 			dh.logger.ErrorContext(ctx, "Spam scan failed", "error", err)
 			return nil, err
 		}
 	}
 
 	// Perform content analysis
-	if err := dh.performContentAnalysis(ctx, data, result); err != nil {
+	if err := dh.performContentAnalysis(ctx, view, result); err != nil {
 		dh.logger.ErrorContext(ctx, "Content analysis failed", "error", err)
 		return nil, err
 	}
@@ -1322,7 +1347,7 @@ func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, met
 }
 
 // performAntivirusScan performs antivirus scanning
-func (dh *DataHandler) performAntivirusScan(ctx context.Context, data []byte, result *SecurityScanResult) error {
+func (dh *DataHandler) performAntivirusScan(ctx context.Context, view *scanContent, result *SecurityScanResult) error {
 	// This would integrate with actual antivirus plugins
 	// For now, perform basic threat detection
 
@@ -1331,9 +1356,8 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, data []byte, re
 		"malware", "virus", "trojan", // Basic patterns
 	}
 
-	content := string(data)
 	for _, pattern := range threatPatterns {
-		if strings.Contains(strings.ToLower(content), strings.ToLower(pattern)) {
+		if strings.Contains(view.lower, strings.ToLower(pattern)) {
 			result.Passed = false
 			result.VirusFound = true
 			result.Threats = append(result.Threats, "Virus detected: "+pattern)
@@ -1345,7 +1369,7 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, data []byte, re
 				From:           "",
 				To:             []string{},
 				Subject:        "",
-				Size:           int64(len(data)),
+				Size:           int64(len(view.raw)),
 				ClientIP:       dh.session.remoteAddr,
 				ClientHostname: dh.session.remoteAddr,
 				Username:       dh.state.GetUsername(),
@@ -1369,10 +1393,10 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, data []byte, re
 }
 
 // performSpamScan performs spam detection
-func (dh *DataHandler) performSpamScan(ctx context.Context, data []byte, metadata *MessageMetadata, result *SecurityScanResult) error {
+func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, metadata *MessageMetadata, result *SecurityScanResult) error {
 	// Basic spam scoring
 	spamScore := 0.0
-	content := strings.ToLower(string(data))
+	content := view.lower
 
 	// Debug: Log the content being scanned
 	previewLength := 200
@@ -1463,8 +1487,8 @@ func (dh *DataHandler) performSpamScan(ctx context.Context, data []byte, metadat
 }
 
 // performContentAnalysis performs comprehensive content analysis
-func (dh *DataHandler) performContentAnalysis(ctx context.Context, data []byte, result *SecurityScanResult) error {
-	content := string(data)
+func (dh *DataHandler) performContentAnalysis(ctx context.Context, view *scanContent, result *SecurityScanResult) error {
+	content := view.raw
 
 	// Check if this is an internal connection - be more permissive for internal connections
 	isInternal := dh.isInternalConnection()
@@ -1543,7 +1567,7 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, data []byte, 
 		}
 
 		for _, dangerousType := range dangerousTypes {
-			if strings.Contains(strings.ToLower(content), dangerousType) {
+			if strings.Contains(view.lower, dangerousType) {
 				result.Passed = false
 				result.Threats = append(result.Threats, fmt.Sprintf("Dangerous attachment type: %s", dangerousType))
 
@@ -1569,7 +1593,7 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, data []byte, 
 	}
 
 	for _, pattern := range maliciousPatterns {
-		if strings.Contains(strings.ToLower(content), pattern) {
+		if strings.Contains(view.lower, pattern) {
 			result.Threats = append(result.Threats, fmt.Sprintf("Malicious content pattern: %s", pattern))
 			dh.logger.WarnContext(ctx, "Malicious content pattern detected",
 				"pattern", pattern,
@@ -1585,7 +1609,7 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, data []byte, 
 	}
 
 	// Only check for .com if it's not part of an email address
-	contentLower := strings.ToLower(content)
+	contentLower := view.lower
 	for _, ext := range suspiciousExtensions {
 		if strings.Contains(contentLower, ext) {
 			// Special handling for .com - only flag if it's not in an email address
