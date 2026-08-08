@@ -171,6 +171,7 @@ func fullyPopulatedConfig() *Config {
 		AllowedRelays:             []string{"10.0.0.0/8"},
 		FailedQueueRetentionHours: 48,
 		StrictLineEndings:         smtp.BoolPtr(true),
+		SpoolThresholdBytes:       int64Ptr(1 << 20),
 		TLS:                       &smtp.TLSConfig{Enabled: true},
 		Auth:                      &smtp.AuthConfig{Enabled: true},
 		Delivery:                  &smtp.DeliveryConfig{Mode: "smtp"},
@@ -214,3 +215,5 @@ func fullyPopulatedConfig() *Config {
 
 	return cfg
 }
+
+func int64Ptr(v int64) *int64 { return &v }
