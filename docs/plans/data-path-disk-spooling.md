@@ -1,6 +1,38 @@
 # Plan: spool message data to disk instead of buffering in memory
 
-Status: **proposed, not implemented**
+Status: **stage 0 done (characterisation tests + header prepend); stages 1-4 not implemented**
+
+## Progress
+
+**Stage 0 — pin the current behaviour.** Done. The round-trip and DKIM tests
+the plan called for now exist and pass against the in-memory implementation, so
+the refactor has a baseline to preserve:
+
+- `internal/smtp/message_roundtrip_test.go` — byte equality between what a
+  client submits and what the queue stores, over dot-stuffing, CRLF, 8-bit
+  content, a body line that looks like the terminator, long lines and large
+  messages; plus the negative cases (rejected message, client disconnect
+  mid-DATA) that will catch orphaned spool files.
+- `internal/dkim/body_fidelity_test.go` — signs content shaped like what the
+  queue stores and verifies it with a stubbed-DNS verifier, across the body
+  shapes most likely to be mangled, with a control proving the check detects
+  corruption.
+
+Two findings came out of writing them:
+
+1. **`addServerHeaders` appended rather than prepended.** This hop's `Received`
+   was spliced in below the sender's headers, which violates RFC 5321 §4.4
+   (the trace record belongs at the top) and reverses the order a multi-hop
+   trace is read in. Fixed. It also mattered structurally: appending forced the
+   whole message to be parsed and rebuilt in memory, which is precisely what
+   makes stage 2 hard. Prepending reduces the header step to writing a prefix
+   ahead of untouched bytes, so it becomes `io.MultiReader(headers, spool)`.
+
+2. **DKIM cannot detect a line-ending change.** Relaxed body canonicalisation
+   normalises CRLF before hashing, so a spool that altered line endings would
+   still produce valid signatures while corrupting the message on the wire.
+   DKIM verification is therefore *not* sufficient coverage for this refactor;
+   the byte-equality tests are what protect that property.
 
 ## Problem
 

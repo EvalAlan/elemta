@@ -770,32 +770,19 @@ func (dh *DataHandler) validateLineContent(ctx context.Context, line string, sta
 
 // addServerHeaders adds server-generated headers to the message
 func (dh *DataHandler) addServerHeaders(ctx context.Context, data []byte, metadata *MessageMetadata, scanResult *SecurityScanResult) ([]byte, error) {
-	dataStr := string(data)
-
-	// Find the end of headers
-	headerEnd := strings.Index(dataStr, "\r\n\r\n")
-	if headerEnd == -1 {
-		// Try with just LF instead of CRLF
-		headerEnd = strings.Index(dataStr, "\n\n")
-		if headerEnd == -1 {
-			// No clear header/body separation, add headers at the beginning
-			headerEnd = 0
-		}
-	}
-
-	var headers, body string
-	if headerEnd > 0 {
-		headers = dataStr[:headerEnd]
-		body = dataStr[headerEnd:]
-	} else {
-		headers = ""
-		body = dataStr
-	}
-
-	// Build additional headers
+	// Build the block this hop contributes.
+	//
+	// RFC 5321 §4.4 requires the trace record to go at the top of the mail
+	// data, so the whole block is prepended rather than spliced in at the end
+	// of the submitter's header block. Appending put this hop's Received below
+	// the sender's own headers, which reverses the trace order a downstream
+	// reader relies on and makes multi-hop loop detection unreliable.
+	//
+	// Prepending is also what allows the message body to be streamed: the
+	// server never has to parse or rebuild the submission, it just writes its
+	// own headers ahead of the bytes it received.
 	var additionalHeaders []string
 
-	// Add Received header (most important for email tracing)
 	receivedTime := time.Now().Format(time.RFC1123Z)
 	sanitizedFrom := sanitizeEmailForHeader(metadata.From)
 	sanitizedTo := make([]string, len(metadata.To))
@@ -836,23 +823,25 @@ func (dh *DataHandler) addServerHeaders(ctx context.Context, data []byte, metada
 	additionalHeaders = append(additionalHeaders, "X-Processed-By: Elemta MTA")
 	additionalHeaders = append(additionalHeaders, fmt.Sprintf("X-Message-ID: %s", metadata.MessageID))
 
-	// Combine headers
-	var finalHeaders string
-	if headers != "" {
-		finalHeaders = headers + "\r\n" + strings.Join(additionalHeaders, "\r\n")
-	} else {
-		finalHeaders = strings.Join(additionalHeaders, "\r\n")
+	prefix := strings.Join(additionalHeaders, "\r\n") + "\r\n"
+
+	// A submission with no header/body separator has no headers of its own, so
+	// this hop's block becomes the header section and needs a blank line to
+	// separate it from the content.
+	if !bytes.Contains(data, []byte("\r\n\r\n")) && !bytes.Contains(data, []byte("\n\n")) {
+		prefix += "\r\n"
 	}
 
-	// Ensure proper header/body separation
-	if body != "" {
-		if !strings.HasPrefix(body, "\r\n\r\n") && !strings.HasPrefix(body, "\n\n") {
-			finalHeaders += "\r\n"
-		}
-		return []byte(finalHeaders + body), nil
-	} else {
-		return []byte(finalHeaders + "\r\n\r\n"), nil
-	}
+	out := make([]byte, 0, len(prefix)+len(data))
+	out = append(out, prefix...)
+	out = append(out, data...)
+
+	slog.LogAttrs(ctx, slog.LevelDebug, "Server headers prepended",
+		slog.Int("header_bytes", len(prefix)),
+		slog.Int("message_bytes", len(data)),
+	)
+
+	return out, nil
 }
 
 // isInternalConnection checks if the connection is from internal Docker network
