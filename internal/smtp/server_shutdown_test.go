@@ -531,7 +531,7 @@ func createTestConfig(t *testing.T) *Config {
 		QueueDir:          queueDir,
 		MaxSize:           10 * 1024 * 1024, // 10MB
 		LocalDomains:      []string{"test.example.com", "example.com"},
-		StrictLineEndings: false, // Disable strict CRLF validation for testing
+		StrictLineEndings: BoolPtr(false), // Disable strict CRLF validation for testing
 		Auth: &AuthConfig{
 			Enabled: false, // Disable auth for testing
 		},

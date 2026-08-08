@@ -466,7 +466,7 @@ func (dh *DataHandler) isValidEndOfData(line string, state *DataReaderState, sus
 	// Check for strict RFC 5321 compliant end-of-data sequence: ".\r\n"
 	if line == ".\r\n" {
 		// Enhanced validation: Ensure previous line ended with CRLF to prevent SMTP smuggling
-		if dh.config.StrictLineEndings && !state.LastLineEndedWithCRLF && state.LineCount > 1 {
+		if dh.config.StrictLineEndingsEnabled() && !state.LastLineEndedWithCRLF && state.LineCount > 1 {
 			dh.logger.WarnContext(context.Background(), "Invalid end-of-data marker - not preceded by CRLF (security violation)",
 				"event_type", "smtp_smuggling_attempt",
 				"line", fmt.Sprintf("%q", line),
@@ -495,7 +495,7 @@ func (dh *DataHandler) isValidEndOfData(line string, state *DataReaderState, sus
 	// Check for legacy bare LF terminator: ".\n"
 	if line == ".\n" {
 		// Legacy compatibility mode check
-		if dh.config.StrictLineEndings {
+		if dh.config.StrictLineEndingsEnabled() {
 			// Strict mode: Reject bare LF terminators
 			dh.logger.WarnContext(context.Background(), "Invalid end-of-data marker with bare LF (security violation)",
 				"event_type", "smtp_smuggling_attempt",
@@ -588,7 +588,7 @@ func (dh *DataHandler) validateLineEndings(ctx context.Context, line []byte, sta
 
 	// Case 2: Bare LF (no CR before LF)
 	if !hasCR && hasLF {
-		if dh.config.StrictLineEndings {
+		if dh.config.StrictLineEndingsEnabled() {
 			// Strict mode: Reject bare LF
 			dh.logger.WarnContext(ctx, "Bare LF detected in message data (RFC 5321 violation)",
 				"event_type", "rfc_violation",

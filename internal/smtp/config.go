@@ -96,7 +96,10 @@ type Config struct {
 	SessionTimeout time.Duration `yaml:"session_timeout" toml:"session_timeout"` // Deprecated: Use Timeouts.SessionTimeout
 
 	// RFC 5321 compliance settings
-	StrictLineEndings bool `toml:"strict_line_endings" json:"strict_line_endings"` // Enforce RFC 5321 CRLF requirements (default: true)
+	// StrictLineEndings enforces RFC 5321 CRLF requirements. It is a pointer so
+	// that "unset" is distinguishable from an explicit false; ApplyDefaults
+	// resolves nil to true. Read it through StrictLineEndingsEnabled().
+	StrictLineEndings *bool `toml:"strict_line_endings" json:"strict_line_endings"`
 }
 
 // TimeoutConfig contains hierarchical timeout settings for context propagation
@@ -368,6 +371,19 @@ func LoadConfig(configPath string) (*Config, error) {
 		}
 	}
 
+	config.ApplyDefaults()
+
+	if err := os.MkdirAll(config.QueueDir, 0750); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+// ApplyDefaults fills in default values for any unset configuration fields.
+// It is shared by LoadConfig and by callers that construct a Config from the
+// top-level elemta configuration, so both paths get identical defaults.
+func (config *Config) ApplyDefaults() {
 	if config.Hostname == "" {
 		hostname, err := os.Hostname()
 		if err == nil {
@@ -524,15 +540,24 @@ func LoadConfig(configPath string) (*Config, error) {
 		}
 	}
 
-	if err := os.MkdirAll(config.QueueDir, 0750); err != nil {
-		return nil, err
-	}
-
 	if config.SessionTimeout == 0 {
 		config.SessionTimeout = 5 * time.Minute
 	}
 
-	return &config, nil
+	// RFC 5321 compliance is strict unless the operator explicitly opts out.
+	if config.StrictLineEndings == nil {
+		config.StrictLineEndings = BoolPtr(true)
+	}
+}
+
+// BoolPtr returns a pointer to b. It exists so callers can set tri-state
+// configuration fields such as StrictLineEndings from a struct literal.
+func BoolPtr(b bool) *bool { return &b }
+
+// StrictLineEndingsEnabled reports whether RFC 5321 CRLF enforcement is active.
+// An unset value defaults to true (strict).
+func (c *Config) StrictLineEndingsEnabled() bool {
+	return c.StrictLineEndings == nil || *c.StrictLineEndings
 }
 
 // DefaultConfig returns a default configuration with sane defaults
@@ -620,6 +645,6 @@ func DefaultConfig() *Config {
 		SessionTimeout: 5 * time.Minute,
 
 		// RFC 5321 compliance - strict by default for security
-		StrictLineEndings: true,
+		StrictLineEndings: BoolPtr(true),
 	}
 }
