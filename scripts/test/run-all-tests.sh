@@ -37,44 +37,26 @@ echo -e "\n${GREEN}✓ Go tests completed in ${duration}s${NC}\n"
 # ===== Run database tests if requested =====
 if [[ "$RUN_ALL_TESTS" == "true" ]]; then
     echo -e "\n${YELLOW}Running database tests...${NC}\n"
-    ./run-datasource-tests.sh all
+    ./scripts/test/run-datasource-tests.sh all
 fi
 
-# ===== Set up Python environment =====
-echo -e "${YELLOW}Setting up Python environment...${NC}"
-
-# Check if venv exists, create if it doesn't
-if [ ! -d "$VENV_DIR" ]; then
-    echo -e "Creating virtual environment..."
-    python -m venv "$VENV_DIR"
-fi
-
-# Activate virtual environment
-source "$VENV_DIR/bin/activate"
-
-# Install required packages
-echo -e "Installing required Python packages..."
-pip install -q pytest python-dotenv requests pytest-timeout
-
-# ===== Run Python e2e tests =====
-echo -e "\n${YELLOW}Running Python e2e tests...${NC}\n"
+# ===== Run centralized integration/e2e suite =====
+# The centralized suite (stdlib-only) is the single interface for
+# integration, SMTP, auth, security, performance, e2e and monitoring tests.
+echo -e "\n${YELLOW}Running centralized integration test suite...${NC}\n"
 start_time=$(date +%s)
 cd "$ROOT_DIR"
-python -m pytest -v tests/python/e2e/
+bash tests/run_centralized_tests.sh
 e2e_result=$?
 end_time=$(date +%s)
 duration=$((end_time - start_time))
 
 if [ $e2e_result -eq 0 ]; then
-    echo -e "\n${GREEN}✓ Python e2e tests completed in ${duration}s${NC}"
+    echo -e "\n${GREEN}✓ Centralized test suite completed in ${duration}s${NC}"
 else
-    echo -e "\n${RED}✗ Python e2e tests failed${NC}"
-    deactivate
+    echo -e "\n${RED}✗ Centralized test suite failed${NC}"
     exit 1
 fi
-
-# Deactivate Python virtual environment
-deactivate
 
 echo -e "\n${GREEN}===================================${NC}"
 echo -e "${GREEN}   All Tests Passed Successfully!   ${NC}"
