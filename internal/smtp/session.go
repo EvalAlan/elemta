@@ -299,10 +299,9 @@ func (s *Session) processCommands(ctx context.Context) error {
 					s.logger.ErrorContext(ctx, "Failed to flush after DATA error", "error", flushErr)
 				}
 
-				// Reset to INIT phase after DATA error so client can send QUIT or other commands
-				if resetErr := s.state.SetPhase(ctx, PhaseInit); resetErr != nil {
-					s.logger.WarnContext(ctx, "Failed to reset phase after DATA error", "error", resetErr)
-				}
+				// Abandon the transaction but keep the session so the client
+				// can retry or send QUIT.
+				s.state.Reset(ctx)
 				continue
 			}
 			// Send success response
@@ -315,10 +314,12 @@ func (s *Session) processCommands(ctx context.Context) error {
 				s.logger.ErrorContext(ctx, "Failed to flush after DATA", "error", flushErr)
 			}
 
-			// Reset to INIT phase after successful DATA processing
-			if resetErr := s.state.SetPhase(ctx, PhaseInit); resetErr != nil {
-				s.logger.WarnContext(ctx, "Failed to reset phase after successful DATA", "error", resetErr)
-			}
+			// End the transaction but keep the session. Reset returns a greeted
+			// client to PhaseMail so it can start another message on the same
+			// connection; this used to drop to PhaseInit, which answered the
+			// next MAIL FROM with "503 Bad sequence of commands" and broke
+			// connection reuse entirely.
+			s.state.Reset(ctx)
 			continue
 		}
 

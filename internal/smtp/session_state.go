@@ -73,8 +73,13 @@ func (m DataTransferMode) String() string {
 
 // SessionState manages the state of an SMTP session with thread safety
 type SessionState struct {
-	mu                 sync.RWMutex
-	phase              SMTPPhase
+	mu    sync.RWMutex
+	phase SMTPPhase
+	// greeted records that the client has sent HELO/EHLO. PhaseInit alone
+	// cannot express this: it means both "not yet greeted" and, historically,
+	// where a session landed after RSET or a completed DATA — which forced the
+	// client to re-issue EHLO before it could start another transaction.
+	greeted            bool
 	authenticated      bool
 	username           string
 	mailFrom           string
@@ -484,7 +489,15 @@ func (ss *SessionState) Reset(ctx context.Context) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
-	ss.phase = PhaseInit
+	// RFC 5321 §4.1.1.5: RSET, and the end of mail data, abort the current
+	// transaction but leave the session otherwise intact. A greeted client
+	// returns to the state it was in right after EHLO, ready for the next
+	// MAIL FROM, and must not be made to greet again.
+	if ss.greeted {
+		ss.phase = PhaseMail
+	} else {
+		ss.phase = PhaseInit
+	}
 	ss.mailFrom = ""
 	ss.rcptTo = ss.rcptTo[:0] // Clear but keep capacity
 	ss.dataSize = 0
@@ -497,6 +510,20 @@ func (ss *SessionState) Reset(ctx context.Context) {
 	ss.lastActivityTime = time.Now()
 
 	ss.logger.DebugContext(ctx, "Session state reset for new transaction")
+}
+
+// SetGreeted records that the client has completed HELO/EHLO (thread-safe).
+func (ss *SessionState) SetGreeted(greeted bool) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	ss.greeted = greeted
+}
+
+// IsGreeted reports whether the client has completed HELO/EHLO (thread-safe).
+func (ss *SessionState) IsGreeted() bool {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
+	return ss.greeted
 }
 
 // GetStateSnapshot returns a snapshot of the current state (thread-safe)
@@ -528,9 +555,12 @@ func (ss *SessionState) isValidPhaseTransition(from, to SMTPPhase) bool {
 	// Define valid transitions
 	validTransitions := map[SMTPPhase][]SMTPPhase{
 		PhaseInit: {PhaseMail, PhaseAuth, PhaseTLS, PhaseQuit, PhaseInit},
-		PhaseMail: {PhaseRcpt, PhaseInit, PhaseQuit},
-		PhaseRcpt: {PhaseRcpt, PhaseData, PhaseInit, PhaseQuit}, // Can add more recipients
-		PhaseData: {PhaseInit, PhaseQuit},                       // Back to init after data
+		PhaseMail: {PhaseRcpt, PhaseMail, PhaseInit, PhaseQuit},
+		PhaseRcpt: {PhaseRcpt, PhaseData, PhaseMail, PhaseInit, PhaseQuit}, // Can add more recipients
+		// After mail data the transaction ends but the session continues, so a
+		// greeted client goes back to PhaseMail ready for the next MAIL FROM.
+		// PhaseInit remains valid for a client that never greeted.
+		PhaseData: {PhaseMail, PhaseInit, PhaseQuit},
 		PhaseAuth: {PhaseInit, PhaseMail, PhaseQuit},            // After successful auth
 		PhaseTLS:  {PhaseInit, PhaseAuth, PhaseMail, PhaseQuit}, // After TLS upgrade
 		PhaseQuit: {},                                           // Terminal state
@@ -557,9 +587,12 @@ func (ss *SessionState) CanAcceptCommand(ctx context.Context, command string) bo
 
 	// Define which commands are allowed in each phase
 	allowedCommands := map[SMTPPhase][]string{
+		// RFC 5321 §4.1.4: EHLO/HELO may be issued at any point in a session
+		// and abort any transaction in progress, so they are accepted in every
+		// non-terminal phase rather than only before the first greeting.
 		PhaseInit: {"HELO", "EHLO", "QUIT", "RSET", "NOOP", "HELP", "AUTH", "STARTTLS", "VRFY", "EXPN", "XDEBUG"},
-		PhaseMail: {"MAIL", "AUTH", "STARTTLS", "QUIT", "RSET", "NOOP", "HELP", "VRFY", "EXPN", "XDEBUG"}, // Allow AUTH after EHLO
-		PhaseRcpt: {"RCPT", "QUIT", "RSET", "NOOP", "HELP", "DATA", "BDAT", "VRFY", "EXPN", "XDEBUG"},
+		PhaseMail: {"HELO", "EHLO", "MAIL", "AUTH", "STARTTLS", "QUIT", "RSET", "NOOP", "HELP", "VRFY", "EXPN", "XDEBUG"},
+		PhaseRcpt: {"HELO", "EHLO", "RCPT", "QUIT", "RSET", "NOOP", "HELP", "DATA", "BDAT", "VRFY", "EXPN", "XDEBUG"},
 		PhaseData: {"QUIT", "RSET", "NOOP", "HELP", "XDEBUG"},
 		PhaseAuth: {"AUTH", "QUIT", "RSET", "NOOP", "HELP", "XDEBUG"},
 		PhaseTLS:  {"HELO", "EHLO", "QUIT", "RSET", "NOOP", "HELP", "AUTH", "MAIL", "VRFY", "EXPN", "XDEBUG"},

@@ -101,13 +101,13 @@ func TestPipelinedSecondMessageAfterTerminator(t *testing.T) {
 
 	expectPrefix(t, reader, "250", "first message acceptance")
 
+	// Assert on the codes, not merely that a response arrived. Checking only
+	// for arrival hid a real defect: the commands were delivered but answered
+	// "503 Bad sequence of commands", because a completed DATA used to leave
+	// the session in PhaseInit. See TestConnectionReuse_MultipleMessages.
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	if _, err := reader.ReadString('\n'); err != nil {
-		t.Fatalf("pipelined MAIL FROM after terminator was dropped: %v", err)
-	}
-	if _, err := reader.ReadString('\n'); err != nil {
-		t.Fatalf("pipelined RCPT TO after terminator was dropped: %v", err)
-	}
+	expectPrefix(t, reader, "250", "pipelined MAIL FROM after terminator")
+	expectPrefix(t, reader, "250", "pipelined RCPT TO after terminator")
 }
 
 // TestQuotedPrintableHTMLDoesNotLeakIntoCommands reproduces the symptom that
