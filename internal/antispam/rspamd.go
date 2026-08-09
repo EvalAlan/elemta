@@ -25,24 +25,34 @@ type Rspamd struct {
 	apiKey     string
 }
 
-// RspamdResponse represents the response from Rspamd
+// RspamdResponse is the part of Rspamd's /checkv2 reply this scanner relies on.
+//
+// Only the fields that decide the verdict are typed. Everything else Rspamd
+// returns is kept as raw JSON: its shapes vary by version and configuration,
+// and a strict type for a field nobody reads turns a scannable message into a
+// decode failure. That is exactly what happened with "milter", which Rspamd
+// returns as a nested object and this struct declared as map[string]string —
+// every real reply failed to parse, which went unnoticed while the scanner was
+// a local substring check that never made a request.
 type RspamdResponse struct {
-	IsSpam    bool                `json:"is_spam"`
-	Score     float64             `json:"score"`
-	Threshold float64             `json:"threshold"`
-	Required  float64             `json:"required_score"`
-	Action    string              `json:"action"`
-	Symbols   map[string]Symbol   `json:"symbols"`
-	MessageID string              `json:"message-id"`
-	Milter    map[string]string   `json:"milter"`
-	Urls      []string            `json:"urls"`
-	Emails    []string            `json:"emails"`
-	DKIMSig   []map[string]string `json:"dkim-signature"`
-	SPF       map[string]string   `json:"spf"`
-	DMARC     map[string]string   `json:"dmarc"`
-	Fuzzy     []string            `json:"fuzzy"`
-	Time      float64             `json:"time_real"`
-	ScanTime  float64             `json:"scan_time"`
+	IsSpam    bool              `json:"is_spam"`
+	Score     float64           `json:"score"`
+	Threshold float64           `json:"threshold"`
+	Required  float64           `json:"required_score"`
+	Action    string            `json:"action"`
+	Symbols   map[string]Symbol `json:"symbols"`
+	MessageID string            `json:"message-id"`
+	Time      float64           `json:"time_real"`
+	ScanTime  float64           `json:"scan_time"`
+
+	// Present in replies but not interpreted here.
+	Milter  json.RawMessage `json:"milter,omitempty"`
+	Urls    json.RawMessage `json:"urls,omitempty"`
+	Emails  json.RawMessage `json:"emails,omitempty"`
+	DKIMSig json.RawMessage `json:"dkim-signature,omitempty"`
+	SPF     json.RawMessage `json:"spf,omitempty"`
+	DMARC   json.RawMessage `json:"dmarc,omitempty"`
+	Fuzzy   json.RawMessage `json:"fuzzy,omitempty"`
 }
 
 // Symbol represents a Rspamd rule symbol
