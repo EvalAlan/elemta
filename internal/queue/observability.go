@@ -78,10 +78,12 @@ type claimReleaseBackend interface {
 // GetObservabilitySnapshot builds a backend-agnostic queue health snapshot.
 func (m *Manager) GetObservabilitySnapshot() (QueueObservabilitySnapshot, error) {
 	now := time.Now().UTC()
-	if err := m.UpdateStats(); err != nil {
-		return QueueObservabilitySnapshot{}, err
-	}
 
+	// This used to call UpdateStats first, which lists and decodes every message
+	// in all four queues — and then the loop below lists them all again. The
+	// snapshot is polled by every open dashboard, so that was two full passes
+	// over the whole spool per poll. Totals are now derived from the single pass
+	// below, and the cached stats refreshed from the same numbers.
 	storageInfo, err := m.GetStorageInfo()
 	if err != nil {
 		return QueueObservabilitySnapshot{}, err
@@ -90,11 +92,11 @@ func (m *Manager) GetObservabilitySnapshot() (QueueObservabilitySnapshot, error)
 	snapshot := QueueObservabilitySnapshot{
 		Backend:     m.BackendType(),
 		GeneratedAt: now,
-		Totals:      m.GetStats(),
 		ByQueue:     make(map[string]QueueBreakdown),
 		Storage:     storageInfo,
 		ByDomain:    []QueueDomainStats{},
 	}
+	totals := QueueStats{LastUpdated: now}
 
 	domainStats := make(map[string]*QueueDomainStats)
 	queueTypes := []QueueType{Active, Deferred, Hold, Failed}
@@ -155,7 +157,27 @@ func (m *Manager) GetObservabilitySnapshot() (QueueObservabilitySnapshot, error)
 		}
 
 		snapshot.ByQueue[string(qType)] = breakdown
+
+		totals.TotalSize += breakdown.TotalSize
+		switch qType {
+		case Active:
+			totals.ActiveCount = breakdown.Count
+		case Deferred:
+			totals.DeferredCount = breakdown.Count
+		case Hold:
+			totals.HoldCount = breakdown.Count
+		case Failed:
+			totals.FailedCount = breakdown.Count
+		}
 	}
+
+	// Publish the freshly computed totals both into the snapshot and the
+	// manager's cache, so this poll doubles as the stats refresh UpdateStats
+	// used to provide.
+	snapshot.Totals = totals
+	m.statsLock.Lock()
+	m.queueStats = totals
+	m.statsLock.Unlock()
 
 	for _, stat := range domainStats {
 		snapshot.ByDomain = append(snapshot.ByDomain, *stat)
