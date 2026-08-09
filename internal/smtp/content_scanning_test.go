@@ -222,7 +222,7 @@ func TestConcurrentScansProduceSameVerdict(t *testing.T) {
 	content := []byte("Subject: probe\r\nFrom: a@example.com\r\n\r\nan ordinary message body\r\n")
 
 	for i := 0; i < 50; i++ {
-		result, err := dh.performSecurityScan(context.Background(), content, metadata)
+		result, err := dh.performSecurityScan(context.Background(), newScanContent(content), metadata)
 		if err != nil {
 			t.Fatalf("iteration %d: %v", i, err)
 		}
@@ -230,4 +230,13 @@ func TestConcurrentScansProduceSameVerdict(t *testing.T) {
 			t.Fatalf("iteration %d: ordinary mail was rejected: %v", i, result.Threats)
 		}
 	}
+}
+
+// newScanContent builds a scan view over an in-memory message.
+//
+// Production builds this from a spool via newScanContentFromSpool; tests that
+// exercise the local content checks in isolation supply bytes directly.
+func newScanContent(data []byte) *scanContent {
+	raw := string(data)
+	return &scanContent{raw: raw, lower: strings.ToLower(raw), body: data}
 }
