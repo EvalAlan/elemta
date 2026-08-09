@@ -1,11 +1,14 @@
 package antispam
 
 import (
+	"bytes"
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -51,21 +54,22 @@ type Symbol struct {
 }
 
 // NewRspamd creates a new Rspamd scanner
+// defaultRspamdTimeout bounds a scan when the operator has not set one.
+//
+// This used to default to zero, which as a context deadline expires
+// immediately and as an http.Client timeout means "wait forever". Neither
+// showed up while the scanner was a local substring check that made no
+// requests.
+const defaultRspamdTimeout = 30 * time.Second
+
 func NewRspamd(config Config) *Rspamd {
 	address := config.Address
 	if address == "" {
 		address = "http://localhost:11333" // Default Rspamd address
 	}
+	address = strings.TrimRight(address, "/")
 
-	timeout := time.Duration(0)
-	if t, ok := config.Options["timeout"].(int); ok {
-		timeout = time.Duration(t) * time.Second
-	}
-
-	scanLimit := int64(0)
-	if sl, ok := config.Options["scan_limit"].(int64); ok {
-		scanLimit = sl
-	}
+	timeout := durationOption(config.Options, "timeout", defaultRspamdTimeout)
 
 	threshold := config.Threshold
 	if threshold == 0 {
@@ -80,7 +84,7 @@ func NewRspamd(config Config) *Rspamd {
 	return &Rspamd{
 		address:   address,
 		timeout:   timeout,
-		scanLimit: scanLimit,
+		scanLimit: int64Option(config.Options, "scan_limit", 0),
 		threshold: threshold,
 		config:    config,
 		apiKey:    apiKey,
@@ -88,6 +92,48 @@ func NewRspamd(config Config) *Rspamd {
 			Timeout: timeout,
 		},
 	}
+}
+
+// durationOption reads a timeout from scanner options, accepting either a
+// duration or a plain number of seconds, since the config decoder's exact
+// numeric type is not guaranteed.
+func durationOption(options map[string]interface{}, key string, fallback time.Duration) time.Duration {
+	switch v := options[key].(type) {
+	case time.Duration:
+		if v > 0 {
+			return v
+		}
+	case int:
+		if v > 0 {
+			return time.Duration(v) * time.Second
+		}
+	case int64:
+		if v > 0 {
+			return time.Duration(v) * time.Second
+		}
+	case float64:
+		if v > 0 {
+			return time.Duration(v) * time.Second
+		}
+	case string:
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return fallback
+}
+
+// int64Option reads a numeric option regardless of how it was typed.
+func int64Option(options map[string]interface{}, key string, fallback int64) int64 {
+	switch v := options[key].(type) {
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	}
+	return fallback
 }
 
 // Connect establishes a connection to the Rspamd server
@@ -151,148 +197,133 @@ func (r *Rspamd) Type() string {
 	return "rspamd"
 }
 
-// GTUBE test pattern for spam detection
-const gtubePattern = "XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X"
-
 // ScanBytes scans a byte slice for spam
 func (r *Rspamd) ScanBytes(ctx context.Context, data []byte) (*ScanResult, error) {
-	if !r.connected {
-		return nil, ErrNotConnected
-	}
-
-	// Limit scan size if configured
 	if r.scanLimit > 0 && int64(len(data)) > r.scanLimit {
 		data = data[:r.scanLimit]
 	}
-
-	// Check for GTUBE test pattern
-	dataStr := string(data)
-	if strings.Contains(dataStr, gtubePattern) {
-		return &ScanResult{
-			Engine:    r.Name(),
-			Timestamp: time.Now(),
-			Clean:     false,
-			Score:     100.0, // Very high score for GTUBE
-			Threshold: r.threshold,
-			Rules:     []string{"GTUBE_TEST"},
-			Details: map[string]interface{}{
-				"scan_time": 0.001,
-				"action":    "reject",
-				"message":   "GTUBE test pattern detected",
-			},
-		}, nil
-	}
-
-	// Simple spam detection for testing - check for common spam keywords
-	spamScore := calculateSpamScore(dataStr)
-
-	// Extract rules that were triggered
-	var rules []string
-
-	// Check for common spam patterns
-	if strings.Contains(strings.ToLower(dataStr), "viagra") {
-		rules = append(rules, "SPAM_DRUG")
-		spamScore += 5.0
-	}
-
-	if strings.Contains(strings.ToLower(dataStr), "free") &&
-		(strings.Contains(strings.ToLower(dataStr), "click") ||
-			strings.Contains(strings.ToLower(dataStr), "buy")) {
-		rules = append(rules, "SPAM_FREE_OFFER")
-		spamScore += 2.5
-	}
-
-	if strings.Contains(strings.ToLower(dataStr), "!!!") {
-		rules = append(rules, "SPAM_EXCLAMATION")
-		spamScore += 1.0
-	}
-
-	// Create result
-	result := &ScanResult{
-		Engine:    r.Name(),
-		Timestamp: time.Now(),
-		Clean:     spamScore < r.threshold,
-		Score:     spamScore,
-		Threshold: r.threshold,
-		Rules:     rules,
-		Details:   make(map[string]interface{}),
-	}
-
-	// Add response details
-	result.Details["scan_time"] = 0.001
-	result.Details["action"] = "no action"
-	if spamScore >= r.threshold {
-		result.Details["action"] = "reject"
-	}
-
-	return result, nil
+	return r.check(ctx, bytes.NewReader(data), int64(len(data)))
 }
 
-// calculateSpamScore calculates a spam score based on the content
-func calculateSpamScore(content string) float64 {
-	content = strings.ToLower(content)
-
-	// Start with a base score
-	score := 0.0
-
-	// Common spam phrases and their scores
-	spamPhrases := map[string]float64{
-		"viagra":             5.0,
-		"cialis":             5.0,
-		"free":               1.0,
-		"buy now":            3.0,
-		"click here":         2.0,
-		"!!!":                1.0,
-		"$$$":                2.0,
-		"discount":           1.0,
-		"limited time offer": 2.0,
-		"prescription":       1.5,
-		"medication":         1.5,
-		"lottery":            4.0,
-		"winner":             1.0,
-		"prize":              1.0,
-		"millions":           2.0,
-		"guaranteed":         1.5,
-		"lose weight":        3.0,
-		"enlarge":            4.0,
-	}
-
-	// Check for each spam phrase
-	for phrase, value := range spamPhrases {
-		if strings.Contains(content, phrase) {
-			score += value
-		}
-	}
-
-	return score
-}
-
-// ScanReader scans a reader for spam
+// ScanReader streams a message to Rspamd without holding it in memory.
 func (r *Rspamd) ScanReader(ctx context.Context, reader io.Reader) (*ScanResult, error) {
+	if r.scanLimit > 0 {
+		reader = io.LimitReader(reader, r.scanLimit)
+	}
+	// Length is unknown, so the request is sent chunked.
+	return r.check(ctx, reader, -1)
+}
+
+// ScanFile streams a file to Rspamd.
+//
+// This is the path a spooled message takes. It used to return "direct file
+// scanning not supported", which meant the caller had to read the message into
+// memory first — the thing spooling exists to avoid.
+func (r *Rspamd) ScanFile(ctx context.Context, filePath string) (*ScanResult, error) {
+	f, err := os.Open(filePath) // #nosec G304 -- caller supplies a queue-owned path
+	if err != nil {
+		return nil, fmt.Errorf("rspamd: open %s: %w", filePath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	length := int64(-1)
+	if info, statErr := f.Stat(); statErr == nil {
+		length = info.Size()
+	}
+
+	if r.scanLimit > 0 && (length < 0 || length > r.scanLimit) {
+		return r.check(ctx, io.LimitReader(f, r.scanLimit), -1)
+	}
+	return r.check(ctx, f, length)
+}
+
+// check posts the message to Rspamd's /checkv2 endpoint and interprets the
+// verdict.
+//
+// The body is passed as a reader so the message is streamed to Rspamd rather
+// than assembled first. contentLength may be -1 when it is not known, in which
+// case the request is chunked.
+func (r *Rspamd) check(ctx context.Context, body io.Reader, contentLength int64) (*ScanResult, error) {
 	if !r.connected {
 		return nil, ErrNotConnected
 	}
 
-	// Read all data from the reader
-	var data []byte
-	var err error
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
 
-	if r.scanLimit > 0 {
-		// Limit the amount of data read
-		limitReader := io.LimitReader(reader, r.scanLimit)
-		data, err = io.ReadAll(limitReader)
-	} else {
-		data, err = io.ReadAll(reader)
-	}
-
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.address+"/checkv2", body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rspamd: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	if contentLength >= 0 {
+		req.ContentLength = contentLength
+	}
+	if r.apiKey != "" {
+		req.Header.Set("Password", r.apiKey)
 	}
 
-	return r.ScanBytes(ctx, data)
+	resp, err := r.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("rspamd: request to %s: %w", r.address, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("rspamd: unexpected status %s", resp.Status)
+	}
+
+	var parsed RspamdResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		// Refusing to guess: a response that cannot be parsed must not become
+		// a clean verdict.
+		return nil, fmt.Errorf("rspamd: decode response: %w", err)
+	}
+
+	return r.resultFrom(parsed), nil
 }
 
-// ScanFile scans a file for spam
-func (r *Rspamd) ScanFile(ctx context.Context, filePath string) (*ScanResult, error) {
-	return nil, errors.New("direct file scanning not supported by Rspamd, use ScanBytes or ScanReader instead")
+// resultFrom turns Rspamd's response into a scan result.
+//
+// The action is authoritative where present: Rspamd applies its own thresholds
+// and policy to reach it, and second-guessing that from the raw score would
+// diverge from what the operator configured in Rspamd itself.
+func (r *Rspamd) resultFrom(parsed RspamdResponse) *ScanResult {
+	threshold := parsed.Required
+	if threshold == 0 {
+		threshold = parsed.Threshold
+	}
+	if threshold == 0 {
+		threshold = r.threshold
+	}
+
+	var clean bool
+	switch strings.ToLower(strings.TrimSpace(parsed.Action)) {
+	case "reject", "add header", "add_header", "rewrite subject", "rewrite_subject", "soft reject", "soft_reject":
+		clean = false
+	case "no action", "no_action", "greylist":
+		clean = true
+	default:
+		// No action reported: fall back to comparing the score.
+		clean = !(threshold > 0 && parsed.Score >= threshold)
+	}
+
+	rules := make([]string, 0, len(parsed.Symbols))
+	for name := range parsed.Symbols {
+		rules = append(rules, name)
+	}
+	sort.Strings(rules)
+
+	return &ScanResult{
+		Engine:    r.Name(),
+		Timestamp: time.Now(),
+		Clean:     clean,
+		Score:     parsed.Score,
+		Threshold: threshold,
+		Rules:     rules,
+		Details: map[string]interface{}{
+			"action":    parsed.Action,
+			"scan_time": parsed.ScanTime,
+		},
+	}
 }
