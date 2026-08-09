@@ -80,6 +80,11 @@ type DataHandler struct {
 	// consulted per line of DATA and the peer cannot change mid-session.
 	internalPeer      bool
 	internalPeerKnown bool
+
+	// dataSyncLost records that a rejected message could not be drained back to
+	// a known protocol position, so the connection may still be mid-body. The
+	// session closes instead of reading further commands from it.
+	dataSyncLost bool
 }
 
 // NewDataHandler creates a new data handler
@@ -131,7 +136,114 @@ func (dh *DataHandler) spoolThreshold() int64 {
 // The returned spool is owned by the caller, which must Close it on every exit
 // path; Close removes the backing file. On error the spool is closed here and
 // nil is returned.
+//
+// It also guarantees that the end-of-data marker has been consumed by the time
+// it returns — on failure as well as success.
+//
+// That guarantee is load-bearing. Once the server has answered DATA with 354
+// the connection is in data-transfer mode until <CRLF>.<CRLF>, and the client
+// keeps sending the body regardless of what the server has decided. Returning
+// an error mid-body used to hand the connection straight back to the command
+// loop with the rest of the message still arriving, so the remaining body
+// lines were parsed as SMTP commands. A sender could trip that deliberately
+// with a single over-long line and have the "body" it sent next executed:
+//
+//	MAIL FROM:<attacker@example>  -> 250 Sender OK
+//	RCPT TO:<victim@example>      -> 250 Recipient OK
+//	DATA ... .                    -> 250 Message accepted for delivery
+//
+// forging a message on a connection whose first message had just been
+// rejected. Draining to the marker keeps command state and data state in
+// agreement, which is what makes that impossible.
 func (dh *DataHandler) ReadData(ctx context.Context) (*MessageSpool, error) {
+	spool, err := dh.readData(ctx)
+	if err != nil && !dh.dataSyncLost {
+		// Only drain when the framing is still trustworthy. A line-ending or
+		// terminator violation means the two ends disagree about where the
+		// message ends — the sender may believe it already finished — so
+		// waiting for a marker that will never arrive would stall the
+		// connection. readData marks those cases, and the session closes.
+		dh.drainToEndOfData(ctx)
+	}
+	return spool, err
+}
+
+// maxDrainBytes bounds how much of a rejected message body will be read and
+// discarded to regain protocol sync. A sender that keeps streaming past this
+// is not going to produce a usable transaction, so the session is failed
+// instead of letting the drain run forever.
+const maxDrainBytes = 32 * 1024 * 1024
+
+// drainTimeout bounds the drain in time as well as bytes, so a sender that
+// stops mid-body cannot pin the connection for the full data-phase deadline.
+const drainTimeout = 30 * time.Second
+
+// drainToEndOfData consumes what is left of a rejected message, up to and
+// including the end-of-data marker, so the command loop does not resume in the
+// middle of a message body. See ReadData for why that matters.
+//
+// It reports nothing: the caller is already returning the error that caused
+// the rejection, and a failed drain only means the connection is unusable,
+// which the next read will discover anyway. It marks the session as desynced
+// so the caller can close rather than continue.
+func (dh *DataHandler) drainToEndOfData(ctx context.Context) {
+	if err := dh.conn.SetReadDeadline(time.Now().Add(drainTimeout)); err != nil {
+		dh.dataSyncLost = true
+		return
+	}
+	defer func() { _ = dh.conn.SetReadDeadline(time.Time{}) }()
+
+	var drained int64
+	atLineStart := true
+	for {
+		line, err := dh.reader.ReadBytes('\n')
+		drained += int64(len(line))
+
+		// A lone "." on its own line ends the message. Check before the error
+		// branch so a marker arriving with the final read still counts.
+		if atLineStart {
+			trimmed := bytes.TrimRight(line, "\r\n")
+			if len(trimmed) == 1 && trimmed[0] == '.' {
+				dh.logger.WarnContext(ctx, "Discarded the remainder of a rejected message to stay in sync",
+					"bytes_discarded", drained,
+					"remote_addr", dh.conn.RemoteAddr().String(),
+				)
+				return
+			}
+		}
+		// If this read stopped on '\n' the next one starts a line.
+		atLineStart = len(line) > 0 && line[len(line)-1] == '\n'
+
+		if err != nil {
+			// EOF, timeout or a read error: the connection cannot be trusted
+			// to still be in sync, so the session must not continue on it.
+			dh.dataSyncLost = true
+			dh.logger.WarnContext(ctx, "Could not drain a rejected message; connection is out of sync",
+				"bytes_discarded", drained,
+				"error", err,
+				"remote_addr", dh.conn.RemoteAddr().String(),
+			)
+			return
+		}
+
+		if drained > maxDrainBytes {
+			dh.dataSyncLost = true
+			dh.logger.WarnContext(ctx, "Rejected message exceeded the drain limit; connection is out of sync",
+				"bytes_discarded", drained,
+				"limit", maxDrainBytes,
+				"remote_addr", dh.conn.RemoteAddr().String(),
+			)
+			return
+		}
+	}
+}
+
+// DataSyncLost reports whether the last rejected message could not be drained
+// back to a known protocol position. The session must close rather than resume
+// reading commands from a connection in that state.
+func (dh *DataHandler) DataSyncLost() bool { return dh.dataSyncLost }
+
+func (dh *DataHandler) readData(ctx context.Context) (*MessageSpool, error) {
 	slog.LogAttrs(ctx, slog.LevelDebug, "Starting message data reading")
 
 	startTime := time.Now()
@@ -221,6 +333,11 @@ func (dh *DataHandler) ReadData(ctx context.Context) (*MessageSpool, error) {
 				"error", err,
 				"remote_addr", dh.conn.RemoteAddr().String(),
 			)
+			// A line-ending violation is exactly the disagreement about framing
+			// that smuggling exploits: the sender may consider the message
+			// finished (".\n") while this server does not. There is no position
+			// to resynchronise to, so the connection must not be reused.
+			dh.dataSyncLost = true
 			// Clear data transfer mode on error
 			dh.state.ClearDataTransferMode(ctx)
 			return nil, err
@@ -593,21 +710,28 @@ func (dh *DataHandler) isValidEndOfData(line string, state *DataReaderState, sus
 		}
 	}
 
-	// Check for suspicious patterns that could indicate SMTP smuggling
-	if strings.HasPrefix(line, ".") {
+	// Check for patterns that could indicate SMTP smuggling.
+	//
+	// This runs on the raw line, before dot-unstuffing. Content whose own line
+	// begins with a period arrives doubled ("..text") under RFC 5321 §4.5.2, so
+	// a leading ".." is ordinary, correctly-transmitted mail — warning on it
+	// flagged thousands of legitimate lines per run as
+	// "malformed_end_of_data", which buries the cases that actually matter.
+	//
+	// What remains suspicious is a single leading period on a short line: not
+	// the terminator (handled above), not stuffed content, and the shape an
+	// attempted malformed terminator takes.
+	if strings.HasPrefix(line, ".") && !strings.HasPrefix(line, "..") {
 		*suspiciousPatterns++
 
-		// Log suspicious patterns for security monitoring
-		dh.logger.WarnContext(context.Background(), "Suspicious dot-prefixed line detected",
-			"event_type", "suspicious_pattern",
-			"line", fmt.Sprintf("%q", line),
-			"line_count", state.LineCount,
-			"remote_addr", dh.conn.RemoteAddr().String(),
-			"pattern_type", "malformed_end_of_data",
-		)
-
-		// Log as security event if it looks like an attempted terminator
 		if len(line) <= 5 { // Likely an attempted terminator
+			dh.logger.WarnContext(context.Background(), "Suspicious dot-prefixed line detected",
+				"event_type", "suspicious_pattern",
+				"line", fmt.Sprintf("%q", line),
+				"line_count", state.LineCount,
+				"remote_addr", dh.conn.RemoteAddr().String(),
+				"pattern_type", "malformed_end_of_data",
+			)
 			LogSecurityEvent(dh.logger, "malformed_terminator", "smtp_smuggling",
 				"Malformed end-of-data terminator detected", line, dh.conn.RemoteAddr().String())
 		}
@@ -732,8 +856,16 @@ func (dh *DataHandler) validateLineContent(ctx context.Context, line string, sta
 
 	// RFC 5321 MUST requirement: Support lines up to 1000 octets
 	const maxLineLengthMust = 1000
-	// SHOULD requirement: We support longer lines up to 2000 octets
-	const maxLineLengthShould = 2000
+	// SHOULD requirement: accept longer lines. Real mail routinely exceeds
+	// 1000 octets — unwrapped base64 segments, long reference/DKIM headers and
+	// tracking URLs all do it — and refusing those messages loses legitimate
+	// mail that every other MTA accepts. A 2000-octet cap rejected ~5% of a
+	// real-world corpus here, with observed lines up to 26KB.
+	//
+	// The cap exists only to bound how much a single line can buffer, and
+	// message bodies spool to disk, so it can be generous: 64KB clears real
+	// mail with headroom while still refusing a pathological unbounded line.
+	const maxLineLengthShould = 64 * 1024
 
 	if lineBytes > maxLineLengthShould {
 		// Hard limit exceeded - reject with 552 (message exceeds storage allocation)
