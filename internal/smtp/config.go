@@ -3,6 +3,7 @@ package smtp
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
@@ -94,6 +95,15 @@ type Config struct {
 	Timeouts TimeoutConfig `toml:"timeouts" json:"timeouts"`
 
 	SessionTimeout time.Duration `yaml:"session_timeout" toml:"session_timeout"` // Deprecated: Use Timeouts.SessionTimeout
+
+	// TrustedNetworks lists the CIDRs whose peers are treated as internal and
+	// given the permissive content-validation path. Unset uses the built-in
+	// private ranges; an explicitly empty list trusts nothing, which is how a
+	// test exercises the external path from loopback.
+	TrustedNetworks []string `toml:"trusted_networks" json:"trusted_networks"`
+
+	// trustedNets is TrustedNetworks resolved by ApplyDefaults.
+	trustedNets []*net.IPNet
 
 	// SpoolThresholdBytes is the size above which message data is written to a
 	// spool file instead of being held in memory. Unset means
@@ -586,6 +596,44 @@ func (c *Config) ApplyDefaults() {
 	if c.StrictLineEndings == nil {
 		c.StrictLineEndings = BoolPtr(true)
 	}
+
+	// Resolve trusted networks once. A malformed CIDR is left unresolved so
+	// ValidateTrustedNetworks can report it rather than silently widening or
+	// narrowing trust.
+	if nets, err := ParseTrustedNetworks(c.TrustedNetworks); err == nil {
+		c.trustedNets = nets
+	}
+}
+
+// ValidateTrustedNetworks reports a malformed trusted_networks entry.
+//
+// This is checked at startup rather than tolerated, because either failure
+// mode is bad: silently dropping an entry narrows trust and starts refusing
+// mail from a network the operator meant to allow, while silently falling back
+// to the defaults widens it.
+func (c *Config) ValidateTrustedNetworks() error {
+	if _, err := ParseTrustedNetworks(c.TrustedNetworks); err != nil {
+		return fmt.Errorf("invalid trusted_networks: %w", err)
+	}
+	return nil
+}
+
+// TrustedNetworkList returns the resolved trusted networks. It falls back to
+// parsing on demand for configs built directly in tests without ApplyDefaults.
+func (c *Config) TrustedNetworkList() []*net.IPNet {
+	if c.trustedNets != nil {
+		return c.trustedNets
+	}
+	if c.TrustedNetworks == nil {
+		return DefaultTrustedNetworks()
+	}
+	nets, err := ParseTrustedNetworks(c.TrustedNetworks)
+	if err != nil {
+		// ApplyDefaults rejects bad CIDRs at startup; anything reaching here is
+		// a config built in code, so fail closed rather than widen trust.
+		return nil
+	}
+	return nets
 }
 
 // BoolPtr returns a pointer to b. It exists so callers can set tri-state

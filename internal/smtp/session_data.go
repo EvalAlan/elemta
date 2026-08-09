@@ -69,6 +69,11 @@ type DataHandler struct {
 	bdatBuffer        bytes.Buffer // Accumulated BDAT chunk data
 	bdatBytesReceived int64        // Total bytes across all chunks
 	bdatChunkCount    int          // Chunks received in current transaction
+
+	// internalPeer caches whether the peer is inside a trusted network. It is
+	// consulted per line of DATA and the peer cannot change mid-session.
+	internalPeer      bool
+	internalPeerKnown bool
 }
 
 // NewDataHandler creates a new data handler
@@ -877,30 +882,15 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 
 // isInternalConnection checks if the connection is from internal Docker network
 func (dh *DataHandler) isInternalConnection() bool {
-	if dh.conn == nil {
-		return false
+	// The peer cannot change within a session, and this is consulted for every
+	// line of DATA, so resolve it once.
+	if dh.internalPeerKnown {
+		return dh.internalPeer
 	}
 
-	remoteAddr := dh.conn.RemoteAddr().String()
-
-	// Check for Docker internal networks (172.x.x.x range)
-	if strings.HasPrefix(remoteAddr, "172.") {
-		return true
-	}
-
-	// Check for localhost connections (IPv4 and IPv6)
-	if strings.HasPrefix(remoteAddr, "127.") ||
-		strings.HasPrefix(remoteAddr, "[::1]") ||
-		strings.Contains(remoteAddr, "::1") {
-		return true
-	}
-
-	// Check for Docker bridge network (10.x.x.x range)
-	if strings.HasPrefix(remoteAddr, "10.") {
-		return true
-	}
-
-	return false
+	dh.internalPeer = PeerIsWithin(dh.conn, dh.config.TrustedNetworkList())
+	dh.internalPeerKnown = true
+	return dh.internalPeer
 }
 
 // validateHeaderLine validates message header lines
