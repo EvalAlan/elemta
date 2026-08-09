@@ -81,13 +81,21 @@ func TestExternalLongSingleLineStillRejectedAtReception(t *testing.T) {
 	dh := externalDataHandler(t)
 	state := &DataReaderState{LineCount: 1}
 
-	longLine := strings.Repeat("A", 5000) + "\r\n"
+	// Past the hard limit. The limit is deliberately generous — real mail
+	// carries lines far beyond the RFC's 1000-octet MUST, and a tighter cap
+	// refused legitimate messages — but a pathological line is still refused.
+	longLine := strings.Repeat("A", 128*1024) + "\r\n"
 	err := dh.validateLineContent(context.Background(), longLine, state)
 	if err == nil {
-		t.Fatal("a 5000-octet line should be rejected at reception")
+		t.Fatal("a 128KB single line should be rejected at reception")
 	}
 	if !strings.Contains(err.Error(), "552") {
 		t.Errorf("expected a 552 line-length rejection, got %v", err)
+	}
+
+	// A line that is long but within the range real mail uses is accepted.
+	if err := dh.validateLineContent(context.Background(), strings.Repeat("A", 5000)+"\r\n", state); err != nil {
+		t.Errorf("a 5000-octet line is ordinary mail and should be accepted: %v", err)
 	}
 
 	// And an ordinary line is still accepted.
