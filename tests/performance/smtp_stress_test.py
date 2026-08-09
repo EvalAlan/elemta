@@ -182,6 +182,26 @@ class ConnectionPool:
             self.connections.clear()
             self.connection_usage.clear()
 
+def _set_unique_header(msg, name: str, value: str) -> None:
+    """Set a header to exactly one value, whatever was there before.
+
+    The obvious `replace_header` raises when the header is absent, so the code
+    used to branch on `msg.get(name)` and call `add_header` otherwise. That
+    reads correctly but is wrong for a header that is *present but empty* —
+    "To:" with nothing after it, which real mail contains. `.get()` returns ""
+    for those, which is falsy, so the else branch added a second copy and the
+    email policy refused it with "There may be at most 1 To headers in a
+    message". The whole message was then thrown away in favour of a synthetic
+    fallback, so the corpus files most worth testing — the malformed ones —
+    were the exact ones that never reached the server.
+
+    `del` removes every occurrence and is a no-op when there are none, so this
+    handles absent, empty and duplicated headers alike.
+    """
+    del msg[name]
+    msg[name] = value
+
+
 class SMTPStressTester:
     """Advanced SMTP stress testing utility"""
     
@@ -198,6 +218,12 @@ class SMTPStressTester:
         self.connection_pool = ConnectionPool(config) if config.connection_reuse else None
         self.corpus_files = []
         self.corpus_lock = threading.Lock()
+        # Corpus messages that could not be rewritten, counted per file rather
+        # than printed per occurrence: the same handful of files get picked
+        # thousands of times in a run, and the repeated warnings drowned out
+        # everything else on the console.
+        self.corpus_fallbacks = {}
+        self.corpus_fallback_lock = threading.Lock()
         self.auth_users = []
         self.user_index = 0
         
@@ -524,45 +550,32 @@ class SMTPStressTester:
                     parser = BytesParser(policy=policy.SMTPUTF8)
                     msg = parser.parsebytes(content_bytes)
                         
-                    # Update headers properly and ensure UTF-8 charset
-                    if msg.get('From'):
-                        msg.replace_header('From', from_email)
-                    else:
-                        msg.add_header('From', from_email)
-                        
-                    if msg.get('To'):
-                        msg.replace_header('To', self._get_recipient_email(thread_id))
-                    else:
-                        msg.add_header('To', self._get_recipient_email(thread_id))
-                        
-                    if msg.get('Subject'):
-                        msg.replace_header('Subject', f"Stress Test - T{thread_id} - E{email_id} - {email_type.upper()} - {time.time()}")
-                    else:
-                        msg.add_header('Subject', f"Stress Test - T{thread_id} - E{email_id} - {email_type.upper()} - {time.time()}")
-                        
-                    if msg.get('Message-ID'):
-                        msg.replace_header('Message-ID', f"<stress-{thread_id}-{email_id}-{int(time.time())}@example.com>")
-                    else:
-                        msg.add_header('Message-ID', f"<stress-{thread_id}-{email_id}-{int(time.time())}@example.com>")
-                        
-                    if msg.get('Date'):
-                        msg.replace_header('Date', time.ctime())
-                    else:
-                        msg.add_header('Date', time.ctime())
-                        
+                    # Rewrite the headers this test needs to control: envelope
+                    # routing, and an identifiable subject and Message-ID.
+                    _set_unique_header(msg, 'From', from_email)
+                    _set_unique_header(msg, 'To', self._get_recipient_email(thread_id))
+                    _set_unique_header(msg, 'Subject',
+                                       f"Stress Test - T{thread_id} - E{email_id} - {email_type.upper()} - {time.time()}")
+                    _set_unique_header(msg, 'Message-ID',
+                                       f"<stress-{thread_id}-{email_id}-{int(time.time())}@example.com>")
+                    _set_unique_header(msg, 'Date', time.ctime())
+
                     # Ensure proper UTF-8 charset in Content-Type header
-                    if 'Content-Type' in msg:
-                        content_type = str(msg.get('Content-Type'))
-                        if 'charset=' not in content_type.lower():
-                            msg.replace_header('Content-Type', content_type + '; charset=utf-8')
-                    else:
-                        msg.add_header('Content-Type', 'text/plain; charset=utf-8')
+                    content_type = str(msg.get('Content-Type') or '')
+                    if not content_type:
+                        _set_unique_header(msg, 'Content-Type', 'text/plain; charset=utf-8')
+                    elif 'charset=' not in content_type.lower():
+                        _set_unique_header(msg, 'Content-Type', content_type + '; charset=utf-8')
                         
                     # Return properly formatted email message object and type
                     return msg, email_type
                         
                 except Exception as e:
-                    print(f"⚠️  Warning: Could not properly parse {corpus_file['filename']}, using fallback: {e}")
+                    # Record rather than print: one bad file is picked many
+                    # times per run, and the summary at the end says which.
+                    with self.corpus_fallback_lock:
+                        key = (corpus_file['filename'], str(e))
+                        self.corpus_fallbacks[key] = self.corpus_fallbacks.get(key, 0) + 1
                         
                     # Fallback to simple string replacement if parsing fails
                     lines = content.split('\n')
@@ -584,7 +597,12 @@ class SMTPStressTester:
                             updated_lines.append(line)
                         
                     # Create proper email message object from fallback content
-                    fallback_content = '\n'.join(updated_lines)
+                    # Rebuild with CRLF. Splitting on '\n' leaves the '\r' on
+                    # untouched lines but strips it from rewritten ones, so the
+                    # old join produced a message with mixed line endings —
+                    # which a server enforcing RFC 5321 CRLF will refuse, making
+                    # the fallback look like a server bug.
+                    fallback_content = '\r\n'.join(line.rstrip('\r') for line in updated_lines)
                     fallback_msg = Parser(policy=policy.SMTP).parsestr(fallback_content)
                     return fallback_msg, email_type
         
@@ -1207,6 +1225,13 @@ class SMTPStressTester:
         print(f"   95th Percentile:   {results.percentile_95:.3f}s")
         print(f"   99th Percentile:   {results.percentile_99:.3f}s")
         
+        if getattr(self, 'corpus_fallbacks', None):
+            total = sum(self.corpus_fallbacks.values())
+            print(f"\n📄 CORPUS FALLBACKS: {total} send(s) across {len(self.corpus_fallbacks)} file(s)")
+            print("   These messages could not be rewritten and were sent in a degraded form.")
+            for (filename, reason), count in sorted(self.corpus_fallbacks.items(), key=lambda x: -x[1])[:10]:
+                print(f"   {count:6d}  {filename}: {reason}")
+
         if results.error_counts:
             print(f"\n❌ ERROR ANALYSIS:")
             for error, count in sorted(results.error_counts.items(), key=lambda x: x[1], reverse=True):
