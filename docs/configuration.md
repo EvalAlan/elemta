@@ -183,6 +183,13 @@ and only if you understand that this re-opens the vector.
 - `[api].auth_enabled`
 - `[api].auth_file`
 
+> **Security:** `auth_enabled` defaults to `false`. The admin API can read
+> queued mail, flush queues, and rewrite configuration, so an unauthenticated
+> API is only safe on loopback. The dev `docker-compose` binds it to
+> `0.0.0.0`; the server logs a `SECURITY:` warning at startup in that state.
+> See the hardening section of
+> [Production Deployment](production-deployment.md).
+
 ### Auth
 
 - `[auth].enabled`

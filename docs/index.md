@@ -20,6 +20,7 @@ This index lists the **maintained** docs for the current codebase.
 - [Testing](testing.md)
 - [Troubleshooting](troubleshooting.md)
 - [Production Deployment](production-deployment.md)
+- [Production Readiness — honest assessment & limitations](production-readiness.md)
 - [Native Install Spec v1](native-install-spec-v1.md)
 - [Releasing](releasing.md)
 
