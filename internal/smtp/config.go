@@ -304,11 +304,16 @@ type AntivirusConfig struct {
 }
 
 // ClamAVConfig represents ClamAV configuration
+//
+// The toml tags are load-bearing. Without them neither decoder matches
+// `scan_limit` to ScanLimit — single-word keys resolve case-insensitively
+// against the field name, but underscored ones do not — so the setting was
+// accepted and silently ignored.
 type ClamAVConfig struct {
-	Enabled   bool   `json:"enabled"`
-	Address   string `json:"address"`
-	Timeout   int    `json:"timeout"`
-	ScanLimit int64  `json:"scan_limit"`
+	Enabled   bool   `toml:"enabled" json:"enabled"`
+	Address   string `toml:"address" json:"address"`
+	Timeout   int    `toml:"timeout" json:"timeout"`
+	ScanLimit int64  `toml:"scan_limit" json:"scan_limit"`
 }
 
 // AntispamConfig represents antispam configuration
@@ -321,21 +326,21 @@ type AntispamConfig struct {
 
 // SpamAssassinConfig represents SpamAssassin configuration
 type SpamAssassinConfig struct {
-	Enabled   bool    `json:"enabled"`
-	Address   string  `json:"address"`
-	Timeout   int     `json:"timeout"`
-	ScanLimit int64   `json:"scan_limit"`
-	Threshold float64 `json:"threshold"`
+	Enabled   bool    `toml:"enabled" json:"enabled"`
+	Address   string  `toml:"address" json:"address"`
+	Timeout   int     `toml:"timeout" json:"timeout"`
+	ScanLimit int64   `toml:"scan_limit" json:"scan_limit"`
+	Threshold float64 `toml:"threshold" json:"threshold"`
 }
 
 // RspamdConfig represents Rspamd configuration
 type RspamdConfig struct {
-	Enabled   bool    `json:"enabled"`
-	Address   string  `json:"address"`
-	Timeout   int     `json:"timeout"`
-	ScanLimit int64   `json:"scan_limit"`
-	Threshold float64 `json:"threshold"`
-	APIKey    string  `json:"api_key"`
+	Enabled   bool    `toml:"enabled" json:"enabled"`
+	Address   string  `toml:"address" json:"address"`
+	Timeout   int     `toml:"timeout" json:"timeout"`
+	ScanLimit int64   `toml:"scan_limit" json:"scan_limit"`
+	Threshold float64 `toml:"threshold" json:"threshold"`
+	APIKey    string  `toml:"api_key" json:"api_key"`
 }
 
 // RulesConfig represents rules configuration
