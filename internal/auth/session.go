@@ -187,6 +187,10 @@ func requestIsSecure(r *http.Request) bool {
 // with nothing in the logs to explain it. Browsers exempt localhost, which is
 // exactly why it worked in development and would not have in production.
 func (sm *SessionManager) SetCookie(w http.ResponseWriter, r *http.Request, sessionID string) {
+	// #nosec G124 -- Secure is deliberately conditional. gosec wants it always
+	// set, but a Secure cookie is never returned over plain HTTP, so hardcoding
+	// it silently breaks login on non-TLS deployments. requestIsSecure sets it
+	// wherever TLS is actually in play, which is where it protects anything.
 	cookie := &http.Cookie{
 		Name:     sm.cookieName,
 		Value:    sessionID,
@@ -265,6 +269,9 @@ func (sm *SessionManager) RevokeSession(sessionID string) error {
 
 // ClearCookie clears the session cookie
 func (sm *SessionManager) ClearCookie(w http.ResponseWriter, r *http.Request) {
+	// #nosec G124 -- the clearing cookie must carry the same attributes as the
+	// one it replaces, Secure included, or the browser keeps the original and
+	// logout silently does nothing. See SetCookie.
 	cookie := &http.Cookie{
 		Name:     sm.cookieName,
 		Value:    "",
