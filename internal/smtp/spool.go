@@ -210,6 +210,34 @@ func (s *MessageSpool) Open() (io.ReadCloser, error) {
 	return s.Reader()
 }
 
+// DefaultHeadSize is how much of a message is read for header inspection.
+//
+// Headers live at the front, and RFC 5322 sets no limit on their total size, so
+// this is a pragmatic cap: large enough for any realistic header block,
+// small enough that it is never the reason a message is held in memory.
+const DefaultHeadSize = 256 * 1024
+
+// Head returns the first n bytes of the spooled message.
+//
+// Header extraction, header validation and the header/body split all work from
+// this rather than from the whole message, so a large message is never brought
+// onto the heap to have its headers read. Full-body inspection is the scanners'
+// job, and they stream.
+func (s *MessageSpool) Head(n int64) ([]byte, error) {
+	r, err := s.Reader()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = r.Close() }()
+
+	head := make([]byte, n)
+	read, err := io.ReadFull(r, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, err
+	}
+	return head[:read], nil
+}
+
 // Bytes returns the whole message as a slice.
 //
 // This defeats the point of spooling for a large message, so it is only for

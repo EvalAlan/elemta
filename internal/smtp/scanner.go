@@ -284,6 +284,20 @@ func (m *ScannerManager) ScanForSpam(ctx context.Context, data []byte) ([]*antis
 	return m.antispamManager.ScanBytes(ctx, data)
 }
 
+// ScanFileForViruses scans a file without reading it into memory.
+func (m *ScannerManager) ScanFileForViruses(ctx context.Context, path string) ([]*antivirus.ScanResult, error) {
+	return m.antivirusManager.ScanFile(ctx, path)
+}
+
+// ScanFileForSpam scans a file without reading it into memory.
+//
+// Both of these exist so a spooled message can be scanned from disk. Handing
+// the scanners a byte slice would mean materialising the message purely to
+// scan it, which is the cost the spooling work set out to remove.
+func (m *ScannerManager) ScanFileForSpam(ctx context.Context, path string) ([]*antispam.ScanResult, error) {
+	return m.antispamManager.ScanFile(ctx, path)
+}
+
 // ScanWithAll scans data with all registered scanners
 func (m *ScannerManager) ScanWithAll(ctx context.Context, data []byte) (map[string]interface{}, error) {
 	results := make(map[string]interface{})

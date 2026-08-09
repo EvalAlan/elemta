@@ -1,6 +1,6 @@
 # Plan: spool message data to disk instead of buffering in memory
 
-Status: **stages 0-3 landed for the file backend; stage 4 blocked on streaming content scans**
+Status: **complete — stages 0-4 landed**
 
 ## Progress
 
@@ -160,20 +160,28 @@ than a copy).
 - `delivery_handler` writes from the reader straight into the `DotWriter`.
 - DKIM signs from a reader, hashing the body in one pass while writing.
 
-### Stage 4 — decouple the limits *(blocked)*
+### Stage 4 — decouple the limits *(done)*
 
-The remaining materialisation is the content scans, which substring-match over
-the whole message. Streaming them means matching over a bounded window or a
-rolling buffer, which changes what a security check can see — a signature
-straddling a chunk boundary, or falling outside the window, would be missed.
-That is a detection-policy decision, not a refactor, so it wants review rather
-than a quiet change.
+The blocker was never really the content scans. It was that the bundled ClamAV
+and Rspamd clients did not scan: both matched a hardcoded test string locally
+and never opened a connection, and ClamAV's ScanFile returned Clean
+unconditionally. Streaming a stub achieves nothing, and wiring the spool to
+that ScanFile would have silently disabled virus detection.
 
-Until then `reconcileMessageSizeLimit` still clamps, and the maximum message
-size is still bounded by memory. What stages 1-3 removed is the *duration* of
-that cost — the body is no longer resident for the whole of a slow DATA
-transfer, only for the brief processing window — and the second copy that
-prepending headers used to make.
+With real clients in place, both engines scan the spool file directly. Nothing
+in the path materialises the message:
+
+- Header extraction, header validation and the header/body split read the first
+  256KB (`MessageSpool.Head`), which is where headers live.
+- The antivirus and antispam engines scan the spool by path.
+- The queue is handed an opener, not a slice.
+- BDAT spools too, so CHUNKING is not left refusing what DATA accepts.
+- `metadata.Checksum` covers the head. Nothing reads it, and the queue computes
+  its own content hash for enqueue identity.
+
+The clamp is gone: `max_size` now means what it says, bounded by disk rather
+than by memory. A message an order of magnitude larger than the per-connection
+memory limit is accepted and stored byte-identical, over both DATA and BDAT.
 
 ### Original stage 4 notes
 
