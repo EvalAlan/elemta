@@ -42,18 +42,33 @@ func NewClient(baseURL, apiKey string) *Client {
 	}
 }
 
-// GetAllMessages returns all messages in all queues
-func (c *Client) GetAllMessages() ([]Message, error) {
-	var messages []Message
-	err := c.get("/api/queue", &messages)
-	return messages, err
+// queueListEnvelope mirrors the server's paged listing response. The listing
+// endpoints stopped returning bare arrays when pagination was added; Total
+// reports how many messages matched beyond the returned page.
+type queueListEnvelope struct {
+	Messages []Message `json:"messages"`
+	Total    int       `json:"total"`
 }
 
-// GetQueueMessages returns messages in a specific queue
-func (c *Client) GetQueueMessages(queueType string) ([]Message, error) {
-	var messages []Message
-	err := c.get(fmt.Sprintf("/api/queue/%s", queueType), &messages)
-	return messages, err
+// cliQueuePageSize asks for the server's maximum page. The CLI prints a table,
+// and past a few hundred rows more data helps nobody at a terminal — the
+// count line reports the rest.
+const cliQueuePageSize = 500
+
+// GetAllMessages returns the newest messages across all queues, and the total
+// count of messages beyond the returned page.
+func (c *Client) GetAllMessages() ([]Message, int, error) {
+	var envelope queueListEnvelope
+	err := c.get(fmt.Sprintf("/api/queue?limit=%d", cliQueuePageSize), &envelope)
+	return envelope.Messages, envelope.Total, err
+}
+
+// GetQueueMessages returns the newest messages in a specific queue, and the
+// total count of messages beyond the returned page.
+func (c *Client) GetQueueMessages(queueType string) ([]Message, int, error) {
+	var envelope queueListEnvelope
+	err := c.get(fmt.Sprintf("/api/queue/%s?limit=%d", queueType, cliQueuePageSize), &envelope)
+	return envelope.Messages, envelope.Total, err
 }
 
 // GetMessage returns a specific message

@@ -271,6 +271,35 @@ func normalizeQueueDomain(msg Message) string {
 	return "unknown"
 }
 
+// RequeueQueue requeues every message in a queue for immediate delivery and
+// returns how many were moved. It exists so the dashboard's "retry" actions
+// can trigger redelivery instead of deleting the queue — the flush endpoint
+// they used to call removed messages outright.
+//
+// Requeuing the active queue is a no-op that still resets retry state, which
+// is the sensible reading of "process the active queue now".
+func (m *Manager) RequeueQueue(queueType QueueType, reason string) (int, error) {
+	messages, err := m.ListMessages(queueType)
+	if err != nil {
+		return 0, fmt.Errorf("failed to list %s queue: %w", queueType, err)
+	}
+
+	requeued := 0
+	var firstErr error
+	for i := range messages {
+		if err := m.RequeueMessage(messages[i].ID, reason); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			m.logger.Warn("Failed to requeue message during bulk retry",
+				"id", messages[i].ID, "queue", queueType, "error", err)
+			continue
+		}
+		requeued++
+	}
+	return requeued, firstErr
+}
+
 func setAdminAnnotation(msg *Message, action, reason string) {
 	if msg.Annotations == nil {
 		msg.Annotations = make(map[string]string)
