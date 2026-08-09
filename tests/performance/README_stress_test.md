@@ -30,6 +30,51 @@ pip install psutil
 chmod +x smtp_stress_test.py
 ```
 
+## Using a real mail corpus
+
+`--corpus-dir` points the tool at a directory of real messages, which exercises
+parsing, scanning and delivery against mail that looks like mail rather than
+generated filler.
+
+```bash
+python smtp_stress_test.py --corpus-dir /path/to/corpus --corpus-limit 20000 \
+    --duration 300 --max-connections 50
+```
+
+Discovery is recursive and does not require a file extension — maildir-style
+corpora name messages things like `1.` or `1425868898.28783_3577.lorien`.
+
+**Only paths are indexed.** Public corpora run to tens of gigabytes across
+millions of files, so messages are read at send time rather than loaded up
+front. `--corpus-limit` caps how many are indexed (default 20000; `0` for no
+limit). Files that are empty, larger than 25MB, or obviously not messages
+(archives, marker files, dotfiles) are skipped.
+
+Messages are drawn from each top-level collection in turn rather than taking a
+depth-first prefix. In a corpus holding ~500k Enron messages next to ~8.7M spam
+messages, a prefix is entirely one or the other, and the run would never
+exercise spam handling.
+
+Classification comes from the path: directory names like `easy_ham`,
+`hard_ham`, `spam_2` decide the type, with a small table for well-known
+collections whose layout says nothing (untroubled.org publishes a spam archive
+laid out by date). Anything unrecognised is reported as `other` rather than
+guessed at.
+
+A run against Enron, SpamAssassin and the untroubled archive:
+
+```
+📧 Indexed 4500 messages from /mnt/data/email-corpus:
+   clean: 3000
+   spam: 1500
+   Total Sent:        2,705
+   Success Rate:      100.00%
+   Throughput:        42.67 messages/second
+```
+
+Throughput is lower than with generated content — real messages are larger and
+more varied, and each one is scanned.
+
 ## Basic Usage
 
 ### Simple Stress Test
