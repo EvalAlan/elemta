@@ -446,3 +446,103 @@ func TestMessageRoundTrip_NegativeThresholdKeepsMessagesInMemory(t *testing.T) {
 		t.Errorf("a negative threshold should never touch disk, found %d spool file(s)", n)
 	}
 }
+
+// TestMessageLargerThanMemoryLimitIsAccepted is the point of the spooling work.
+//
+// The message is an order of magnitude larger than the per-connection memory
+// limit. Before DATA was spooled and scanned from disk, max_size was clamped
+// down to that limit at startup and a message this size was refused part-way
+// through DATA with a 552.
+func TestMessageLargerThanMemoryLimitIsAccepted(t *testing.T) {
+	cfg := strictTestConfig(t)
+	cfg.MaxSize = 64 * 1024 * 1024
+	threshold := int64(32 * 1024)
+	cfg.SpoolThresholdBytes = &threshold
+	// Deliberately far below the message size.
+	cfg.Memory = &MemoryConfig{PerConnectionMemoryLimit: 1 * 1024 * 1024}
+	cfg.ApplyDefaults()
+	queueDir := cfg.QueueDir
+
+	// ~8MB of distinct lines, against a 1MB per-connection memory limit.
+	var body strings.Builder
+	for i := 0; i < 200000; i++ {
+		fmt.Fprintf(&body, "line %07d of a message much larger than memory\r\n", i)
+	}
+	wantBody := body.String()
+	if int64(len(wantBody)) <= cfg.Memory.PerConnectionMemoryLimit {
+		t.Fatalf("test body (%d) must exceed the per-connection limit (%d)",
+			len(wantBody), cfg.Memory.PerConnectionMemoryLimit)
+	}
+
+	conn, reader := dialGreeted(t, cfg)
+	resp := submitMessage(t, conn, reader, "Subject: oversized\r\n\r\n"+wantBody+".\r\n")
+	if !strings.HasPrefix(resp, "250") {
+		t.Fatalf("a %d-byte message was rejected against a %d-byte memory limit: %s",
+			len(wantBody), cfg.Memory.PerConnectionMemoryLimit, resp)
+	}
+
+	stored := string(waitForStoredMessage(t, queueDir))
+	if !strings.HasSuffix(stored, wantBody) {
+		t.Errorf("large message body was not stored verbatim (stored %d, body %d bytes)",
+			len(stored), len(wantBody))
+	}
+	if n := countSpoolFiles(t, queueDir); n != 0 {
+		t.Errorf("%d spool file(s) left behind", n)
+	}
+}
+
+// TestBDATMessageLargerThanMemoryLimitIsAccepted covers the chunked path.
+//
+// BDAT accumulated its chunks on the heap, so CHUNKING would have refused
+// messages that DATA accepted once the clamp was lifted. It spools too now.
+func TestBDATMessageLargerThanMemoryLimitIsAccepted(t *testing.T) {
+	cfg := strictTestConfig(t)
+	cfg.MaxSize = 64 * 1024 * 1024
+	threshold := int64(32 * 1024)
+	cfg.SpoolThresholdBytes = &threshold
+	cfg.Memory = &MemoryConfig{PerConnectionMemoryLimit: 1 * 1024 * 1024}
+	cfg.ApplyDefaults()
+	queueDir := cfg.QueueDir
+
+	var body strings.Builder
+	body.WriteString("Subject: chunked oversized\r\n\r\n")
+	for i := 0; i < 100000; i++ {
+		fmt.Fprintf(&body, "chunked line %07d beyond the memory limit\r\n", i)
+	}
+	payload := body.String()
+
+	conn, reader := dialGreeted(t, cfg)
+
+	mustWrite(t, conn, "MAIL FROM:<sender@example.com>\r\n")
+	expectPrefix(t, reader, "250", "MAIL FROM")
+	mustWrite(t, conn, "RCPT TO:<user@example.com>\r\n")
+	expectPrefix(t, reader, "250", "RCPT TO")
+
+	// Send in several BDAT chunks, the last marked LAST.
+	const chunks = 4
+	size := len(payload) / chunks
+	for i := 0; i < chunks; i++ {
+		start := i * size
+		end := start + size
+		if i == chunks-1 {
+			end = len(payload)
+		}
+		part := payload[start:end]
+
+		last := ""
+		if i == chunks-1 {
+			last = " LAST"
+		}
+		mustWrite(t, conn, fmt.Sprintf("BDAT %d%s\r\n", len(part), last))
+		mustWrite(t, conn, part)
+		expectPrefix(t, reader, "250", fmt.Sprintf("BDAT chunk %d", i))
+	}
+
+	stored := string(waitForStoredMessage(t, queueDir))
+	if !strings.HasSuffix(stored, payload[strings.Index(payload, "\r\n\r\n")+4:]) {
+		t.Errorf("chunked message body was not stored verbatim (stored %d bytes)", len(stored))
+	}
+	if n := countSpoolFiles(t, queueDir); n != 0 {
+		t.Errorf("%d spool file(s) left behind after BDAT", n)
+	}
+}
