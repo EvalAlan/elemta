@@ -75,6 +75,38 @@ func TestRequeueMessageResetsDeliveryState(t *testing.T) {
 	assert.Equal(t, 0, stats.DeferredCount)
 }
 
+// TestRequeueQueueMovesEveryMessageWithoutDeleting is the regression test for
+// the dashboard bug: "Retry Deferred" called flush, which deleted the queue.
+// Bulk retry must move messages back to active and leave them intact.
+func TestRequeueQueueMovesEveryMessageWithoutDeleting(t *testing.T) {
+	mgr := NewManager(t.TempDir(), 0)
+	defer mgr.Stop()
+
+	var ids []string
+	for i := 0; i < 5; i++ {
+		id, err := mgr.EnqueueMessage("sender@example.com", []string{"rcpt@example.net"}, "test", []byte("body"), PriorityNormal, time.Now())
+		require.NoError(t, err)
+		require.NoError(t, mgr.MoveMessage(id, Deferred, "450 greylisted"))
+		ids = append(ids, id)
+	}
+
+	requeued, err := mgr.RequeueQueue(Deferred, "bulk retry")
+	require.NoError(t, err)
+	assert.Equal(t, 5, requeued)
+
+	// Every message must still exist, now in the active queue.
+	for _, id := range ids {
+		msg, err := mgr.GetMessage(id)
+		require.NoError(t, err, "message %s must not have been deleted", id)
+		assert.Equal(t, Active, msg.QueueType)
+		assert.Equal(t, 0, msg.RetryCount)
+	}
+
+	stats := mgr.GetStats()
+	assert.Equal(t, 5, stats.ActiveCount)
+	assert.Equal(t, 0, stats.DeferredCount)
+}
+
 func TestHoldMessage(t *testing.T) {
 	mgr := NewManager(t.TempDir(), 0)
 	defer mgr.Stop()

@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260514-queue-observability">
+    <link rel="stylesheet" href="/static/styles.css?v=20260809-queue-pagination">
 </head>
 
 <body>
@@ -900,12 +900,8 @@ If you received this message, your mail server is working correctly!</textarea>
                                         <input type="text" id="config-max-size">
                                     </div>
                                     <div class="config-item">
-                                        <label for="config-max-workers">Max Workers</label>
-                                        <input type="number" id="config-max-workers">
-                                    </div>
-                                    <div class="config-item">
                                         <label for="config-failed-retention">Failed Queue Retention (hours)</label>
-                                        <input type="number" id="config-failed-retention">
+                                        <input type="number" id="config-failed-retention" min="0" title="0 deletes failed messages immediately">
                                     </div>
                                 </div>
                                 <div class="settings-form-actions">
@@ -1154,7 +1150,7 @@ If you received this message, your mail server is working correctly!</textarea>
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20260514-queue-observability"></script>
+    <script src="/static/app.js?v=20260809-queue-pagination"></script>
 </body>
 
 </html>
