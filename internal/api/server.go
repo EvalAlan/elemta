@@ -607,6 +607,8 @@ func (s *Server) Start() error {
 		log.Printf("Starting API server on %s", s.listenAddr)
 		if s.authMiddleware != nil {
 			log.Printf("Authentication enabled")
+		} else if warning := unauthenticatedExposureWarning(ln.Addr(), s.listenAddr); warning != "" {
+			log.Print(warning)
 		}
 		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Printf("API server error: %v", err)
@@ -653,6 +655,38 @@ func (s *Server) requireAuthIfConfigured(next http.Handler) http.Handler {
 		return next
 	}
 	return s.authMiddleware.RequireAuth(next)
+}
+
+// unauthenticatedExposureWarning returns a startup warning when the admin API
+// is running without authentication on an address reachable from off-host, and
+// "" otherwise.
+//
+// With auth disabled the API will read any queued message, flush queues, and
+// rewrite configuration for anyone who can reach the port. That is a
+// reasonable default only on loopback; the shipped container binds 0.0.0.0, so
+// the exposure is otherwise silent.
+func unauthenticatedExposureWarning(bound net.Addr, configured string) string {
+	host := ""
+	if tcp, ok := bound.(*net.TCPAddr); ok {
+		host = tcp.IP.String()
+	}
+	if host == "" || host == "<nil>" {
+		if h, _, err := net.SplitHostPort(configured); err == nil {
+			host = h
+		}
+	}
+
+	// A concrete loopback bind is the safe case. Everything else — an explicit
+	// external IP, or an empty/unspecified host meaning all interfaces — is
+	// reachable from off the host.
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return ""
+	}
+
+	return "SECURITY: the admin API is serving on " + configured +
+		" with authentication DISABLED. Anyone who can reach this address can read queued mail, " +
+		"flush queues, and change configuration. Bind it to 127.0.0.1, put it behind an " +
+		"authenticating proxy, or set [api].auth_enabled = true."
 }
 
 // Stop stops the API server. It is idempotent and waits for an in-progress
