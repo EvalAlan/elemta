@@ -16,7 +16,8 @@ const state = {
     refreshRate: 30000,
     refreshErrorStreak: 0,
     autoRefreshInFlight: false,
-    autoRefreshPaused: false
+    autoRefreshPaused: false,
+    logsRequestSeq: 0
 };
 
 // ============================================================================
@@ -1029,11 +1030,13 @@ function deleteCurrentMessage() {
 // ============================================================================
 // Logs
 // ============================================================================
-async function refreshLogs() {
+async function refreshLogs(options = {}) {
+    const { silent = false } = options;
     const container = document.getElementById('logs-container');
     const levelFilter = document.getElementById('log-level-filter')?.value || '';
     const typeFilter = document.getElementById('log-type-filter')?.value || '';
     const searchTerm = document.getElementById('log-search-input')?.value.toLowerCase() || '';
+    const requestSeq = ++state.logsRequestSeq;
 
     try {
         // Build query parameters
@@ -1047,9 +1050,15 @@ async function refreshLogs() {
 
         const data = await response.json();
 
+        if (requestSeq !== state.logsRequestSeq) {
+            return false;
+        }
+
         if (!data.logs || data.logs.length === 0) {
-            container.innerHTML = '<div class="log-entry info"><span class="log-message">No logs available</span></div>';
-            return;
+            const filterSummary = [typeFilter || 'all types', levelFilter || 'all levels', searchTerm ? `search: ${searchTerm}` : 'no search']
+                .join(' • ');
+            container.innerHTML = `<div class="log-entry info"><span class="log-message">No logs for current filters (${escapeHtml(filterSummary)})</span></div>`;
+            return true;
         }
 
         let logs = data.logs;
@@ -1069,10 +1078,14 @@ async function refreshLogs() {
 
         if (logs.length === 0) {
             container.innerHTML = '<div class="log-entry info"><span class="log-message">No logs match your filters</span></div>';
-            return;
+            return true;
         }
 
         // Render logs as a table
+        if (requestSeq !== state.logsRequestSeq) {
+            return false;
+        }
+
         container.innerHTML = `
             <table class="logs-table">
                 <thead>
@@ -1108,9 +1121,15 @@ async function refreshLogs() {
         return true;
 
     } catch (error) {
+        if (requestSeq !== state.logsRequestSeq) {
+            return false;
+        }
+
         console.error('Error fetching logs:', error);
         container.innerHTML = '<div class="log-entry error"><span class="log-message">Failed to load logs</span></div>';
-        showToast('Failed to load logs', 'error');
+        if (!silent) {
+            showToast('Failed to load logs', 'error');
+        }
         return false;
     }
 }
