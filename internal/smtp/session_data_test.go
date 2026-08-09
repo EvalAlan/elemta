@@ -1078,30 +1078,38 @@ func TestValidateLineContent_RFC5321LineLengthLimits(t *testing.T) {
 			name:        "line at 999 octets + CRLF (1001 total - within SHOULD)",
 			lineContent: strings.Repeat("a", 999) + "\r\n",
 			remoteAddr:  "203.0.113.1:12345",
-			wantErr:     false, // Within SHOULD limit of 2000
+			wantErr:     false, // Within the SHOULD limit
 		},
 		{
 			name:        "line at 1500 octets (within SHOULD extension)",
 			lineContent: strings.Repeat("a", 1500) + "\r\n",
 			remoteAddr:  "203.0.113.1:12345",
-			wantErr:     false, // Within SHOULD limit of 2000
+			wantErr:     false, // Within the SHOULD limit
 		},
 		{
-			name:        "line at 1998 octets + CRLF (exactly 2000)",
-			lineContent: strings.Repeat("a", 1998) + "\r\n",
+			name:        "line at 65534 octets + CRLF (exactly at the hard limit)",
+			lineContent: strings.Repeat("a", 65534) + "\r\n",
 			remoteAddr:  "203.0.113.1:12345",
-			wantErr:     false, // At SHOULD limit
+			wantErr:     false, // At the SHOULD limit
 		},
 		{
-			name:        "line exceeding 2000 octets (hard limit)",
-			lineContent: strings.Repeat("a", 2001) + "\r\n",
+			// Real mail carries lines well past 1000 octets; the longest seen
+			// in a real corpus here was 26193. Those must be accepted.
+			name:        "line at 26193 octets (longest seen in a real corpus)",
+			lineContent: strings.Repeat("a", 26193) + "\r\n",
+			remoteAddr:  "203.0.113.1:12345",
+			wantErr:     false,
+		},
+		{
+			name:        "line exceeding the hard limit",
+			lineContent: strings.Repeat("a", 65537) + "\r\n",
 			remoteAddr:  "203.0.113.1:12345",
 			wantErr:     true,
 			errContains: "552 5.3.4 Line too long",
 		},
 		{
-			name:        "line at 3000 octets (far exceeding limit)",
-			lineContent: strings.Repeat("a", 3000) + "\r\n",
+			name:        "line far exceeding the hard limit",
+			lineContent: strings.Repeat("a", 200000) + "\r\n",
 			remoteAddr:  "203.0.113.1:12345",
 			wantErr:     true,
 			errContains: "552 5.3.4 Line too long",
@@ -1113,8 +1121,8 @@ func TestValidateLineContent_RFC5321LineLengthLimits(t *testing.T) {
 			wantErr:     false, // 500 * 3 + 2 = 1502 octets, within SHOULD limit
 		},
 		{
-			name:        "multi-byte UTF-8 exceeding limit - 700 chars (2100 octets)",
-			lineContent: strings.Repeat("日", 700) + "\r\n", // 700 * 3 + 2 = 2102 octets
+			name:        "multi-byte UTF-8 exceeding limit - 25000 chars (75000 octets)",
+			lineContent: strings.Repeat("日", 25000) + "\r\n", // 25000 * 3 + 2 octets
 			remoteAddr:  "203.0.113.1:12345",
 			wantErr:     true,
 			errContains: "552 5.3.4 Line too long",
@@ -1126,15 +1134,15 @@ func TestValidateLineContent_RFC5321LineLengthLimits(t *testing.T) {
 			wantErr:     false, // 400 * 4 + 2 = 1602 octets, within SHOULD limit
 		},
 		{
-			name:        "emoji characters exceeding limit - 500 chars (2000 octets)",
-			lineContent: strings.Repeat("😀", 500) + "\r\n", // 500 * 4 + 2 = 2002 octets
+			name:        "emoji characters exceeding limit - 20000 chars (80000 octets)",
+			lineContent: strings.Repeat("😀", 20000) + "\r\n", // 20000 * 4 + 2 octets
 			remoteAddr:  "203.0.113.1:12345",
 			wantErr:     true,
 			errContains: "552 5.3.4 Line too long",
 		},
 		{
 			name:        "internal connection respects same line length limits",
-			lineContent: strings.Repeat("a", 2001) + "\r\n",
+			lineContent: strings.Repeat("a", 65537) + "\r\n",
 			remoteAddr:  "127.0.0.1:12345", // Internal address
 			wantErr:     true,
 			errContains: "552 5.3.4 Line too long",
