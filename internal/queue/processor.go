@@ -455,6 +455,19 @@ func (p *Processor) processMessage(msg Message) {
 	// Get message content
 	content, err := p.manager.GetMessageContent(msg.ID)
 	if err != nil {
+		// The listing this message came from is a snapshot, and walking a large
+		// queue takes a while. A message delivered and consumed in the meantime
+		// is simply gone by the time we reach it.
+		//
+		// That is a benign race, not a delivery failure. Treating it as one
+		// bounces a message that was in fact delivered — moveToFailed emits a
+		// DSN to the sender — and records a phantom failure. Only a message
+		// still in the queue that has lost its content is a real problem.
+		if _, stillQueued := p.manager.GetMessage(msg.ID); stillQueued != nil {
+			logger.Debug("Message left the queue before delivery; nothing to do",
+				"reason", stillQueued)
+			return
+		}
 		logger.Error("Failed to get message content", "error", err)
 		p.moveToFailed(msg, fmt.Sprintf("Failed to read content: %v", err))
 		return
