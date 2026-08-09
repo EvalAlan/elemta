@@ -183,6 +183,9 @@ and only if you understand that this re-opens the vector.
 - `[api].auth_enabled`
 - `[api].auth_file`
 
+> Use `elemta user add --file <path>` to create the users file; see the
+> hardening section of [Production Deployment](production-deployment.md).
+>
 > **Security:** `auth_enabled` defaults to `false`. The admin API can read
 > queued mail, flush queues, and rewrite configuration, so an unauthenticated
 > API is only safe on loopback. The dev `docker-compose` binds it to
