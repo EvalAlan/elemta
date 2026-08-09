@@ -362,15 +362,39 @@ func reconcileMessageSizeLimit(config *Config, memoryConfig *MemoryConfig, logge
 	config.MaxSize = perConnLimit
 }
 
+// defaultConnectionWorkers is how many SMTP sessions run at once when
+// [resources].max_concurrent is unset. Sessions are I/O bound — they spend
+// their time waiting on the client and on content scanners — so this is sized
+// well above the core count.
+const defaultConnectionWorkers = 200
+
 // initConcurrency initializes the context hierarchy and worker pool.
-func initConcurrency(slogger *slog.Logger, resourceLimits *ResourceLimits) (context.Context, context.CancelFunc, context.Context, context.CancelFunc, *errgroup.Group, context.Context, *WorkerPool) {
+func initConcurrency(config *Config, slogger *slog.Logger, resourceLimits *ResourceLimits) (context.Context, context.CancelFunc, context.Context, context.CancelFunc, *errgroup.Group, context.Context, *WorkerPool) {
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	ctx, cancel := context.WithCancel(rootCtx)
 	errGroup, gctx := errgroup.WithContext(ctx)
 
+	// Each accepted connection occupies a worker for the whole session, so this
+	// is the cap on how many SMTP sessions can be in progress at once —
+	// everything beyond it waits in the job queue. It was hardcoded to 20
+	// while the shipped configuration allowed 1000 connections, so at any
+	// meaningful concurrency most connections sat idle waiting for a worker
+	// rather than being served.
+	//
+	// [resources].max_concurrent sizes it now. max_workers, which reads like
+	// the right knob, has never been consumed by anything.
+	poolSize := defaultConnectionWorkers
+	if config != nil && config.Resources != nil && config.Resources.MaxConcurrent > 0 {
+		poolSize = config.Resources.MaxConcurrent
+	}
+	slogger.Info("Connection worker pool sized",
+		"workers", poolSize,
+		"source", map[bool]string{true: "[resources].max_concurrent", false: "default"}[config != nil && config.Resources != nil && config.Resources.MaxConcurrent > 0],
+	)
+
 	workerPoolConfig := &WorkerPoolConfig{
-		Size:               20,
-		JobBufferSize:      100,
+		Size:               poolSize,
+		JobBufferSize:      poolSize * 2,
 		ResultBufferSize:   100,
 		CircuitBreakerName: "smtp-connections",
 		MaxRequests:        1000,
@@ -492,7 +516,7 @@ func NewServer(config *Config) (*Server, error) {
 		queueProcessor.AddMetricsRecorder(metrics)
 	}
 	resourceManager, resourceLimits := initResourceManager(config, slogger)
-	rootCtx, rootCancel, _, cancel, errGroup, gctx, workerPool := initConcurrency(slogger, resourceLimits)
+	rootCtx, rootCancel, _, cancel, errGroup, gctx, workerPool := initConcurrency(config, slogger, resourceLimits)
 
 	server := &Server{
 		config:          config,
