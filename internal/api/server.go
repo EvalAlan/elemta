@@ -1096,7 +1096,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Set session cookie
 	log.Printf("Setting session cookie")
-	s.sessionManager.SetCookie(w, session.ID)
+	s.sessionManager.SetCookie(w, r, session.ID)
 	log.Printf("Session cookie set")
 
 	// Get user permissions
@@ -1134,7 +1134,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	// Clear session cookie
 	log.Printf("Clearing session cookie")
-	s.sessionManager.ClearCookie(w)
+	s.sessionManager.ClearCookie(w, r)
 	log.Printf("Session cookie cleared")
 
 	// Redirect to login page instead of returning JSON
