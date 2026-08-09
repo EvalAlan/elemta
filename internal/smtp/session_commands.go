@@ -391,12 +391,18 @@ func (ch *CommandHandler) HandleDATA(ctx context.Context) error {
 func (ch *CommandHandler) HandleBDAT(ctx context.Context, args string) error {
 	ch.logger.DebugContext(ctx, "Processing BDAT command", "args", args)
 
-	// Check if we have recipients
-	if ch.state.GetRecipientCount() == 0 {
-		return fmt.Errorf("503 5.5.1 RCPT first")
-	}
-
-	// Parse args: "<size> [LAST]"
+	// The chunk follows this command immediately, with no server reply in
+	// between, so by the time any check below fails its octets are already
+	// arriving. Every rejection therefore has to consume the chunk — or give up
+	// on the connection — before returning, otherwise those octets are read as
+	// SMTP commands. See DataHandler.DiscardBDATChunk.
+	//
+	// The size is parsed first for exactly that reason: nothing can
+	// resynchronise without knowing how many octets to skip.
+	// A size that cannot be parsed is a different situation: the server never
+	// commits to reading a chunk, so the octets that follow were always going
+	// to be commands and nothing is being reinterpreted. Those keep the
+	// original behaviour of reporting the syntax error and carrying on.
 	parts := strings.Fields(args)
 	if len(parts) == 0 || len(parts) > 2 {
 		return fmt.Errorf("501 5.5.4 Syntax: BDAT <chunk-size> [LAST]")
@@ -412,6 +418,18 @@ func (ch *CommandHandler) HandleBDAT(ctx context.Context, args string) error {
 		return fmt.Errorf("501 5.5.4 Syntax: BDAT <chunk-size> [LAST]")
 	}
 
+	// rejectChunk refuses the command while leaving the connection at a known
+	// position, by consuming the chunk that is already on its way.
+	rejectChunk := func(e error) error {
+		ch.session.dataHandler.DiscardBDATChunk(ctx, size)
+		return e
+	}
+
+	// Check if we have recipients
+	if ch.state.GetRecipientCount() == 0 {
+		return rejectChunk(fmt.Errorf("503 5.5.1 RCPT first"))
+	}
+
 	// Validate data command acceptance to prevent desynchronization attacks
 	if !ch.state.CanAcceptDataCommand(ctx, "BDAT") {
 		ch.logger.WarnContext(ctx, "BDAT command rejected - mode conflict or invalid phase",
@@ -419,13 +437,13 @@ func (ch *CommandHandler) HandleBDAT(ctx context.Context, args string) error {
 			"current_mode", ch.state.GetDataTransferMode().String(),
 			"current_phase", ch.state.GetPhase().String(),
 		)
-		return fmt.Errorf("503 5.5.1 Bad sequence of commands")
+		return rejectChunk(fmt.Errorf("503 5.5.1 Bad sequence of commands"))
 	}
 
 	// First chunk: set data transfer mode to BDAT
 	if ch.state.GetDataTransferMode() == DataModeNone {
 		if err := ch.state.SetDataTransferMode(ctx, DataModeBDAT); err != nil {
-			return fmt.Errorf("503 5.5.1 Bad sequence of commands")
+			return rejectChunk(fmt.Errorf("503 5.5.1 Bad sequence of commands"))
 		}
 	}
 
@@ -537,6 +555,11 @@ func (ch *CommandHandler) HandleSTARTTLS(ctx context.Context) error {
 	tlsConn, err := ch.tlsManager.WrapConnection(ch.conn)
 	if err != nil {
 		ch.logger.ErrorContext(ctx, "Failed to upgrade connection to TLS", "error", err)
+		// The server already answered 220 and the client has begun a TLS
+		// handshake, so whatever is on the wire now is TLS records, not SMTP.
+		// RFC 3207 §4 requires the connection to be dropped rather than
+		// returned to the command loop to be parsed as commands.
+		ch.session.dataHandler.MarkDataSyncLost()
 		return fmt.Errorf("454 4.7.0 TLS handshake failed")
 	}
 

@@ -239,3 +239,72 @@ func TestOrdinaryLongLinesAreAccepted(t *testing.T) {
 		})
 	}
 }
+
+// BDAT carries the same hazard as DATA in a different shape: the chunk follows
+// the command immediately, with no server reply in between, so a refused BDAT
+// leaves those octets in the stream. Reading them as commands lets content
+// that an application treated as a message body issue SMTP commands on that
+// application's session — adding recipients it never authorised.
+//
+// Confirmed against a running server before the fix:
+//
+//	BDAT 99999999                 -> 552 size exceeds maximum
+//	RCPT TO:<victim@example.com>  -> 250 2.1.5 Recipient OK
+//	BDAT 10 LAST / injected!      -> 250 2.0.0 Message accepted for delivery
+
+func TestRefusedBDATChunkIsNotExecutedAsCommands(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	p.cmd("EHLO probe.example")
+	p.cmd("MAIL FROM:<sender@example.com>")
+	if reply := p.cmd("RCPT TO:<rcpt@example.com>"); !strings.HasPrefix(reply, "250") {
+		t.Fatalf("RCPT TO: %q", reply)
+	}
+
+	// A chunk far larger than max_size is refused before it is read.
+	p.send("BDAT 99999999\r\n")
+	// These are chunk octets, not commands.
+	p.send("RCPT TO:<victim@example.com>\r\n")
+	p.send("BDAT 10 LAST\r\n")
+	p.send("injected!\n")
+
+	got := p.drainFor(3 * time.Second)
+
+	if !strings.Contains(got, "552") {
+		t.Errorf("expected the oversized chunk to be refused, got:\n%s", got)
+	}
+	if strings.Contains(got, "Recipient OK") {
+		t.Errorf("a recipient was accepted from chunk content — the envelope gained "+
+			"a recipient it never authorised:\n%s", got)
+	}
+	if strings.Contains(got, "Message accepted for delivery") {
+		t.Errorf("a message was accepted from chunk content:\n%s", got)
+	}
+}
+
+// TestRefusedSmallBDATChunkKeepsConnectionUsable pins that a chunk small enough
+// to discard leaves the connection at a command boundary, rather than closing
+// on every refusal.
+func TestRefusedSmallBDATChunkKeepsConnectionUsable(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	p.cmd("EHLO probe.example")
+	p.cmd("MAIL FROM:<sender@example.com>")
+
+	// BDAT before any RCPT is refused with 503, and the chunk is discarded.
+	p.send("BDAT 5\r\n")
+	p.send("hello")
+
+	reply := p.readReply()
+	if !strings.HasPrefix(reply, "503") {
+		t.Fatalf("expected 503 for BDAT without a recipient, got %q", reply)
+	}
+
+	// The five chunk octets must have been consumed, leaving the connection
+	// at a command boundary.
+	if got := p.cmd("RCPT TO:<rcpt@example.com>"); !strings.HasPrefix(got, "250") {
+		t.Errorf("connection was not left at a command boundary after a refused chunk: %q", got)
+	}
+}
