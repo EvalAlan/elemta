@@ -638,8 +638,8 @@ function renderMessages() {
         return `
             <tr class="${isSelected ? 'selected' : ''}">
                 <td class="checkbox-col">
-                    <input type="checkbox" 
-                           onchange="toggleMessageSelection('${msg.id}')"
+                    <input type="checkbox"
+                           onchange="toggleMessageSelection('${escapeJsArg(msg.id)}')"
                            ${isSelected ? 'checked' : ''}>
                 </td>
                 <td><span class="message-id" title="${escapeHtml(msg.id || '')} (click to copy)" onclick="copyMessageId('${escapeJsArg(msg.id)}')">${escapeHtml(msg.id?.substring(0, 12) || '')}</span></td>
