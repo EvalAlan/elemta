@@ -58,6 +58,8 @@ class StressTestConfig:
     # Email content options
     corpus_dir: str = 'tests/corpus'  # Directory containing email files
     use_corpus: bool = True  # Use real email files from corpus
+    corpus_limit: int = 20000  # Max messages to index; 0 means no limit
+    corpus_max_bytes: int = 25 * 1024 * 1024  # Skip corpus files larger than this
     # Authentication options
     auth_user_prefix: str = 'stressuser'  # Prefix for test users
     auth_user_count: int = 10  # Number of test users to create
@@ -215,103 +217,158 @@ class SMTPStressTester:
         print(f"\n🛑 Received signal {signum}, gracefully shutting down...")
         self.stop_event.set()
     
+    # Files that are not messages, by name or extension.
+    _CORPUS_SKIP_SUFFIXES = ('.tar', '.gz', '.bz2', '.zip', '.7z', '.xz', '.md', '.txt.gz')
+    _CORPUS_SKIP_NAMES = ('.extracted', 'cmds', 'index')
+
     def _load_corpus_files(self):
-        """Load email files from corpus directory with categorization"""
+        """Index message files under the corpus directory.
+
+        Only paths are held. Real corpora are large — the Enron, SpamAssassin,
+        TREC and untroubled sets together run to tens of gigabytes across
+        millions of files — so reading every message into memory at startup is
+        not an option. Content is read at send time instead.
+
+        Discovery is recursive and does not require a particular extension:
+        maildir-style corpora name messages things like `1.` or
+        `1425868898.28783_3577.lorien`, and an earlier version of this loader
+        globbed a single directory for `*.eml`, which found nothing in them.
+        """
         if not self.config.use_corpus:
             return
-            
+
         corpus_path = Path(self.config.corpus_dir)
         if not corpus_path.exists():
             print(f"⚠️  Corpus directory {self.config.corpus_dir} not found, using synthetic content")
             return
-            
+
+        self.corpus_stats = {'clean': 0, 'spam': 0, 'virus': 0, 'other': 0}
+        limit = self.config.corpus_limit or 0
+
+        # Draw from each top-level collection in turn rather than filling the
+        # limit from whichever branch the walk enters first. A corpus like this
+        # one holds ~500k Enron messages next to ~8.7M spam messages, and a
+        # depth-first prefix of it is entirely one or the other — which makes
+        # the run look clean and never exercises spam handling at all.
+        roots = sorted(p for p in corpus_path.iterdir() if p.is_dir()) or [corpus_path]
+        share = (limit // len(roots)) if limit else 0
+
         try:
-            # Initialize category counters
-            self.corpus_stats = {
-                'clean': 0,
-                'spam': 0, 
-                'virus': 0,
-                'other': 0
-            }
-            
-            loaded_files = {'clean': [], 'spam': [], 'virus': [], 'other': []}
-            
-            # Load ALL .eml files from corpus (no filtering)
-            eml_files = list(corpus_path.glob("*.eml"))
-            if not eml_files:
-                print(f"⚠️  No .eml files found in {self.config.corpus_dir}, using synthetic content")
-                return
-                
-            for file_path in eml_files:
-                try:
-                    # Read files as bytes to preserve encoding
-                    with open(file_path, 'rb') as f:
-                        content_bytes = f.read()
-
-                    if not content_bytes or not content_bytes.strip():
+            for root in roots:
+                taken = 0
+                for path in self._walk_corpus(root):
+                    entry = self._corpus_entry(path)
+                    if entry is None:
                         continue
 
-                    # Try to decode to string for validation
-                    content = None
-                    for encoding in ['utf-8', 'latin-1', 'cp1252']:
-                        try:
-                            content = content_bytes.decode(encoding)
-                            break
-                        except UnicodeDecodeError:
-                            continue
+                    self.corpus_files.append(entry)
+                    self.corpus_stats[entry['type']] += 1
+                    taken += 1
 
-                    if not content:
-                        continue
-                    
-                    # Skip specific problematic files that cause Header object parsing errors
-                    problematic_files = ['spam-00002.9438920e9a55591b18e60d1ed37d992b.eml', 
-                                       'spam-00045.c1a84780700090224ce6ab0014b20183.eml',
-                                       'spam-00031.e50cc5af8bd1131521b551713370a4b1.eml',
-                                       'clean-00023.0e033ed93f68fcb5aab26cbf511caf0e.eml']
-                    if file_path.name in problematic_files:
-                        print(f"⚠️  Skipping {file_path.name}: known parsing issues with Header objects")
-                        continue
+                    if share and taken >= share:
+                        break
+                    if limit and len(self.corpus_files) >= limit:
+                        break
+                if limit and len(self.corpus_files) >= limit:
+                    break
 
-                    # Categorize email based on filename
-                    filename_lower = file_path.name.lower()
-                    if filename_lower.startswith('clean-') or 'clean' in filename_lower:
-                        email_type = 'clean'
-                    elif filename_lower.startswith('spam-') or 'spam' in filename_lower:
-                        email_type = 'spam'
-                    elif filename_lower.startswith('virus-') or 'virus' in filename_lower:
-                        email_type = 'virus'
-                    else:
-                        email_type = 'other'
-                    
-                    self.corpus_files.append({
-                        'filename': file_path.name,
-                        'content': content,
-                        'content_bytes': content_bytes,
-                        'path': str(file_path),
-                        'type': email_type
-                    })
-                    
-                    self.corpus_stats[email_type] += 1
-                    loaded_files[email_type].append(file_path.name)
-                        
-                except Exception as e:
-                    print(f"⚠️  Error loading corpus file {file_path.name}: {e}")
-            
             if self.corpus_files:
-                print(f"📧 Loaded {len(self.corpus_files)} email files from corpus:")
+                print(f"📧 Indexed {len(self.corpus_files)} messages from {self.config.corpus_dir}:")
                 for email_type, count in self.corpus_stats.items():
-                    if count > 0:
-                        print(f"   {email_type.capitalize()}: {count} files")
-                        if len(loaded_files[email_type]) <= 5:
-                            print(f"      Files: {', '.join(loaded_files[email_type])}")
-                        elif len(loaded_files[email_type]) > 5:
-                            print(f"      Files: {loaded_files[email_type][0]}, {loaded_files[email_type][1]}, ... (+{len(loaded_files[email_type])-2} more)")
+                    if count:
+                        print(f"   {email_type}: {count}")
             else:
-                print(f"⚠️  No .eml files found in {self.config.corpus_dir}, using synthetic content")
-                
+                print(f"⚠️  No usable messages found in {self.config.corpus_dir}, using synthetic content")
+
         except Exception as e:
-            print(f"⚠️  Error loading corpus files: {e}")
-    
+            print(f"⚠️  Error indexing corpus: {e}")
+
+    def _walk_corpus(self, root: Path):
+        """Yield candidate message paths beneath root, depth first."""
+        stack = [root]
+        while stack:
+            current = stack.pop()
+            try:
+                with os.scandir(current) as it:
+                    for entry in it:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            yield Path(entry.path)
+            except (PermissionError, OSError):
+                continue
+
+    def _corpus_entry(self, path: Path):
+        """Build an index entry for a path, or None if it is not a message."""
+        name = path.name
+        if name.startswith('.') or name in self._CORPUS_SKIP_NAMES:
+            return None
+        if name.lower().endswith(self._CORPUS_SKIP_SUFFIXES):
+            return None
+
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return None
+        if size == 0 or size > self.config.corpus_max_bytes:
+            return None
+
+        return {'filename': name, 'path': str(path), 'type': self._classify_corpus_path(path)}
+
+    # Well-known public corpora whose contents are not described by their paths.
+    # untroubled.org publishes a spam archive laid out by date, so nothing in a
+    # message's path says what it is.
+    _CORPUS_KNOWN_COLLECTIONS = {
+        'untroubled': 'spam',
+        'enron': 'clean',
+    }
+
+    @classmethod
+    def _classify_corpus_path(cls, path: Path) -> str:
+        """Classify a message from its location.
+
+        Public corpora encode ham and spam in directory names — easy_ham,
+        hard_ham, spam_2 — rather than in the filename, which is what an
+        earlier filename-prefix check assumed. Where the layout says nothing,
+        a small table of known collections fills the gap, and anything
+        unrecognised is reported as "other" rather than guessed at.
+        """
+        parts = [p.lower() for p in path.parts]
+
+        for part in reversed(parts):
+            if 'virus' in part:
+                return 'virus'
+            if 'spam' in part:
+                return 'spam'
+            if 'ham' in part:
+                return 'clean'
+
+        for part in parts:
+            if part in cls._CORPUS_KNOWN_COLLECTIONS:
+                return cls._CORPUS_KNOWN_COLLECTIONS[part]
+
+        if 'maildir' in parts:
+            return 'clean'
+        return 'other'
+
+    def _read_corpus_message(self, entry: dict):
+        """Read one indexed message, returning (text, bytes) or None."""
+        try:
+            with open(entry['path'], 'rb') as f:
+                content_bytes = f.read()
+        except OSError:
+            return None
+
+        if not content_bytes or not content_bytes.strip():
+            return None
+
+        for encoding in ('utf-8', 'latin-1', 'cp1252'):
+            try:
+                return content_bytes.decode(encoding), content_bytes
+            except UnicodeDecodeError:
+                continue
+        return None
+
     def _generate_auth_users(self):
         """Generate pool of authenticated test users"""
         if not self.config.use_authentication:
@@ -441,87 +498,95 @@ class SMTPStressTester:
     def _get_email_content(self, thread_id: int, email_id: int, auth_user: dict = None) -> tuple:
         """Get email content and type - either from corpus or synthetic with RFC 5322 compliance"""
         if self.config.use_corpus and self.corpus_files:
-            # Use random corpus file
+            # Pick an indexed message and read it now. The index holds paths
+            # only, so a corpus far larger than memory can be used.
             import random
-            with self.corpus_lock:
-                if self.corpus_files:
-                    corpus_file = random.choice(self.corpus_files)
-                    content = corpus_file['content']
-                    content_bytes = corpus_file['content_bytes']
-                    email_type = corpus_file['type']
+            corpus_file = None
+            content = content_bytes = None
+            for _ in range(5):  # a few retries in case a file is unreadable
+                with self.corpus_lock:
+                    candidate = random.choice(self.corpus_files)
+                loaded = self._read_corpus_message(candidate)
+                if loaded is not None:
+                    corpus_file = candidate
+                    content, content_bytes = loaded
+                    break
 
-                    # Use authenticated user's email if available, otherwise fallback
-                    from_email = auth_user['email'] if auth_user else f"stress{thread_id}@example.com"
+            if corpus_file is not None:
+                email_type = corpus_file['type']
 
-                    try:
-                        # Parse email using proper RFC 5322 parser with SMTPUTF8 policy for UTF-8 support
-                        from email.parser import BytesParser
-                        parser = BytesParser(policy=policy.SMTPUTF8)
-                        msg = parser.parsebytes(content_bytes)
+                # Use authenticated user's email if available, otherwise fallback
+                from_email = auth_user['email'] if auth_user else f"stress{thread_id}@example.com"
+
+                try:
+                    # Parse email using proper RFC 5322 parser with SMTPUTF8 policy for UTF-8 support
+                    from email.parser import BytesParser
+                    parser = BytesParser(policy=policy.SMTPUTF8)
+                    msg = parser.parsebytes(content_bytes)
                         
-                        # Update headers properly and ensure UTF-8 charset
-                        if msg.get('From'):
-                            msg.replace_header('From', from_email)
+                    # Update headers properly and ensure UTF-8 charset
+                    if msg.get('From'):
+                        msg.replace_header('From', from_email)
+                    else:
+                        msg.add_header('From', from_email)
+                        
+                    if msg.get('To'):
+                        msg.replace_header('To', self._get_recipient_email(thread_id))
+                    else:
+                        msg.add_header('To', self._get_recipient_email(thread_id))
+                        
+                    if msg.get('Subject'):
+                        msg.replace_header('Subject', f"Stress Test - T{thread_id} - E{email_id} - {email_type.upper()} - {time.time()}")
+                    else:
+                        msg.add_header('Subject', f"Stress Test - T{thread_id} - E{email_id} - {email_type.upper()} - {time.time()}")
+                        
+                    if msg.get('Message-ID'):
+                        msg.replace_header('Message-ID', f"<stress-{thread_id}-{email_id}-{int(time.time())}@example.com>")
+                    else:
+                        msg.add_header('Message-ID', f"<stress-{thread_id}-{email_id}-{int(time.time())}@example.com>")
+                        
+                    if msg.get('Date'):
+                        msg.replace_header('Date', time.ctime())
+                    else:
+                        msg.add_header('Date', time.ctime())
+                        
+                    # Ensure proper UTF-8 charset in Content-Type header
+                    if 'Content-Type' in msg:
+                        content_type = str(msg.get('Content-Type'))
+                        if 'charset=' not in content_type.lower():
+                            msg.replace_header('Content-Type', content_type + '; charset=utf-8')
+                    else:
+                        msg.add_header('Content-Type', 'text/plain; charset=utf-8')
+                        
+                    # Return properly formatted email message object and type
+                    return msg, email_type
+                        
+                except Exception as e:
+                    print(f"⚠️  Warning: Could not properly parse {corpus_file['filename']}, using fallback: {e}")
+                        
+                    # Fallback to simple string replacement if parsing fails
+                    lines = content.split('\n')
+                    updated_lines = []
+                        
+                    for line in lines:
+                        line_stripped = line.strip()
+                        if line_stripped.startswith('From:'):
+                            updated_lines.append(f"From: {from_email}")
+                        elif line_stripped.startswith('To:'):
+                            updated_lines.append(f"To: {self._get_recipient_email(thread_id)}")
+                        elif line_stripped.startswith('Subject:'):
+                            updated_lines.append(f"Subject: Stress Test - T{thread_id} - E{email_id} - {time.time()}")
+                        elif line_stripped.startswith('Message-ID:'):
+                            updated_lines.append(f"Message-ID: <stress-{thread_id}-{email_id}-{int(time.time())}@example.com>")
+                        elif line_stripped.startswith('Date:'):
+                            updated_lines.append(f"Date: {time.ctime()}")
                         else:
-                            msg.add_header('From', from_email)
+                            updated_lines.append(line)
                         
-                        if msg.get('To'):
-                            msg.replace_header('To', self._get_recipient_email(thread_id))
-                        else:
-                            msg.add_header('To', self._get_recipient_email(thread_id))
-                        
-                        if msg.get('Subject'):
-                            msg.replace_header('Subject', f"Stress Test - T{thread_id} - E{email_id} - {email_type.upper()} - {time.time()}")
-                        else:
-                            msg.add_header('Subject', f"Stress Test - T{thread_id} - E{email_id} - {email_type.upper()} - {time.time()}")
-                        
-                        if msg.get('Message-ID'):
-                            msg.replace_header('Message-ID', f"<stress-{thread_id}-{email_id}-{int(time.time())}@example.com>")
-                        else:
-                            msg.add_header('Message-ID', f"<stress-{thread_id}-{email_id}-{int(time.time())}@example.com>")
-                        
-                        if msg.get('Date'):
-                            msg.replace_header('Date', time.ctime())
-                        else:
-                            msg.add_header('Date', time.ctime())
-                        
-                        # Ensure proper UTF-8 charset in Content-Type header
-                        if 'Content-Type' in msg:
-                            content_type = str(msg.get('Content-Type'))
-                            if 'charset=' not in content_type.lower():
-                                msg.replace_header('Content-Type', content_type + '; charset=utf-8')
-                        else:
-                            msg.add_header('Content-Type', 'text/plain; charset=utf-8')
-                        
-                        # Return properly formatted email message object and type
-                        return msg, email_type
-                        
-                    except Exception as e:
-                        print(f"⚠️  Warning: Could not properly parse {corpus_file['filename']}, using fallback: {e}")
-                        
-                        # Fallback to simple string replacement if parsing fails
-                        lines = content.split('\n')
-                        updated_lines = []
-                        
-                        for line in lines:
-                            line_stripped = line.strip()
-                            if line_stripped.startswith('From:'):
-                                updated_lines.append(f"From: {from_email}")
-                            elif line_stripped.startswith('To:'):
-                                updated_lines.append(f"To: {self._get_recipient_email(thread_id)}")
-                            elif line_stripped.startswith('Subject:'):
-                                updated_lines.append(f"Subject: Stress Test - T{thread_id} - E{email_id} - {time.time()}")
-                            elif line_stripped.startswith('Message-ID:'):
-                                updated_lines.append(f"Message-ID: <stress-{thread_id}-{email_id}-{int(time.time())}@example.com>")
-                            elif line_stripped.startswith('Date:'):
-                                updated_lines.append(f"Date: {time.ctime()}")
-                            else:
-                                updated_lines.append(line)
-                        
-                        # Create proper email message object from fallback content
-                        fallback_content = '\n'.join(updated_lines)
-                        fallback_msg = Parser(policy=policy.SMTP).parsestr(fallback_content)
-                        return fallback_msg, email_type
+                    # Create proper email message object from fallback content
+                    fallback_content = '\n'.join(updated_lines)
+                    fallback_msg = Parser(policy=policy.SMTP).parsestr(fallback_content)
+                    return fallback_msg, email_type
         
         # Fallback to synthetic content
         synthetic_content = self._generate_message_content(self.config.message_size_bytes)
@@ -1227,6 +1292,8 @@ def parse_arguments():
     # Email content options
     parser.add_argument('--corpus-dir', default='tests/corpus',
                        help='Directory containing email files (default: tests/corpus)')
+    parser.add_argument('--corpus-limit', type=int, default=20000,
+                        help='Maximum number of corpus messages to index; 0 for no limit (default: 20000)')
     parser.add_argument('--no-corpus', dest='use_corpus', action='store_false', default=True,
                        help='Disable corpus file usage and use synthetic content')
     
@@ -1292,6 +1359,7 @@ def main():
         auth_failure_rate=args.auth_failure_rate,
         use_corpus=args.use_corpus,
         corpus_dir=args.corpus_dir,
+        corpus_limit=args.corpus_limit,
         # Authentication options
         auth_user_prefix=args.auth_user_prefix,
         auth_user_count=args.auth_user_count,
