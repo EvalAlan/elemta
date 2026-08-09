@@ -532,9 +532,53 @@ func (fs *FileStorageBackend) List(q QueueType) ([]Message, error) {
 	}
 	return visible, nil
 }
+
+// Count returns the number of messages in a queue by counting directory
+// entries, without reading or decoding any of them.
+//
+// This used to call List, which opens, reads, JSON-decodes and tombstone-checks
+// every message file. refreshCounts runs on a 5s ticker across all four queues,
+// so on a large queue that meant re-parsing the entire spool every few seconds
+// just to produce four integers. Counting `.json` entries is O(dirents) with no
+// file I/O per message.
+//
+// The result can transiently include a message that has been consumed but whose
+// file is not yet removed; List filters those precisely. For an approximate
+// counter refreshed every few seconds that is an acceptable trade, and it never
+// under-counts live mail.
 func (fs *FileStorageBackend) Count(q QueueType) (int, error) {
-	m, err := fs.List(q)
-	return len(m), err
+	if err := validateQueueType(q); err != nil {
+		return 0, err
+	}
+	root, err := openRoot(fs.queueDir, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer root.Close()
+
+	dir, err := openChildDir(root, string(q), false)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer dir.Close()
+
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read queue directory: %w", err)
+	}
+	count := 0
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".json") {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (fs *FileStorageBackend) DeleteAll(q QueueType) error {
