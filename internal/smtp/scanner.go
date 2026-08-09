@@ -57,7 +57,11 @@ func (m *ScannerManager) Initialize(ctx context.Context) error {
 // initializeAntivirusScanners initializes all configured antivirus scanners
 func (m *ScannerManager) initializeAntivirusScanners(ctx context.Context) error {
 	// Initialize ClamAV if enabled
-	if m.config.Antivirus != nil && m.config.Antivirus.ClamAV != nil && m.config.Antivirus.ClamAV.Enabled {
+	// The parent [antivirus].enabled gate is honoured too. It used to be
+	// ignored entirely, so turning antivirus off at the section level did
+	// nothing and only the per-scanner flag had any effect.
+	if m.config.Antivirus != nil && m.config.Antivirus.Enabled &&
+		m.config.Antivirus.ClamAV != nil && m.config.Antivirus.ClamAV.Enabled {
 		clamavConfig := antivirus.Config{
 			Type:    "clamav",
 			Name:    "clamav",
@@ -96,7 +100,8 @@ func (m *ScannerManager) initializeAntivirusScanners(ctx context.Context) error 
 // initializeAntispamScanners initializes all configured antispam scanners
 func (m *ScannerManager) initializeAntispamScanners(ctx context.Context) error {
 	// Initialize SpamAssassin if enabled
-	if m.config.Antispam != nil && m.config.Antispam.SpamAssassin != nil && m.config.Antispam.SpamAssassin.Enabled {
+	if m.config.Antispam != nil && m.config.Antispam.Enabled &&
+		m.config.Antispam.SpamAssassin != nil && m.config.Antispam.SpamAssassin.Enabled {
 		spamassassinConfig := antispam.Config{
 			Type:      "spamassassin",
 			Name:      "spamassassin",
@@ -130,7 +135,8 @@ func (m *ScannerManager) initializeAntispamScanners(ctx context.Context) error {
 	}
 
 	// Initialize Rspamd if enabled
-	if m.config.Antispam != nil && m.config.Antispam.Rspamd != nil && m.config.Antispam.Rspamd.Enabled {
+	if m.config.Antispam != nil && m.config.Antispam.Enabled &&
+		m.config.Antispam.Rspamd != nil && m.config.Antispam.Rspamd.Enabled {
 		rspamdConfig := antispam.Config{
 			Type:      "rspamd",
 			Name:      "rspamd",
