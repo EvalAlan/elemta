@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"log/slog"
@@ -1302,6 +1303,26 @@ func newScanContent(data []byte) *scanContent {
 	return &scanContent{raw: raw, lower: strings.ToLower(raw)}
 }
 
+// mergeScanResult folds one scan's findings into the combined result.
+//
+// A failure in either scan fails the message, and threats accumulate, so the
+// order the concurrent scans finish in does not change the outcome.
+func mergeScanResult(dst, src *SecurityScanResult) {
+	if !src.Passed {
+		dst.Passed = false
+	}
+	if src.VirusFound {
+		dst.VirusFound = true
+	}
+	if src.SpamDetected {
+		dst.SpamDetected = true
+	}
+	if src.SpamScore > dst.SpamScore {
+		dst.SpamScore = src.SpamScore
+	}
+	dst.Threats = append(dst.Threats, src.Threats...)
+}
+
 // performSecurityScan performs comprehensive security scanning
 func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, metadata *MessageMetadata) (*SecurityScanResult, error) {
 	result := &SecurityScanResult{
@@ -1316,19 +1337,65 @@ func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, met
 	// Build both views once and share them.
 	view := newScanContent(data)
 
+	// The antivirus and antispam scans are independent network round trips to
+	// separate services, so they run concurrently. In sequence their latencies
+	// add; overlapped, the pair costs about max(av, spam) rather than the sum.
+	//
+	// No throughput figure is claimed for this. Attempts to measure it here
+	// varied by more than tenfold across consecutive identical runs — 5 to 55
+	// messages a second — with all three containers near-idle on CPU, so the
+	// cost is dominated by external lookups rather than by anything this
+	// change affects. The reasoning stands on the shape of the work, not on a
+	// benchmark that could not be reproduced.
+	//
+	// Each writes into its own result, merged below, because they would
+	// otherwise race on the shared one.
+	//
 	// These used to be gated on builtinPlugins being non-nil, which was only
 	// ever a proxy for "plugins are configured" — the plugins themselves were
 	// never asked to scan anything. Each scan now decides for itself whether a
 	// scanner is available.
-	if err := dh.performAntivirusScan(ctx, view, result); err != nil {
-		dh.logger.ErrorContext(ctx, "Antivirus scan failed", "error", err)
-		return nil, err
+	var (
+		wg         sync.WaitGroup
+		virusScan  = &SecurityScanResult{Passed: true, Threats: make([]string, 0)}
+		spamScan   = &SecurityScanResult{Passed: true, Threats: make([]string, 0)}
+		virusErr   error
+		spamScnErr error
+	)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			// A panic in a scan must not take the session down with it.
+			if r := recover(); r != nil {
+				virusErr = fmt.Errorf("antivirus scan panicked: %v", r)
+			}
+		}()
+		virusErr = dh.performAntivirusScan(ctx, view, virusScan)
+	}()
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				spamScnErr = fmt.Errorf("spam scan panicked: %v", r)
+			}
+		}()
+		spamScnErr = dh.performSpamScan(ctx, view, metadata, spamScan)
+	}()
+	wg.Wait()
+
+	if virusErr != nil {
+		dh.logger.ErrorContext(ctx, "Antivirus scan failed", "error", virusErr)
+		return nil, virusErr
+	}
+	if spamScnErr != nil {
+		dh.logger.ErrorContext(ctx, "Spam scan failed", "error", spamScnErr)
+		return nil, spamScnErr
 	}
 
-	if err := dh.performSpamScan(ctx, view, metadata, result); err != nil {
-		dh.logger.ErrorContext(ctx, "Spam scan failed", "error", err)
-		return nil, err
-	}
+	mergeScanResult(result, virusScan)
+	mergeScanResult(result, spamScan)
 
 	// Perform content analysis
 	if err := dh.performContentAnalysis(ctx, view, result); err != nil {
