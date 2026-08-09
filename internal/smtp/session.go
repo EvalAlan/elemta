@@ -298,6 +298,16 @@ func (s *Session) processCommands(ctx context.Context) error {
 					s.logger.ErrorContext(ctx, "Failed to flush after DATA error", "error", flushErr)
 				}
 
+				// If the rejected body could not be drained back to the
+				// end-of-data marker, the connection may still be mid-message.
+				// Resuming the command loop there would parse message content
+				// as SMTP commands, so close the session instead.
+				if s.dataHandler.DataSyncLost() {
+					s.logger.WarnContext(ctx, "Closing session: could not resynchronise after a rejected message",
+						"client", s.remoteAddr)
+					return nil
+				}
+
 				// Abandon the transaction but keep the session so the client
 				// can retry or send QUIT.
 				s.state.Reset(ctx)
