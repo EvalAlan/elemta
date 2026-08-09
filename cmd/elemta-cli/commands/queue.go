@@ -30,17 +30,18 @@ Valid queue types: active, deferred, hold, failed`,
 			apiClient := client.NewClient(apiURL, apiKey)
 
 			var messages []client.Message
+			var total int
 			var err error
 
 			if len(args) > 0 {
 				queueType := args[0]
-				messages, err = apiClient.GetQueueMessages(queueType)
+				messages, total, err = apiClient.GetQueueMessages(queueType)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
 				}
 			} else {
-				messages, err = apiClient.GetAllMessages()
+				messages, total, err = apiClient.GetAllMessages()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
@@ -53,6 +54,9 @@ Valid queue types: active, deferred, hold, failed`,
 			}
 
 			printMessages(messages)
+			if total > len(messages) {
+				fmt.Printf("Showing newest %d of %d messages\n", len(messages), total)
+			}
 		},
 	}
 
