@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -161,14 +162,41 @@ func (sm *SessionManager) ValidateSession(sessionID string) (*Session, error) {
 	return &sessionCopy, nil
 }
 
-// SetCookie sets a session cookie in the HTTP response
-func (sm *SessionManager) SetCookie(w http.ResponseWriter, sessionID string) {
+// requestIsSecure reports whether the request reached the server over TLS,
+// directly or through a proxy that terminated it.
+//
+// Trusting X-Forwarded-Proto here is safe in this one direction: the header can
+// only cause the Secure attribute to be set, never cleared, so a forged value
+// makes the cookie stricter rather than weaker.
+func requestIsSecure(r *http.Request) bool {
+	if r == nil {
+		return true // no request to judge by: keep the strict default
+	}
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+// SetCookie sets a session cookie in the HTTP response.
+//
+// Secure is set to match the connection rather than being hardcoded. A Secure
+// cookie is not sent back over plain HTTP, so hardcoding it meant that on any
+// HTTP deployment that is not localhost — an internal host, an IP address —
+// login appeared to succeed and then bounced straight back to the login form,
+// with nothing in the logs to explain it. Browsers exempt localhost, which is
+// exactly why it worked in development and would not have in production.
+func (sm *SessionManager) SetCookie(w http.ResponseWriter, r *http.Request, sessionID string) {
+	// #nosec G124 -- Secure is deliberately conditional. gosec wants it always
+	// set, but a Secure cookie is never returned over plain HTTP, so hardcoding
+	// it silently breaks login on non-TLS deployments. requestIsSecure sets it
+	// wherever TLS is actually in play, which is where it protects anything.
 	cookie := &http.Cookie{
 		Name:     sm.cookieName,
 		Value:    sessionID,
 		MaxAge:   int(sm.maxAge.Seconds()),
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   requestIsSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 	}
@@ -240,13 +268,18 @@ func (sm *SessionManager) RevokeSession(sessionID string) error {
 }
 
 // ClearCookie clears the session cookie
-func (sm *SessionManager) ClearCookie(w http.ResponseWriter) {
+func (sm *SessionManager) ClearCookie(w http.ResponseWriter, r *http.Request) {
+	// #nosec G124 -- the clearing cookie must carry the same attributes as the
+	// one it replaces, Secure included, or the browser keeps the original and
+	// logout silently does nothing. See SetCookie.
 	cookie := &http.Cookie{
 		Name:     sm.cookieName,
 		Value:    "",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   true,
+		// Must match the attributes used when setting it, or the browser keeps
+		// the original cookie and logout silently does nothing.
+		Secure:   requestIsSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 	}

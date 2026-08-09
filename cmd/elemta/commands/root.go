@@ -28,6 +28,18 @@ Elemta is a high-performance, carrier-grade MTA with modular architecture and pl
 				return
 			}
 
+			// `user` commands manage the users file. Given an explicit --file
+			// they need nothing from the config, and refusing to run without a
+			// loadable config would make it impossible to create the first
+			// account on a host whose config is not yet in order — which is
+			// exactly when someone is trying to turn authentication on.
+			if cmd.Parent() != nil && cmd.Parent().Name() == "user" {
+				if f, _ := cmd.Flags().GetString("file"); f != "" {
+					configOnce.Do(func() { cfg, configErr = config.LoadConfig(configPath) })
+					return
+				}
+			}
+
 			// Load configuration exactly once in a thread-safe way
 			configOnce.Do(func() {
 				cfg, configErr = config.LoadConfig(configPath)
