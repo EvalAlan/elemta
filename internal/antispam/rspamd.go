@@ -307,16 +307,31 @@ func (r *Rspamd) resultFrom(parsed RspamdResponse) *ScanResult {
 		threshold = r.threshold
 	}
 
-	var clean bool
+	// Rspamd's actions are not interchangeable, and flattening them loses the
+	// only distinction that decides whether mail survives: "add header" means
+	// deliver-and-mark, "soft reject" means try again later, and only "reject"
+	// means refuse for good.
+	var disposition Disposition
 	switch strings.ToLower(strings.TrimSpace(parsed.Action)) {
-	case "reject", "add header", "add_header", "rewrite subject", "rewrite_subject", "soft reject", "soft_reject":
-		clean = false
+	case "reject":
+		disposition = DispositionReject
+	case "soft reject", "soft_reject":
+		disposition = DispositionDefer
+	case "add header", "add_header", "rewrite subject", "rewrite_subject":
+		disposition = DispositionTag
 	case "no action", "no_action", "greylist":
-		clean = true
+		disposition = DispositionClean
 	default:
-		// No action reported: fall back to comparing the score.
-		clean = !(threshold > 0 && parsed.Score >= threshold)
+		// No action reported: fall back to comparing the score. Reaching the
+		// threshold is the engine's own definition of spam, so treat it the
+		// way the engine would — as grounds to refuse.
+		if threshold > 0 && parsed.Score >= threshold {
+			disposition = DispositionReject
+		} else {
+			disposition = DispositionClean
+		}
 	}
+	clean := disposition == DispositionClean
 
 	rules := make([]string, 0, len(parsed.Symbols))
 	for name := range parsed.Symbols {
@@ -325,12 +340,13 @@ func (r *Rspamd) resultFrom(parsed RspamdResponse) *ScanResult {
 	sort.Strings(rules)
 
 	return &ScanResult{
-		Engine:    r.Name(),
-		Timestamp: time.Now(),
-		Clean:     clean,
-		Score:     parsed.Score,
-		Threshold: threshold,
-		Rules:     rules,
+		Engine:      r.Name(),
+		Timestamp:   time.Now(),
+		Clean:       clean,
+		Disposition: disposition,
+		Score:       parsed.Score,
+		Threshold:   threshold,
+		Rules:       rules,
 		Details: map[string]interface{}{
 			"action":    parsed.Action,
 			"scan_time": parsed.ScanTime,

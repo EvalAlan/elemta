@@ -43,6 +43,42 @@ type Scanner interface {
 }
 
 // ScanResult represents the result of a spam scan
+// Disposition is what the engine asked the server to do with a message.
+//
+// Collapsing this to a boolean loses the distinction that matters most: an
+// engine asking for a message to be *tagged* is not asking for it to be
+// refused, and one asking for a temporary deferral is not asking for a
+// permanent rejection. Both used to end as "spam", and with reject_on_spam
+// enabled both became a permanent 554 — destroying mail the engine wanted
+// delivered, and turning "retry later" into "never".
+type Disposition int
+
+const (
+	// DispositionClean: deliver normally.
+	DispositionClean Disposition = iota
+	// DispositionTag: deliver, but mark it. Rspamd's "add header" and
+	// "rewrite subject" both mean this.
+	DispositionTag
+	// DispositionDefer: refuse temporarily; the sender should retry. Rspamd's
+	// "soft reject", used for rate limiting and similar transient conditions.
+	DispositionDefer
+	// DispositionReject: refuse permanently. Rspamd's "reject".
+	DispositionReject
+)
+
+func (d Disposition) String() string {
+	switch d {
+	case DispositionTag:
+		return "tag"
+	case DispositionDefer:
+		return "defer"
+	case DispositionReject:
+		return "reject"
+	default:
+		return "clean"
+	}
+}
+
 type ScanResult struct {
 	Engine    string                 // Name of the scanner engine
 	Timestamp time.Time              // Time of the scan
@@ -51,6 +87,11 @@ type ScanResult struct {
 	Threshold float64                // Threshold for spam detection
 	Rules     []string               // Rules that were triggered
 	Details   map[string]interface{} // Additional details
+
+	// Disposition is what the engine asked for. Clean is kept for callers that
+	// only need "is this spam at all"; anything deciding whether to refuse a
+	// message should read this instead.
+	Disposition Disposition
 }
 
 // Config represents the configuration for a scanner

@@ -296,3 +296,72 @@ func TestRspamdRefusesWhenNotConnected(t *testing.T) {
 		t.Error("scanning while disconnected should fail rather than report clean")
 	}
 }
+
+// TestRspamdActionsMapToDistinctDispositions is the regression test for a
+// mail-loss bug. Rspamd's actions were flattened to a boolean, so "add header"
+// (deliver and mark) and "soft reject" (retry later) both became "spam" — and
+// with reject_on_spam enabled both produced a permanent 554.
+//
+// Measured on a real corpus before the fix: 139 legitimate messages refused,
+// and no spam caught.
+func TestRspamdActionsMapToDistinctDispositions(t *testing.T) {
+	cases := []struct {
+		action string
+		want   Disposition
+		why    string
+	}{
+		{"no action", DispositionClean, "clean mail is delivered"},
+		{"greylist", DispositionClean, "greylisting is not a spam verdict"},
+		{"add header", DispositionTag, "tagging means deliver and mark, never refuse"},
+		{"add_header", DispositionTag, "underscore spelling behaves the same"},
+		{"rewrite subject", DispositionTag, "rewriting means deliver and mark"},
+		{"soft reject", DispositionDefer, "a soft reject must stay temporary"},
+		{"soft_reject", DispositionDefer, "underscore spelling behaves the same"},
+		{"reject", DispositionReject, "only a reject refuses outright"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.action, func(t *testing.T) {
+			f := startFakeRspamd(t, RspamdResponse{Action: tc.action, Score: 7.0, Required: 15.0})
+			s := newTestRspamd(t, f, Config{})
+
+			result, err := s.ScanBytes(context.Background(), []byte("message"))
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			if result.Disposition != tc.want {
+				t.Errorf("action %q -> %v, want %v (%s)",
+					tc.action, result.Disposition, tc.want, tc.why)
+			}
+			// Clean must stay consistent with the disposition.
+			if result.Clean != (tc.want == DispositionClean) {
+				t.Errorf("action %q: Clean = %v but disposition is %v",
+					tc.action, result.Clean, result.Disposition)
+			}
+		})
+	}
+}
+
+// TestRspamdScoreFallbackRejectsOnlyAtThreshold covers the case where Rspamd
+// reports no action at all: the score decides, against the engine's threshold.
+func TestRspamdScoreFallbackRejectsOnlyAtThreshold(t *testing.T) {
+	for _, tc := range []struct {
+		score float64
+		want  Disposition
+	}{
+		{5.0, DispositionClean},
+		{14.9, DispositionClean},
+		{15.0, DispositionReject},
+		{30.0, DispositionReject},
+	} {
+		f := startFakeRspamd(t, RspamdResponse{Action: "", Score: tc.score, Required: 15.0})
+		s := newTestRspamd(t, f, Config{})
+		result, err := s.ScanBytes(context.Background(), []byte("message"))
+		if err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if result.Disposition != tc.want {
+			t.Errorf("score %.1f/15.0 -> %v, want %v", tc.score, result.Disposition, tc.want)
+		}
+	}
+}
