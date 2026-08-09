@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -207,14 +208,32 @@ func runWeb(cmd *cobra.Command, args []string) {
 		},
 	}
 
-	// Create and start API server
+	// Create and start API server.
+	//
+	// These failures are fatal and the container restart policy will bring the
+	// process straight back to fail again, so they have to be findable. Going
+	// through log.Fatalf alone routed them through the standard logger at INFO,
+	// which meant a misconfigured auth file produced an endless restart loop
+	// whose only trace was an INFO line — invisible to anyone filtering on
+	// errors. Log at ERROR first, with the remedy, then exit.
 	server, err := api.NewServer(apiConfig, convertToAPIMainConfig(cfg), resolvedQueueDir, cfg.FailedQueueRetentionHours, resolvedConfigPath)
 	if err != nil {
-		log.Fatalf("Failed to create API server: %v", err)
+		slog.Error("Failed to create API server; the web interface cannot start",
+			"error", err,
+			"auth_enabled", resolvedAuthEnabled,
+			"auth_file", resolvedAuthFile,
+			"hint", "if this names the auth file, check it exists and is readable by the user the server runs as; `elemta user add` creates it",
+		)
+		os.Exit(1)
 	}
 
 	if err := server.Start(); err != nil {
-		log.Fatalf("Failed to start API server: %v", err)
+		slog.Error("Failed to start API server; the web interface cannot start",
+			"error", err,
+			"listen_addr", resolvedListenAddr,
+			"hint", "check that the listen address is free and permitted",
+		)
+		os.Exit(1)
 	}
 
 	fmt.Printf("Elemta web interface started on http://%s\n", resolvedListenAddr)

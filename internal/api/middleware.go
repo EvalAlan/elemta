@@ -45,21 +45,35 @@ func NewAuthMiddleware(rbac *auth.RBAC, apiKeyManager *auth.APIKeyManager, sessi
 }
 
 // RequireAuth middleware that requires authentication
+// wantsLoginPage reports whether an unauthenticated request should be
+// redirected to the login form rather than answered with 401.
+//
+// Only a browser navigating to a page wants a redirect. The previous test
+// treated `Accept: */*` as a browser, and an absent `X-Requested-With` as a
+// browser too — between them that is nearly every API client, including curl
+// and most HTTP libraries, so programmatic callers were bounced to an HTML
+// login page instead of being told they were unauthenticated. Anything under
+// /api/ is a client, whatever it claims to accept, and a browser navigation is
+// identifiable by explicitly asking for HTML.
+func wantsLoginPage(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		return false
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
 func (am *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authCtx, err := am.authenticate(r)
 		if err != nil {
-			// Check if this is a browser request (accepts HTML) vs API request (accepts JSON)
-			acceptHeader := r.Header.Get("Accept")
-			isBrowserRequest := strings.Contains(acceptHeader, "text/html") ||
-				strings.Contains(acceptHeader, "*/*") ||
-				r.Header.Get("X-Requested-With") == ""
-
-			if isBrowserRequest && r.Method == http.MethodGet {
-				// Redirect browser requests to login page
+			if wantsLoginPage(r) {
+				// A browser navigating to a page is sent to the login form.
 				http.Redirect(w, r, "/login", http.StatusFound)
 			} else {
-				// Return 401 JSON for API requests
+				// Everything else gets a 401 it can actually act on.
 				am.writeError(w, http.StatusUnauthorized, "Authentication required", err.Error())
 			}
 			return

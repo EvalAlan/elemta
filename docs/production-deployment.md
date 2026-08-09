@@ -106,6 +106,51 @@ curl -s http://127.0.0.1:8025/api/queue/storage | jq
 - Keep regular backups of queue data and config.
 - Run `make test` / `make lint` before deployment changes.
 
+### Turning authentication on
+
+`elemta user` manages the users file; nothing else is needed to enable auth.
+
+```bash
+# Create the first account (prompts for the password twice).
+elemta user add admin --file /etc/elemta/users.txt
+
+elemta user list   --file /etc/elemta/users.txt
+elemta user passwd admin --file /etc/elemta/users.txt
+elemta user remove admin --file /etc/elemta/users.txt
+```
+
+Then point the server at it:
+
+```toml
+[api]
+auth_enabled = true
+auth_file = "/etc/elemta/users.txt"
+```
+
+The file holds `username:bcrypt-hash` lines and is written `0600`. **It must be
+readable by the user the server runs as** — in the container that is `elemta`
+(uid 1001), not the account that created the file. Getting this wrong is fatal
+at startup and the process exits; with a restart policy in place that becomes a
+restart loop, so check the logs for:
+
+```
+Failed to create API server; the web interface cannot start
+```
+
+Once `auth_enabled` is on:
+
+- Browsers navigating to a page are redirected to `/login`.
+- API clients get `401` with a JSON body, never a redirect into HTML.
+- The session cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` whenever the
+  request arrived over TLS — directly, or through a proxy that sets
+  `X-Forwarded-Proto: https`.
+
+That last point matters if you terminate TLS at a proxy: **set
+`X-Forwarded-Proto`**, otherwise the cookie is issued without `Secure` and can
+be sent over a plaintext connection.
+
+---
+
 ### The admin API is unauthenticated by default — this matters most
 
 `[api].auth_enabled` defaults to **false**, and the shipped `docker-compose`
