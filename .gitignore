@@ -146,7 +146,12 @@ docker/dovecot/conf/users
 
 # Docker test files
 docker/dovecot/conf/passwd
-docker/rspamd/override.d/
+# Rspamd overrides: local experiments are ignored, the ones the dev stack
+# mounts are tracked. Ignoring the directory itself would stop git descending
+# into it, so the contents are ignored instead and the shipped files un-ignored.
+docker/rspamd/override.d/*
+!docker/rspamd/override.d/*.conf
+!docker/rspamd/override.d/options.inc
 
 # Deploy directory
 .deploy/
