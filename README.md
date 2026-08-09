@@ -59,6 +59,7 @@ docker compose -f deployments/compose/docker-compose.yml up -d
 - [Queue management](docs/queue_management.md)
 - [Testing](docs/testing.md)
 - [Production deployment](docs/production-deployment.md)
+- [Production readiness — honest assessment & limitations](docs/production-readiness.md)
 - [API reference](docs/api-reference.md)
 
 ## Security & Project Governance

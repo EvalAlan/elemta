@@ -106,6 +106,44 @@ curl -s http://127.0.0.1:8025/api/queue/storage | jq
 - Keep regular backups of queue data and config.
 - Run `make test` / `make lint` before deployment changes.
 
+### The admin API is unauthenticated by default — this matters most
+
+`[api].auth_enabled` defaults to **false**, and the shipped `docker-compose`
+runs the web service bound to `0.0.0.0`. In that combination, anyone who can
+reach the port can:
+
+- read any queued message — full content and headers
+- flush queues (delete mail) and requeue
+- read and rewrite server configuration
+- send mail through the test endpoint
+
+There is no read-only mode. Treat the API/web port exactly as you would a
+root shell on the mail server.
+
+The server now logs a `SECURITY:` warning at startup when it binds to anything
+other than loopback with auth disabled — do not ignore it. Choose one of:
+
+1. **Bind to loopback.** Set `[api].listen_addr = "127.0.0.1:8025"` (or the
+   `--listen` flag) and reach it via SSH tunnel or a co-located proxy. This is
+   the right default for most deployments.
+2. **Enable authentication.** Set `[api].auth_enabled = true` and provide an
+   auth file (`[api].auth_file`). Required if the port is reachable by anyone
+   you do not fully trust.
+3. **Front it with an authenticating reverse proxy** (mTLS, OIDC, or basic
+   auth over TLS) and bind the app to loopback behind it.
+
+The dev stack ships insecure on purpose — it is a single-host demo. A
+production deployment that copies the dev `docker-compose` verbatim inherits an
+open admin API. Do not.
+
+### TLS
+
+- Provide real certificate and key paths; do not run STARTTLS-only in
+  production without a valid chain.
+- Cipher-suite ordering is controlled by the Go runtime (server-side ordering
+  preferences are ignored by modern Go); rely on the runtime's secure defaults
+  rather than trying to pin an order.
+
 ---
 
 ## 5) Content scanning
