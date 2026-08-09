@@ -55,8 +55,14 @@ type SecurityScanResult struct {
 	SpamDetected bool
 	Threats      []string
 	SpamScore    float64
-	VirusFound   bool
-	Quarantined  bool
+	// SpamThreshold is the score at which the engine that produced SpamScore
+	// considers a message spam. Reported in the X-Spam-Status header, which
+	// used to print a hardcoded "/10.0" — a number matching neither the
+	// configured threshold nor the one Rspamd actually applied, so the header
+	// misdescribed the decision it was reporting.
+	SpamThreshold float64
+	VirusFound    bool
+	Quarantined   bool
 }
 
 // DataHandler manages message data processing for a session
@@ -1073,7 +1079,11 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 			spamStatus = "Yes"
 		}
 		additionalHeaders = append(additionalHeaders, "X-Spam-Scanned: Yes")
-		additionalHeaders = append(additionalHeaders, fmt.Sprintf("X-Spam-Status: %s, score=%.1f/10.0", spamStatus, scanResult.SpamScore))
+		threshold := scanResult.SpamThreshold
+		if threshold <= 0 && dh.config.Antispam != nil && dh.config.Antispam.Rspamd != nil {
+			threshold = dh.config.Antispam.Rspamd.Threshold
+		}
+		additionalHeaders = append(additionalHeaders, fmt.Sprintf("X-Spam-Status: %s, score=%.1f/%.1f", spamStatus, scanResult.SpamScore, threshold))
 		additionalHeaders = append(additionalHeaders, fmt.Sprintf("X-Spam-Score: %.1f", scanResult.SpamScore))
 	}
 
@@ -1553,6 +1563,9 @@ func mergeScanResult(dst, src *SecurityScanResult) {
 	if src.SpamScore > dst.SpamScore {
 		dst.SpamScore = src.SpamScore
 	}
+	if src.SpamThreshold > 0 && dst.SpamThreshold == 0 {
+		dst.SpamThreshold = src.SpamThreshold
+	}
 	dst.Threats = append(dst.Threats, src.Threats...)
 }
 
@@ -1712,14 +1725,15 @@ func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, m
 
 	// Several engines may report; the highest score decides, and any engine
 	// calling the message spam is enough to mark it.
-	var highest float64
+	var highest, highestThreshold float64
 	spam := false
 	for _, r := range results {
 		if r == nil {
 			continue
 		}
-		if r.Score > highest {
+		if r.Score > highest || highestThreshold == 0 {
 			highest = r.Score
+			highestThreshold = r.Threshold
 		}
 		if !r.Clean {
 			spam = true
@@ -1736,6 +1750,7 @@ func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, m
 	}
 
 	result.SpamScore = highest
+	result.SpamThreshold = highestThreshold
 	if spam {
 		result.SpamDetected = true
 		result.Threats = append(result.Threats, fmt.Sprintf("Message identified as spam (score %.1f)", highest))

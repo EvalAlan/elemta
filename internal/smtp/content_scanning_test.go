@@ -240,3 +240,44 @@ func newScanContent(data []byte) *scanContent {
 	raw := string(data)
 	return &scanContent{raw: raw, lower: strings.ToLower(raw), body: data}
 }
+
+// TestSpamHeaderReportsTheRealThreshold pins that X-Spam-Status names the score
+// the engine actually applied. It used to print a hardcoded "/10.0", which
+// matched neither the configured threshold nor the one Rspamd used — so a
+// message Rspamd rejected at 15.0 was reported as "15.0/10.0", describing a
+// decision that was never made against 10.
+func TestSpamHeaderReportsTheRealThreshold(t *testing.T) {
+	metadata := &MessageMetadata{MessageID: "t", From: "a@example.com", To: []string{"b@example.com"}}
+	body := []byte("Subject: x\r\n\r\nbody\r\n")
+
+	t.Run("uses the engine's threshold", func(t *testing.T) {
+		dh := scanningHandler(t, nil, nil)
+		result := &SecurityScanResult{Passed: true, SpamDetected: true, SpamScore: 15.0, SpamThreshold: 15.0}
+
+		headers := string(dh.buildServerHeaders(context.Background(), body, metadata, result))
+		if !strings.Contains(headers, "score=15.0/15.0") {
+			t.Errorf("expected the engine threshold in the header, got:\n%s", headers)
+		}
+		if strings.Contains(headers, "/10.0") {
+			t.Errorf("hardcoded 10.0 threshold is still being reported:\n%s", headers)
+		}
+	})
+
+	t.Run("falls back to the configured threshold", func(t *testing.T) {
+		cfg := &Config{
+			Hostname: "mail.example.com",
+			Antispam: &AntispamConfig{
+				Enabled: true,
+				Rspamd:  &RspamdConfig{Enabled: true, Threshold: 6.0},
+			},
+		}
+		dh := scanningHandler(t, nil, cfg)
+		// No threshold reported by the engine.
+		result := &SecurityScanResult{Passed: true, SpamDetected: false, SpamScore: 2.0}
+
+		headers := string(dh.buildServerHeaders(context.Background(), body, metadata, result))
+		if !strings.Contains(headers, "score=2.0/6.0") {
+			t.Errorf("expected the configured threshold as fallback, got:\n%s", headers)
+		}
+	})
+}
