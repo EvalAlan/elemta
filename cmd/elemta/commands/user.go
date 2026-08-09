@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 
 	"github.com/busybox42/elemta/internal/auth"
 	"github.com/spf13/cobra"
@@ -190,12 +189,12 @@ func readPassword(cmd *cobra.Command, confirm bool) (string, error) {
 	if userPassword != "" {
 		return userPassword, nil
 	}
-	if !term.IsTerminal(int(syscall.Stdin)) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return "", fmt.Errorf("no terminal available to prompt for a password; pass --password")
 	}
 
 	fmt.Fprint(cmd.OutOrStdout(), "Password: ")
-	first, err := term.ReadPassword(int(syscall.Stdin))
+	first, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Fprintln(cmd.OutOrStdout())
 	if err != nil {
 		return "", fmt.Errorf("read password: %w", err)
@@ -208,7 +207,7 @@ func readPassword(cmd *cobra.Command, confirm bool) (string, error) {
 	}
 
 	fmt.Fprint(cmd.OutOrStdout(), "Confirm password: ")
-	second, err := term.ReadPassword(int(syscall.Stdin))
+	second, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Fprintln(cmd.OutOrStdout())
 	if err != nil {
 		return "", fmt.Errorf("read password: %w", err)
