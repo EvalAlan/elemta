@@ -3,6 +3,7 @@ package antispam
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 )
@@ -167,7 +168,10 @@ func (m *Manager) ScanBytes(ctx context.Context, data []byte) ([]*ScanResult, er
 	}
 
 	if len(results) == 0 && len(errs) > 0 {
-		return nil, ErrScanFailed
+		// Carry the cause. Collapsing every failure to a bare ErrScanFailed
+		// left the operator with "scan failed" and no way to tell a refused
+		// connection from a malformed reply.
+		return nil, fmt.Errorf("%w: %w", ErrScanFailed, errors.Join(errs...))
 	}
 
 	return results, nil
@@ -205,7 +209,10 @@ func (m *Manager) ScanFile(ctx context.Context, filePath string) ([]*ScanResult,
 	}
 
 	if len(results) == 0 && len(errs) > 0 {
-		return nil, ErrScanFailed
+		// Carry the cause. Collapsing every failure to a bare ErrScanFailed
+		// left the operator with "scan failed" and no way to tell a refused
+		// connection from a malformed reply.
+		return nil, fmt.Errorf("%w: %w", ErrScanFailed, errors.Join(errs...))
 	}
 
 	return results, nil
