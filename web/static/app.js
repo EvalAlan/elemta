@@ -7,8 +7,9 @@ const state = {
     currentQueue: 'active',
     currentPage: 1,
     pageSize: 25,
-    allMessages: [],
-    filteredMessages: [],
+    messages: [],        // current page, as returned by the server
+    totalMessages: 0,    // total matching the active filters, across all pages
+    queueRequestSeq: 0,  // discards stale queue responses, same as logsRequestSeq
     queueObservability: null,
     selectedMessages: new Set(),
     currentMessageId: null,
@@ -401,18 +402,44 @@ function renderQueueObservability(snapshot) {
     `).join('') : '<div class="loading-placeholder">No active claims</div>';
 }
 
+// dateFilterCutoff converts the date-filter selection into an RFC3339 cutoff
+// for the server's `since` parameter.
+function dateFilterCutoff(value) {
+    const hours = { '1h': 1, '24h': 24, '7d': 168, '30d': 720 }[value];
+    if (!hours) return null;
+    return new Date(Date.now() - hours * 3600 * 1000).toISOString();
+}
+
 async function loadQueue(queueType) {
     showRefreshIndicator(true);
+    const requestSeq = ++state.queueRequestSeq;
     try {
-        const response = await fetch(`${API_BASE}/queue/${queueType}`);
+        // Filtering and paging are the server's job: the queue can hold
+        // hundreds of thousands of messages, and this client only ever asks
+        // for one page of it.
+        const params = new URLSearchParams();
+        params.set('limit', String(state.pageSize));
+        params.set('offset', String((state.currentPage - 1) * state.pageSize));
+        const search = document.getElementById('search-input')?.value.trim();
+        if (search) params.set('search', search);
+        const priority = document.getElementById('priority-filter')?.value;
+        if (priority) params.set('priority', priority);
+        const since = dateFilterCutoff(document.getElementById('date-filter')?.value);
+        if (since) params.set('since', since);
+
+        const response = await fetch(`${API_BASE}/queue/${queueType}?${params}`);
         if (!response.ok) throw new Error(`Queue load failed: ${response.status}`);
-        const messages = await response.json();
+        const envelope = await response.json();
 
-        state.allMessages = messages || [];
-        state.filteredMessages = [...state.allMessages];
-        state.selectedMessages.clear();
+        if (requestSeq !== state.queueRequestSeq) {
+            return false; // a newer request superseded this one
+        }
 
-        applyFilters();
+        state.messages = envelope.messages || [];
+        state.totalMessages = envelope.total || 0;
+
+        renderMessages();
+        updateBatchActions();
         return true;
     } catch (error) {
         console.error('Error loading queue:', error);
@@ -427,17 +454,18 @@ async function loadQueue(queueType) {
 
 async function loadRecentActivity() {
     try {
-        const response = await fetch(`${API_BASE}/queue/active`);
+        const response = await fetch(`${API_BASE}/queue/active?limit=5`);
         if (!response.ok) throw new Error(`Recent activity failed: ${response.status}`);
-        const messages = await response.json();
+        const envelope = await response.json();
+        const messages = envelope.messages || [];
 
         const container = document.getElementById('recent-activity');
-        if (!messages || messages.length === 0) {
+        if (messages.length === 0) {
             container.innerHTML = '<div class="loading-placeholder">No recent activity</div>';
             return true;
         }
 
-        const recentMessages = messages.slice(0, 5);
+        const recentMessages = messages;
         container.innerHTML = recentMessages.map(msg => `
             <div class="activity-item">
                 <div class="activity-icon queued">
@@ -490,17 +518,18 @@ function refreshQueue() {
 }
 
 async function retryCurrentQueue() {
-    if (!confirm(`Retry all messages in the ${state.currentQueue} queue?\n\nThis will attempt immediate delivery.`)) {
+    if (!confirm(`Requeue all messages in the ${state.currentQueue} queue for delivery?\n\nThis moves them back to active for another delivery attempt. It does not delete anything.`)) {
         return;
     }
 
     try {
-        const response = await fetch(`${API_BASE}/queue/${state.currentQueue}/flush`, {
+        const response = await fetch(`${API_BASE}/queue/${state.currentQueue}/retry`, {
             method: 'POST'
         });
 
         if (response.ok) {
-            showToast(`${state.currentQueue} queue retry initiated`, 'success');
+            const data = await response.json().catch(() => ({}));
+            showToast(data.message || `${state.currentQueue} queue requeued for delivery`, 'success');
             refreshQueue();
         } else {
             throw new Error('Retry failed');
@@ -510,35 +539,41 @@ async function retryCurrentQueue() {
     }
 }
 
+// retryQueue requeues every message in a queue for immediate delivery. This
+// calls /retry, which moves messages back to active — not /flush, which
+// deletes them. The two were previously conflated, so "Retry Deferred"
+// silently emptied the queue.
 async function retryQueue(queueType) {
     try {
-        const response = await fetch(`${API_BASE}/queue/${queueType}/flush`, {
+        const response = await fetch(`${API_BASE}/queue/${queueType}/retry`, {
             method: 'POST'
         });
 
         if (response.ok) {
-            showToast(`${queueType} queue processing started`, 'success');
+            const data = await response.json().catch(() => ({}));
+            showToast(data.message || `${queueType} queue requeued for delivery`, 'success');
             refreshAllData();
         } else {
             throw new Error('Retry failed');
         }
     } catch (error) {
-        showToast('Failed to process queue', 'error');
+        showToast('Failed to retry queue', 'error');
     }
 }
 
 async function retryAllQueues() {
-    if (!confirm('Retry ALL messages in ALL queues?\n\nThis is a system-wide operation.')) {
+    if (!confirm('Requeue ALL messages in ALL queues for delivery?\n\nThis moves deferred, failed, and held messages back to active. It does not delete anything.')) {
         return;
     }
 
     try {
-        const response = await fetch(`${API_BASE}/queue/all/flush`, {
+        const response = await fetch(`${API_BASE}/queue/all/retry`, {
             method: 'POST'
         });
 
         if (response.ok) {
-            showToast('All queues retry initiated', 'success');
+            const data = await response.json().catch(() => ({}));
+            showToast(data.message || 'All queues requeued for delivery', 'success');
             refreshAllData();
         } else {
             throw new Error('Retry failed');
@@ -548,79 +583,45 @@ async function retryAllQueues() {
     }
 }
 
+// flushQueue deletes every message in a queue. This is destructive and
+// irreversible; it is deliberately not wired to the dashboard's "process" or
+// "retry" actions, which requeue instead.
+async function flushQueue(queueType) {
+    const label = queueType === 'all' ? 'ALL queues' : `the ${queueType} queue`;
+    if (!confirm(`Delete every message in ${label}?\n\nThis permanently removes the messages and their content. It cannot be undone.`)) {
+        return;
+    }
+    try {
+        const response = await fetch(`${API_BASE}/queue/${queueType}/flush`, { method: 'POST' });
+        if (response.ok) {
+            showToast(`${label} flushed`, 'success');
+            refreshAllData();
+        } else {
+            throw new Error('Flush failed');
+        }
+    } catch (error) {
+        showToast('Failed to flush queue', 'error');
+    }
+}
+
 // ============================================================================
 // Filtering & Pagination
 // ============================================================================
+// applyFilters re-queries the server with the current filter state. The
+// filtering itself happens server-side; what changed locally is only which
+// page of which query the table shows.
 function applyFilters() {
-    const searchTerm = document.getElementById('search-input')?.value.toLowerCase() || '';
-    const priorityFilter = document.getElementById('priority-filter')?.value || '';
-    const dateFilter = document.getElementById('date-filter')?.value || '';
-
-    state.filteredMessages = state.allMessages.filter(message => {
-        // Search filter
-        if (searchTerm) {
-            const searchableText = [
-                message.id || '',
-                message.from || '',
-                Array.isArray(message.to) ? message.to.join(' ') : message.to || '',
-                message.subject || ''
-            ].join(' ').toLowerCase();
-
-            if (!searchableText.includes(searchTerm)) {
-                return false;
-            }
-        }
-
-        // Priority filter
-        if (priorityFilter && message.priority != priorityFilter) {
-            return false;
-        }
-
-        // Date filter
-        if (dateFilter) {
-            const messageDate = new Date(message.created_at);
-            const now = new Date();
-            let cutoffDate;
-
-            switch (dateFilter) {
-                case '1h':
-                    cutoffDate = new Date(now.getTime() - 60 * 60 * 1000);
-                    break;
-                case '24h':
-                    cutoffDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-                    break;
-                case '7d':
-                    cutoffDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-                    break;
-                case '30d':
-                    cutoffDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-                    break;
-            }
-
-            if (cutoffDate && messageDate < cutoffDate) {
-                return false;
-            }
-        }
-
-        return true;
-    });
-
-    renderMessages();
+    state.selectedMessages.clear();
     updateBatchActions();
+    loadQueue(state.currentQueue);
 }
 
 function renderMessages() {
     const tbody = document.getElementById('messages-tbody');
-    const totalMessages = state.filteredMessages.length;
+    const totalMessages = state.totalMessages;
     const totalPages = Math.ceil(totalMessages / state.pageSize);
 
-    if (state.currentPage > totalPages && totalPages > 0) {
-        state.currentPage = totalPages;
-    }
-
-    const startIndex = (state.currentPage - 1) * state.pageSize;
-    const endIndex = startIndex + state.pageSize;
-    const pageMessages = state.filteredMessages.slice(startIndex, endIndex);
+    const pageMessages = state.messages;
 
     if (pageMessages.length === 0) {
         tbody.innerHTML = '<tr><td colspan="9" class="loading-cell">No messages found</td></tr>';
@@ -641,7 +642,7 @@ function renderMessages() {
                            onchange="toggleMessageSelection('${msg.id}')"
                            ${isSelected ? 'checked' : ''}>
                 </td>
-                <td><span class="message-id">${escapeHtml(msg.id?.substring(0, 12) || '')}</span></td>
+                <td><span class="message-id" title="${escapeHtml(msg.id || '')} (click to copy)" onclick="copyMessageId('${escapeJsArg(msg.id)}')">${escapeHtml(msg.id?.substring(0, 12) || '')}</span></td>
                 <td title="${escapeHtml(msg.from || '')}">${escapeHtml(msg.from || 'Unknown')}</td>
                 <td title="${escapeHtml(toList || '')}">${escapeHtml(toList || 'Unknown')}</td>
                 <td title="${escapeHtml(msg.subject || '')}">${escapeHtml(msg.subject || 'No Subject')}</td>
@@ -681,8 +682,8 @@ function renderMessages() {
     }).join('');
 
     // Update pagination
-    const start = startIndex + 1;
-    const end = Math.min(endIndex, totalMessages);
+    const start = (state.currentPage - 1) * state.pageSize + 1;
+    const end = Math.min(start + pageMessages.length - 1, totalMessages);
     document.getElementById('pagination-info').textContent =
         `Showing ${start}-${end} of ${totalMessages} messages`;
 
@@ -731,12 +732,12 @@ function renderPagination(totalPages) {
 }
 
 function goToPage(page) {
-    const totalPages = Math.ceil(state.filteredMessages.length / state.pageSize);
+    const totalPages = Math.ceil(state.totalMessages / state.pageSize);
     if (page < 1 || page > totalPages) return;
 
     state.currentPage = page;
     updateURL();
-    renderMessages();
+    loadQueue(state.currentQueue);
 }
 
 // ============================================================================
@@ -753,9 +754,7 @@ function toggleMessageSelection(messageId) {
 
 function toggleSelectAll() {
     const selectAll = document.getElementById('select-all');
-    const startIndex = (state.currentPage - 1) * state.pageSize;
-    const endIndex = startIndex + state.pageSize;
-    const pageMessages = state.filteredMessages.slice(startIndex, endIndex);
+    const pageMessages = state.messages;
 
     if (selectAll.checked) {
         pageMessages.forEach(msg => state.selectedMessages.add(msg.id));
@@ -895,30 +894,6 @@ function renderMessageDetails(message) {
             ` : ''}
         </dl>
     `;
-}
-
-function switchModalTab(tab) {
-    document.querySelectorAll('.modal-tab').forEach(t => {
-        t.classList.toggle('active', t.dataset.tab === tab);
-    });
-
-    const modalBody = document.getElementById('modal-body');
-    const message = state.currentMessage;
-
-    if (!message) return;
-
-    switch (tab) {
-        case 'details':
-            renderMessageDetails(message);
-            break;
-        case 'headers':
-            const headers = parseMessageHeaders(message.content);
-            modalBody.innerHTML = `<pre class="message-content-raw">${escapeHtml(headers || 'No headers available')}</pre>`;
-            break;
-        case 'raw':
-            modalBody.innerHTML = `<pre class="message-content-raw">${escapeHtml(message.content || 'No content available')}</pre>`;
-            break;
-    }
 }
 
 function closeModal() {
@@ -1336,12 +1311,6 @@ function renderLogContext(context) {
     return fields ? `<div class="log-context">${fields}</div>` : '';
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 // ============================================================================
 // Settings
 // ============================================================================
@@ -1529,6 +1498,19 @@ function formatDate(dateString) {
 function shortMessageId(id) {
     if (!id) return '';
     return String(id).substring(0, 12);
+}
+
+// copyMessageId puts a queue ID on the clipboard. The table shows IDs
+// truncated to keep the column readable, which made distinct messages look
+// identical and left no way to grab the real ID; the full value lives here
+// and in the cell's tooltip.
+async function copyMessageId(id) {
+    try {
+        await navigator.clipboard.writeText(id);
+        showToast('Message ID copied', 'success');
+    } catch {
+        showToast('Could not copy — clipboard unavailable', 'error');
+    }
 }
 
 function escapeJsArg(value) {
@@ -1763,8 +1745,9 @@ async function refreshServerConfig() {
         document.getElementById('config-listen-addr').value = config.listen_addr || '';
         document.getElementById('config-queue-dir').value = config.queue_dir || '';
         document.getElementById('config-max-size').value = config.max_size || '';
-        document.getElementById('config-max-workers').value = config.max_workers || '';
-        document.getElementById('config-failed-retention').value = config.failed_queue_retention_hours || '';
+        // ?? instead of ||: zero is a real value here (retention 0 means
+        // failed messages are deleted immediately), not an absence.
+        document.getElementById('config-failed-retention').value = config.failed_queue_retention_hours ?? '';
         
         loadingEl.style.display = 'none';
         contentEl.style.display = 'block';
@@ -1786,7 +1769,6 @@ async function saveServerConfig() {
             listen_addr: document.getElementById('config-listen-addr').value,
             queue_dir: document.getElementById('config-queue-dir').value,
             max_size: document.getElementById('config-max-size').value,
-            max_workers: parseInt(document.getElementById('config-max-workers').value),
             failed_queue_retention_hours: parseInt(document.getElementById('config-failed-retention').value)
         };
         
@@ -1878,12 +1860,12 @@ async function refreshPlugins() {
                         </div>
                         <div style="color: ${plugin.enabled ? '#10b981' : '#ef4444'}; font-size: 0.875rem; margin-bottom: 0.5rem;">
                             ${plugin.enabled ? 'Enabled' : 'Disabled'}
-                            ${!canToggle ? ' (managed via docker-compose)' : ''}
+                            ${!canToggle ? ' (configured in elemta.toml)' : ''}
                         </div>
                         <div style="color: #ccc; font-size: 0.875rem;">${plugin.description || 'No description available'}</div>
-                        ${!canToggle && plugin.config && plugin.config.host ? `
+                        ${!canToggle && plugin.config && plugin.config.address ? `
                             <div style="color: #888; font-size: 0.75rem; margin-top: 0.5rem;">
-                                Host: ${plugin.config.host}:${plugin.config.port}
+                                ${escapeHtml(plugin.config.address)}${plugin.config.threshold ? ` • threshold ${plugin.config.threshold}` : ''}${plugin.config.reject_on_spam ? ' • rejects spam' : ''}${plugin.config.reject_on_failure ? ' • rejects on scan failure' : ''}
                             </div>
                         ` : ''}
                     </div>

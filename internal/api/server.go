@@ -59,6 +59,22 @@ type MainConfig struct {
 	RateLimiterPluginConfig   interface{} `json:"rate_limiter"`
 	TLS                       interface{} `json:"tls"`
 	API                       interface{} `json:"api"`
+
+	// Scanner configuration, mirrored here because internal/api cannot import
+	// internal/smtp (smtp already imports api for the throughput counters).
+	Antivirus *ScannerStatus `json:"antivirus,omitempty"`
+	Antispam  *ScannerStatus `json:"antispam,omitempty"`
+}
+
+// ScannerStatus is the API's view of a content scanner's configuration.
+type ScannerStatus struct {
+	Enabled         bool    `json:"enabled"`
+	Address         string  `json:"address"`
+	Timeout         int     `json:"timeout"`
+	ScanLimit       int64   `json:"scan_limit"`
+	Threshold       float64 `json:"threshold,omitempty"`
+	RejectOnSpam    bool    `json:"reject_on_spam,omitempty"`
+	RejectOnFailure bool    `json:"reject_on_failure,omitempty"`
 }
 
 // Server represents an API server for Elemta
@@ -542,7 +558,9 @@ func (s *Server) Start() error {
 		api.Handle("/queue/message/{id}/requeue", manageHandler(http.HandlerFunc(s.handleRequeueMessage))).Methods("POST")
 		api.Handle("/queue/message/{id}/hold", manageHandler(http.HandlerFunc(s.handleHoldMessage))).Methods("POST")
 		api.Handle("/queue/message/{id}/release-claim", manageHandler(http.HandlerFunc(s.handleReleaseMessageClaim))).Methods("POST")
-		// Queue flushing requires queue:flush permission
+		// Bulk retry is a management action, not a destructive one.
+		api.Handle("/queue/{type}/retry", manageHandler(http.HandlerFunc(s.handleRetryQueue))).Methods("POST")
+		// Queue flushing deletes messages, so it requires queue:flush permission.
 		flushHandler := s.authMiddleware.RequirePermission(auth.PermissionQueueFlush)(http.HandlerFunc(s.handleFlushQueue))
 		api.Handle("/queue/{type}/flush", flushHandler).Methods("POST")
 	} else {
@@ -551,6 +569,7 @@ func (s *Server) Start() error {
 		api.HandleFunc("/queue/message/{id}/requeue", s.handleRequeueMessage).Methods("POST")
 		api.HandleFunc("/queue/message/{id}/hold", s.handleHoldMessage).Methods("POST")
 		api.HandleFunc("/queue/message/{id}/release-claim", s.handleReleaseMessageClaim).Methods("POST")
+		api.HandleFunc("/queue/{type}/retry", s.handleRetryQueue).Methods("POST")
 		api.HandleFunc("/queue/{type}/flush", s.handleFlushQueue).Methods("POST")
 	}
 
@@ -771,7 +790,7 @@ func (s *Server) startReplacementProcess() (*os.Process, error) {
 
 // API handlers
 
-// handleGetAllQueues returns all messages in all queues
+// handleGetAllQueues returns a page of messages across all queues
 func (s *Server) handleGetAllQueues(w http.ResponseWriter, r *http.Request) {
 	messages, err := s.queueMgr.GetAllMessages()
 	if err != nil {
@@ -779,10 +798,10 @@ func (s *Server) handleGetAllQueues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, messages)
+	writeJSON(w, listQueuePage(messages, parseQueueListQuery(r)))
 }
 
-// handleGetQueue returns messages in a specific queue
+// handleGetQueue returns a page of messages in a specific queue
 func (s *Server) handleGetQueue(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	qType := vars["type"]
@@ -799,7 +818,7 @@ func (s *Server) handleGetQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, messages)
+	writeJSON(w, listQueuePage(messages, parseQueueListQuery(r)))
 }
 
 // handleFlushQueue flushes a specific queue
@@ -826,6 +845,57 @@ func (s *Server) handleFlushQueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]string{"status": "success", "message": fmt.Sprintf("Queue %s flushed", qType)})
+}
+
+// handleRetryQueue requeues every message in a queue for immediate delivery.
+//
+// This is the non-destructive counterpart to flush. The dashboard's "process"
+// and "retry" actions call it; flush deletes, so pointing those actions at
+// flush meant a click labelled "Retry Deferred" silently discarded the queue.
+func (s *Server) handleRetryQueue(w http.ResponseWriter, r *http.Request) {
+	qType := mux.Vars(r)["type"]
+
+	var req queueActionRequest
+	if err := decodeOptionalQueueActionRequest(r, &req); err != nil {
+		http.Error(w, fmt.Sprintf("Error: %v", err), http.StatusBadRequest)
+		return
+	}
+	reason := req.Reason
+	if reason == "" {
+		reason = "bulk retry from dashboard"
+	}
+
+	var requeued int
+	if qType == "all" {
+		for _, qt := range []queue.QueueType{queue.Deferred, queue.Failed, queue.Hold, queue.Active} {
+			n, err := s.queueMgr.RequeueQueue(qt, reason)
+			requeued += n
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Error retrying %s: %v", qt, err), http.StatusInternalServerError)
+				return
+			}
+		}
+	} else {
+		queueType, qErr := parseQueueType(qType)
+		if qErr != nil {
+			http.Error(w, fmt.Sprintf("Error: %v", qErr), http.StatusBadRequest)
+			return
+		}
+		n, err := s.queueMgr.RequeueQueue(queueType, reason)
+		requeued = n
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Error: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"status":   "success",
+		"action":   "requeued",
+		"queue":    qType,
+		"requeued": requeued,
+		"message":  fmt.Sprintf("%d message(s) requeued for delivery", requeued),
+	})
 }
 
 // handleGetMessage returns a specific message
@@ -1419,7 +1489,17 @@ func (s *Server) handleGetMessageLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// tailLogFile reads log file from the end and returns matching entries
+// maxLogScanBytes bounds how much of the log file a single request may scan.
+// A filtered query that matches nothing used to walk the whole file backwards,
+// JSON-parsing every line — 20+ seconds against the multi-gigabyte log a busy
+// server accumulates, per click, in the request path.
+const maxLogScanBytes = 32 * 1024 * 1024
+
+// tailLogFile reads the log file from the end and returns matching entries.
+//
+// The scan stops at limit*3 matches or after maxLogScanBytes, whichever comes
+// first. A filter with no matches therefore returns empty quickly instead of
+// scanning to the beginning of time.
 func (s *Server) tailLogFile(filename string, limit int, eventTypeFilter, levelFilter string) ([]MessageLog, error) {
 	if !isAllowedLogPath(filename) {
 		return nil, fmt.Errorf("log file path not allowed: %s", filename)
@@ -1430,63 +1510,75 @@ func (s *Server) tailLogFile(filename string, limit int, eventTypeFilter, levelF
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = file.Close() }() // Ignore error in defer cleanup
+	defer func() { _ = file.Close() }()
 
-	// Get file size
 	stat, err := file.Stat()
 	if err != nil {
 		return nil, err
 	}
 
 	var messageLogs []MessageLog
-	const maxLineSize = 8192 // Maximum line size to prevent infinite reads
+	const maxLineSize = 8192
 	buffer := make([]byte, maxLineSize)
-	lines := make([]string, 0, limit*2) // Collect more lines than needed for filtering
 
-	// Read from end of file backwards
+	// Lowercased needles for the cheap pre-filter below.
+	levelNeedle := strings.ToLower(levelFilter)
+	typeNeedle := strings.ToLower(eventTypeFilter)
+
 	offset := stat.Size()
+	scanFloor := int64(0)
+	if offset > maxLogScanBytes {
+		scanFloor = offset - maxLogScanBytes
+	}
 	linesFound := 0
-	maxLinesToRead := limit * 3 // Read more lines to account for filtering
+	maxLinesToRead := limit * 3 // Read more lines than needed to survive filtering
 
-	for offset > 0 && linesFound < maxLinesToRead {
-		// Calculate chunk size to read
+	for offset > scanFloor && linesFound < maxLinesToRead {
 		chunkSize := int64(len(buffer))
-		if offset < chunkSize {
-			chunkSize = offset
+		if offset-scanFloor < chunkSize {
+			chunkSize = offset - scanFloor
 		}
 		offset -= chunkSize
 
-		// Read chunk
-		_, err := file.ReadAt(buffer[:chunkSize], offset)
-		if err != nil {
+		if _, err := file.ReadAt(buffer[:chunkSize], offset); err != nil {
 			break
 		}
 
-		// Split chunk into lines
 		chunk := string(buffer[:chunkSize])
 		chunkLines := strings.Split(chunk, "\n")
 
-		// If we're not at the start of file, the first line might be partial
-		if offset > 0 && len(chunkLines) > 1 {
-			// Skip the first (partial) line and process the rest
+		// If we're not at the start of the scan window, the first line of the
+		// chunk is partial; it will be read whole in the next iteration.
+		if offset > scanFloor && len(chunkLines) > 1 {
 			chunkLines = chunkLines[1:]
 		}
 
-		// Process lines in reverse order (since we're reading backwards)
+		// Process lines in reverse order, since the file is walked backwards.
 		for i := len(chunkLines) - 1; i >= 0 && linesFound < maxLinesToRead; i-- {
 			line := strings.TrimSpace(chunkLines[i])
 			if line == "" {
 				continue
 			}
 
-			// Try to parse as JSON
-			var logEntry map[string]interface{}
-			if err := json.Unmarshal([]byte(line), &logEntry); err != nil {
-				// Skip non-JSON lines
-				continue
+			// Cheap pre-filter: a line that does not even contain the filter
+			// text cannot match it, and skipping the JSON parse is what makes
+			// scanning a large window affordable. False positives fall
+			// through to the real checks below.
+			if levelNeedle != "" || typeNeedle != "" {
+				lower := strings.ToLower(line)
+				if levelNeedle != "" && !strings.Contains(lower, levelNeedle) {
+					continue
+				}
+				if typeNeedle != "" && typeNeedle != "system" && !strings.Contains(lower, typeNeedle) {
+					continue
+				}
 			}
 
-			// Extract common fields
+			var logEntry map[string]interface{}
+			if err := json.Unmarshal([]byte(line), &logEntry); err != nil {
+				continue // skip non-JSON lines
+			}
+
 			timeStr, _ := logEntry["time"].(string)
 			level, _ := logEntry["level"].(string)
 			msg, _ := logEntry["msg"].(string)
@@ -1527,39 +1619,39 @@ func (s *Server) tailLogFile(filename string, limit int, eventTypeFilter, levelF
 			messageLifecycleTypes := []string{
 				"reception", "delivery", "rejection", "deferral", "bounce", "tempfail", "authentication",
 			}
-
-			// Include if it's a message lifecycle event
 			for _, t := range messageLifecycleTypes {
 				if eventType == t {
 					includeLog = true
 					break
 				}
 			}
-
 			// Always include system events, errors, and warnings
 			if !includeLog && (eventType == "system" || strings.EqualFold(level, "error") || strings.EqualFold(level, "warn")) {
 				includeLog = true
 			}
 
 			if includeLog {
-				messageLog := MessageLog{
+				messageLogs = append(messageLogs, MessageLog{
 					Time:      timeStr,
 					Level:     level,
 					Message:   msg,
 					EventType: eventType,
 					Component: component,
 					Fields:    logEntry,
-				}
-				lines = append([]string{line}, lines...)                       // Prepend to maintain chronological order
-				messageLogs = append([]MessageLog{messageLog}, messageLogs...) // Prepend to maintain order
+				})
 				linesFound++
 			}
 		}
 	}
 
-	// Trim to requested limit if we have more
+	// The walk collected newest-first; flip to chronological order.
+	for i, j := 0, len(messageLogs)-1; i < j; i, j = i+1, j-1 {
+		messageLogs[i], messageLogs[j] = messageLogs[j], messageLogs[i]
+	}
+
+	// Trim to the requested limit, keeping the newest entries.
 	if len(messageLogs) > limit {
-		messageLogs = messageLogs[:limit]
+		messageLogs = messageLogs[len(messageLogs)-limit:]
 	}
 
 	return messageLogs, nil
@@ -1610,6 +1702,33 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Scanner state comes from configuration. This process does not run the
+	// scanners — the SMTP node does — so what is reported here is what the
+	// shipped config asks for, which is also what the UI can meaningfully
+	// edit. This used to be hardcoded nil, which the UI dressed up as
+	// "Disabled (managed via docker-compose)" regardless of reality.
+	clamavEnabled, clamavConfig := false, map[string]interface{}(nil)
+	if av := s.mainConfig.Antivirus; av != nil {
+		clamavEnabled = av.Enabled
+		clamavConfig = map[string]interface{}{
+			"address":           av.Address,
+			"timeout":           av.Timeout,
+			"scan_limit":        av.ScanLimit,
+			"reject_on_failure": av.RejectOnFailure,
+		}
+	}
+	rspamdEnabled, rspamdConfig := false, map[string]interface{}(nil)
+	if as := s.mainConfig.Antispam; as != nil {
+		rspamdEnabled = as.Enabled
+		rspamdConfig = map[string]interface{}{
+			"address":        as.Address,
+			"timeout":        as.Timeout,
+			"scan_limit":     as.ScanLimit,
+			"threshold":      as.Threshold,
+			"reject_on_spam": as.RejectOnSpam,
+		}
+	}
+
 	plugins := []map[string]interface{}{
 		{
 			"name":        "rate_limiter",
@@ -1619,15 +1738,15 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			"name":        "clamav",
-			"enabled":     nil, // Status unknown - plugin manager not accessible from API
+			"enabled":     clamavEnabled,
 			"description": "Antivirus and malware scanning",
-			"config":      nil,
+			"config":      clamavConfig,
 		},
 		{
 			"name":        "rspamd",
-			"enabled":     nil, // Status unknown - plugin manager not accessible from API
+			"enabled":     rspamdEnabled,
 			"description": "Spam filtering and content analysis",
-			"config":      nil,
+			"config":      rspamdConfig,
 		},
 	}
 

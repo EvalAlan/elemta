@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/mail"
 	"runtime"
 	"sort"
 	"strings"
@@ -575,6 +577,26 @@ func normalizeErrorReason(raw string) string {
 	}
 }
 
+// validateTestEmailRequest checks the fields that handleSendTestEmail
+// concatenates into RFC 5322 headers. Each address must parse as exactly one
+// address, and the subject must not carry CR or LF: a Subject of
+// "x\r\nBcc: ..." is a header injection, not a subject. The returned
+// addresses are the bare addr-spec forms, stripped of display names.
+func validateTestEmailRequest(from, to, subject string) (string, string, error) {
+	fromAddr, err := mail.ParseAddress(from)
+	if err != nil {
+		return "", "", fmt.Errorf("from is not a valid address")
+	}
+	toAddr, err := mail.ParseAddress(to)
+	if err != nil {
+		return "", "", fmt.Errorf("to is not a valid address")
+	}
+	if strings.ContainsAny(subject, "\r\n") {
+		return "", "", fmt.Errorf("subject must not contain line breaks")
+	}
+	return fromAddr.Address, toAddr.Address, nil
+}
+
 // handleSendTestEmail sends a test email
 func (s *Server) handleSendTestEmail(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -594,6 +616,13 @@ func (s *Server) handleSendTestEmail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "from and to are required", http.StatusBadRequest)
 		return
 	}
+
+	from, to, err := validateTestEmailRequest(req.From, req.To, req.Subject)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.From, req.To = from, to
 
 	if req.Subject == "" {
 		req.Subject = "Test Email from Elemta"

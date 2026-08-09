@@ -45,6 +45,30 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		authAllowDeprecatedSHA1 = cfg.Auth.AllowDeprecatedSHA1
 	}
 
+	// Mirror scanner configuration into the API's own types; internal/api
+	// cannot import internal/smtp without a cycle.
+	var antivirus *api.ScannerStatus
+	if av := cfg.Antivirus; av != nil && av.ClamAV != nil {
+		antivirus = &api.ScannerStatus{
+			Enabled:         av.Enabled && av.ClamAV.Enabled,
+			Address:         av.ClamAV.Address,
+			Timeout:         av.ClamAV.Timeout,
+			ScanLimit:       av.ClamAV.ScanLimit,
+			RejectOnFailure: av.RejectOnFailure,
+		}
+	}
+	var antispam *api.ScannerStatus
+	if as := cfg.Antispam; as != nil && as.Rspamd != nil {
+		antispam = &api.ScannerStatus{
+			Enabled:      as.Enabled && as.Rspamd.Enabled,
+			Address:      as.Rspamd.Address,
+			Timeout:      as.Rspamd.Timeout,
+			ScanLimit:    as.Rspamd.ScanLimit,
+			Threshold:    as.Rspamd.Threshold,
+			RejectOnSpam: as.RejectOnSpam,
+		}
+	}
+
 	return &api.MainConfig{
 		Hostname:                  hostname,
 		ListenAddr:                listenAddr,
@@ -74,6 +98,8 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		RateLimiterPluginConfig:   cfg.RateLimiter,
 		TLS:                       cfg.TLS,
 		API:                       nil, // API config not available in main config
+		Antivirus:                 antivirus,
+		Antispam:                  antispam,
 	}
 }
 
