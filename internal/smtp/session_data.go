@@ -466,10 +466,71 @@ func (dh *DataHandler) readData(ctx context.Context) (*MessageSpool, error) {
 	return spool, nil
 }
 
+// DiscardBDATChunk consumes a chunk the server has decided to refuse.
+//
+// BDAT sends the chunk immediately after the command, with no intervening
+// server reply, so those octets are already in flight. Refusing the command
+// without consuming them leaves them to be read as SMTP commands — the same
+// desync as an aborted DATA, and exploitable the same way:
+//
+//	BDAT 99999999                 -> 552 size exceeds maximum
+//	RCPT TO:<victim@example.com>  -> 250 Recipient OK      (these are chunk bytes)
+//	BDAT 10 LAST / <payload>      -> 250 Message accepted
+//
+// which delivers to a recipient the envelope never authorised. The chunk size
+// is known exactly here, so a chunk within the drain budget is consumed and the
+// connection stays usable; anything larger cannot be paid for, and the session
+// is marked out of sync so the caller closes it.
+func (dh *DataHandler) DiscardBDATChunk(ctx context.Context, size int64) {
+	if size <= 0 {
+		return
+	}
+	if size > maxDrainBytes {
+		dh.dataSyncLost = true
+		dh.logger.WarnContext(ctx, "Refused BDAT chunk is too large to discard; connection is out of sync",
+			"chunk_size", size,
+			"limit", maxDrainBytes,
+			"remote_addr", dh.conn.RemoteAddr().String(),
+		)
+		return
+	}
+
+	if err := dh.conn.SetReadDeadline(time.Now().Add(drainTimeout)); err != nil {
+		dh.dataSyncLost = true
+		return
+	}
+	defer func() { _ = dh.conn.SetReadDeadline(time.Time{}) }()
+
+	if _, err := io.CopyN(io.Discard, dh.reader, size); err != nil {
+		dh.dataSyncLost = true
+		dh.logger.WarnContext(ctx, "Could not discard a refused BDAT chunk; connection is out of sync",
+			"chunk_size", size,
+			"error", err,
+			"remote_addr", dh.conn.RemoteAddr().String(),
+		)
+		return
+	}
+	dh.logger.WarnContext(ctx, "Discarded a refused BDAT chunk to stay in sync",
+		"chunk_size", size,
+		"remote_addr", dh.conn.RemoteAddr().String(),
+	)
+}
+
+// MarkDataSyncLost records that the connection can no longer be trusted to sit
+// at a command boundary, so the session must close rather than read further
+// commands from it. Used where the server has committed to a protocol
+// transition it cannot then unwind — a refused chunk too large to discard, or
+// a TLS handshake that failed after 220 was sent and the wire now carries TLS
+// records rather than SMTP.
+func (dh *DataHandler) MarkDataSyncLost() { dh.dataSyncLost = true }
+
 // ReadBDATChunk reads exactly size bytes from the connection for a BDAT chunk
 func (dh *DataHandler) ReadBDATChunk(ctx context.Context, size int64) error {
-	// Check total accumulated + new chunk against max size
+	// Check total accumulated + new chunk against max size.
+	// The chunk is already in flight, so it has to be consumed or the
+	// connection abandoned before this can return.
 	if dh.bdatBytesReceived+size > dh.config.MaxSize {
+		dh.DiscardBDATChunk(ctx, size)
 		return fmt.Errorf("552 5.3.4 Message size exceeds maximum allowed (%d bytes)", dh.config.MaxSize)
 	}
 

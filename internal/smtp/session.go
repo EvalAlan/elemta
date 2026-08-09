@@ -374,6 +374,16 @@ func (s *Session) processCommands(ctx context.Context) error {
 			)
 			s.writeError(ctx, err)
 
+			// A refused BDAT whose chunk could not be consumed leaves the
+			// connection somewhere inside that chunk. Reading further commands
+			// from it would parse message content as SMTP, so close instead.
+			if s.dataHandler.DataSyncLost() {
+				s.logger.WarnContext(ctx, "Closing session: could not resynchronise after a refused chunk",
+					"client", s.remoteAddr)
+				_ = s.flush()
+				return nil
+			}
+
 			// Check for QUIT command
 			if s.state.GetPhase() == PhaseQuit {
 				s.logger.InfoContext(ctx, "Session terminated by client")
