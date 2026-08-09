@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"github.com/busybox42/elemta/internal/antispam"
+	"github.com/busybox42/elemta/internal/antivirus"
 	"io"
 	"net"
 	"path/filepath"
@@ -70,9 +72,9 @@ type DataHandler struct {
 	enhancedValidator *EnhancedValidator
 	msgLogger         *logging.MessageLogger
 	receptionTime     time.Time
-	bdatBuffer        bytes.Buffer // Accumulated BDAT chunk data
-	bdatBytesReceived int64        // Total bytes across all chunks
-	bdatChunkCount    int          // Chunks received in current transaction
+	bdatSpool         *MessageSpool // Accumulated BDAT chunk data, spooled like DATA
+	bdatBytesReceived int64         // Total bytes across all chunks
+	bdatChunkCount    int           // Chunks received in current transaction
 
 	// internalPeer caches whether the peer is inside a trusted network. It is
 	// consulted per line of DATA and the peer cannot change mid-session.
@@ -244,16 +246,15 @@ func (dh *DataHandler) ReadData(ctx context.Context) (*MessageSpool, error) {
 			lastMemoryCheck = state.BytesRead
 
 			// Check per-session memory limit
-			if state.BytesRead > sessionMemoryLimit {
-				dh.logger.WarnContext(ctx, "Session memory limit exceeded during data reading",
-					"bytes_read", state.BytesRead,
-					"session_memory_limit", sessionMemoryLimit,
-					"session_id", dh.session.sessionID,
-				)
-				// Clear data transfer mode on error
-				dh.state.ClearDataTransferMode(ctx)
-				return nil, fmt.Errorf("552 5.3.4 Session memory limit exceeded")
-			}
+			// The per-connection memory limit no longer bounds message size:
+			// data past the spool threshold is on disk, not on the heap, so a
+			// large message costs file space rather than memory. max_size is
+			// the limit that governs how large a message may be, and it is
+			// checked above.
+			//
+			// The global check below still applies — it reflects what the
+			// process is actually using, which spooling has made largely
+			// independent of any single message.
 
 			// Check global memory limits if resource manager is available
 			if dh.session.resourceManager != nil && dh.session.resourceManager.memoryManager != nil {
@@ -355,24 +356,24 @@ func (dh *DataHandler) ReadBDATChunk(ctx context.Context, size int64) error {
 		return fmt.Errorf("552 5.3.4 Message size exceeds maximum allowed (%d bytes)", dh.config.MaxSize)
 	}
 
-	// Check per-session memory limit
-	sessionMemoryLimit := int64(50 * 1024 * 1024)
-	if dh.session.resourceManager != nil && dh.session.resourceManager.memoryManager != nil {
-		sessionMemoryLimit = dh.session.resourceManager.memoryManager.config.PerConnectionMemoryLimit
-	}
-	if dh.bdatBytesReceived+size > sessionMemoryLimit {
-		return fmt.Errorf("552 5.3.4 Session memory limit exceeded")
+	// BDAT is spooled exactly like DATA, so a chunked message is bounded by
+	// max_size rather than by memory. Buffering chunks on the heap here would
+	// have left CHUNKING rejecting messages that DATA accepts.
+	if dh.bdatSpool == nil {
+		dh.bdatSpool = NewMessageSpool(dh.spoolDir(), dh.spoolThreshold())
 	}
 
 	// Read exactly size bytes
 	chunk := make([]byte, size)
-	_, err := io.ReadFull(dh.reader, chunk)
-	if err != nil {
+	if _, err := io.ReadFull(dh.reader, chunk); err != nil {
 		dh.logger.ErrorContext(ctx, "Failed to read BDAT chunk", "error", err, "expected_size", size)
 		return fmt.Errorf("451 4.3.0 Error reading chunk data: %w", err)
 	}
 
-	dh.bdatBuffer.Write(chunk)
+	if _, err := dh.bdatSpool.Write(chunk); err != nil {
+		dh.logger.ErrorContext(ctx, "Failed to spool BDAT chunk", "error", err)
+		return fmt.Errorf("451 4.3.0 Unable to buffer message data")
+	}
 	dh.bdatBytesReceived += size
 	dh.bdatChunkCount++
 
@@ -387,17 +388,32 @@ func (dh *DataHandler) ReadBDATChunk(ctx context.Context, size int64) error {
 
 // ProcessBDATMessage processes the accumulated BDAT data as a complete message
 func (dh *DataHandler) ProcessBDATMessage(ctx context.Context) error {
-	data := dh.bdatBuffer.Bytes()
-	dh.state.SetDataSize(ctx, int64(len(data)))
+	defer dh.ResetBDAT()
 
-	err := dh.processMessageBytes(ctx, data, queue.OpenerForBytes(data))
-	dh.ResetBDAT()
-	return err
+	if dh.bdatSpool == nil {
+		return fmt.Errorf("503 5.5.1 No message data received")
+	}
+
+	dh.state.SetDataSize(ctx, dh.bdatSpool.Size())
+
+	head, err := dh.bdatSpool.Head(DefaultHeadSize)
+	if err != nil {
+		dh.logger.ErrorContext(ctx, "Failed to read spooled BDAT message head", "error", err)
+		return fmt.Errorf("451 4.3.0 Unable to read message data")
+	}
+
+	view := newScanContentFromSpool(dh.bdatSpool, head)
+	return dh.processMessage(ctx, head, dh.bdatSpool.Size(), view, dh.bdatSpool.Open)
 }
 
 // ResetBDAT clears the BDAT buffer and counters
 func (dh *DataHandler) ResetBDAT() {
-	dh.bdatBuffer.Reset()
+	if dh.bdatSpool != nil {
+		if err := dh.bdatSpool.Close(); err != nil {
+			dh.logger.Warn("Failed to release BDAT spool", "error", err)
+		}
+		dh.bdatSpool = nil
+	}
 	dh.bdatBytesReceived = 0
 	dh.bdatChunkCount = 0
 }
@@ -405,24 +421,31 @@ func (dh *DataHandler) ResetBDAT() {
 // ProcessMessage processes a spooled message with security scanning and
 // validation.
 //
-// Stage 1 of the spooling work reads the spool back into memory here, so that
-// moving DATA reception off the heap could land and soak on its own. Stage 2
-// replaces this with a reader-based path; the seam is deliberate.
+// The message is never brought onto the heap. Header extraction, header
+// validation and the header/body split all work from the first
+// DefaultHeadSize bytes; the antivirus and antispam engines scan the spool
+// file directly; and the queue is handed an opener rather than a slice. What
+// the server holds per message is a bounded head, not the message.
 func (dh *DataHandler) ProcessMessage(ctx context.Context, spool *MessageSpool) error {
-	data, err := spool.Bytes()
+	head, err := spool.Head(DefaultHeadSize)
 	if err != nil {
-		dh.logger.ErrorContext(ctx, "Failed to read spooled message", "error", err)
+		dh.logger.ErrorContext(ctx, "Failed to read spooled message head", "error", err)
 		return fmt.Errorf("451 4.3.0 Unable to read message data")
 	}
-	// Scanning still needs the whole body, but queuing does not: the spool is
-	// handed on so the queue can stream it rather than take another copy.
-	return dh.processMessageBytes(ctx, data, spool.Open)
+
+	view := newScanContentFromSpool(spool, head)
+	return dh.processMessage(ctx, head, spool.Size(), view, spool.Open)
 }
 
 // processMessageBytes is the byte-oriented implementation shared by the DATA
 // and BDAT paths.
-func (dh *DataHandler) processMessageBytes(ctx context.Context, data []byte, body queue.ContentOpener) error {
-	dh.logger.DebugContext(ctx, "Starting message processing with memory tracking", "size", len(data))
+// processMessage runs validation, scanning and queuing.
+//
+// head is the front of the message, used for anything that inspects headers.
+// size is the whole message. view carries whatever the scan engines need,
+// which for a spooled message is a path rather than the bytes.
+func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int64, view *scanContent, body queue.ContentOpener) error {
+	dh.logger.DebugContext(ctx, "Starting message processing", "size", size)
 
 	startTime := time.Now()
 
@@ -434,18 +457,20 @@ func (dh *DataHandler) processMessageBytes(ctx context.Context, data []byte, bod
 			dh.logger.WarnContext(ctx, "Global memory limit exceeded before message processing",
 				"error", err,
 				"session_id", dh.session.sessionID,
-				"message_size", len(data),
+				"message_size", size,
 			)
 			return fmt.Errorf("552 5.3.4 Server memory limit exceeded")
 		}
 
 		// Check per-session memory limits for the message
-		estimatedProcessingMemory := int64(len(data) * 3) // Estimate 3x message size for processing
+		// Processing no longer scales with message size: the head is bounded
+		// and the engines read the spool from disk.
+		estimatedProcessingMemory := int64(len(head))
 		if err := dh.session.resourceManager.memoryManager.CheckConnectionMemoryLimit(dh.session.sessionID, estimatedProcessingMemory); err != nil {
 			dh.logger.WarnContext(ctx, "Session memory limit exceeded for message processing",
 				"error", err,
 				"session_id", dh.session.sessionID,
-				"message_size", len(data),
+				"message_size", size,
 				"estimated_processing_memory", estimatedProcessingMemory,
 			)
 			return fmt.Errorf("552 5.3.4 Session memory limit exceeded")
@@ -453,7 +478,7 @@ func (dh *DataHandler) processMessageBytes(ctx context.Context, data []byte, bod
 	}
 
 	// Extract message metadata
-	metadata, err := dh.extractMessageMetadata(ctx, data)
+	metadata, err := dh.extractMessageMetadata(ctx, head, size)
 	if err != nil {
 		dh.logger.ErrorContext(ctx, "Failed to extract message metadata", "error", err)
 		return fmt.Errorf("451 4.3.0 Message processing failed")
@@ -466,7 +491,7 @@ func (dh *DataHandler) processMessageBytes(ctx context.Context, data []byte, bod
 	}
 
 	// Perform security scanning
-	scanResult, err := dh.performSecurityScan(ctx, data, metadata)
+	scanResult, err := dh.performSecurityScan(ctx, view, metadata)
 	if err != nil {
 		dh.logger.ErrorContext(ctx, "Security scan failed", "error", err)
 		return fmt.Errorf("451 4.3.0 Security scan failed")
@@ -479,7 +504,7 @@ func (dh *DataHandler) processMessageBytes(ctx context.Context, data []byte, bod
 
 	// Build this hop's headers. They are written ahead of the body rather than
 	// concatenated with it, so the body is never copied a second time.
-	headerPrefix := dh.buildServerHeaders(ctx, data, metadata, scanResult)
+	headerPrefix := dh.buildServerHeaders(ctx, head, metadata, scanResult)
 
 	if err := dh.saveMessage(ctx, headerPrefix, body, metadata); err != nil {
 		dh.logger.ErrorContext(ctx, "Failed to save message", "error", err)
@@ -1007,22 +1032,24 @@ func (dh *DataHandler) validateMessageIDHeader(value string) error {
 }
 
 // extractMessageMetadata extracts metadata from the message
-func (dh *DataHandler) extractMessageMetadata(ctx context.Context, data []byte) (*MessageMetadata, error) {
+func (dh *DataHandler) extractMessageMetadata(ctx context.Context, head []byte, size int64) (*MessageMetadata, error) {
 	metadata := &MessageMetadata{
 		MessageID: uuid.New().String(),
 		From:      dh.state.GetMailFrom(),
 		To:        dh.state.GetRecipients(),
 		Date:      time.Now(),
-		Size:      int64(len(data)),
+		Size:      size,
 		Headers:   make(map[string]string),
 	}
 
-	// Calculate checksum
-	hash := sha256.Sum256(data)
+	// Checksum covers the head only. Nothing reads this field — the queue
+	// computes its own content hash for enqueue identity — and digesting the
+	// whole body here would undo the point of scanning from the spool.
+	hash := sha256.Sum256(head)
 	metadata.Checksum = fmt.Sprintf("%x", hash)
 
 	// Extract headers
-	headers := dh.extractHeaders(data)
+	headers := dh.extractHeaders(head)
 	for name, value := range headers {
 		metadata.Headers[strings.ToLower(name)] = value
 	}
@@ -1284,13 +1311,36 @@ func (dh *DataHandler) validateFromHeader(ctx context.Context, fromHeader, mailF
 // size in garbage per delivery, which for a 25MB message is several hundred
 // megabytes of allocation and about a second of CPU.
 type scanContent struct {
+	// raw and lower cover the head of the message: enough for header
+	// inspection, which is all the local content analysis does.
 	raw   string
 	lower string
+
+	// path, when set, is the spooled message on disk. The antivirus and
+	// antispam engines scan it directly, so the full body is inspected without
+	// ever being brought onto the heap.
+	path string
+	// body, when path is empty, is the whole message for a small submission
+	// that never spilled.
+	body []byte
 }
 
-func newScanContent(data []byte) *scanContent {
-	raw := string(data)
-	return &scanContent{raw: raw, lower: strings.ToLower(raw)}
+// newScanContentFromSpool builds a view over a spooled message: the head for
+// local inspection, and either a path or the in-memory bytes for the engines.
+func newScanContentFromSpool(spool *MessageSpool, head []byte) *scanContent {
+	raw := string(head)
+	view := &scanContent{raw: raw, lower: strings.ToLower(raw)}
+	if spool.OnDisk() {
+		view.path = spool.Path()
+		return view
+	}
+	// Small message: it is already in memory, so there is nothing to save by
+	// making the engines read it back off disk.
+	body, err := spool.Bytes()
+	if err == nil {
+		view.body = body
+	}
+	return view
 }
 
 // mergeScanResult folds one scan's findings into the combined result.
@@ -1314,18 +1364,11 @@ func mergeScanResult(dst, src *SecurityScanResult) {
 }
 
 // performSecurityScan performs comprehensive security scanning
-func (dh *DataHandler) performSecurityScan(ctx context.Context, data []byte, metadata *MessageMetadata) (*SecurityScanResult, error) {
+func (dh *DataHandler) performSecurityScan(ctx context.Context, view *scanContent, metadata *MessageMetadata) (*SecurityScanResult, error) {
 	result := &SecurityScanResult{
 		Passed:  true,
 		Threats: make([]string, 0),
 	}
-
-	// The scans below are substring matches over the whole message, most of
-	// them case-insensitive. Lowercasing per pattern allocated a fresh copy of
-	// the message every time — around fifteen times the message size in
-	// garbage per delivery, and the dominant cost of accepting a large message.
-	// Build both views once and share them.
-	view := newScanContent(data)
 
 	// The antivirus and antispam scans are independent network round trips to
 	// separate services, so they run concurrently. In sequence their latencies
@@ -1409,7 +1452,15 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, view *scanConte
 		return nil
 	}
 
-	results, err := dh.scannerManager.ScanForViruses(ctx, []byte(view.raw))
+	var (
+		results []*antivirus.ScanResult
+		err     error
+	)
+	if view.path != "" {
+		results, err = dh.scannerManager.ScanFileForViruses(ctx, view.path)
+	} else {
+		results, err = dh.scannerManager.ScanForViruses(ctx, view.body)
+	}
 	if err != nil {
 		// A scanner that is down must not take mail down with it. The message
 		// is delivered unscanned and the failure is recorded.
@@ -1450,7 +1501,15 @@ func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, m
 		return nil
 	}
 
-	results, err := dh.scannerManager.ScanForSpam(ctx, []byte(view.raw))
+	var (
+		results []*antispam.ScanResult
+		err     error
+	)
+	if view.path != "" {
+		results, err = dh.scannerManager.ScanFileForSpam(ctx, view.path)
+	} else {
+		results, err = dh.scannerManager.ScanForSpam(ctx, view.body)
+	}
 	if err != nil {
 		dh.logger.WarnContext(ctx, "Spam scan failed; delivering message unscored",
 			"error", err,

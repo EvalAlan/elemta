@@ -459,7 +459,7 @@ func TestExtractMessageMetadata(t *testing.T) {
 
 	messageData := []byte("From: sender@example.com\r\nTo: user@localhost\r\nSubject: Test\r\n\r\nBody")
 
-	metadata, err := dh.extractMessageMetadata(context.Background(), messageData)
+	metadata, err := dh.extractMessageMetadata(context.Background(), messageData, int64(len(messageData)))
 	require.NoError(t, err)
 	assert.NotEmpty(t, metadata.MessageID)
 	assert.Equal(t, "sender@example.com", metadata.From)

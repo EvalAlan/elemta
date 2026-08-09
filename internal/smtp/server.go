@@ -320,7 +320,7 @@ func initResourceManager(config *Config, slogger *slog.Logger) (*ResourceManager
 		resourceManager = NewResourceManager(resourceLimits, slogger)
 		memoryManager := NewMemoryManager(memoryConfig, slogger)
 		resourceManager.SetMemoryManager(memoryManager)
-		reconcileMessageSizeLimit(config, memoryConfig, slogger)
+		logMessageSizePolicy(config, memoryConfig, slogger)
 		slogger.Info("Resource manager initialized with memory protection enabled")
 	} else {
 		resourceLimits = DefaultResourceLimits()
@@ -328,38 +328,29 @@ func initResourceManager(config *Config, slogger *slog.Logger) (*ResourceManager
 		defaultMemory := DefaultMemoryConfig()
 		memoryManager := NewMemoryManager(defaultMemory, slogger)
 		resourceManager.SetMemoryManager(memoryManager)
-		reconcileMessageSizeLimit(config, defaultMemory, slogger)
+		logMessageSizePolicy(config, defaultMemory, slogger)
 		slogger.Info("Resource manager initialized with default memory protection")
 	}
 
 	return resourceManager, resourceLimits
 }
 
-// reconcileMessageSizeLimit makes the advertised message size match the size
-// the server will actually accept.
+// logMessageSizePolicy records the effective message size limit.
 //
-// DATA is buffered in memory, so a session cannot exceed
-// PerConnectionMemoryLimit no matter what max_size says. When max_size is the
-// larger of the two, the server would advertise "250-SIZE <max_size>" in EHLO,
-// accept a matching SIZE= on MAIL FROM, and then reject the message part-way
-// through DATA with a 552 — after the client had already sent most of it.
+// This used to clamp max_size down to the per-connection memory limit, because
+// DATA was accumulated on the heap and a session could not exceed it: the
+// server would otherwise advertise a size in EHLO and then refuse the message
+// part-way through, after the client had sent most of it.
 //
-// Clamping max_size here keeps EHLO, the RFC 1870 SIZE check and the DATA
-// reader all working from one number, and tells the operator which knob to
-// turn if they wanted the larger value.
-func reconcileMessageSizeLimit(config *Config, memoryConfig *MemoryConfig, logger *slog.Logger) {
-	perConnLimit := memoryConfig.PerConnectionMemoryLimit
-	if perConnLimit <= 0 || config.MaxSize <= perConnLimit {
-		return
-	}
-
-	logger.Warn("max_size exceeds the per-connection memory limit; clamping advertised message size",
-		"configured_max_size", config.MaxSize,
-		"per_connection_memory_limit", perConnLimit,
-		"effective_max_size", perConnLimit,
-		"remedy", "raise [memory].per_connection_memory_limit (and max_memory_usage), or lower max_size",
+// Message data is spooled to disk now, for both DATA and BDAT, so message size
+// is bounded by max_size and by disk rather than by memory. The clamp is gone
+// and max_size means what it says.
+func logMessageSizePolicy(config *Config, memoryConfig *MemoryConfig, logger *slog.Logger) {
+	logger.Info("Message size policy",
+		"max_size", config.MaxSize,
+		"per_connection_memory_limit", memoryConfig.PerConnectionMemoryLimit,
+		"note", "message data is spooled to disk; max_size is not bounded by memory",
 	)
-	config.MaxSize = perConnLimit
 }
 
 // defaultConnectionWorkers is how many SMTP sessions run at once when
