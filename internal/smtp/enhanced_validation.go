@@ -29,15 +29,19 @@ type EnhancedValidationResult struct {
 
 // SMTPParameterLimits defines RFC 5321 parameter limits
 type SMTPParameterLimits struct {
-	MaxCommandLength   int   // RFC 5321: 512 octets including CRLF
-	MaxLocalPartLength int   // RFC 5321: 64 octets
-	MaxDomainLength    int   // RFC 5321: 255 octets
-	MaxPathLength      int   // RFC 5321: 256 octets
-	MaxLineLength      int   // RFC 5321: 1000 octets including CRLF
-	MaxHeaderLength    int   // RFC 5322: 998 octets
-	MaxHeaderCount     int   // Reasonable limit
-	MaxParameterLength int   // For SMTP extensions
-	MaxSizeValue       int64 // Maximum SIZE parameter value
+	MaxCommandLength   int // RFC 5321: 512 octets including CRLF
+	MaxLocalPartLength int // RFC 5321: 64 octets
+	MaxDomainLength    int // RFC 5321: 255 octets
+	MaxPathLength      int // RFC 5321: 256 octets
+	MaxLineLength      int // RFC 5321: 1000 octets including CRLF
+	MaxHeaderLength    int // RFC 5322: 998 octets
+	MaxHeaderCount     int // Reasonable limit
+	// MaxHeaderBlockLength caps the whole header section, not one field.
+	// Distinct from MaxHeaderLength, which is RFC 5322's 998-octet per-field
+	// limit and is enforced per line as data arrives.
+	MaxHeaderBlockLength int
+	MaxParameterLength   int   // For SMTP extensions
+	MaxSizeValue         int64 // Maximum SIZE parameter value
 }
 
 // DefaultSMTPParameterLimits returns RFC-compliant parameter limits
@@ -50,9 +54,23 @@ func DefaultSMTPParameterLimits() *SMTPParameterLimits {
 		MaxLineLength:      1000,
 		MaxHeaderLength:    998,
 		MaxHeaderCount:     100,
-		MaxParameterLength: 256,
-		MaxSizeValue:       50 * 1024 * 1024, // 50MB
+		// 100KB, matching Postfix's header_size_limit default. This was
+		// MaxLineLength*10 — 10KB — which refuses ordinary mail: a message
+		// through a dozen hops with ARC seals and DKIM signatures runs past
+		// 12KB of headers on its own.
+		MaxHeaderBlockLength: 100 * 1024,
+		MaxParameterLength:   256,
+		MaxSizeValue:         50 * 1024 * 1024, // 50MB
 	}
+}
+
+// headerBlockLimit returns the cap on the whole header section, falling back
+// to the default for limits built before this field existed.
+func (v *EnhancedValidator) headerBlockLimit() int {
+	if v.limits != nil && v.limits.MaxHeaderBlockLength > 0 {
+		return v.limits.MaxHeaderBlockLength
+	}
+	return 100 * 1024
 }
 
 // EnhancedValidator provides comprehensive input validation with security analysis
@@ -531,10 +549,12 @@ func (v *EnhancedValidator) validateHeaderParameter(headers string) *EnhancedVal
 	}
 
 	// Length validation
-	if len(headers) > v.limits.MaxLineLength*10 { // Allow longer headers
+	// Per-field length is RFC 5322's concern and is enforced per line as data
+	// arrives; this bounds the section as a whole.
+	if maxBlock := v.headerBlockLimit(); len(headers) > maxBlock {
 		result.Valid = false
 		result.ErrorType = "headers_too_long"
-		result.ErrorMessage = fmt.Sprintf("Headers exceed maximum length (%d characters)", v.limits.MaxLineLength*10)
+		result.ErrorMessage = fmt.Sprintf("Headers exceed maximum length (%d characters)", maxBlock)
 		result.SecurityThreat = "buffer_overflow_attempt"
 		result.SecurityScore = 0
 		return result
