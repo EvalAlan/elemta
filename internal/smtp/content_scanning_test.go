@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/busybox42/elemta/internal/antispam"
 	"github.com/busybox42/elemta/internal/logging"
 )
 
@@ -231,6 +232,71 @@ func TestConcurrentScansProduceSameVerdict(t *testing.T) {
 		if !result.Passed {
 			t.Fatalf("iteration %d: ordinary mail was rejected: %v", i, result.Threats)
 		}
+	}
+}
+
+// TestWinningScoreKeepsScoreAndThresholdTogether covers the pairing that makes
+// X-Spam-Status meaningful: the threshold reported has to be the one belonging
+// to the engine whose score is reported.
+//
+// The "lower score cannot displace a higher one" case is the regression. An
+// earlier version advanced on `r.Score > highest || highestThreshold == 0`,
+// so an engine reporting no threshold left the zero test armed and the *next*
+// engine overwrote the winner regardless of its score — a 9.0 from Rspamd
+// replaced by a 1.0 from a second engine, and the message delivered unmarked.
+func TestWinningScoreKeepsScoreAndThresholdTogether(t *testing.T) {
+	cases := []struct {
+		name          string
+		results       []*antispam.ScanResult
+		wantScore     float64
+		wantThreshold float64
+	}{
+		{
+			name:          "highest score wins, and brings its own threshold",
+			results:       []*antispam.ScanResult{{Score: 3.0, Threshold: 5.0}, {Score: 12.0, Threshold: 15.0}},
+			wantScore:     12.0,
+			wantThreshold: 15.0,
+		},
+		{
+			name:          "a lower score cannot displace a higher one",
+			results:       []*antispam.ScanResult{{Score: 9.0, Threshold: 0}, {Score: 1.0, Threshold: 5.0}},
+			wantScore:     9.0,
+			wantThreshold: 0,
+		},
+		{
+			name:          "order does not change the outcome",
+			results:       []*antispam.ScanResult{{Score: 1.0, Threshold: 5.0}, {Score: 9.0, Threshold: 0}},
+			wantScore:     9.0,
+			wantThreshold: 0,
+		},
+		{
+			name:          "a zero threshold from the winner is reported as zero",
+			results:       []*antispam.ScanResult{{Score: 0, Threshold: 0}},
+			wantScore:     0,
+			wantThreshold: 0,
+		},
+		{
+			name:          "nil replies are skipped, not counted",
+			results:       []*antispam.ScanResult{nil, {Score: 4.0, Threshold: 6.0}, nil},
+			wantScore:     4.0,
+			wantThreshold: 6.0,
+		},
+		{
+			name:          "no replies at all",
+			results:       nil,
+			wantScore:     0,
+			wantThreshold: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			score, threshold := winningScore(tc.results)
+			if score != tc.wantScore || threshold != tc.wantThreshold {
+				t.Errorf("winningScore() = %.1f/%.1f, want %.1f/%.1f",
+					score, threshold, tc.wantScore, tc.wantThreshold)
+			}
+		})
 	}
 }
 
