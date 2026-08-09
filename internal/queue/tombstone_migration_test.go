@@ -194,8 +194,8 @@ func TestContentHashIsStableAndDistinct(t *testing.T) {
 	a := []byte("Subject: one\r\n\r\nbody\r\n")
 	b := []byte("Subject: two\r\n\r\nbody\r\n")
 
-	if ContentHash(a) != ContentHash(a) {
-		t.Error("hashing the same content twice must agree")
+	if firstA, secondA := ContentHash(a), ContentHash(a); firstA != secondA {
+		t.Errorf("hashing the same content twice must agree: %q vs %q", firstA, secondA)
 	}
 	if ContentHash(a) == ContentHash(b) {
 		t.Error("different content must hash differently")
