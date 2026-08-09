@@ -108,7 +108,81 @@ curl -s http://127.0.0.1:8025/api/queue/storage | jq
 
 ---
 
-## 5) Upgrades and rollback
+## 5) Content scanning
+
+Antivirus and antispam are plugins. Enable the ones you run, and give them
+addresses — the defaults assume `localhost`, which is wrong wherever the
+scanners are separate containers or hosts.
+
+```toml
+[antivirus]
+enabled = true
+reject_on_failure = false
+
+[antivirus.clamav]
+enabled = true
+address = "clamav.internal:3310"
+timeout = 30
+scan_limit = 26214400
+
+[antispam]
+enabled = true
+reject_on_spam = false
+
+[antispam.rspamd]
+enabled = true
+address = "http://rspamd.internal:11333"
+timeout = 30
+threshold = 6.0
+```
+
+Both `[antivirus].enabled` and `[antivirus.clamav].enabled` must be true; the
+section gate and the per-scanner gate are both honoured.
+
+### What the settings mean
+
+- **`reject_on_failure`** — a scanner that cannot be reached delivers the
+  message unscanned rather than refusing it. Leave it `false` unless you would
+  rather lose mail than accept it unscanned; a scanner outage becomes a mail
+  outage otherwise.
+- **`reject_on_spam`** — the engine decides what is spam against its own
+  threshold; this decides whether that verdict refuses the message. With it
+  `false`, spam is delivered carrying `X-Spam-*` headers for downstream
+  filtering. A virus verdict always refuses, regardless.
+- **`scan_limit`** — how much of a message is sent to the scanner. Messages are
+  streamed from the spool, so this bounds scanner work rather than memory.
+
+If no scanner is reachable, the server logs a warning at startup and delivers
+mail unscanned:
+
+```
+No antivirus scanner is available; messages will be delivered unscanned for viruses
+```
+
+Treat that line as an alert. Silence there previously looked identical to
+working scanners.
+
+### Latency
+
+Scanning costs a network round trip per message per engine, and the two run
+concurrently. Rspamd's optional lookups can dominate that:
+
+- `fuzzy_check` queries rspamd.com over UDP for every message. Measured on a
+  development stack it added roughly 4.3 seconds to about 5% of messages, cut
+  throughput by more than half, and made it swing eightfold between runs.
+- DNS blocklists (`rbl`, `surbl`) behave badly against a resolver that answers
+  for names which should not exist — rspamd cannot then tell a working
+  blocklist from a broken one.
+
+Both are genuinely useful against bulk mail. Keep them if you want them, but
+size for the latency and make sure Rspamd has a resolver that returns NXDOMAIN
+properly. The development stack disables them for reproducibility, via
+`docker/rspamd/override.d/`; those overrides are **not** intended for
+production.
+
+---
+
+## 6) Upgrades and rollback
 
 ### Upgrade
 
@@ -125,7 +199,7 @@ curl -s http://127.0.0.1:8025/api/queue/storage | jq
 
 ---
 
-## 6) Queue backend caveat
+## 7) Queue backend caveat
 
 Changing `queue.backend` does **not** migrate existing queued messages automatically.
 
