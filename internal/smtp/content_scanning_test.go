@@ -152,3 +152,82 @@ func TestVirusVerdictRejects(t *testing.T) {
 		t.Errorf("expected a 554 virus rejection, got %v", err)
 	}
 }
+
+// TestMergeScanResultIsOrderIndependent pins the property the concurrent scans
+// depend on: the two scans finish in whatever order they finish, so folding
+// their findings together must give the same answer either way.
+func TestMergeScanResultIsOrderIndependent(t *testing.T) {
+	virus := &SecurityScanResult{
+		Passed:     false,
+		VirusFound: true,
+		Threats:    []string{"Virus detected: Eicar-Test-Signature"},
+	}
+	spam := &SecurityScanResult{
+		Passed:       true,
+		SpamDetected: true,
+		SpamScore:    7.5,
+		Threats:      []string{"Message identified as spam (score 7.5)"},
+	}
+
+	forward := &SecurityScanResult{Passed: true, Threats: []string{}}
+	mergeScanResult(forward, virus)
+	mergeScanResult(forward, spam)
+
+	reverse := &SecurityScanResult{Passed: true, Threats: []string{}}
+	mergeScanResult(reverse, spam)
+	mergeScanResult(reverse, virus)
+
+	if forward.Passed != reverse.Passed ||
+		forward.VirusFound != reverse.VirusFound ||
+		forward.SpamDetected != reverse.SpamDetected ||
+		forward.SpamScore != reverse.SpamScore ||
+		len(forward.Threats) != len(reverse.Threats) {
+		t.Errorf("merge order changed the outcome\n  forward: %+v\n  reverse: %+v", forward, reverse)
+	}
+
+	if forward.Passed {
+		t.Error("a failing scan must fail the combined result")
+	}
+	if !forward.VirusFound || !forward.SpamDetected {
+		t.Error("both findings should survive the merge")
+	}
+	if forward.SpamScore != 7.5 {
+		t.Errorf("spam score = %v, want 7.5", forward.SpamScore)
+	}
+	if len(forward.Threats) != 2 {
+		t.Errorf("threats = %v, want both", forward.Threats)
+	}
+}
+
+// TestMergeScanResultKeepsHighestSpamScore covers several engines reporting.
+func TestMergeScanResultKeepsHighestSpamScore(t *testing.T) {
+	combined := &SecurityScanResult{Passed: true, Threats: []string{}}
+	mergeScanResult(combined, &SecurityScanResult{Passed: true, SpamScore: 3.0})
+	mergeScanResult(combined, &SecurityScanResult{Passed: true, SpamScore: 9.0})
+	mergeScanResult(combined, &SecurityScanResult{Passed: true, SpamScore: 5.0})
+
+	if combined.SpamScore != 9.0 {
+		t.Errorf("spam score = %v, want the highest (9.0)", combined.SpamScore)
+	}
+	if !combined.Passed {
+		t.Error("clean fragments should not fail the result")
+	}
+}
+
+// TestConcurrentScansProduceSameVerdict runs the scan path repeatedly to check
+// the concurrency did not make the outcome depend on timing.
+func TestConcurrentScansProduceSameVerdict(t *testing.T) {
+	dh := scanningHandler(t, nil, nil)
+	metadata := &MessageMetadata{MessageID: "t", From: "a@example.com", To: []string{"b@example.com"}}
+	content := []byte("Subject: probe\r\nFrom: a@example.com\r\n\r\nan ordinary message body\r\n")
+
+	for i := 0; i < 50; i++ {
+		result, err := dh.performSecurityScan(context.Background(), content, metadata)
+		if err != nil {
+			t.Fatalf("iteration %d: %v", i, err)
+		}
+		if !result.Passed {
+			t.Fatalf("iteration %d: ordinary mail was rejected: %v", i, result.Threats)
+		}
+	}
+}
