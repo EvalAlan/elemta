@@ -81,6 +81,15 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		}
 	}
 
+	var massMailer *api.MassMailerStatus
+	if mm := cfg.MassMailer; mm != nil {
+		massMailer = &api.MassMailerStatus{
+			Enabled:              mm.Enabled,
+			DefaultRatePerMinute: mm.DefaultRatePerMinute,
+			MaxRecipients:        mm.MaxRecipients,
+		}
+	}
+
 	return &api.MainConfig{
 		Hostname:                  hostname,
 		ListenAddr:                listenAddr,
@@ -110,6 +119,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		RateLimiterPluginConfig:   cfg.RateLimiter,
 		TLS:                       cfg.TLS,
 		API:                       nil, // API config not available in main config
+		MassMailer:                massMailer,
 		Antivirus:                 antivirus,
 		Antispam:                  antispam,
 		AccessControl:             accessControl,
