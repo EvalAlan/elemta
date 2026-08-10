@@ -37,6 +37,7 @@ type Server struct {
 	resourceManager *ResourceManager // Resource management and rate limiting
 	scannerManager  *ScannerManager  // Antivirus/antispam scanners used during DATA
 	accessControl   *AccessControl   // Allow/deny lists applied at connect and MAIL FROM
+	rblChecker      *RBLChecker      // DNS blocklists consulted for the connecting address
 	slogger         *slog.Logger     // Structured logger for resource management
 
 	// Concurrency management
@@ -562,6 +563,23 @@ func NewServer(config *Config) (*Server, error) {
 		)
 	}
 
+	// DNS blocklists, on the same terms: a zone that fails to load is a filter
+	// the operator thinks is running.
+	rblChecker, err := NewRBLChecker(config.RBL, slogger)
+	if err != nil {
+		return nil, fmt.Errorf("rbl configuration: %w", err)
+	}
+	server.rblChecker = rblChecker
+	if rblChecker.Enabled() {
+		slogger.Info("DNS blocklists enabled",
+			"zones", config.RBL.Zones,
+			"reject", rblChecker.Reject(),
+		)
+		if !rblChecker.Reject() {
+			slogger.Info("Blocklist hits will be marked with an X-RBL-Listed header, not refused")
+		}
+	}
+
 	// Say plainly when nothing will be scanned. Silence here previously looked
 	// identical to working scanners.
 	if !scannerManager.HasAntivirusScanners() {
@@ -941,6 +959,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	// Set the content scanners from the server
 	session.SetScannerManager(s.scannerManager)
 	session.SetAccessControl(s.accessControl)
+	session.SetRBLChecker(s.rblChecker)
 
 	// Set queue manager for message processing
 	if s.queueManager != nil {

@@ -262,6 +262,9 @@ type Config struct {
 	// AccessControl holds allow/deny lists for peer addresses and sender domains.
 	AccessControl *smtp.AccessControlConfig `toml:"access_control"`
 
+	// RBL holds the DNS blocklists consulted for the connecting address.
+	RBL *smtp.RBLConfig `toml:"rbl"`
+
 	// MassMailer configures bulk campaign sending in the web interface.
 	MassMailer *MassMailerConfig `toml:"mass_mailer"`
 

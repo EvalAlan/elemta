@@ -1091,6 +1091,21 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 		additionalHeaders = append(additionalHeaders, fmt.Sprintf("X-Spam-Score: %.1f", scanResult.SpamScore))
 	}
 
+	// A blocklist hit that was not rejected still has to be visible, or the
+	// tag-only mode reports nothing and the operator has no way to judge a new
+	// blocklist before trusting it. The zone and code come from configuration
+	// and DNS, and the reason has already had its control characters stripped,
+	// so none of it can write a header line of its own.
+	if dh.session != nil {
+		if rbl := dh.session.RBLDecision(); rbl.Listed {
+			header := fmt.Sprintf("X-RBL-Listed: %s (%s)", rbl.Zone, rbl.Code)
+			if rbl.Reason != "" {
+				header += "; " + rbl.Reason
+			}
+			additionalHeaders = append(additionalHeaders, header)
+		}
+	}
+
 	// Add server identification headers
 	additionalHeaders = append(additionalHeaders, "X-Elemta-Version: 1.0")
 	additionalHeaders = append(additionalHeaders, "X-Processed-By: Elemta MTA")

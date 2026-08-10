@@ -70,6 +70,9 @@ type Config struct {
 	// AccessControl holds the allow/deny lists applied at connect and MAIL FROM.
 	AccessControl *AccessControlConfig `toml:"access_control" json:"access_control"`
 
+	// RBL holds the DNS blocklists consulted for the connecting address.
+	RBL *RBLConfig `toml:"rbl" json:"rbl"`
+
 	// Rules configuration
 	Rules *RulesConfig `toml:"rules" json:"rules"`
 
@@ -315,6 +318,27 @@ type AccessControlConfig struct {
 	// subdomains, so "example.com" also covers "mail.example.com".
 	AllowDomains []string `toml:"allow_domains" json:"allow_domains"`
 	DenyDomains  []string `toml:"deny_domains" json:"deny_domains"`
+}
+
+// RBLConfig configures DNS blocklist checks on the connecting address.
+type RBLConfig struct {
+	Enabled bool `toml:"enabled" json:"enabled"`
+	// Zones are the blocklists to query, e.g. "zen.spamhaus.org". They are
+	// queried concurrently and one listing is enough.
+	Zones []string `toml:"zones" json:"zones"`
+	// Reject decides whether a listing refuses the message or only adds a
+	// header. Tagging first is what makes a new blocklist safe to try: the
+	// operator can see what it would have refused before letting it.
+	Reject bool `toml:"reject" json:"reject"`
+	// Timeout bounds the whole check in seconds, not each zone.
+	Timeout int `toml:"timeout" json:"timeout"`
+	// SkipIPs are addresses and ranges never looked up: relays, monitoring,
+	// the operator's own networks.
+	SkipIPs []string `toml:"skip_ips" json:"skip_ips"`
+	// CacheTTL and CacheSize bound the answer cache. It has to be bounded:
+	// keyed by peer address and left to grow, it is a memory exhaustion vector.
+	CacheTTL  int `toml:"cache_ttl" json:"cache_ttl"`
+	CacheSize int `toml:"cache_size" json:"cache_size"`
 }
 
 // AntivirusConfig represents antivirus configuration

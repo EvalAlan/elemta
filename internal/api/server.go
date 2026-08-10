@@ -72,6 +72,20 @@ type MainConfig struct {
 
 	// MassMailer configures the campaign sender.
 	MassMailer *MassMailerStatus `json:"mass_mailer,omitempty"`
+
+	// RBL is the DNS blocklist plugin's configuration.
+	RBL *RBLStatus `json:"rbl,omitempty"`
+}
+
+// RBLStatus is the API's view of the DNS blocklists.
+type RBLStatus struct {
+	Enabled   bool     `json:"enabled"`
+	Zones     []string `json:"zones"`
+	Reject    bool     `json:"reject"`
+	Timeout   int      `json:"timeout"`
+	SkipIPs   []string `json:"skip_ips"`
+	CacheTTL  int      `json:"cache_ttl"`
+	CacheSize int      `json:"cache_size"`
 }
 
 // AccessControlStatus is the API's view of the allow/deny lists.
@@ -1862,6 +1876,19 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	rblEnabled, rblConfig := false, map[string]interface{}(nil)
+	if r := s.mainConfig.RBL; r != nil {
+		rblEnabled = r.Enabled
+		rblConfig = map[string]interface{}{
+			"zones":      r.Zones,
+			"reject":     r.Reject,
+			"timeout":    r.Timeout,
+			"skip_ips":   r.SkipIPs,
+			"cache_ttl":  r.CacheTTL,
+			"cache_size": r.CacheSize,
+		}
+	}
+
 	plugins := []map[string]interface{}{
 		{
 			"name":             "rate_limiter",
@@ -1896,6 +1923,15 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"enabled":          rspamdEnabled,
 			"description":      "Spam filtering and content analysis",
 			"config":           rspamdConfig,
+			"configurable":     true,
+			"requires_restart": true,
+		},
+		{
+			"name":             "rbl",
+			"title":            "DNS Blocklists",
+			"enabled":          rblEnabled,
+			"description":      "Check the connecting address against DNS blocklists (RBL/DNSBL)",
+			"config":           rblConfig,
 			"configurable":     true,
 			"requires_restart": true,
 		},
@@ -2117,6 +2153,25 @@ func (s *Server) persistConfig() error {
 			edits = append(edits, edit{"antispam.rspamd", "threshold", as.Threshold})
 		}
 	}
+	if r := s.mainConfig.RBL; r != nil {
+		edits = append(edits,
+			edit{"rbl", "enabled", r.Enabled},
+			edit{"rbl", "zones", r.Zones},
+			edit{"rbl", "reject", r.Reject},
+			edit{"rbl", "skip_ips", r.SkipIPs},
+		)
+		// Same rule as the scanners: an unset bound is left out rather than
+		// written as a zero, which here would mean no timeout and no cache.
+		if r.Timeout > 0 {
+			edits = append(edits, edit{"rbl", "timeout", r.Timeout})
+		}
+		if r.CacheTTL > 0 {
+			edits = append(edits, edit{"rbl", "cache_ttl", r.CacheTTL})
+		}
+		if r.CacheSize > 0 {
+			edits = append(edits, edit{"rbl", "cache_size", r.CacheSize})
+		}
+	}
 	if mm := s.mainConfig.MassMailer; mm != nil {
 		edits = append(edits,
 			edit{"mass_mailer", "enabled", mm.Enabled},
@@ -2237,6 +2292,21 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 			s.mainConfig.AccessControl = &AccessControlStatus{}
 		}
 		s.mainConfig.AccessControl.Enabled = enabled
+		requiresRestart = true
+
+	case "rbl":
+		if s.mainConfig.RBL == nil {
+			s.mainConfig.RBL = &RBLStatus{}
+		}
+		// Enabled with nothing to query is a filter the operator believes is
+		// protecting them — and it is what the SMTP server refuses to start
+		// with, so accepting it here would turn a form error into a server that
+		// does not come back up.
+		if enabled && len(s.mainConfig.RBL.Zones) == 0 {
+			http.Error(w, "Add at least one blocklist zone before enabling this plugin", http.StatusBadRequest)
+			return
+		}
+		s.mainConfig.RBL.Enabled = enabled
 		requiresRestart = true
 
 	case "mass_mailer":
