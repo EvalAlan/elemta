@@ -1962,11 +1962,18 @@ function pluginSummary(plugin) {
 // configurable plugin has a tab while it is enabled and loses it when disabled.
 // If the tab currently open belongs to a plugin that was just turned off, the
 // view falls back to the plugin list rather than showing an empty panel.
+//
+// The exception is a plugin the server reports as needs_config — one that
+// refuses to be enabled until it has been configured. Hiding its tab while it
+// is off left no way to configure it and therefore no way to turn it on: the
+// toggle answered "add at least one blocklist zone" and the form for adding
+// one appeared only once it was enabled.
 function renderPluginTabs(plugins) {
     const tabBar = document.querySelector('.settings-tabs');
     if (!tabBar) return;
 
-    const wanted = plugins.filter(p => p.enabled && p.configurable && PLUGIN_SETTINGS_SCHEMA[p.name]);
+    const wanted = plugins.filter(p =>
+        (p.enabled || p.needs_config) && p.configurable && PLUGIN_SETTINGS_SCHEMA[p.name]);
     const wantedIds = new Set(wanted.map(p => `plugin-${p.name}`));
 
     // Drop tabs whose plugin is gone or disabled.
@@ -2067,6 +2074,11 @@ function renderPluginPanel(plugin) {
             </div>`;
     }).join('');
 
+    // A plugin that is off only because it has not been configured gets a
+    // button that does both, so the operator is not left saving settings for
+    // something that stays off with no hint that a second step exists.
+    const enableOnSave = !plugin.enabled && plugin.needs_config;
+
     panel.innerHTML = `
         <div class="card">
             <div class="card-header">
@@ -2075,6 +2087,11 @@ function renderPluginPanel(plugin) {
             </div>
             <div class="card-body">
                 <p class="panel-intro">${escapeHtml(plugin.description || '')}</p>
+                ${enableOnSave ? `
+                    <div class="restart-note">
+                        This plugin is off until it is configured. Fill the settings in and
+                        save to turn it on.
+                    </div>` : ''}
                 <div class="config-grid">${fields}</div>
                 ${plugin.requires_restart ? `
                     <div class="restart-note">
@@ -2083,7 +2100,8 @@ function renderPluginPanel(plugin) {
                     </div>` : ''}
                 <div class="form-actions">
                     <button class="btn btn-primary" id="plugin-${escapeHtml(plugin.name)}-save"
-                            onclick="savePluginSettings('${escapeJsArg(plugin.name)}')">Save Settings</button>
+                            onclick="savePluginSettings('${escapeJsArg(plugin.name)}', ${enableOnSave})">${
+                        enableOnSave ? 'Save and Enable' : 'Save Settings'}</button>
                     <span class="save-status" id="plugin-${escapeHtml(plugin.name)}-status"></span>
                 </div>
             </div>
@@ -2098,7 +2116,7 @@ function renderPluginPanel(plugin) {
 // Values are sent with their JSON types — a port typed into a number field is
 // a number, not the string "3310" — because the server validates types and
 // would otherwise refuse everything the form produces.
-async function savePluginSettings(pluginName) {
+async function savePluginSettings(pluginName, enableOnSave = false) {
     const schema = PLUGIN_SETTINGS_SCHEMA[pluginName];
     if (!schema || !schema.fields) return;
 
@@ -2130,10 +2148,14 @@ async function savePluginSettings(pluginName) {
 
     setSaveStatus(statusEl, 'Saving...', '');
     try {
+        // Enabling and configuring go in one request when the plugin refuses to
+        // be enabled without its settings: the server applies the settings
+        // first, so it cannot end up on with a configuration it would reject.
+        const body = enableOnSave ? { enabled: true, config } : { config };
         const response = await fetch(`${API_BASE}/config/plugins/${encodeURIComponent(pluginName)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ config })
+            body: JSON.stringify(body)
         });
         const text = await response.text();
         if (!response.ok) throw new Error(text || `HTTP ${response.status}`);
@@ -2173,7 +2195,19 @@ async function togglePlugin(pluginName, enabled) {
         });
 
         if (!response.ok) {
-            throw new Error(await response.text() || `HTTP ${response.status}`);
+            const message = await response.text() || `HTTP ${response.status}`;
+            // A plugin that refuses to be enabled until it is configured needs
+            // the operator taken to the form, not just told no. Being told
+            // "add at least one blocklist zone" with no visible way to add one
+            // is where this got stuck before.
+            const plugin = pluginState.find(p => p.name === pluginName);
+            if (enabled && plugin && plugin.needs_config) {
+                showToast(`${message.trim()} — opening its settings`, 'info');
+                await refreshPlugins();
+                switchSettingsTab(`plugin-${pluginName}`);
+                return;
+            }
+            throw new Error(message);
         }
         const result = await response.json();
 
