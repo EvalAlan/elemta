@@ -110,8 +110,6 @@ type Server struct {
 	listener       net.Listener
 	restarting     atomic.Bool
 	queueMgr       *queue.Manager
-	campaigns      *campaign.Store // Mass mailer campaigns, when enabled
-	campaignRunner *campaign.Runner
 	listenAddr     string
 	webRoot        string
 	authSystem     *auth.Auth
@@ -122,6 +120,13 @@ type Server struct {
 	rateLimiter    *RateLimitMiddleware
 	corsMiddleware *CORSMiddleware
 	metricsStore   MetricsStore
+
+	// Mass mailer. Guarded because the plugin toggle builds and tears these
+	// down while requests are in flight, unlike the rest of the server's
+	// components, which are fixed once startup finishes.
+	massMailerMu   sync.RWMutex
+	campaigns      *campaign.Store
+	campaignRunner *campaign.Runner
 
 	lifecycleMu     sync.Mutex
 	lifecycleState  serverLifecycleState
@@ -244,11 +249,9 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 	// campaign endpoints report the feature as unavailable rather than half
 	// working.
 	if mainConfig != nil && mainConfig.MassMailer != nil && mainConfig.MassMailer.Enabled {
-		server.campaigns = campaign.NewStore()
-		server.campaignRunner = campaign.NewRunner(
-			server.campaigns, server.queueMgr, mainConfig.Hostname,
-			slog.Default().With("component", "mass-mailer"),
-		)
+		if err := server.setMassMailerEnabled(true); err != nil {
+			return nil, fmt.Errorf("failed to start the mass mailer: %w", err)
+		}
 	}
 
 	// Initialize rate limiter
@@ -1850,6 +1853,15 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 	}
 	accessControlEnabled, accessControlConfig := acEnabled, acConfig
 
+	mmEnabled, mmConfig := false, map[string]interface{}(nil)
+	if mm := s.mainConfig.MassMailer; mm != nil {
+		mmEnabled = mm.Enabled
+		mmConfig = map[string]interface{}{
+			"default_rate_per_minute": mm.DefaultRatePerMinute,
+			"max_recipients":          mm.MaxRecipients,
+		}
+	}
+
 	plugins := []map[string]interface{}{
 		{
 			"name":             "rate_limiter",
@@ -1886,6 +1898,17 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"config":           rspamdConfig,
 			"configurable":     true,
 			"requires_restart": true,
+		},
+		{
+			"name":        "mass_mailer",
+			"title":       "Mass Mailer",
+			"enabled":     mmEnabled,
+			"description": "Bulk campaigns with a throttled background sender",
+			"config":      mmConfig,
+			// The campaign store and runner live in this process, so unlike the
+			// scanners this one is live the moment it is switched on.
+			"configurable":     true,
+			"requires_restart": false,
 		},
 	}
 
@@ -2049,17 +2072,56 @@ func (s *Server) persistConfig() error {
 		)
 	}
 
-	// Scanner enablement, which the plugin toggles drive.
+	// Scanners. The endpoint settings live in the [antivirus.clamav] and
+	// [antispam.rspamd] subsections, while the rejection policy is a property of
+	// the stage as a whole and sits in the parent — writing either to the wrong
+	// place produces a file that loads cleanly and ignores the setting.
+	//
+	// An unset endpoint setting is left out rather than written as a zero. A
+	// scanner section can be absent from the file entirely, in which case the
+	// toggle creates one from an empty struct — writing that out would replace a
+	// working address with "" and a timeout with 0, which is not "the default"
+	// but "no timeout".
 	if av := s.mainConfig.Antivirus; av != nil {
 		edits = append(edits,
 			edit{"antivirus", "enabled", av.Enabled},
+			edit{"antivirus", "reject_on_failure", av.RejectOnFailure},
 			edit{"antivirus.clamav", "enabled", av.Enabled},
 		)
+		if av.Address != "" {
+			edits = append(edits, edit{"antivirus.clamav", "address", av.Address})
+		}
+		if av.Timeout > 0 {
+			edits = append(edits, edit{"antivirus.clamav", "timeout", av.Timeout})
+		}
+		if av.ScanLimit > 0 {
+			edits = append(edits, edit{"antivirus.clamav", "scan_limit", av.ScanLimit})
+		}
 	}
 	if as := s.mainConfig.Antispam; as != nil {
 		edits = append(edits,
 			edit{"antispam", "enabled", as.Enabled},
+			edit{"antispam", "reject_on_spam", as.RejectOnSpam},
 			edit{"antispam.rspamd", "enabled", as.Enabled},
+		)
+		if as.Address != "" {
+			edits = append(edits, edit{"antispam.rspamd", "address", as.Address})
+		}
+		if as.Timeout > 0 {
+			edits = append(edits, edit{"antispam.rspamd", "timeout", as.Timeout})
+		}
+		if as.ScanLimit > 0 {
+			edits = append(edits, edit{"antispam.rspamd", "scan_limit", as.ScanLimit})
+		}
+		if as.Threshold > 0 {
+			edits = append(edits, edit{"antispam.rspamd", "threshold", as.Threshold})
+		}
+	}
+	if mm := s.mainConfig.MassMailer; mm != nil {
+		edits = append(edits,
+			edit{"mass_mailer", "enabled", mm.Enabled},
+			edit{"mass_mailer", "default_rate_per_minute", mm.DefaultRatePerMinute},
+			edit{"mass_mailer", "max_recipients", mm.MaxRecipients},
 		)
 	}
 	if ac := s.mainConfig.AccessControl; ac != nil {
@@ -2119,16 +2181,32 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var pluginUpdate map[string]interface{}
+	var pluginUpdate struct {
+		Enabled *bool                  `json:"enabled"`
+		Config  map[string]interface{} `json:"config"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&pluginUpdate); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-
-	enabled, ok := pluginUpdate["enabled"].(bool)
-	if !ok {
-		http.Error(w, "Field 'enabled' (boolean) is required", http.StatusBadRequest)
+	if pluginUpdate.Enabled == nil && pluginUpdate.Config == nil {
+		http.Error(w, "Send 'enabled' (boolean), 'config' (object), or both", http.StatusBadRequest)
 		return
+	}
+
+	// Settings first: a payload that turns a plugin on with settings it will
+	// refuse to start with should not leave the toggle flipped.
+	if pluginUpdate.Config != nil {
+		if err := s.applyPluginConfig(pluginName, pluginUpdate.Config); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// An update that only changes settings leaves enablement alone.
+	enabled := s.pluginEnabled(pluginName)
+	if pluginUpdate.Enabled != nil {
+		enabled = *pluginUpdate.Enabled
 	}
 
 	requiresRestart := false
@@ -2160,6 +2238,20 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mainConfig.AccessControl.Enabled = enabled
 		requiresRestart = true
+
+	case "mass_mailer":
+		if s.mainConfig.MassMailer == nil {
+			s.mainConfig.MassMailer = &MassMailerStatus{}
+		}
+		// The campaign store and runner live in this process, so this toggle
+		// can take effect now. Turning it off with a send in flight would
+		// abandon a partly-delivered campaign, so that is refused rather than
+		// done quietly.
+		if err := s.setMassMailerEnabled(enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		s.mainConfig.MassMailer.Enabled = enabled
 
 	default:
 		http.Error(w, fmt.Sprintf("Unknown plugin %q", pluginName), http.StatusBadRequest)

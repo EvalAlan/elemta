@@ -1831,10 +1831,18 @@ const PLUGIN_SETTINGS_SCHEMA = {
             { key: 'address', label: 'Address', type: 'text', hint: 'Base URL of the rspamd worker' },
             { key: 'timeout', label: 'Timeout (seconds)', type: 'number' },
             { key: 'scan_limit', label: 'Scan limit (bytes)', type: 'number' },
-            { key: 'threshold', label: 'Score threshold', type: 'number',
+            { key: 'threshold', label: 'Score threshold', type: 'number', step: '0.1',
               hint: 'Only used when rspamd reports no action of its own' },
             { key: 'reject_on_spam', label: 'Reject spam at SMTP', type: 'checkbox',
               hint: 'Off delivers spam tagged with X-Spam headers for downstream filtering' },
+        ],
+    },
+    mass_mailer: {
+        fields: [
+            { key: 'default_rate_per_minute', label: 'Default rate (messages/minute)', type: 'number',
+              hint: 'Used by campaigns that do not set their own. Campaign mail is queued at low priority.' },
+            { key: 'max_recipients', label: 'Maximum recipients per campaign', type: 'number',
+              hint: '0 for no limit' },
         ],
     },
 };
@@ -2021,10 +2029,11 @@ function renderPluginPanel(plugin) {
                     ${hint}
                 </div>`;
         }
+        const step = f.step ? ` step="${escapeHtml(f.step)}"` : '';
         return `
             <div class="config-item">
                 <label for="${id}">${escapeHtml(f.label)}</label>
-                <input type="${f.type === 'number' ? 'number' : 'text'}" id="${id}"
+                <input type="${f.type === 'number' ? 'number' : 'text'}" id="${id}"${step}
                        value="${escapeHtml(value === undefined || value === null ? '' : String(value))}">
                 ${hint}
             </div>`;
@@ -2044,9 +2053,87 @@ function renderPluginPanel(plugin) {
                         Changes here are read by the SMTP server at startup, so they take
                         effect after a restart.
                     </div>` : ''}
+                <div class="form-actions">
+                    <button class="btn btn-primary" id="plugin-${escapeHtml(plugin.name)}-save"
+                            onclick="savePluginSettings('${escapeJsArg(plugin.name)}')">Save Settings</button>
+                    <span class="save-status" id="plugin-${escapeHtml(plugin.name)}-status"></span>
+                </div>
             </div>
         </div>
     `;
+}
+
+// savePluginSettings sends what the form holds. Until this existed the panels
+// were decoration: they rendered the current values, accepted changes and had
+// nowhere to send them, so every edit was discarded when the tab was closed.
+//
+// Values are sent with their JSON types — a port typed into a number field is
+// a number, not the string "3310" — because the server validates types and
+// would otherwise refuse everything the form produces.
+async function savePluginSettings(pluginName) {
+    const schema = PLUGIN_SETTINGS_SCHEMA[pluginName];
+    if (!schema || !schema.fields) return;
+
+    const statusEl = document.getElementById(`plugin-${pluginName}-status`);
+    const config = {};
+
+    for (const f of schema.fields) {
+        const el = document.getElementById(`plugin-${pluginName}-${f.key}`);
+        if (!el) continue;
+
+        if (f.type === 'checkbox') {
+            config[f.key] = el.checked;
+        } else if (f.type === 'list') {
+            config[f.key] = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+        } else if (f.type === 'number') {
+            // An empty box means "leave this alone", not zero. Sending 0 for a
+            // blank timeout would turn a scanner timeout off.
+            if (el.value.trim() === '') continue;
+            const n = Number(el.value);
+            if (Number.isNaN(n)) {
+                setSaveStatus(statusEl, `${f.label} must be a number`, 'error');
+                return;
+            }
+            config[f.key] = n;
+        } else {
+            config[f.key] = el.value.trim();
+        }
+    }
+
+    setSaveStatus(statusEl, 'Saving...', '');
+    try {
+        const response = await fetch(`${API_BASE}/config/plugins/${encodeURIComponent(pluginName)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config })
+        });
+        const text = await response.text();
+        if (!response.ok) throw new Error(text || `HTTP ${response.status}`);
+
+        const result = JSON.parse(text);
+        if (result.persistent === false) {
+            setSaveStatus(statusEl, '', '');
+            showConfigWarning(result.warning || 'This change was not saved permanently.');
+        } else if (result.requires_restart) {
+            setSaveStatus(statusEl, 'Saved', 'success');
+            showRestartRequired(`${pluginName} settings saved`);
+        } else {
+            setSaveStatus(statusEl, 'Saved', 'success');
+            showToast(`${pluginName} settings saved`, 'success');
+        }
+        await refreshPlugins();
+    } catch (error) {
+        console.error('Error saving plugin settings:', error);
+        // The server names the field to fix, so show its words rather than a
+        // generic failure.
+        setSaveStatus(statusEl, error.message, 'error');
+    }
+}
+
+function setSaveStatus(el, message, kind) {
+    if (!el) return;
+    el.textContent = message;
+    el.className = `save-status${kind ? ' ' + kind : ''}`;
 }
 
 async function togglePlugin(pluginName, enabled) {
