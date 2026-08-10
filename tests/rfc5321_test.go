@@ -19,8 +19,10 @@ func createTestConfig(t *testing.T) *smtp.Config {
 	queueDir := t.TempDir()
 
 	config := &smtp.Config{
-		Hostname:          "test.example.com",
-		ListenAddr:        ":2525",
+		Hostname: "test.example.com",
+		// Loopback and an ephemeral port: see startTestServer. A fixed 2525
+		// collided with the development stack, and the collision was silent.
+		ListenAddr:        "127.0.0.1:0",
 		QueueDir:          queueDir,
 		LocalDomains:      []string{"test.example.com", "example.com", "localhost"},
 		MaxSize:           1024 * 1024,         // 1MB for testing
@@ -40,26 +42,8 @@ func createTestConfig(t *testing.T) *smtp.Config {
 
 // setupTestServer creates and starts a test SMTP server
 func setupTestServer(t *testing.T) (*smtp.Server, net.Conn, *bufio.Reader) {
-	config := createTestConfig(t)
-
-	server, err := smtp.NewServer(config)
-	require.NoError(t, err)
-
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- server.Start() }()
-	time.Sleep(100 * time.Millisecond)
-
-	conn, err := net.Dial("tcp", "localhost:2525")
-	require.NoError(t, err)
-
-	reader := bufio.NewReader(conn)
-
-	// Read greeting
-	greeting, err := reader.ReadString('\n')
-	require.NoError(t, err)
-	require.Contains(t, greeting, "220")
-
-	return server, conn, reader
+	t.Helper()
+	return startTestServer(t, createTestConfig(t))
 }
 
 // sendCommand sends an SMTP command and returns the response
