@@ -79,6 +79,10 @@ var userAddCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Added %q to %s\n", args[0], path)
+		// A running server read this file at startup and will not see the new
+		// account until it reads it again. Without saying so, `user add`
+		// succeeds and the account then fails to log in for no visible reason.
+		fmt.Println("Restart the web service for a running server to pick this up.")
 		return nil
 	},
 }
@@ -112,6 +116,7 @@ var userPasswdCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Changed the password for %q\n", args[0])
+		fmt.Println("Restart the web service for a running server to pick this up.")
 		return nil
 	},
 }
@@ -138,6 +143,9 @@ var userRemoveCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Removed %q\n", args[0])
+		// Especially worth saying here: a removed account keeps working until
+		// the server reads the file again.
+		fmt.Println("Restart the web service for a running server to pick this up.")
 		return nil
 	},
 }
@@ -189,8 +197,20 @@ func readPassword(cmd *cobra.Command, confirm bool) (string, error) {
 	if userPassword != "" {
 		return userPassword, nil
 	}
+	// Not a terminal: read one line from stdin. This is what lets a setup
+	// script pipe a password in without putting it on the command line, where
+	// it would be visible in the process list and in shell history — the same
+	// reason prompting is preferred over --password interactively.
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return "", fmt.Errorf("no terminal available to prompt for a password; pass --password")
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		password := strings.TrimRight(line, "\r\n")
+		if password == "" {
+			if err != nil {
+				return "", fmt.Errorf("no terminal available and no password on stdin: %w", err)
+			}
+			return "", fmt.Errorf("password must not be empty")
+		}
+		return password, nil
 	}
 
 	fmt.Fprint(cmd.OutOrStdout(), "Password: ")
