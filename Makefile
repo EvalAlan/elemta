@@ -113,6 +113,9 @@ help:
 	@echo "    in the compose file if the machine is not isolated."
 	@echo "  • The RBL plugin ships in tag mode (adds a header, refuses nothing). Turn on"
 	@echo "    'Refuse listed senders' in Settings once you trust what it is flagging."
+	@echo "  • The Mass Mailer opens with a demo campaign — a draft addressed to this"
+	@echo "    stack's own mailboxes, never sent. Delete it and it stays gone until the"
+	@echo "    campaign list is empty again; ELEMTA_DEMO_DATA=false turns it off."
 
 build:
 	@echo "Building elemta server and utilities..."
