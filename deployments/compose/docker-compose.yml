@@ -29,6 +29,9 @@ services:
       # certificate when it cannot read one. Never set this in production: a
       # server that quietly self-signs looks healthy while being untrusted.
       - ELEMTA_DEV_CERT=true
+      # Seeds a worked example into the mass mailer. Development only: a
+      # deployment should not invent content it was not asked for.
+      - ELEMTA_DEMO_DATA=${ELEMTA_DEMO_DATA:-true}
       - ELEMTA_DEV_CERT_DAYS=${ELEMTA_DEV_CERT_DAYS:-7}
       - DEBUG=true
       - NODE_ID=0
@@ -113,6 +116,9 @@ services:
       # certificate when it cannot read one. Never set this in production: a
       # server that quietly self-signs looks healthy while being untrusted.
       - ELEMTA_DEV_CERT=true
+      # Seeds a worked example into the mass mailer. Development only: a
+      # deployment should not invent content it was not asked for.
+      - ELEMTA_DEMO_DATA=${ELEMTA_DEMO_DATA:-true}
       - ELEMTA_DEV_CERT_DAYS=${ELEMTA_DEV_CERT_DAYS:-7}
       - NODE_ID=web
       - VALKEY_ADDR=elemta-valkey:6379
