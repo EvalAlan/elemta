@@ -39,9 +39,10 @@ RUN apt-get update && \
 
 # Create directories with proper ownership from the start
 # Note: /app/plugins directory exists but is empty (all plugins are built-in)
-RUN mkdir -p /app/config /app/queue /app/logs /app/plugins /app/certs && \
+RUN mkdir -p /app/config /app/runtime-config /app/queue /app/logs /app/plugins /app/certs && \
     chown -R elemta:elemta /app && \
     chmod 755 /app/config /app/logs /app/plugins /app/certs && \
+    chmod 700 /app/runtime-config && \
     chmod 700 /app/queue
 
 # Set working directory
@@ -49,9 +50,10 @@ WORKDIR /app
 
 # Copy entrypoint script and set proper permissions
 COPY scripts/entrypoint.sh /app/entrypoint.sh
-RUN dos2unix /app/entrypoint.sh && \
-    chmod +x /app/entrypoint.sh && \
-    chown elemta:elemta /app/entrypoint.sh
+COPY scripts/prepare-config.sh /app/prepare-config.sh
+RUN dos2unix /app/entrypoint.sh /app/prepare-config.sh && \
+    chmod +x /app/entrypoint.sh /app/prepare-config.sh && \
+    chown elemta:elemta /app/entrypoint.sh /app/prepare-config.sh
 
 # Copy the binary and config files with proper ownership
 COPY --from=builder --chown=elemta:elemta /build/elemta /app/elemta
