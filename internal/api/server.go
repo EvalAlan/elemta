@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/busybox42/elemta/internal/auth"
+	"github.com/busybox42/elemta/internal/campaign"
 	"github.com/busybox42/elemta/internal/config"
 	"github.com/busybox42/elemta/internal/metrics"
 	"github.com/busybox42/elemta/internal/queue"
@@ -68,6 +69,9 @@ type MainConfig struct {
 	// AccessControl is the allow/deny plugin's configuration, mirrored for the
 	// same reason.
 	AccessControl *AccessControlStatus `json:"access_control,omitempty"`
+
+	// MassMailer configures the campaign sender.
+	MassMailer *MassMailerStatus `json:"mass_mailer,omitempty"`
 }
 
 // AccessControlStatus is the API's view of the allow/deny lists.
@@ -77,6 +81,13 @@ type AccessControlStatus struct {
 	DenyIPs      []string `json:"deny_ips"`
 	AllowDomains []string `json:"allow_domains"`
 	DenyDomains  []string `json:"deny_domains"`
+}
+
+// MassMailerStatus is the API's view of the mass mailer plugin.
+type MassMailerStatus struct {
+	Enabled              bool `json:"enabled"`
+	DefaultRatePerMinute int  `json:"default_rate_per_minute"`
+	MaxRecipients        int  `json:"max_recipients"`
 }
 
 // ScannerStatus is the API's view of a content scanner's configuration.
@@ -99,6 +110,8 @@ type Server struct {
 	listener       net.Listener
 	restarting     atomic.Bool
 	queueMgr       *queue.Manager
+	campaigns      *campaign.Store // Mass mailer campaigns, when enabled
+	campaignRunner *campaign.Runner
 	listenAddr     string
 	webRoot        string
 	authSystem     *auth.Auth
@@ -225,6 +238,17 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 		if err := server.initializeAuth(); err != nil {
 			return nil, fmt.Errorf("failed to initialize authentication: %w", err)
 		}
+	}
+
+	// Mass mailer. Only built when enabled: without a store and runner the
+	// campaign endpoints report the feature as unavailable rather than half
+	// working.
+	if mainConfig != nil && mainConfig.MassMailer != nil && mainConfig.MassMailer.Enabled {
+		server.campaigns = campaign.NewStore()
+		server.campaignRunner = campaign.NewRunner(
+			server.campaigns, server.queueMgr, mainConfig.Hostname,
+			slog.Default().With("component", "mass-mailer"),
+		)
 	}
 
 	// Initialize rate limiter
@@ -536,6 +560,28 @@ func (s *Server) Start() error {
 
 	// Configuration read endpoints expose operational topology.
 	api.Handle("/config", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetConfig))).Methods("GET")
+	// Mass mailer campaigns. Composing and sending are separate: a campaign is
+	// created, checked, then started, so nothing goes out because a draft was
+	// saved.
+	if s.authMiddleware != nil {
+		manage := s.authMiddleware.RequirePermission(auth.PermissionQueueManage)
+		api.Handle("/campaigns", manage(http.HandlerFunc(s.handleListCampaigns))).Methods("GET")
+		api.Handle("/campaigns", manage(http.HandlerFunc(s.handleCreateCampaign))).Methods("POST")
+		api.Handle("/campaigns/{id}", manage(http.HandlerFunc(s.handleGetCampaign))).Methods("GET")
+		api.Handle("/campaigns/{id}", manage(http.HandlerFunc(s.handleUpdateCampaign))).Methods("PUT")
+		api.Handle("/campaigns/{id}", manage(http.HandlerFunc(s.handleDeleteCampaign))).Methods("DELETE")
+		api.Handle("/campaigns/{id}/recipients", manage(http.HandlerFunc(s.handleGetCampaignRecipients))).Methods("GET")
+		api.Handle("/campaigns/{id}/{action}", manage(http.HandlerFunc(s.handleCampaignAction))).Methods("POST")
+	} else {
+		api.HandleFunc("/campaigns", s.handleListCampaigns).Methods("GET")
+		api.HandleFunc("/campaigns", s.handleCreateCampaign).Methods("POST")
+		api.HandleFunc("/campaigns/{id}", s.handleGetCampaign).Methods("GET")
+		api.HandleFunc("/campaigns/{id}", s.handleUpdateCampaign).Methods("PUT")
+		api.HandleFunc("/campaigns/{id}", s.handleDeleteCampaign).Methods("DELETE")
+		api.HandleFunc("/campaigns/{id}/recipients", s.handleGetCampaignRecipients).Methods("GET")
+		api.HandleFunc("/campaigns/{id}/{action}", s.handleCampaignAction).Methods("POST")
+	}
+
 	api.Handle("/config/plugins", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetPlugins))).Methods("GET")
 
 	// Configuration management endpoints (write operations require auth)
