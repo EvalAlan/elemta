@@ -132,4 +132,19 @@ if ! pair_matches "$RUNTIME_DIR/test.crt" "$RUNTIME_DIR/test.key"; then
     fi
 fi
 
+# The dashboard's user file.
+#
+# Authentication is on by default, and the server refuses to start without this
+# file — correctly, since the alternative is an admin interface that anyone can
+# reach. But it cannot be created before the service exists either, so an empty
+# one is placed here: the service starts, and nobody can log in until an account
+# is added with `elemta user add` (which `make install-dev` does).
+#
+# Empty means locked, not open. That is the safe direction, and it beats a crash
+# loop that takes the health probes down with it when the fix is one command.
+if [ ! -e "$RUNTIME_DIR/users.json" ]; then
+    printf '{}' > "$RUNTIME_DIR/users.json" 2>/dev/null || true
+    chmod 600 "$RUNTIME_DIR/users.json" 2>/dev/null || true
+fi
+
 echo "$RUNTIME_CONFIG"
