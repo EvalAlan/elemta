@@ -149,7 +149,12 @@ body {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
-    overflow-y: visible;
+    /* Same reasoning as .view: the sidebar is a fixed-height column, so the nav
+       list is what scrolls when it does not fit. In a short window the theme
+       toggle and server status in the footer were pushed off the bottom with no
+       way to reach them. */
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .nav-item {
@@ -326,10 +331,19 @@ body {
 .view {
     display: none;
     flex: 1;
-    overflow: visible;
+    /* The shell is a fixed-height column — .app is 100vh with overflow:hidden —
+       so the view is where scrolling has to happen. With overflow:visible here
+       and nothing above it able to scroll, everything past the bottom of the
+       window was clipped rather than reachable: the Plugins list lost its last
+       three cards, toggles and all.
+
+       min-height:0 is the load-bearing half. A flex child defaults to
+       min-height:auto and refuses to shrink below its content, so without it
+       the view stays as tall as its content and there is nothing to scroll. */
+    min-height: 0;
+    overflow-y: auto;
     padding: 1.5rem;
     width: 100%;
-    height: auto;
 }
 
 .view.active {
