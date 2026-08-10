@@ -297,6 +297,54 @@ func TestRBLCannotBeEnabledWithNoZones(t *testing.T) {
 	}
 }
 
+// TestRBLReportsNeedsConfigUntilItHasZones.
+//
+// The UI hides a disabled plugin's settings tab, and the server refuses to
+// enable this one without zones. Together that was a dead end: the toggle
+// answered "add at least one blocklist zone" and the form for adding one only
+// appeared once the plugin was enabled. needs_config is what lets the UI show
+// the form first, so it has to be reported accurately.
+func TestRBLReportsNeedsConfigUntilItHasZones(t *testing.T) {
+	s, _ := testServerWithConfig(t, pluginTestTOML)
+
+	needsConfig := func() bool {
+		req := httptest.NewRequest(http.MethodGet, "/api/config/plugins", nil)
+		rec := httptest.NewRecorder()
+		s.handleGetPlugins(rec, req)
+
+		var body struct {
+			Plugins []map[string]interface{} `json:"plugins"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode plugins: %v", err)
+		}
+		for _, p := range body.Plugins {
+			if p["name"] == "rbl" {
+				return p["needs_config"] == true
+			}
+		}
+		t.Fatal("rbl is missing from the plugin list")
+		return false
+	}
+
+	if !needsConfig() {
+		t.Error("with no zones configured, rbl must report needs_config so its form is reachable")
+	}
+
+	rec := updatePlugin(t, s, "rbl", `{"config":{"zones":["zen.example.org"]}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("saving zones was refused: %d %s", rec.Code, rec.Body.String())
+	}
+	if needsConfig() {
+		t.Error("once zones are configured the plugin no longer needs configuration")
+	}
+
+	// And now the plain toggle works, which is the whole point.
+	if rec := updatePlugin(t, s, "rbl", `{"enabled":true}`); rec.Code != http.StatusOK {
+		t.Errorf("enabling after configuring should succeed, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestRBLSettingsSurviveAReload writes through to the file and reads it back
 // with the real parser, since a zone list that does not persist is a blocklist
 // that stops working at the next restart.
