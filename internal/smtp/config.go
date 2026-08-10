@@ -67,6 +67,9 @@ type Config struct {
 	// Antivirus configuration
 	Antivirus *AntivirusConfig `toml:"antivirus" json:"antivirus"`
 
+	// AccessControl holds the allow/deny lists applied at connect and MAIL FROM.
+	AccessControl *AccessControlConfig `toml:"access_control" json:"access_control"`
+
 	// Rules configuration
 	Rules *RulesConfig `toml:"rules" json:"rules"`
 
@@ -294,6 +297,24 @@ type CacheConfig struct {
 	MaxItems int    `json:"max_items"`
 	MaxSize  int64  `json:"max_size"`
 	TTL      int    `json:"ttl"`
+}
+
+// AccessControlConfig holds operator-maintained allow and deny lists.
+//
+// Separate from trusted_networks on purpose: that decides how strictly a peer's
+// content is validated, this decides whether the peer may connect at all.
+//
+// Allow beats deny, so a known-good host inside a denied range can be permitted
+// without restating the range.
+type AccessControlConfig struct {
+	Enabled bool `toml:"enabled" json:"enabled"`
+	// AllowIPs and DenyIPs accept CIDR ranges and bare addresses.
+	AllowIPs []string `toml:"allow_ips" json:"allow_ips"`
+	DenyIPs  []string `toml:"deny_ips" json:"deny_ips"`
+	// AllowDomains and DenyDomains match the MAIL FROM domain and its
+	// subdomains, so "example.com" also covers "mail.example.com".
+	AllowDomains []string `toml:"allow_domains" json:"allow_domains"`
+	DenyDomains  []string `toml:"deny_domains" json:"deny_domains"`
 }
 
 // AntivirusConfig represents antivirus configuration

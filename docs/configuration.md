@@ -168,6 +168,38 @@ and only if you understand that this re-opens the vector.
 > will see strict enforcement turn on for the first time; if that rejects
 > mail you need to accept, set `strict_line_endings = false` explicitly.
 
+### Access control (allow / deny lists)
+
+`[access_control]` refuses connections and senders outright. It is distinct
+from `trusted_networks`, which only decides how strictly a peer's *content* is
+validated — this decides whether the peer may talk to the server at all.
+
+```toml
+[access_control]
+enabled = true
+allow_ips     = ["10.1.2.3"]
+deny_ips      = ["203.0.113.0/24"]
+allow_domains = ["newsletter.partner.example"]
+deny_domains  = ["spam.example"]
+```
+
+- **Allow beats deny.** A host in both lists is allowed, so a known-good server
+  inside a denied range can be permitted without restating the range.
+- **Addresses** may be CIDR ranges or single hosts. Denied peers are refused
+  with `554` before the greeting, so a blocked address costs one round trip and
+  no session state.
+- **Domains** are matched against the `MAIL FROM` domain *and its subdomains*,
+  so `spam.example` also covers `mail.spam.example`. Matching stops before a
+  bare TLD, so an entry of `com` cannot refuse everything.
+- **The empty sender (`<>`) is never refused.** That is the bounce path, and
+  blocking it would break delivery status notifications.
+- A malformed entry stops the server at startup rather than being skipped: a
+  deny rule that silently fails to load leaves you believing a network is
+  blocked when it is not.
+
+Disabled by default. Changes are read at startup, so they take effect after a
+restart.
+
 ### Queue backend
 
 - `[queue].dir`

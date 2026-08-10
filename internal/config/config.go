@@ -245,6 +245,9 @@ type Config struct {
 	// Antivirus scanning configuration
 	Antivirus *smtp.AntivirusConfig `toml:"antivirus"`
 
+	// AccessControl holds allow/deny lists for peer addresses and sender domains.
+	AccessControl *smtp.AccessControlConfig `toml:"access_control"`
+
 	// Antispam scanning configuration
 	Antispam *smtp.AntispamConfig `toml:"antispam"`
 

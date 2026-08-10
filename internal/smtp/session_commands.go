@@ -237,6 +237,20 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 	}
 	mailFrom, declaredSize := parsed.addr, parsed.size
 
+	// Sender domain policy. Checked after parsing so the rule matches a real
+	// address rather than whatever text arrived, and before the transaction is
+	// committed so a refused sender leaves no state behind.
+	if ch.session != nil {
+		if decision := ch.session.accessControl.CheckSender(mailFrom); decision.Denied {
+			ch.logger.WarnContext(ctx, "Sender refused by access control",
+				"event_type", "rejection",
+				"mail_from", mailFrom,
+				"rule", decision.Rule,
+			)
+			return fmt.Errorf("550 5.7.1 %s", decision.Reason)
+		}
+	}
+
 	if err := ch.validateEmailAddress(ctx, mailFrom); err != nil {
 		return fmt.Errorf("553 5.1.3 Invalid sender address: %s", mailFrom)
 	}
