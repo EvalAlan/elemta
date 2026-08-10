@@ -10,24 +10,12 @@ mkdir -p /app/queue/active /app/queue/deferred /app/queue/hold /app/queue/failed
 chmod 700 /app/queue 2>/dev/null || true
 chmod 755 /app/logs 2>/dev/null || true
 
-# Stage the configuration into a private copy.
-#
-# /app/config is mounted read-only so that changes saved from the web UI reach
-# this server, which means the old in-place copy to elemta.conf cannot work.
-# The server also refuses a config that is group- or world-readable when it
-# holds secrets, and a bind-mounted file carries the host's permissions. Both
-# are solved by copying to a 0600 file on a writable path and pointing the
-# server at that, which is what the web service already does.
-ELEMTA_CONFIG=""
-for candidate in /app/config/elemta-generated.toml /app/config/elemta.toml; do
-    if [ -f "$candidate" ]; then
-        cp "$candidate" /tmp/elemta-runtime.toml 2>/dev/null || continue
-        chmod 600 /tmp/elemta-runtime.toml 2>/dev/null || true
-        ELEMTA_CONFIG=/tmp/elemta-runtime.toml
-        echo "Using configuration from $candidate"
-        break
-    fi
-done
+# Resolve the runtime configuration, seeding it onto the shared volume the first
+# time. See scripts/prepare-config.sh for why it does not live under /tmp.
+ELEMTA_CONFIG="$(/app/prepare-config.sh)" || ELEMTA_CONFIG=""
+if [ -n "$ELEMTA_CONFIG" ]; then
+    echo "Using configuration from $ELEMTA_CONFIG"
+fi
 
 # Create test messages in the queue if TEST_MODE is enabled
 if [ "$TEST_MODE" = "true" ]; then
