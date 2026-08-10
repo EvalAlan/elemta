@@ -599,6 +599,12 @@ func (s *Server) Start() error {
 		api.HandleFunc("/campaigns/{id}/{action}", s.handleCampaignAction).Methods("POST")
 	}
 
+	// Message tracing. Read-only and derived from the logs, but a trace names
+	// senders, recipients and subjects, so it follows the same auth as the rest
+	// of the dashboard rather than being open.
+	api.Handle("/messages/search", s.requireAuthIfConfigured(http.HandlerFunc(s.handleSearchMessages))).Methods("GET")
+	api.Handle("/messages/{id}/trace", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTraceMessage))).Methods("GET")
+
 	api.Handle("/config/plugins", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetPlugins))).Methods("GET")
 
 	// Configuration management endpoints (write operations require auth)
