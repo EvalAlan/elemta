@@ -1935,6 +1935,7 @@ function renderPluginCard(plugin) {
             <div class="plugin-status ${enabled ? 'on' : 'off'}">
                 ${enabled ? 'Enabled' : 'Disabled'}
                 ${plugin.requires_restart ? '<span class="plugin-note">restart required to apply</span>' : ''}
+                ${plugin.applies_on_reload ? '<span class="plugin-note">applied by the SMTP server within a few seconds</span>' : ''}
             </div>
             <div class="plugin-description">${escapeHtml(plugin.description || '')}</div>
             ${summary ? `<div class="plugin-summary">${summary}</div>` : ''}
@@ -2098,6 +2099,12 @@ function renderPluginPanel(plugin) {
                         Changes here are read by the SMTP server at startup, so they take
                         effect after a restart.
                     </div>` : ''}
+                ${plugin.applies_on_reload ? `
+                    <div class="restart-note reload-note">
+                        The SMTP server watches this file and picks changes up within a few
+                        seconds, without dropping connections. Sessions already in progress
+                        finish under the settings they started with.
+                    </div>` : ''}
                 <div class="form-actions">
                     <button class="btn btn-primary" id="plugin-${escapeHtml(plugin.name)}-save"
                             onclick="savePluginSettings('${escapeJsArg(plugin.name)}', ${enableOnSave})">${
@@ -2167,6 +2174,9 @@ async function savePluginSettings(pluginName, enableOnSave = false) {
         } else if (result.requires_restart) {
             setSaveStatus(statusEl, 'Saved', 'success');
             showRestartRequired(`${pluginName} settings saved`);
+        } else if (result.applies_on_reload) {
+            setSaveStatus(statusEl, 'Saved — applying within a few seconds', 'success');
+            showToast(`${pluginName} settings saved; the SMTP server applies them shortly`, 'success');
         } else {
             setSaveStatus(statusEl, 'Saved', 'success');
             showToast(`${pluginName} settings saved`, 'success');
@@ -2220,6 +2230,10 @@ async function togglePlugin(pluginName, enabled) {
             showConfigWarning(result.warning || 'This change was not saved permanently.');
         } else if (result.requires_restart) {
             showRestartRequired(result.message || `${pluginName} updated`);
+        } else if (result.applies_on_reload) {
+            // Saying "restart required" for something the server picks up on its
+            // own is how a restart becomes a reflex.
+            showToast(`${result.message || pluginName + ' updated'} — the SMTP server applies this within a few seconds`, 'success');
         } else {
             showToast(result.message || `${pluginName} updated`, 'success');
         }

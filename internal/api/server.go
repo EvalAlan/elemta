@@ -1905,40 +1905,44 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"requires_restart": false,
 		},
 		{
-			"name":             "clamav",
-			"title":            "Antivirus",
-			"enabled":          clamavEnabled,
-			"description":      "Antivirus and malware scanning",
-			"config":           clamavConfig,
-			"configurable":     true,
-			"requires_restart": true,
+			"name":              "clamav",
+			"title":             "Antivirus",
+			"enabled":           clamavEnabled,
+			"description":       "Antivirus and malware scanning",
+			"config":            clamavConfig,
+			"configurable":      true,
+			"requires_restart":  false,
+			"applies_on_reload": true,
 		},
 		{
-			"name":             "access_control",
-			"title":            "Allow / Deny",
-			"enabled":          accessControlEnabled,
-			"description":      "Allow and deny lists for peer addresses and sender domains",
-			"config":           accessControlConfig,
-			"configurable":     true,
-			"requires_restart": true,
+			"name":              "access_control",
+			"title":             "Allow / Deny",
+			"enabled":           accessControlEnabled,
+			"description":       "Allow and deny lists for peer addresses and sender domains",
+			"config":            accessControlConfig,
+			"configurable":      true,
+			"requires_restart":  false,
+			"applies_on_reload": true,
 		},
 		{
-			"name":             "rspamd",
-			"title":            "Antispam",
-			"enabled":          rspamdEnabled,
-			"description":      "Spam filtering and content analysis",
-			"config":           rspamdConfig,
-			"configurable":     true,
-			"requires_restart": true,
+			"name":              "rspamd",
+			"title":             "Antispam",
+			"enabled":           rspamdEnabled,
+			"description":       "Spam filtering and content analysis",
+			"config":            rspamdConfig,
+			"configurable":      true,
+			"requires_restart":  false,
+			"applies_on_reload": true,
 		},
 		{
-			"name":             "rbl",
-			"title":            "DNS Blocklists",
-			"enabled":          rblEnabled,
-			"description":      "Check the connecting address against DNS blocklists (RBL/DNSBL)",
-			"config":           rblConfig,
-			"configurable":     true,
-			"requires_restart": true,
+			"name":              "rbl",
+			"title":             "DNS Blocklists",
+			"enabled":           rblEnabled,
+			"description":       "Check the connecting address against DNS blocklists (RBL/DNSBL)",
+			"config":            rblConfig,
+			"configurable":      true,
+			"requires_restart":  false,
+			"applies_on_reload": true,
 			// This plugin cannot be switched on until it has something to
 			// query. Saying so here is what lets the UI offer its settings
 			// before it is enabled; without it the toggle refuses and the form
@@ -2274,7 +2278,13 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 		enabled = *pluginUpdate.Enabled
 	}
 
+	// requiresRestart means the operator has to take the server down to apply
+	// this. appliesOnReload means the SMTP server picks it up on its own,
+	// shortly, without dropping connections — a distinction worth keeping,
+	// because telling someone to restart when they need not is how a restart
+	// becomes a reflex.
 	requiresRestart := false
+	appliesOnReload := false
 	switch pluginName {
 	case "rate_limiter":
 		if rc, ok := s.mainConfig.RateLimiterPluginConfig.(*config.RateLimiterPluginConfig); ok && rc != nil {
@@ -2288,21 +2298,21 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 			s.mainConfig.Antivirus = &ScannerStatus{}
 		}
 		s.mainConfig.Antivirus.Enabled = enabled
-		requiresRestart = true
+		appliesOnReload = true
 
 	case "rspamd":
 		if s.mainConfig.Antispam == nil {
 			s.mainConfig.Antispam = &ScannerStatus{}
 		}
 		s.mainConfig.Antispam.Enabled = enabled
-		requiresRestart = true
+		appliesOnReload = true
 
 	case "access_control":
 		if s.mainConfig.AccessControl == nil {
 			s.mainConfig.AccessControl = &AccessControlStatus{}
 		}
 		s.mainConfig.AccessControl.Enabled = enabled
-		requiresRestart = true
+		appliesOnReload = true
 
 	case "rbl":
 		if s.mainConfig.RBL == nil {
@@ -2317,7 +2327,7 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mainConfig.RBL.Enabled = enabled
-		requiresRestart = true
+		appliesOnReload = true
 
 	case "mass_mailer":
 		if s.mainConfig.MassMailer == nil {
@@ -2347,10 +2357,14 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"status":           "success",
-		"plugin":           pluginName,
-		"enabled":          enabled,
-		"requires_restart": requiresRestart,
+		"status":  "success",
+		"plugin":  pluginName,
+		"enabled": enabled,
+		// requires_restart is the operator taking the server down.
+		// applies_on_reload is the SMTP server picking the change up on its
+		// own, without dropping connections.
+		"requires_restart":  requiresRestart,
+		"applies_on_reload": appliesOnReload,
 		"message": fmt.Sprintf("%s %s", pluginName,
 			map[bool]string{true: "enabled", false: "disabled"}[enabled]),
 	}

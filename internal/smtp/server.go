@@ -36,9 +36,13 @@ type Server struct {
 	tlsManager      TLSHandler
 	resourceManager *ResourceManager // Resource management and rate limiting
 	scannerManager  *ScannerManager  // Antivirus/antispam scanners used during DATA
-	accessControl   *AccessControl   // Allow/deny lists applied at connect and MAIL FROM
-	rblChecker      *RBLChecker      // DNS blocklists consulted for the connecting address
-	slogger         *slog.Logger     // Structured logger for resource management
+	// scannerManager, accessControl and rblChecker are replaced by Reload while
+	// the accept loop is reading them, so they are guarded. Everything else here
+	// is fixed once startup finishes.
+	pluginMu      sync.RWMutex
+	accessControl *AccessControl // Allow/deny lists applied at connect and MAIL FROM
+	rblChecker    *RBLChecker    // DNS blocklists consulted for the connecting address
+	slogger       *slog.Logger   // Structured logger for resource management
 
 	// Concurrency management
 	workerPool   *WorkerPool        // Standardized worker pool for connection handling
@@ -886,7 +890,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	// Denied peers are refused before a session exists. Answering 554 and
 	// closing costs one round trip and no session state, which is the point of
 	// blocking an address rather than filtering its mail later.
-	if decision := s.accessControl.CheckPeer(conn.RemoteAddr()); decision.Denied {
+	if decision := s.currentAccessControl().CheckPeer(conn.RemoteAddr()); decision.Denied {
 		s.slogger.WarnContext(ctx, "Connection refused by access control",
 			"event_type", "rejection",
 			"client_ip", clientIP,
@@ -957,9 +961,14 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	session.SetTLSManager(s.tlsManager)
 
 	// Set the content scanners from the server
-	session.SetScannerManager(s.scannerManager)
-	session.SetAccessControl(s.accessControl)
-	session.SetRBLChecker(s.rblChecker)
+	// Read once, so a reload landing between these calls cannot give one
+	// session a mixture of the old policy and the new one.
+	s.pluginMu.RLock()
+	scanners, accessControl, rblChecker := s.scannerManager, s.accessControl, s.rblChecker
+	s.pluginMu.RUnlock()
+	session.SetScannerManager(scanners)
+	session.SetAccessControl(accessControl)
+	session.SetRBLChecker(rblChecker)
 
 	// Set queue manager for message processing
 	if s.queueManager != nil {
