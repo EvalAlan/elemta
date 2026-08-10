@@ -251,12 +251,22 @@ enabled = true
 listen_addr = ":8080"
 
 # API Server Configuration
+# The web interface and its API.
+#
+# auth_enabled is on. Every endpoint behind it can flush a queue, rewrite the
+# configuration or send bulk mail, so an unauthenticated dashboard is an
+# unauthenticated administrator — the "Guest" view was full access with a
+# friendlier name.
+#
+# auth_file lives on the runtime volume because it has to be writable by the
+# service and readable by nobody else; `elemta user add` creates it, and
+# `make install-dev` bootstraps an admin account.
 [api]
 enabled = true
 listen_addr = "127.0.0.1:8025"
 web_root = "./web/static"
-auth_enabled = false
-auth_file = ""
+auth_enabled = true
+auth_file = "/app/runtime-config/users.json"
 
 # Rate Limiting Configuration for API endpoints
 [api.rate_limit]
