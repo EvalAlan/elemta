@@ -98,6 +98,18 @@ retry_delay = 60
 #
 # reject_on_failure / reject_on_spam stay false so that a scanner outage
 # degrades to delivering unscanned mail rather than refusing it.
+# Mass mailer: bulk campaign sending from the web interface.
+#
+# Disabled by default — bulk mail should be turned on deliberately.
+#
+# default_rate_per_minute caps how fast a campaign hands messages to the queue
+# when the campaign does not set its own rate. Campaign mail is queued at low
+# priority so it cannot overtake ordinary transactional mail.
+[mass_mailer]
+enabled = false
+default_rate_per_minute = 600
+max_recipients = 0  # 0 = no limit
+
 [antivirus]
 enabled = true
 reject_on_failure = false

@@ -107,6 +107,20 @@ func DefaultRateLimiterPluginConfig() *RateLimiterPluginConfig {
 	}
 }
 
+// MassMailerConfig configures bulk campaign sending.
+//
+// Disabled by default. Bulk mail is the kind of capability that should be
+// turned on deliberately rather than found by accident.
+type MassMailerConfig struct {
+	Enabled bool `toml:"enabled"`
+	// DefaultRatePerMinute caps how fast a campaign hands messages to the
+	// queue when it does not set its own rate. Unlimited by default would let
+	// one campaign bury every other message waiting behind it.
+	DefaultRatePerMinute int `toml:"default_rate_per_minute"`
+	// MaxRecipients bounds a single campaign. Zero means no limit.
+	MaxRecipients int `toml:"max_recipients"`
+}
+
 // Config represents the application configuration
 type Config struct {
 	// Top-level server settings (from flat TOML structure)
@@ -244,6 +258,9 @@ type Config struct {
 
 	// Antivirus scanning configuration
 	Antivirus *smtp.AntivirusConfig `toml:"antivirus"`
+
+	// MassMailer configures bulk campaign sending in the web interface.
+	MassMailer *MassMailerConfig `toml:"mass_mailer"`
 
 	// Antispam scanning configuration
 	Antispam *smtp.AntispamConfig `toml:"antispam"`
