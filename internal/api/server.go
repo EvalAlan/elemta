@@ -1015,6 +1015,7 @@ func (s *Server) handleGetQueueStorage(w http.ResponseWriter, r *http.Request) {
 
 // handleLoginPage serves the public login page
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	setHTMLNoCache(w)
 	http.ServeFile(w, r, "web/login.html")
 }
 
@@ -1044,7 +1045,25 @@ func (s *Server) handleLogo(w http.ResponseWriter, r *http.Request) {
 
 // handleDashboard serves the main dashboard page
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	setHTMLNoCache(w)
 	http.ServeFile(w, r, s.webRoot+"/index.html")
+}
+
+// setHTMLNoCache stops browsers reusing a stale application shell.
+//
+// The HTML references its CSS and JS with a version query string, so those can
+// be cached hard. The document that carries those references cannot: it was
+// served with only Last-Modified, which browsers are free to satisfy from cache
+// without revalidating. A stale shell then keeps requesting the asset versions
+// it was built with, so an updated UI simply never arrives — the symptom being
+// a page that still shows old styling and duplicate controls long after the
+// server was rebuilt.
+//
+// must-revalidate rather than no-store: the response may still be cached, the
+// browser just has to ask whether it is current, which a Last-Modified check
+// answers cheaply.
+func setHTMLNoCache(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 }
 
 // Authentication handlers
@@ -1763,24 +1782,38 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// configurable drives the per-plugin settings tab in the UI: a plugin with
+	// settings worth editing gets its own tab while it is enabled, and loses it
+	// when it is turned off. requires_restart says whether toggling takes effect
+	// in this process or needs the SMTP server restarted, so the UI can tell the
+	// operator the truth instead of implying the change is already live.
 	plugins := []map[string]interface{}{
 		{
-			"name":        "rate_limiter",
-			"enabled":     rateLimiterEnabled,
-			"description": "Rate limiting and connection management",
-			"config":      s.mainConfig.RateLimiterPluginConfig,
+			"name":             "rate_limiter",
+			"title":            "Rate Limiting",
+			"enabled":          rateLimiterEnabled,
+			"description":      "Rate limiting and connection management",
+			"config":           s.mainConfig.RateLimiterPluginConfig,
+			"configurable":     true,
+			"requires_restart": false,
 		},
 		{
-			"name":        "clamav",
-			"enabled":     clamavEnabled,
-			"description": "Antivirus and malware scanning",
-			"config":      clamavConfig,
+			"name":             "clamav",
+			"title":            "Antivirus",
+			"enabled":          clamavEnabled,
+			"description":      "Antivirus and malware scanning",
+			"config":           clamavConfig,
+			"configurable":     true,
+			"requires_restart": true,
 		},
 		{
-			"name":        "rspamd",
-			"enabled":     rspamdEnabled,
-			"description": "Spam filtering and content analysis",
-			"config":      rspamdConfig,
+			"name":             "rspamd",
+			"title":            "Antispam",
+			"enabled":          rspamdEnabled,
+			"description":      "Spam filtering and content analysis",
+			"config":           rspamdConfig,
+			"configurable":     true,
+			"requires_restart": true,
 		},
 	}
 
@@ -1895,45 +1928,111 @@ func (s *Server) applyRateLimiterUpdate(rl map[string]interface{}) {
 	}
 }
 
-// persistConfig builds a config.Config from the current mainConfig and saves to disk
+// persistConfig writes the settings the API manages back to the config file,
+// changing only those keys.
+//
+// It used to rebuild a config.Config from DefaultConfig(), copy a dozen fields
+// across and re-serialise the whole file with SaveConfig — which emits only the
+// sections it knows about. Everything else was destroyed: toggling the rate
+// limiter in the web UI deleted [antivirus] and [antispam] outright, turning
+// off virus and spam scanning, and reset queue.backend from sqlite to file,
+// pointing the server at a different queue and orphaning the mail already in
+// it. None of that was reported; the toggle returned success.
+//
+// Editing the keys in place cannot do that. A setting this code has never heard
+// of survives, as do comments and ordering.
 func (s *Server) persistConfig() error {
-	cfg := config.DefaultConfig()
+	if s.configPath == "" {
+		return fmt.Errorf("no config file path is known")
+	}
 
-	// Map mainConfig fields to both top-level and nested server fields
-	cfg.Hostname = s.mainConfig.Hostname
-	cfg.ListenAddr = s.mainConfig.ListenAddr
-	cfg.QueueDir = s.mainConfig.QueueDir
-	cfg.MaxSize = s.mainConfig.MaxSize
-	cfg.MaxWorkers = s.mainConfig.MaxWorkers
-	cfg.MaxRetries = s.mainConfig.MaxRetries
-	cfg.MaxQueueTime = s.mainConfig.MaxQueueTime
-	cfg.FailedQueueRetentionHours = s.mainConfig.FailedQueueRetentionHours
-	cfg.LocalDomains = s.mainConfig.LocalDomains
+	doc, err := os.ReadFile(s.configPath) // #nosec G304 -- operator-configured path
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
 
-	// Keep legacy server section in sync
-	cfg.Server.Hostname = s.mainConfig.Hostname
-	cfg.Server.Listen = s.mainConfig.ListenAddr
-	cfg.Server.MaxSize = s.mainConfig.MaxSize
+	type edit struct {
+		section string
+		key     string
+		value   interface{}
+	}
+	edits := []edit{
+		{"", "hostname", s.mainConfig.Hostname},
+		{"", "listen_addr", s.mainConfig.ListenAddr},
+		{"", "max_size", s.mainConfig.MaxSize},
+		{"", "failed_queue_retention_hours", s.mainConfig.FailedQueueRetentionHours},
+	}
+	if len(s.mainConfig.LocalDomains) > 0 {
+		edits = append(edits, edit{"", "local_domains", s.mainConfig.LocalDomains})
+	}
 
-	// Apply rate limiter config
-	if s.mainConfig.RateLimiterPluginConfig != nil {
-		if rc, ok := s.mainConfig.RateLimiterPluginConfig.(*config.RateLimiterPluginConfig); ok {
-			cfg.RateLimiter = rc
+	// Rate limiter, if the API is holding one.
+	if rc, ok := s.mainConfig.RateLimiterPluginConfig.(*config.RateLimiterPluginConfig); ok && rc != nil {
+		edits = append(edits,
+			edit{"rate_limiter", "enabled", rc.Enabled},
+			edit{"rate_limiter", "max_connections_per_ip", rc.MaxConnectionsPerIP},
+			edit{"rate_limiter", "max_messages_per_minute", rc.MaxMessagesPerMinute},
+			edit{"rate_limiter", "max_messages_per_hour", rc.MaxMessagesPerHour},
+			edit{"rate_limiter", "max_recipients_per_message", rc.MaxRecipientsPerMessage},
+		)
+	}
+
+	// Scanner enablement, which the plugin toggles drive.
+	if av := s.mainConfig.Antivirus; av != nil {
+		edits = append(edits,
+			edit{"antivirus", "enabled", av.Enabled},
+			edit{"antivirus.clamav", "enabled", av.Enabled},
+		)
+	}
+	if as := s.mainConfig.Antispam; as != nil {
+		edits = append(edits,
+			edit{"antispam", "enabled", as.Enabled},
+			edit{"antispam.rspamd", "enabled", as.Enabled},
+		)
+	}
+
+	for _, e := range edits {
+		doc, err = config.SetTOMLValue(doc, e.section, e.key, e.value)
+		if err != nil {
+			return fmt.Errorf("update %s.%s: %w", e.section, e.key, err)
 		}
 	}
 
-	return cfg.SaveConfig(s.configPath)
+	// Write via a temp file in the same directory so a failure part-way through
+	// cannot leave a half-written config behind.
+	//
+	// #nosec G703 -- configPath is resolved once at startup from --config or
+	// config discovery and is never derived from a request. No handler writes
+	// it, so there is no request-controlled component in this path; the taint
+	// analysis is flagging the absence of a string literal, not a reachable
+	// traversal.
+	tmp := s.configPath + ".tmp"
+	// #nosec G703 -- see above: configPath is startup-resolved, not request-derived.
+	if err := os.WriteFile(tmp, doc, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
+	// #nosec G703 -- same path, same provenance.
+	if err := os.Rename(tmp, s.configPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("replace %s: %w", s.configPath, err)
+	}
+	return nil
 }
 
-// handleUpdatePlugin enables/disables plugins (runtime-only for now)
+// handleUpdatePlugin enables or disables a plugin and persists the change.
+//
+// Whether the change takes effect immediately depends on the plugin. The rate
+// limiter is read by this process. The scanners are used by the SMTP server,
+// which reads its configuration at startup, so those need a restart — reported
+// as requires_restart so the UI can say so rather than implying the toggle took
+// effect.
 func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 	if s.mainConfig == nil {
 		http.Error(w, "Configuration not available", http.StatusServiceUnavailable)
 		return
 	}
 
-	vars := mux.Vars(r)
-	pluginName := vars["plugin"]
+	pluginName := mux.Vars(r)["plugin"]
 	if pluginName == "" {
 		http.Error(w, "Plugin name required", http.StatusBadRequest)
 		return
@@ -1945,38 +2044,83 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Handle rate limiter plugin specifically
-	if pluginName == "rate_limiter" {
-		if enabled, ok := pluginUpdate["enabled"].(bool); ok {
-			if s.mainConfig.RateLimiterPluginConfig != nil {
-				if rateLimiterConfig, ok := s.mainConfig.RateLimiterPluginConfig.(*config.RateLimiterPluginConfig); ok {
-					rateLimiterConfig.Enabled = enabled
-				}
-			} else {
-				s.mainConfig.RateLimiterPluginConfig = &config.RateLimiterPluginConfig{
-					Enabled: enabled,
-				}
-			}
-
-			// Persist change to disk
-			if s.configPath != "" {
-				if err := s.persistConfig(); err != nil {
-					slog.Warn("Failed to persist plugin config change", "error", err)
-				}
-			}
-
-			writeJSON(w, map[string]interface{}{
-				"status":           "success",
-				"message":          fmt.Sprintf("Rate limiter plugin %s", map[bool]string{true: "enabled", false: "disabled"}[enabled]),
-				"plugin":           pluginName,
-				"enabled":          enabled,
-				"requires_restart": false,
-			})
-			return
-		}
+	enabled, ok := pluginUpdate["enabled"].(bool)
+	if !ok {
+		http.Error(w, "Field 'enabled' (boolean) is required", http.StatusBadRequest)
+		return
 	}
 
-	http.Error(w, "Unknown plugin or invalid update", http.StatusBadRequest)
+	requiresRestart := false
+	switch pluginName {
+	case "rate_limiter":
+		if rc, ok := s.mainConfig.RateLimiterPluginConfig.(*config.RateLimiterPluginConfig); ok && rc != nil {
+			rc.Enabled = enabled
+		} else {
+			s.mainConfig.RateLimiterPluginConfig = &config.RateLimiterPluginConfig{Enabled: enabled}
+		}
+
+	case "clamav":
+		if s.mainConfig.Antivirus == nil {
+			s.mainConfig.Antivirus = &ScannerStatus{}
+		}
+		s.mainConfig.Antivirus.Enabled = enabled
+		requiresRestart = true
+
+	case "rspamd":
+		if s.mainConfig.Antispam == nil {
+			s.mainConfig.Antispam = &ScannerStatus{}
+		}
+		s.mainConfig.Antispam.Enabled = enabled
+		requiresRestart = true
+
+	default:
+		http.Error(w, fmt.Sprintf("Unknown plugin %q", pluginName), http.StatusBadRequest)
+		return
+	}
+
+	// A toggle that cannot be written down is not a toggle: report the failure
+	// rather than returning success for a change that will not survive.
+	if err := s.persistConfig(); err != nil {
+		slog.Error("Failed to persist plugin change", "plugin", pluginName, "error", err)
+		http.Error(w, fmt.Sprintf("Failed to save configuration: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"status":           "success",
+		"plugin":           pluginName,
+		"enabled":          enabled,
+		"requires_restart": requiresRestart,
+		"message": fmt.Sprintf("%s %s", pluginName,
+			map[bool]string{true: "enabled", false: "disabled"}[enabled]),
+	}
+	// Saying "saved" about a file that will not be read again is worse than
+	// saying nothing. Deployments that stage the config into a private copy —
+	// which the containers do, because the server refuses a world-readable
+	// config — write to that copy, and the change is gone at the next start.
+	if warning := nonDurableConfigWarning(s.configPath); warning != "" {
+		response["persistent"] = false
+		response["warning"] = warning
+	} else {
+		response["persistent"] = true
+	}
+	writeJSON(w, response)
+}
+
+// nonDurableConfigWarning reports that the config being written is a staging
+// copy rather than the file the server will read next time, and returns "" when
+// the write is durable.
+func nonDurableConfigWarning(path string) string {
+	if path == "" {
+		return "No configuration file is known, so this change exists only in memory."
+	}
+	dir := filepath.Dir(path)
+	if dir == os.TempDir() || strings.HasPrefix(dir, "/tmp") || strings.HasPrefix(dir, "/var/tmp") {
+		return fmt.Sprintf("Saved to %s, which is a temporary copy of the configuration. "+
+			"The change will be lost when the service restarts — edit the real config file, "+
+			"or give the service write access to it.", path)
+	}
+	return ""
 }
 
 // handleServerRestart initiates a graceful zero-downtime restart using listener handoff.

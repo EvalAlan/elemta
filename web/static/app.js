@@ -1796,123 +1796,310 @@ async function saveServerConfig() {
     }
 }
 
+// Plugins the UI knows how to render a settings form for. A plugin the server
+// reports as configurable but that is missing here still gets a toggle; it just
+// has no tab, which is better than showing an empty one.
+const PLUGIN_SETTINGS_SCHEMA = {
+    rate_limiter: {
+        // The rate limiter has a hand-built panel already; its tab reuses it.
+        panelId: 'settings-rate-limiting',
+        onShow: () => refreshRateLimiting(),
+    },
+    clamav: {
+        fields: [
+            { key: 'address', label: 'Address', type: 'text', hint: 'host:port of clamd' },
+            { key: 'timeout', label: 'Timeout (seconds)', type: 'number' },
+            { key: 'scan_limit', label: 'Scan limit (bytes)', type: 'number',
+              hint: 'How much of each message is sent to the scanner' },
+            { key: 'reject_on_failure', label: 'Reject when the scanner is unreachable', type: 'checkbox',
+              hint: 'Off delivers unscanned mail; on turns a scanner outage into a mail outage' },
+        ],
+    },
+    rspamd: {
+        fields: [
+            { key: 'address', label: 'Address', type: 'text', hint: 'Base URL of the rspamd worker' },
+            { key: 'timeout', label: 'Timeout (seconds)', type: 'number' },
+            { key: 'scan_limit', label: 'Scan limit (bytes)', type: 'number' },
+            { key: 'threshold', label: 'Score threshold', type: 'number',
+              hint: 'Only used when rspamd reports no action of its own' },
+            { key: 'reject_on_spam', label: 'Reject spam at SMTP', type: 'checkbox',
+              hint: 'Off delivers spam tagged with X-Spam headers for downstream filtering' },
+        ],
+    },
+};
+
+// Plugins as last reported, so tab rendering and the settings forms agree.
+let pluginState = [];
+
 async function refreshPlugins() {
     const loadingEl = document.getElementById('plugins-loading');
     const contentEl = document.getElementById('plugins-content');
     const listEl = document.getElementById('plugins-list');
-    
+
     try {
         loadingEl.style.display = 'block';
         contentEl.style.display = 'none';
-        
-        // Try different endpoints to see which one works
-        let response, data;
-        try {
-            response = await fetch('/api/plugins');
-            if (response.ok) {
-                data = await response.json();
-            }
-        } catch (e) {
-            // Try fallback endpoint
-        }
-        
-        if (!data) {
-            response = await fetch('/api/config/plugins');
-            if (!response.ok) throw new Error('Failed to load plugins');
-            data = await response.json();
-        }
-        
-        const plugins = data.plugins || data;
-        
-        if (!plugins || plugins.length === 0) {
-            listEl.innerHTML = '<div style="padding: 2rem; color: #888;">No plugins found</div>';
+
+        const response = await fetch(`${API_BASE}/config/plugins`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+
+        const plugins = data.plugins || [];
+        pluginState = plugins;
+
+        if (plugins.length === 0) {
+            listEl.innerHTML = '<div class="loading-placeholder">No plugins found</div>';
         } else {
-            // Ensure container can scroll
-            listEl.style.maxHeight = '600px';
-            listEl.style.overflowY = 'auto';
-            
-            // Render plugin cards
-            listEl.innerHTML = plugins.map(plugin => {
-                const isInternalPlugin = plugin.name === 'rate_limiter';
-                const canToggle = isInternalPlugin;
-                
-                return `
-                    <div style="background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                            <div style="font-weight: bold; color: #fff;">${plugin.name || 'Unknown'}</div>
-                            ${canToggle ? `
-                                <label style="position: relative; display: inline-block; width: 50px; height: 24px;">
-                                    <input type="checkbox" ${plugin.enabled ? 'checked' : ''} 
-                                           onchange="togglePlugin('${plugin.name}', this.checked)"
-                                           style="opacity: 0; width: 0; height: 0;">
-                                    <span style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: ${plugin.enabled ? '#3b82f6' : '#666'}; transition: .4s; border-radius: 24px;">
-                                        <span style="position: absolute; content: ''; height: 18px; width: 18px; left: ${plugin.enabled ? '26px' : '3px'}; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%;"></span>
-                                    </span>
-                                </label>
-                            ` : `
-                                <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                    <span style="color: ${plugin.enabled ? '#10b981' : '#ef4444'}; font-size: 0.875rem; font-weight: bold;">
-                                        ${plugin.enabled ? 'Active' : 'Inactive'}
-                                    </span>
-                                    <span style="color: #666; font-size: 0.75rem;">External Service</span>
-                                </div>
-                            `}
-                        </div>
-                        <div style="color: ${plugin.enabled ? '#10b981' : '#ef4444'}; font-size: 0.875rem; margin-bottom: 0.5rem;">
-                            ${plugin.enabled ? 'Enabled' : 'Disabled'}
-                            ${!canToggle ? ' (configured in elemta.toml)' : ''}
-                        </div>
-                        <div style="color: #ccc; font-size: 0.875rem;">${plugin.description || 'No description available'}</div>
-                        ${!canToggle && plugin.config && plugin.config.address ? `
-                            <div style="color: #888; font-size: 0.75rem; margin-top: 0.5rem;">
-                                ${escapeHtml(plugin.config.address)}${plugin.config.threshold ? ` • threshold ${plugin.config.threshold}` : ''}${plugin.config.reject_on_spam ? ' • rejects spam' : ''}${plugin.config.reject_on_failure ? ' • rejects on scan failure' : ''}
-                            </div>
-                        ` : ''}
-                    </div>
-                `;
-            }).join('');
+            listEl.innerHTML = plugins.map(renderPluginCard).join('');
         }
-        
+
+        renderPluginTabs(plugins);
+
         loadingEl.style.display = 'none';
         contentEl.style.display = 'block';
     } catch (error) {
         console.error('Error loading plugins:', error);
-        loadingEl.innerHTML = `<div style="color: #ef4444; padding: 1rem;">Failed to load plugins: ${error.message}</div>`;
+        loadingEl.innerHTML = `<div class="error-message">Failed to load plugins: ${escapeHtml(error.message)}</div>`;
     }
+}
+
+// renderPluginCard draws one plugin with a working toggle. Every plugin gets
+// the same control: the scanners used to show a static "External Service"
+// label with no way to change anything, which made them look unmanageable.
+function renderPluginCard(plugin) {
+    const name = plugin.name || 'unknown';
+    const enabled = plugin.enabled === true;
+    const schema = PLUGIN_SETTINGS_SCHEMA[name];
+    const summary = pluginSummary(plugin);
+
+    return `
+        <div class="plugin-card ${enabled ? 'enabled' : 'disabled'}">
+            <div class="plugin-card-head">
+                <div>
+                    <div class="plugin-name">${escapeHtml(plugin.title || name)}</div>
+                    <div class="plugin-id">${escapeHtml(name)}</div>
+                </div>
+                <label class="switch" title="${enabled ? 'Disable' : 'Enable'} ${escapeHtml(name)}">
+                    <input type="checkbox" ${enabled ? 'checked' : ''}
+                           onchange="togglePlugin('${escapeJsArg(name)}', this.checked)">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                </label>
+            </div>
+            <div class="plugin-status ${enabled ? 'on' : 'off'}">
+                ${enabled ? 'Enabled' : 'Disabled'}
+                ${plugin.requires_restart ? '<span class="plugin-note">restart required to apply</span>' : ''}
+            </div>
+            <div class="plugin-description">${escapeHtml(plugin.description || '')}</div>
+            ${summary ? `<div class="plugin-summary">${summary}</div>` : ''}
+            ${enabled && schema ? `<div class="plugin-summary"><a href="#" class="link-button"
+                onclick="switchSettingsTab('plugin-${escapeJsArg(name)}'); return false;">Open settings</a></div>` : ''}
+        </div>
+    `;
+}
+
+// pluginSummary shows the settings that matter at a glance, so the card says
+// something useful without opening the tab.
+function pluginSummary(plugin) {
+    const c = plugin.config;
+    if (!c || typeof c !== 'object') return '';
+    const bits = [];
+    if (c.address) bits.push(escapeHtml(String(c.address)));
+    if (typeof c.threshold === 'number' && c.threshold > 0) bits.push(`threshold ${c.threshold}`);
+    if (c.reject_on_spam) bits.push('rejects spam');
+    if (c.reject_on_failure) bits.push('rejects on scan failure');
+    if (typeof c.max_messages_per_minute === 'number') bits.push(`${c.max_messages_per_minute}/min`);
+    return bits.join(' • ');
+}
+
+// renderPluginTabs keeps the settings tabs in step with the plugins: a
+// configurable plugin has a tab while it is enabled and loses it when disabled.
+// If the tab currently open belongs to a plugin that was just turned off, the
+// view falls back to the plugin list rather than showing an empty panel.
+function renderPluginTabs(plugins) {
+    const tabBar = document.querySelector('.settings-tabs');
+    if (!tabBar) return;
+
+    const wanted = plugins.filter(p => p.enabled && p.configurable && PLUGIN_SETTINGS_SCHEMA[p.name]);
+    const wantedIds = new Set(wanted.map(p => `plugin-${p.name}`));
+
+    // Drop tabs whose plugin is gone or disabled.
+    tabBar.querySelectorAll('.settings-tab[data-plugin-tab]').forEach(tab => {
+        if (!wantedIds.has(tab.dataset.tab)) {
+            const panel = document.getElementById(`settings-${tab.dataset.tab}`);
+            // The rate limiter's panel is part of the page, not generated here.
+            if (panel && !panel.dataset.staticPanel) panel.remove();
+            if (tab.classList.contains('active')) switchSettingsTab('plugins');
+            tab.remove();
+        }
+    });
+
+    // Add tabs for newly enabled plugins, before the System tab.
+    const systemTab = tabBar.querySelector('.settings-tab[data-tab="system"]');
+    wanted.forEach(plugin => {
+        const tabId = `plugin-${plugin.name}`;
+        if (tabBar.querySelector(`.settings-tab[data-tab="${tabId}"]`)) {
+            renderPluginPanel(plugin);
+            return;
+        }
+
+        const tab = document.createElement('button');
+        tab.className = 'settings-tab';
+        tab.dataset.tab = tabId;
+        tab.dataset.pluginTab = plugin.name;
+        tab.textContent = plugin.title || plugin.name;
+        tab.addEventListener('click', () => switchSettingsTab(tabId));
+        tabBar.insertBefore(tab, systemTab || null);
+
+        renderPluginPanel(plugin);
+    });
+}
+
+// renderPluginPanel builds the settings form for one plugin from its schema.
+// The rate limiter keeps its existing hand-built panel; it is only relabelled
+// so the dynamic tab can point at it.
+function renderPluginPanel(plugin) {
+    const schema = PLUGIN_SETTINGS_SCHEMA[plugin.name];
+    if (!schema) return;
+
+    const panelId = `settings-plugin-${plugin.name}`;
+
+    if (schema.panelId) {
+        // Reuse an existing panel: give it the id the tab expects and mark it
+        // static so tab removal does not delete part of the page.
+        const existing = document.getElementById(schema.panelId);
+        if (existing) {
+            existing.id = panelId;
+            existing.dataset.staticPanel = 'true';
+        }
+        return;
+    }
+
+    let panel = document.getElementById(panelId);
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.className = 'settings-panel';
+        panel.id = panelId;
+        const container = document.querySelector('#view-settings');
+        if (!container) return;
+        container.appendChild(panel);
+    }
+
+    const cfg = plugin.config || {};
+    const fields = (schema.fields || []).map(f => {
+        const value = cfg[f.key];
+        const id = `plugin-${plugin.name}-${f.key}`;
+        const hint = f.hint ? `<div class="field-hint">${escapeHtml(f.hint)}</div>` : '';
+
+        if (f.type === 'checkbox') {
+            return `
+                <div class="config-item">
+                    <label for="${id}">
+                        <input type="checkbox" id="${id}" ${value ? 'checked' : ''}>
+                        ${escapeHtml(f.label)}
+                    </label>
+                    ${hint}
+                </div>`;
+        }
+        return `
+            <div class="config-item">
+                <label for="${id}">${escapeHtml(f.label)}</label>
+                <input type="${f.type === 'number' ? 'number' : 'text'}" id="${id}"
+                       value="${escapeHtml(value === undefined || value === null ? '' : String(value))}">
+                ${hint}
+            </div>`;
+    }).join('');
+
+    panel.innerHTML = `
+        <div class="card">
+            <div class="card-header">
+                <h3>${escapeHtml(plugin.title || plugin.name)}</h3>
+                <button class="btn btn-secondary btn-sm" onclick="refreshPlugins()">Refresh</button>
+            </div>
+            <div class="card-body">
+                <p class="panel-intro">${escapeHtml(plugin.description || '')}</p>
+                <div class="config-grid">${fields}</div>
+                ${plugin.requires_restart ? `
+                    <div class="restart-note">
+                        Changes here are read by the SMTP server at startup, so they take
+                        effect after a restart.
+                    </div>` : ''}
+            </div>
+        </div>
+    `;
 }
 
 async function togglePlugin(pluginName, enabled) {
     try {
-        const response = await fetch(`/api/config/plugins/${pluginName}`, {
+        const response = await fetch(`${API_BASE}/config/plugins/${encodeURIComponent(pluginName)}`, {
             method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled })
         });
-        
+
         if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to update plugin: ${errorText}`);
+            throw new Error(await response.text() || `HTTP ${response.status}`);
         }
-        
         const result = await response.json();
-        
-        // Show success message
-        if (result.message) {
-            console.log(result.message);
+
+        // Say plainly whether the change is live. A scanner toggle is written
+        // to the config file but read by the SMTP server at startup, so
+        // reporting plain success would imply something that has not happened.
+        // A change written to a staging copy of the config disappears at the
+        // next restart. Saying "saved" about that is worse than saying nothing.
+        if (result.persistent === false) {
+            showConfigWarning(result.warning || 'This change was not saved permanently.');
+        } else if (result.requires_restart) {
+            showRestartRequired(result.message || `${pluginName} updated`);
+        } else {
+            showToast(result.message || `${pluginName} updated`, 'success');
         }
-        
-        // Refresh plugins to show updated status
-        refreshPlugins();
+
+        await refreshPlugins();
     } catch (error) {
         console.error('Error toggling plugin:', error);
-        // Revert checkbox on error
-        if (event && event.target) {
-            event.target.checked = !enabled;
-        }
+        showToast(`Failed to update ${pluginName}: ${error.message}`, 'error');
+        // The server rejected the change, so put the switch back where it was.
+        await refreshPlugins();
     }
 }
+
+// showConfigWarning reports a change that was accepted but will not survive,
+// which happens when the service is running from a staging copy of the config.
+function showConfigWarning(message) {
+    let banner = document.getElementById('restart-required-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'restart-required-banner';
+        banner.className = 'restart-banner';
+        const view = document.getElementById('view-settings');
+        if (view) view.insertBefore(banner, view.firstChild);
+    }
+    banner.innerHTML = `
+        <span><strong>Not saved permanently.</strong> ${escapeHtml(message)}</span>
+        <button class="btn btn-secondary btn-sm" onclick="this.parentElement.remove()">Dismiss</button>
+    `;
+    banner.style.display = 'flex';
+}
+
+// showRestartRequired surfaces a saved-but-not-yet-applied change, with the
+// action that applies it. Without this the toggle looks like it took effect.
+function showRestartRequired(message) {
+    let banner = document.getElementById('restart-required-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'restart-required-banner';
+        banner.className = 'restart-banner';
+        const view = document.getElementById('view-settings');
+        if (view) view.insertBefore(banner, view.firstChild);
+    }
+    banner.innerHTML = `
+        <span>${escapeHtml(message)} — saved, but the SMTP server reads this at startup.</span>
+        <button class="btn btn-primary btn-sm" onclick="restartServer()">Restart now</button>
+        <button class="btn btn-secondary btn-sm" onclick="this.parentElement.remove()">Dismiss</button>
+    `;
+    banner.style.display = 'flex';
+}
+
 
 async function refreshRateLimiting() {
     const loadingEl = document.getElementById('rate-limiting-loading');
@@ -1993,15 +2180,27 @@ async function saveRateLimiting() {
 }
 
 async function restartServer() {
-    const statusEl = document.getElementById('system-status');
-    
+    // Callable from the System panel and from the restart-required banner, so
+    // the status element may not be on screen. Reporting through a helper keeps
+    // a missing element from throwing part-way through a restart.
+    const setStatus = (text, cls) => {
+        const el = document.getElementById('system-status');
+        if (el) {
+            el.textContent = text;
+            el.className = `system-status ${cls}`;
+        } else {
+            showToast(text, cls === 'success' ? 'success' : 'info');
+        }
+    };
+
     if (!confirm('Are you sure you want to restart the server? This will terminate all active connections.')) {
         return;
     }
-    
+
     try {
-        statusEl.textContent = 'Restarting server...';
-        statusEl.className = 'system-status warning';
+        setStatus('Restarting server...', 'warning');
+        const banner = document.getElementById('restart-required-banner');
+        if (banner) banner.remove();
         
         const response = await fetch('/api/config/restart', {
             method: 'POST'
@@ -2010,18 +2209,15 @@ async function restartServer() {
         if (!response.ok) throw new Error('Failed to restart server');
         
         const result = await response.json();
-        statusEl.textContent = result.message || 'Server restart initiated';
-        statusEl.className = 'system-status success';
-        
+        setStatus(result.message || 'Server restart initiated', 'success');
+
         // Show warning about disconnection
         setTimeout(() => {
-            statusEl.textContent = 'Server is restarting. You may be disconnected momentarily.';
-            statusEl.className = 'system-status warning';
+            setStatus('Server is restarting. You may be disconnected momentarily.', 'warning');
         }, 2000);
     } catch (error) {
         console.error('Error restarting server:', error);
-        statusEl.textContent = `Error: ${error.message}`;
-        statusEl.className = 'system-status error';
+        setStatus(`Error: ${error.message}`, 'error');
     }
 }
 
