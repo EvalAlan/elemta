@@ -3084,3 +3084,45 @@ input:checked + .plugin-slider:before {
     .trace-event { flex-direction: column; gap: 0.2rem; }
     .trace-time { flex: none; }
 }
+
+/* ============================================================================
+   TLS Certificate
+   ============================================================================ */
+.cert-grid { display: flex; flex-direction: column; gap: 0.6rem; }
+
+.cert-row {
+    display: grid;
+    grid-template-columns: 7rem minmax(0, 1fr);
+    gap: 1rem;
+    align-items: baseline;
+}
+
+.cert-label {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.cert-value {
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    word-break: break-word;
+}
+
+/* The status carries the whole message, so it is coloured rather than badged:
+   an operator should be able to tell at a glance whether this needs them
+   today, and a red line is faster to read than a label to interpret. */
+.cert-status { font-weight: 500; }
+.cert-status.ok { color: var(--accent-success); }
+.cert-status.warning { color: var(--accent-warning); }
+.cert-status.critical,
+.cert-status.expired { color: var(--accent-danger); }
+
+.cert-path {
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+@media (max-width: 768px) {
+    .cert-row { grid-template-columns: 1fr; gap: 0.1rem; }
+}
