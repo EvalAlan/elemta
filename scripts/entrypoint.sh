@@ -10,14 +10,24 @@ mkdir -p /app/queue/active /app/queue/deferred /app/queue/hold /app/queue/failed
 chmod 700 /app/queue 2>/dev/null || true
 chmod 755 /app/logs 2>/dev/null || true
 
-# Workaround: copy TOML config to .conf if present
-if [ -f /app/config/elemta-generated.toml ]; then
-    cp /app/config/elemta-generated.toml /app/config/elemta.conf
-    chmod 600 /app/config/elemta.conf
-elif [ -f /app/config/elemta.toml ]; then
-    cp /app/config/elemta.toml /app/config/elemta.conf
-    chmod 600 /app/config/elemta.conf
-fi
+# Stage the configuration into a private copy.
+#
+# /app/config is mounted read-only so that changes saved from the web UI reach
+# this server, which means the old in-place copy to elemta.conf cannot work.
+# The server also refuses a config that is group- or world-readable when it
+# holds secrets, and a bind-mounted file carries the host's permissions. Both
+# are solved by copying to a 0600 file on a writable path and pointing the
+# server at that, which is what the web service already does.
+ELEMTA_CONFIG=""
+for candidate in /app/config/elemta-generated.toml /app/config/elemta.toml; do
+    if [ -f "$candidate" ]; then
+        cp "$candidate" /tmp/elemta-runtime.toml 2>/dev/null || continue
+        chmod 600 /tmp/elemta-runtime.toml 2>/dev/null || true
+        ELEMTA_CONFIG=/tmp/elemta-runtime.toml
+        echo "Using configuration from $candidate"
+        break
+    fi
+done
 
 # Create test messages in the queue if TEST_MODE is enabled
 if [ "$TEST_MODE" = "true" ]; then
@@ -130,6 +140,9 @@ if [ -x "/app/elemta" ]; then
     # Check if we need to start as a server or handle other commands
     elif [ "$1" = "server" ]; then
         echo "Starting elemta server..."
+        if [ -n "$ELEMTA_CONFIG" ]; then
+            exec /app/elemta --config "$ELEMTA_CONFIG" server
+        fi
         exec /app/elemta server
     else
         # If any arguments were provided, run the elemta binary with them
@@ -139,6 +152,9 @@ if [ -x "/app/elemta" ]; then
         else
             # Default to starting the server if no arguments
             echo "Starting elemta server with no args..."
+            if [ -n "$ELEMTA_CONFIG" ]; then
+                exec /app/elemta --config "$ELEMTA_CONFIG" server
+            fi
             exec /app/elemta server
         fi
     fi

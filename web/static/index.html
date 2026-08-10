@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260809-visual-refresh">
+    <link rel="stylesheet" href="/static/styles.css?v=20260810-tabbar-wrap">
 </head>
 
 <body>
@@ -829,7 +829,8 @@ If you received this message, your mail server is working correctly!</textarea>
                     <button class="settings-tab active" data-tab="ui">UI Settings</button>
                     <button class="settings-tab" data-tab="server">Server Config</button>
                     <button class="settings-tab" data-tab="plugins">Plugins</button>
-                    <button class="settings-tab" data-tab="rate-limiting">Rate Limiting</button>
+                    <!-- Tabs for configurable plugins are inserted here at runtime,
+                         and removed again when the plugin is disabled. -->
                     <button class="settings-tab" data-tab="system">System</button>
                 </div>
 
@@ -1150,7 +1151,7 @@ If you received this message, your mail server is working correctly!</textarea>
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20260809-visual-refresh"></script>
+    <script src="/static/app.js?v=20260810-tabbar-wrap"></script>
 </body>
 
 </html>
