@@ -585,6 +585,13 @@ func normalizeErrorReason(raw string) string {
 // This outlived the send-test endpoint it was written for. Anything building a
 // message from operator- or user-supplied fields needs the same check, and
 // deleting it only to write it again later is how the injection comes back.
+//
+// removed in this change, and the mass mailer that replaces it builds messages
+// from the same kind of supplied fields. Deleting security validation along
+// with its last caller, then writing it again a change later, is how the
+// injection it prevents comes back. Its tests still exercise it.
+//
+//nolint:unused // Kept deliberately: its only caller was the send-test endpoint
 func validateTestEmailRequest(from, to, subject string) (string, string, error) {
 	fromAddr, err := mail.ParseAddress(from)
 	if err != nil {
