@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/mail"
@@ -577,11 +576,22 @@ func normalizeErrorReason(raw string) string {
 	}
 }
 
-// validateTestEmailRequest checks the fields that handleSendTestEmail
-// concatenates into RFC 5322 headers. Each address must parse as exactly one
-// address, and the subject must not carry CR or LF: a Subject of
-// "x\r\nBcc: ..." is a header injection, not a subject. The returned
-// addresses are the bare addr-spec forms, stripped of display names.
+// validateTestEmailRequest checks fields that are about to be concatenated into
+// RFC 5322 headers. Each address must parse as exactly one address, and the
+// subject must not carry CR or LF: a Subject of "x\r\nBcc: ..." is a header
+// injection, not a subject. The returned addresses are the bare addr-spec
+// forms, stripped of display names.
+//
+// This outlived the send-test endpoint it was written for. Anything building a
+// message from operator- or user-supplied fields needs the same check, and
+// deleting it only to write it again later is how the injection comes back.
+//
+// removed in this change, and the mass mailer that replaces it builds messages
+// from the same kind of supplied fields. Deleting security validation along
+// with its last caller, then writing it again a change later, is how the
+// injection it prevents comes back. Its tests still exercise it.
+//
+//nolint:unused // Kept deliberately: its only caller was the send-test endpoint
 func validateTestEmailRequest(from, to, subject string) (string, string, error) {
 	fromAddr, err := mail.ParseAddress(from)
 	if err != nil {
@@ -595,64 +605,6 @@ func validateTestEmailRequest(from, to, subject string) (string, string, error) 
 		return "", "", fmt.Errorf("subject must not contain line breaks")
 	}
 	return fromAddr.Address, toAddr.Address, nil
-}
-
-// handleSendTestEmail sends a test email
-func (s *Server) handleSendTestEmail(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		From    string `json:"from"`
-		To      string `json:"to"`
-		Subject string `json:"subject"`
-		Body    string `json:"body"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	// Validate required fields
-	if req.From == "" || req.To == "" {
-		http.Error(w, "from and to are required", http.StatusBadRequest)
-		return
-	}
-
-	from, to, err := validateTestEmailRequest(req.From, req.To, req.Subject)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	req.From, req.To = from, to
-
-	if req.Subject == "" {
-		req.Subject = "Test Email from Elemta"
-	}
-	if req.Body == "" {
-		req.Body = "This is a test email sent from the Elemta web interface."
-	}
-
-	// Create email content
-	content := "From: " + req.From + "\r\n" +
-		"To: " + req.To + "\r\n" +
-		"Subject: " + req.Subject + "\r\n" +
-		"Date: " + time.Now().Format(time.RFC1123Z) + "\r\n" +
-		"Content-Type: text/plain; charset=utf-8\r\n" +
-		"X-Mailer: Elemta-WebUI/1.0\r\n" +
-		"\r\n" +
-		req.Body
-
-	// Queue the message
-	msgID, err := s.queueMgr.EnqueueMessage(req.From, []string{req.To}, req.Subject, []byte(content), 2, time.Now())
-	if err != nil {
-		http.Error(w, "Failed to queue message: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	writeJSON(w, map[string]interface{}{
-		"status":     "success",
-		"message_id": msgID,
-		"message":    "Test email queued successfully",
-	})
 }
 
 // formatDuration formats a duration as human readable
