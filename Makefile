@@ -1,5 +1,5 @@
 .PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres \
-	configure-queue-backend configure-plugins ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
+	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
 	uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
 	rebuild rebuild-dev docker docker-build docker-run docker-stop docker-setup docker-down update lint lint-fix fmt
 
@@ -25,6 +25,15 @@ PLUGIN_RSPAMD ?= on
 PLUGIN_ACCESS_CONTROL ?= on
 PLUGIN_RBL ?= on
 PLUGIN_MASS_MAILER ?= on
+
+# The dashboard's first account.
+#
+# The password is generated rather than fixed. A well-known default on a service
+# that can flush queues and send bulk mail is a bad thing to have on a laptop
+# and a worse thing to have on a host somebody exposed by accident. Override
+# with ADMIN_PASSWORD to choose your own.
+ADMIN_USER ?= admin
+ADMIN_PASSWORD ?=
 
 # Queue backend config
 QUEUE_BACKEND ?= sqlite
@@ -259,6 +268,51 @@ configure-plugins:
 		rbl=$(PLUGIN_RBL) \
 		mass_mailer=$(PLUGIN_MASS_MAILER)
 
+# Create the dashboard's first account, once. The users file lives on the
+# runtime volume, so this runs inside the container: it has to be written by the
+# user that reads it, and the host cannot write there.
+bootstrap-admin:
+	@# Whether an *account* exists, not whether the file does: the runtime setup
+	@# leaves an empty `{}` there so the service can start locked, and testing
+	@# for the file would read that as an account and skip the bootstrap.
+	@needs_account=1; \
+	if docker exec elemta-web test -e /app/runtime-config/users.json 2>/dev/null; then \
+		if ! docker exec elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+			user list --file /app/runtime-config/users.json 2>/dev/null | grep -q '^No users'; then \
+			needs_account=0; \
+		fi; \
+	fi; \
+	if [ "$$needs_account" = "0" ]; then \
+		echo "ℹ️  Dashboard account already exists (make reset-admin-password to change it)"; \
+	else \
+		PW="$(ADMIN_PASSWORD)"; \
+		if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
+		if printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+			user add $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1; then \
+			echo ""; \
+			echo "🔑 Dashboard login created"; \
+			echo "   URL:      http://localhost:8025/"; \
+			echo "   Username: $(ADMIN_USER)"; \
+			echo "   Password: $$PW"; \
+			echo "   (shown once — make reset-admin-password if you lose it)"; \
+			echo ""; \
+			echo "🔄 Restarting the web service so it picks up the new account..."; \
+			docker compose -f $(COMPOSE_FILE) restart elemta-web >/dev/null 2>&1 || true; \
+		else \
+			echo "❌ Could not create the dashboard account"; \
+		fi; \
+	fi
+
+# Set a new password for the dashboard account, for when the generated one is
+# lost — which is the normal outcome of a password shown once.
+reset-admin-password:
+	@PW="$(ADMIN_PASSWORD)"; \
+	if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
+	printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+		user passwd $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1 && \
+	echo "🔑 Password for $(ADMIN_USER) is now: $$PW" && \
+	docker compose -f $(COMPOSE_FILE) restart elemta-web >/dev/null 2>&1 || echo "❌ Could not change the password"
+
 check-tools:
 	@for tool in docker python3 openssl; do \
 		if ! command -v $$tool >/dev/null 2>&1; then \
@@ -344,6 +398,7 @@ install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-de
 	@sleep 5
 	@echo "⏳ Initializing LDAP..."
 	@./scripts/init-ldap-if-needed.sh || true
+	@$(MAKE) bootstrap-admin
 	@$(MAKE) print-dev-summary
 
 install-dev-postgres:
