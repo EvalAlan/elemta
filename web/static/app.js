@@ -186,6 +186,7 @@ function switchView(viewName) {
             break;
         case 'health':
             refreshHealth();
+            refreshCertificate();
             break;
         case 'queues':
             refreshQueue();
@@ -3105,3 +3106,50 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Enter') searchMessages();
     });
 });
+
+// ============================================================================
+// TLS Certificate
+// ============================================================================
+//
+// An expired certificate is one of the most common ways a mail server stops
+// working, and it is entirely predictable — the date is written on the
+// certificate. It only ever comes as a surprise because nothing was looking.
+
+async function refreshCertificate() {
+    const body = document.getElementById('tls-cert-body');
+    if (!body) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/tls/certificate`);
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        const cert = await response.json();
+
+        if (!cert.configured) {
+            body.innerHTML = `<div class="field-hint">${escapeHtml(cert.message)}</div>`;
+            return;
+        }
+
+        // The status comes from the server rather than being re-derived here,
+        // so the panel cannot disagree with the API about what "warning" means.
+        const rows = [
+            ['Status', `<span class="cert-status ${escapeHtml(cert.status)}">${escapeHtml(cert.message)}</span>`],
+            ['Expires', cert.not_after ? `${escapeHtml(formatDate(cert.not_after))} (${cert.days_remaining} days)` : '—'],
+            ['Subject', escapeHtml(cert.subject || '—')],
+            ['Issuer', escapeHtml(cert.issuer || '—') + (cert.self_signed ? ' <span class="plugin-note">self-signed</span>' : '')],
+            ['Names', escapeHtml((cert.dns_names || []).join(', ') || '—')],
+            ['File', `<span class="cert-path">${escapeHtml(cert.path || '—')}</span>`],
+        ];
+
+        body.innerHTML = `
+            <div class="cert-grid">
+                ${rows.map(([label, value]) => `
+                    <div class="cert-row">
+                        <span class="cert-label">${label}</span>
+                        <span class="cert-value">${value}</span>
+                    </div>`).join('')}
+            </div>`;
+    } catch (error) {
+        console.error('Certificate check failed:', error);
+        body.innerHTML = `<div class="error-message">Could not check the certificate: ${escapeHtml(error.message)}</div>`;
+    }
+}

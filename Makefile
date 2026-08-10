@@ -1,5 +1,5 @@
 .PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres \
-	configure-queue-backend ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
+	configure-queue-backend configure-plugins ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
 	uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
 	rebuild rebuild-dev docker docker-build docker-run docker-stop docker-setup docker-down update lint lint-fix fmt
 
@@ -7,6 +7,24 @@
 COMPOSE_FILE ?= deployments/compose/docker-compose.yml
 DEV_ENV_FILE ?= .env
 DEV_MIN_SERVICES ?= elemta elemta-web elemta-dovecot elemta-ldap valkey
+
+# Development TLS certificate.
+#
+# Seven days on purpose. The dashboard warns below fourteen, so a dev stack sits
+# permanently inside the warning window — which means the expiry panel is
+# exercised every day rather than being a code path nobody sees until a real
+# certificate runs out. Override with CERT_DAYS for a longer-lived one.
+CERT_DAYS ?= 7
+
+# Plugins enabled by a development deploy. A stack with everything switched off
+# exercises none of it, so the first sign a plugin is broken would be someone
+# turning it on in production. Override individually: make install-dev PLUGIN_RBL=off
+PLUGIN_RATE_LIMITER ?= on
+PLUGIN_CLAMAV ?= on
+PLUGIN_RSPAMD ?= on
+PLUGIN_ACCESS_CONTROL ?= on
+PLUGIN_RBL ?= on
+PLUGIN_MASS_MAILER ?= on
 
 # Queue backend config
 QUEUE_BACKEND ?= sqlite
@@ -93,12 +111,12 @@ certs:
 	@openssl req -x509 -newkey rsa:4096 -nodes \
 		-keyout config/test.key \
 		-out config/test.crt \
-		-days 365 \
+		-days $(CERT_DAYS) \
 		-subj '/CN=mail.dev.evil-admin.com/O=Elemta Dev/C=US' \
 		-addext 'subjectAltName=DNS:mail.dev.evil-admin.com,DNS:*.dev.evil-admin.com' 2>/dev/null
 	@chmod 600 config/test.key
 	@chmod 644 config/test.crt
-	@echo "✅ TLS certificates generated at config/test.{crt,key}"
+	@echo "✅ TLS certificates generated at config/test.{crt,key} (valid $(CERT_DAYS) days)"
 
 # Install targets
 install-bin: build
@@ -231,6 +249,16 @@ configure-queue-backend:
 		echo "   $(QUEUE_POSTGRES_DSN)"; \
 	fi
 
+configure-plugins:
+	@echo "🔌 Configuring plugins for this deployment"
+	@python3 ./scripts/configure_plugins.py config/elemta.toml \
+		rate_limiter=$(PLUGIN_RATE_LIMITER) \
+		clamav=$(PLUGIN_CLAMAV) \
+		rspamd=$(PLUGIN_RSPAMD) \
+		access_control=$(PLUGIN_ACCESS_CONTROL) \
+		rbl=$(PLUGIN_RBL) \
+		mass_mailer=$(PLUGIN_MASS_MAILER)
+
 check-tools:
 	@for tool in docker python3 openssl; do \
 		if ! command -v $$tool >/dev/null 2>&1; then \
@@ -239,12 +267,18 @@ check-tools:
 		fi; \
 	done
 
+# A short-lived dev certificate has to be replaced once it lapses, or the stack
+# comes up with TLS that fails every handshake. Checking the date rather than
+# just the file is the difference between a warning and a broken deployment.
 ensure-dev-certs:
 	@if [ ! -f config/test.crt ] || [ ! -f config/test.key ]; then \
 		echo "🔐 Missing test certs, generating..."; \
 		$(MAKE) certs; \
+	elif ! openssl x509 -checkend 0 -noout -in config/test.crt >/dev/null 2>&1; then \
+		echo "🔐 Test certificate has expired, regenerating..."; \
+		$(MAKE) certs; \
 	else \
-		echo "ℹ️  Using existing TLS certificates"; \
+		echo "ℹ️  Using existing TLS certificate (expires $$(openssl x509 -enddate -noout -in config/test.crt | cut -d= -f2))"; \
 	fi
 
 ensure-dev-env:
@@ -299,8 +333,13 @@ install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-de
 	@echo "🚀 Elemta Development Setup (Minimal)"
 	@echo "======================================"
 	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) configure-plugins
 	@echo "🚀 Starting services..."
-	@docker compose -f $(COMPOSE_FILE) up -d --no-deps $(DEV_MIN_SERVICES)
+	@# ELEMTA_CONFIG_RESEED makes this install authoritative: the services read a
+	@# configuration on a shared volume, which is seeded once and then owned by
+	@# whatever the web UI saves. Without this, the settings configured above
+	@# would be ignored on every deploy after the first.
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --no-deps $(DEV_MIN_SERVICES)
 	@echo "⏳ Waiting for services to become healthy..."
 	@sleep 5
 	@echo "⏳ Initializing LDAP..."

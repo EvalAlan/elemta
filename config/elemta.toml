@@ -24,11 +24,19 @@ dev_mode = true  # Enable development mode for XDEBUG command
 
 # TLS Configuration - disabled by default in container builds
 # TLS certs/keys should be mounted and enabled via custom config in production.
+# TLS. The development stack ships a self-signed certificate that `make certs`
+# generates with a deliberately short life — see CERT_DAYS in the Makefile — so
+# the expiry warning on the Health page is exercised rather than being a code
+# path nobody sees until a real certificate lapses.
+#
+# The paths point at the runtime directory, not the read-only config mount:
+# a private key has to be 0600 and owned by the user that reads it, and a bind
+# mount carries the host's ownership. scripts/prepare-config.sh stages it.
 [tls]
-enabled = false
-enable_starttls = false
-cert_file = ""
-key_file = ""
+enabled = true
+enable_starttls = true
+cert_file = "/app/runtime-config/test.crt"
+key_file = "/app/runtime-config/test.key"
 
 queue_dir = "/app/queue"
 
@@ -108,7 +116,7 @@ retry_delay = 60
 # without restating the range. Addresses may be CIDR ranges or single hosts.
 # Domain rules cover subdomains, and the empty sender (bounces) is never refused.
 [access_control]
-enabled = false
+enabled = true
 allow_ips = []
 deny_ips = []
 allow_domains = []
@@ -128,8 +136,8 @@ deny_domains = []
 # A resolver failure is treated as "not listed": failing closed would turn a
 # DNS outage into a mail outage.
 [rbl]
-enabled = false
-zones = []
+enabled = true
+zones = ["zen.spamhaus.org"]
 reject = false
 timeout = 5
 skip_ips = []
@@ -144,7 +152,7 @@ cache_size = 10000
 # when the campaign does not set its own rate. Campaign mail is queued at low
 # priority so it cannot overtake ordinary transactional mail.
 [mass_mailer]
-enabled = false
+enabled = true
 default_rate_per_minute = 600
 max_recipients = 0  # 0 = no limit
 

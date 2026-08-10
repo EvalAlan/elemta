@@ -131,12 +131,19 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		AuthAllowDeprecatedSHA1:   authAllowDeprecatedSHA1,
 		RateLimiterPluginConfig:   cfg.RateLimiter,
 		TLS:                       cfg.TLS,
-		API:                       nil, // API config not available in main config
-		MassMailer:                massMailer,
-		Antivirus:                 antivirus,
-		Antispam:                  antispam,
-		AccessControl:             accessControl,
-		RBL:                       rbl,
+		TLSEnabled:                cfg.TLS != nil && cfg.TLS.Enabled,
+		TLSCertFile: func() string {
+			if cfg.TLS != nil {
+				return cfg.TLS.CertFile
+			}
+			return ""
+		}(),
+		API:           nil, // API config not available in main config
+		MassMailer:    massMailer,
+		Antivirus:     antivirus,
+		Antispam:      antispam,
+		AccessControl: accessControl,
+		RBL:           rbl,
 	}
 }
 
