@@ -55,6 +55,15 @@ func (s *Server) setMassMailerEnabled(enabled bool) error {
 		s.campaigns, s.queueMgr, s.massMailerHostname(),
 		slog.Default().With("component", "mass-mailer"),
 	)
+
+	// A development stack gets a worked example, so the Mass Mailer does not
+	// open on an empty list that explains nothing. Draft, local recipients,
+	// never started — see demo_campaign.go.
+	if seedDemoCampaign(s.campaigns, s.massMailerHostname()) {
+		slog.Default().Info("Added the demo campaign",
+			"component", "mass-mailer",
+			"note", "a draft addressed to this stack's own mailboxes; it is not sent")
+	}
 	return nil
 }
 
