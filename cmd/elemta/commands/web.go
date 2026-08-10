@@ -58,6 +58,17 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 			RejectOnFailure: av.RejectOnFailure,
 		}
 	}
+	var accessControl *api.AccessControlStatus
+	if ac := cfg.AccessControl; ac != nil {
+		accessControl = &api.AccessControlStatus{
+			Enabled:      ac.Enabled,
+			AllowIPs:     ac.AllowIPs,
+			DenyIPs:      ac.DenyIPs,
+			AllowDomains: ac.AllowDomains,
+			DenyDomains:  ac.DenyDomains,
+		}
+	}
+
 	var antispam *api.ScannerStatus
 	if as := cfg.Antispam; as != nil && as.Rspamd != nil {
 		antispam = &api.ScannerStatus{
@@ -101,6 +112,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		API:                       nil, // API config not available in main config
 		Antivirus:                 antivirus,
 		Antispam:                  antispam,
+		AccessControl:             accessControl,
 	}
 }
 

@@ -36,6 +36,7 @@ type Server struct {
 	tlsManager      TLSHandler
 	resourceManager *ResourceManager // Resource management and rate limiting
 	scannerManager  *ScannerManager  // Antivirus/antispam scanners used during DATA
+	accessControl   *AccessControl   // Allow/deny lists applied at connect and MAIL FROM
 	slogger         *slog.Logger     // Structured logger for resource management
 
 	// Concurrency management
@@ -544,6 +545,23 @@ func NewServer(config *Config) (*Server, error) {
 	}
 	server.scannerManager = scannerManager
 
+	// Access control lists. A malformed entry stops startup rather than being
+	// dropped: a deny rule that silently fails to load leaves the operator
+	// believing a network is blocked when it is not.
+	accessControl, err := NewAccessControl(config.AccessControl, slogger)
+	if err != nil {
+		return nil, fmt.Errorf("access control configuration: %w", err)
+	}
+	server.accessControl = accessControl
+	if accessControl.Enabled() {
+		slogger.Info("Access control enabled",
+			"allow_ips", len(config.AccessControl.AllowIPs),
+			"deny_ips", len(config.AccessControl.DenyIPs),
+			"allow_domains", len(config.AccessControl.AllowDomains),
+			"deny_domains", len(config.AccessControl.DenyDomains),
+		)
+	}
+
 	// Say plainly when nothing will be scanned. Silence here previously looked
 	// identical to working scanners.
 	if !scannerManager.HasAntivirusScanners() {
@@ -846,6 +864,21 @@ func (s *Server) handleConnectionWithContext(ctx context.Context, conn interface
 func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	clientIP := conn.RemoteAddr().String()
 	s.slogger.Debug("handleAndCloseSession called", "client_ip", clientIP)
+
+	// Denied peers are refused before a session exists. Answering 554 and
+	// closing costs one round trip and no session state, which is the point of
+	// blocking an address rather than filtering its mail later.
+	if decision := s.accessControl.CheckPeer(conn.RemoteAddr()); decision.Denied {
+		s.slogger.WarnContext(ctx, "Connection refused by access control",
+			"event_type", "rejection",
+			"client_ip", clientIP,
+			"rule", decision.Rule,
+		)
+		_, _ = conn.Write([]byte("554 5.7.1 " + decision.Reason + "\r\n"))
+		_ = conn.Close()
+		return
+	}
+
 	var sessionID string
 	var cleanupDone bool
 
@@ -907,6 +940,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 
 	// Set the content scanners from the server
 	session.SetScannerManager(s.scannerManager)
+	session.SetAccessControl(s.accessControl)
 
 	// Set queue manager for message processing
 	if s.queueManager != nil {
