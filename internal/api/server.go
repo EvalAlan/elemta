@@ -1876,9 +1876,14 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rblEnabled, rblConfig := false, map[string]interface{}(nil)
+	// needsConfig is a plugin that has a prerequisite before it can be turned
+	// on at all. The UI uses it to show the settings form for a plugin that is
+	// still off, which is the only way out of "the toggle refuses until you
+	// configure it, and the form is only shown once it is enabled".
+	rblEnabled, rblConfig, rblNeedsConfig := false, map[string]interface{}(nil), true
 	if r := s.mainConfig.RBL; r != nil {
 		rblEnabled = r.Enabled
+		rblNeedsConfig = len(r.Zones) == 0
 		rblConfig = map[string]interface{}{
 			"zones":      r.Zones,
 			"reject":     r.Reject,
@@ -1934,6 +1939,11 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"config":           rblConfig,
 			"configurable":     true,
 			"requires_restart": true,
+			// This plugin cannot be switched on until it has something to
+			// query. Saying so here is what lets the UI offer its settings
+			// before it is enabled; without it the toggle refuses and the form
+			// that would fix the refusal is nowhere to be found.
+			"needs_config": rblNeedsConfig,
 		},
 		{
 			"name":        "mass_mailer",
