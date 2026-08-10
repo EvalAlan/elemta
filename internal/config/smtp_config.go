@@ -67,6 +67,7 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 		Resources:     c.Resources,
 		Antivirus:     c.Antivirus,
 		AccessControl: c.AccessControl,
+		RBL:           c.RBL,
 		Antispam:      c.Antispam,
 		Metrics:       c.Metrics,
 		Delivery:      c.Delivery,

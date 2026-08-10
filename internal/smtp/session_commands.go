@@ -249,6 +249,15 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 			)
 			return fmt.Errorf("550 5.7.1 %s", decision.Reason)
 		}
+
+		// DNS blocklists. Consulted here rather than at connect so that an
+		// authenticated client is already known to be one: a legitimate user
+		// sending from a hotel or mobile network whose address is listed would
+		// otherwise be unable to send at all — a support ticket, not a spam
+		// control.
+		if rblErr := ch.session.checkRBL(ctx); rblErr != nil {
+			return rblErr
+		}
 	}
 
 	if err := ch.validateEmailAddress(ctx, mailFrom); err != nil {

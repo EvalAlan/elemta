@@ -114,6 +114,28 @@ deny_ips = []
 allow_domains = []
 deny_domains = []
 
+# DNS blocklists (RBL/DNSBL) for the connecting address.
+#
+# Disabled by default and, when enabled, set to mark rather than refuse.
+# Tagging first is what makes a new blocklist safe to try: the operator can see
+# what it would have refused before letting it refuse anything.
+#
+# Checked at MAIL FROM rather than at connect, so an authenticated client is
+# already known to be one. Authenticated senders are never looked up — a
+# legitimate user on a hotel or mobile network whose address is listed would
+# otherwise be unable to send at all.
+#
+# A resolver failure is treated as "not listed": failing closed would turn a
+# DNS outage into a mail outage.
+[rbl]
+enabled = false
+zones = []
+reject = false
+timeout = 5
+skip_ips = []
+cache_ttl = 3600
+cache_size = 10000
+
 # Mass mailer: bulk campaign sending from the web interface.
 #
 # Disabled by default — bulk mail should be turned on deliberately.
