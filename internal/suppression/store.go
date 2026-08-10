@@ -169,21 +169,38 @@ func (s *Store) List(ctx context.Context, query string, limit, offset int) ([]En
 		limit = 100
 	}
 
-	where, args := "", []interface{}{}
-	if q := strings.TrimSpace(query); q != "" {
-		where = " WHERE address LIKE ?"
-		args = append(args, "%"+strings.ToLower(q)+"%")
-	}
+	// Two complete statements rather than a base query with a clause appended.
+	// The filter is a constant either way and every value is a parameter, so the
+	// concatenated form was safe — but "safe SQL built by concatenation" is a
+	// pattern that stops being true the first time someone extends it, and it
+	// is what a scanner flags. Writing both out costs a few lines and removes
+	// the question.
+	const (
+		countAll      = `SELECT COUNT(*) FROM suppressed`
+		countFiltered = `SELECT COUNT(*) FROM suppressed WHERE address LIKE ?`
+		selectAll     = `SELECT address, source, reason, code, created_at FROM suppressed
+		                 ORDER BY created_at DESC LIMIT ? OFFSET ?`
+		selectFiltered = `SELECT address, source, reason, code, created_at FROM suppressed
+		                  WHERE address LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	)
 
-	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM suppressed"+where, args...).Scan(&total); err != nil {
-		return nil, 0, err
+	var (
+		total int
+		rows  *sql.Rows
+		err   error
+	)
+	if filter := strings.TrimSpace(query); filter != "" {
+		pattern := "%" + strings.ToLower(filter) + "%"
+		if err = s.db.QueryRowContext(ctx, countFiltered, pattern).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+		rows, err = s.db.QueryContext(ctx, selectFiltered, pattern, limit, offset)
+	} else {
+		if err = s.db.QueryRowContext(ctx, countAll).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+		rows, err = s.db.QueryContext(ctx, selectAll, limit, offset)
 	}
-
-	rows, err := s.db.QueryContext(ctx,
-		"SELECT address, source, reason, code, created_at FROM suppressed"+where+
-			" ORDER BY created_at DESC LIMIT ? OFFSET ?",
-		append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
