@@ -64,6 +64,19 @@ type MainConfig struct {
 	// internal/smtp (smtp already imports api for the throughput counters).
 	Antivirus *ScannerStatus `json:"antivirus,omitempty"`
 	Antispam  *ScannerStatus `json:"antispam,omitempty"`
+
+	// AccessControl is the allow/deny plugin's configuration, mirrored for the
+	// same reason.
+	AccessControl *AccessControlStatus `json:"access_control,omitempty"`
+}
+
+// AccessControlStatus is the API's view of the allow/deny lists.
+type AccessControlStatus struct {
+	Enabled      bool     `json:"enabled"`
+	AllowIPs     []string `json:"allow_ips"`
+	DenyIPs      []string `json:"deny_ips"`
+	AllowDomains []string `json:"allow_domains"`
+	DenyDomains  []string `json:"deny_domains"`
 }
 
 // ScannerStatus is the API's view of a content scanner's configuration.
@@ -1787,6 +1800,18 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 	// when it is turned off. requires_restart says whether toggling takes effect
 	// in this process or needs the SMTP server restarted, so the UI can tell the
 	// operator the truth instead of implying the change is already live.
+	acEnabled, acConfig := false, map[string]interface{}(nil)
+	if ac := s.mainConfig.AccessControl; ac != nil {
+		acEnabled = ac.Enabled
+		acConfig = map[string]interface{}{
+			"allow_ips":     ac.AllowIPs,
+			"deny_ips":      ac.DenyIPs,
+			"allow_domains": ac.AllowDomains,
+			"deny_domains":  ac.DenyDomains,
+		}
+	}
+	accessControlEnabled, accessControlConfig := acEnabled, acConfig
+
 	plugins := []map[string]interface{}{
 		{
 			"name":             "rate_limiter",
@@ -1803,6 +1828,15 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"enabled":          clamavEnabled,
 			"description":      "Antivirus and malware scanning",
 			"config":           clamavConfig,
+			"configurable":     true,
+			"requires_restart": true,
+		},
+		{
+			"name":             "access_control",
+			"title":            "Allow / Deny",
+			"enabled":          accessControlEnabled,
+			"description":      "Allow and deny lists for peer addresses and sender domains",
+			"config":           accessControlConfig,
 			"configurable":     true,
 			"requires_restart": true,
 		},
@@ -1990,6 +2024,15 @@ func (s *Server) persistConfig() error {
 			edit{"antispam.rspamd", "enabled", as.Enabled},
 		)
 	}
+	if ac := s.mainConfig.AccessControl; ac != nil {
+		edits = append(edits,
+			edit{"access_control", "enabled", ac.Enabled},
+			edit{"access_control", "allow_ips", ac.AllowIPs},
+			edit{"access_control", "deny_ips", ac.DenyIPs},
+			edit{"access_control", "allow_domains", ac.AllowDomains},
+			edit{"access_control", "deny_domains", ac.DenyDomains},
+		)
+	}
 
 	for _, e := range edits {
 		doc, err = config.SetTOMLValue(doc, e.section, e.key, e.value)
@@ -2071,6 +2114,13 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 			s.mainConfig.Antispam = &ScannerStatus{}
 		}
 		s.mainConfig.Antispam.Enabled = enabled
+		requiresRestart = true
+
+	case "access_control":
+		if s.mainConfig.AccessControl == nil {
+			s.mainConfig.AccessControl = &AccessControlStatus{}
+		}
+		s.mainConfig.AccessControl.Enabled = enabled
 		requiresRestart = true
 
 	default:
