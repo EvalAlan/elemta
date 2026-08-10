@@ -18,26 +18,37 @@ while ! docker exec elemta-ldap ldapsearch -x -D "cn=admin,dc=example,dc=com" -w
     fi
 done
 
-# Check if users already exist
-if docker exec elemta-ldap ldapsearch -x -H ldapi:/// -Y EXTERNAL -b "ou=people,dc=example,dc=com" "(uid=user)" 2>/dev/null | grep -q "uid: user"; then
+# Whether the users are already there.
+#
+# This and the verification below used to combine -x (simple authentication)
+# with -Y EXTERNAL (SASL). ldapsearch refuses that outright, so the check failed
+# every time: the script decided on every run that the users were missing,
+# re-added them, and ldapadd then failed with "Already exists" — which under
+# `set -e` ended the script before it could verify anything. The warning about
+# verification being "unclear" was this, not a problem with LDAP.
+ldap_has_users() {
+    docker exec elemta-ldap ldapsearch -x -D "cn=admin,dc=example,dc=com" -w admin \
+        -b "ou=people,dc=example,dc=com" "(uid=user)" 2>/dev/null | grep -q "^dn: uid=user"
+}
+
+if ldap_has_users; then
     echo "✅ LDAP users already initialized"
     exit 0
 fi
 
 echo "📝 LDAP users not found, adding them now..."
 
-# Add users using ldapadd
-docker exec elemta-ldap ldapadd -x -D "cn=admin,dc=example,dc=com" -w admin -f /docker-entrypoint-initdb.d/99-stress-users.ldif 2>&1
+# Adding entries that already exist is not a failure for an idempotent
+# initialiser, so this must not take `set -e` with it.
+docker exec elemta-ldap ldapadd -x -D "cn=admin,dc=example,dc=com" -w admin \
+    -f /docker-entrypoint-initdb.d/99-stress-users.ldif 2>&1 | grep -v "Already exists" || true
 
-# Wait a moment for LDAP to process the additions
 sleep 2
 
-# Verify
-if docker exec elemta-ldap ldapsearch -x -H ldapi:/// -Y EXTERNAL -b "ou=people,dc=example,dc=com" "(uid=user)" 2>&1 | grep -q "dn: uid=user"; then
+if ldap_has_users; then
     echo "✅ LDAP users initialized successfully"
     exit 0
 else
-    echo "⚠️  Users added but verification unclear - continuing anyway"
+    echo "⚠️  LDAP users could not be verified — check: docker logs elemta-ldap"
     exit 0
 fi
-

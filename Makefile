@@ -51,48 +51,69 @@ all: build
 help:
 	@echo "Elemta - High Performance SMTP Server"
 	@echo ""
-	@echo "🐳 Docker Commands:"
+	@echo "⚡ Quick Start:"
+	@echo "  make install-dev              # Minimal dev stack, plugins on, prints a dashboard login"
+	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
+	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
+	@echo "  make install                  # Interactive production setup"
+	@echo ""
+	@echo "🔑 Accounts & Access:"
+	@echo "  Web UI            http://localhost:8025  (login required — there is no guest access)"
+	@echo "  bootstrap-admin       - Create the dashboard account; prints the password once"
+	@echo "  reset-admin-password  - Generate and print a new password for it"
+	@echo "                          ADMIN_USER=name ADMIN_PASSWORD=secret to choose your own"
+	@echo "  The dashboard login is NOT the mailbox login. Mailbox users live in LDAP;"
+	@echo "  the dashboard account lives in the users file and is managed with:"
+	@echo "    docker exec -it elemta-web /app/elemta --config /app/runtime-config/elemta.toml \\"
+	@echo "      user list|add|passwd|remove --file /app/runtime-config/users.json"
+	@echo "  A running server reads that file at startup, so restart elemta-web after changing it."
+	@echo ""
+	@echo "🐳 Services:"
 	@echo "  up             - Start services (requires .env)"
-	@echo "  down           - Stop services (keep volumes)"
-	@echo "  down-volumes   - Stop services and remove volumes"
+	@echo "  down           - Stop services, keep volumes"
+	@echo "  down-volumes   - Stop services and DELETE volumes (queue, config and login all go)"
 	@echo "  restart        - Restart all services"
 	@echo "  rebuild        - Rebuild images and restart"
 	@echo "  rebuild-dev    - Quick rebuild (dev only, skips cert check)"
-	@echo "  logs           - Show all logs (follow mode)"
-	@echo "  logs-elemta    - Show Elemta SMTP logs only"
 	@echo "  status         - Show service status"
+	@echo "  logs           - Follow all logs        logs-elemta - Elemta SMTP logs only"
 	@echo ""
-	@echo "🚀 Setup & Installation:"
-	@echo "  install               - Production setup (interactive, creates .env)"
-	@echo "  install-dev           - Minimal dev setup (Elemta + Web + Dovecot + LDAP + Valkey)"
-	@echo "  install-dev-full      - Full dev setup (all services incl. ClamAV, Rspamd, Roundcube)"
-	@echo "  install-dev-postgres  - One-command postgres queue dev setup (includes DB container)"
-	@echo "  refresh-dev-env       - Refresh backend/compose keys in .env"
-	@echo "  configure-queue-backend - Update config/elemta.toml queue backend (QUEUE_BACKEND=file|sqlite|postgres)"
+	@echo "⚙️  Configuration:"
+	@echo "  configure-plugins        - Apply the PLUGIN_* settings below to config/elemta.toml"
+	@echo "  configure-queue-backend  - Set the queue backend (QUEUE_BACKEND=file|sqlite|postgres)"
+	@echo "  refresh-dev-env          - Refresh backend/compose keys in .env"
+	@echo "  certs / clean-certs      - Generate or remove the dev TLS certificate"
 	@echo ""
 	@echo "🔧 Build & Test:"
-	@echo "  build             - Build all Elemta binaries (server, queue, cli)"
-	@echo "  clean             - Clean build artifacts"
-	@echo "  certs             - Generate self-signed TLS certificates"
-	@echo "  clean-certs       - Remove test TLS certificates"
-	@echo "  test              - Run Go unit tests"
-	@echo "  test-load         - Run SMTP load/performance tests"
-	@echo "  test-race-smoke   - Run targeted SMTP/session race checks"
-	@echo "  test-docker       - Run full integration test suite (21 tests)"
-	@echo "  lint              - Run code quality checks (production code)"
-	@echo "  fmt               - Format code with gofmt and goimports"
+	@echo "  build          - Build all binaries (server, queue, cli)   clean - Remove artifacts"
+	@echo "  test           - Go unit tests            test-docker    - Integration suite"
+	@echo "  test-load      - SMTP load tests          test-race-smoke - Session race checks"
+	@echo "  test-auth      - Authentication tests     test-security  - Security tests"
+	@echo "  lint / lint-fix / fmt   - Code quality"
 	@echo ""
-	@echo "⚡ Quick Start:"
-	@echo "  Minimal Dev:  make install-dev QUEUE_BACKEND=sqlite"
-	@echo "  Full Dev:     make install-dev-full QUEUE_BACKEND=file"
-	@echo "  Postgres:     make install-dev-postgres"
-	@echo "  Production:   make install          # Interactive production setup"
-	@echo "  Start:        make up               # Start services"
-	@echo "  Stop:         make down             # Stop services"
-	@echo "  Logs:         make logs             # View logs"
-	@echo "  Status:       make status           # Check services"
+	@echo "🎛️  Variables (override on the command line):"
+	@echo "  ADMIN_USER=admin              Dashboard account name"
+	@echo "  ADMIN_PASSWORD=               Dashboard password (generated when empty)"
+	@echo "  CERT_DAYS=$(CERT_DAYS)                  Dev certificate lifetime, in days"
+	@echo "  QUEUE_BACKEND=$(QUEUE_BACKEND)         file | sqlite | postgres"
+	@echo "  PLUGIN_RATE_LIMITER=$(PLUGIN_RATE_LIMITER)      PLUGIN_CLAMAV=$(PLUGIN_CLAMAV)   PLUGIN_RSPAMD=$(PLUGIN_RSPAMD)"
+	@echo "  PLUGIN_ACCESS_CONTROL=$(PLUGIN_ACCESS_CONTROL)    PLUGIN_RBL=$(PLUGIN_RBL)      PLUGIN_MASS_MAILER=$(PLUGIN_MASS_MAILER)"
+	@echo "    e.g. make install-dev PLUGIN_RBL=off CERT_DAYS=90"
+	@echo ""
+	@echo "💡 Things that surprise people:"
+	@echo "  • Editing config/elemta.toml does not change a running stack. The services read a"
+	@echo "    copy on a shared volume, seeded once, because the web UI writes to it too."
+	@echo "    'make install-dev' re-seeds from the file; 'up' and 'restart' do not."
+	@echo "  • Scanner, allow/deny and blocklist changes apply on their own within ~5 seconds —"
+	@echo "    no restart. Listen address, size limits, timeouts and the queue backend do need"
+	@echo "    a restart, and the reload log says so."
+	@echo "  • The dev TLS certificate expires in $(CERT_DAYS) days on purpose, so the expiry warning on"
+	@echo "    the Health page is exercised. It is regenerated when it lapses."
+	@echo "  • The dev stack is self-signed and binds 0.0.0.0. Fine on a laptop; bind 127.0.0.1"
+	@echo "    in the compose file if the machine is not isolated."
+	@echo "  • The RBL plugin ships in tag mode (adds a header, refuses nothing). Turn on"
+	@echo "    'Refuse listed senders' in Settings once you trust what it is flagging."
 
-# Build targets
 build:
 	@echo "Building elemta server and utilities..."
 	go build -o bin/elemta ./cmd/elemta
@@ -308,10 +329,31 @@ bootstrap-admin:
 reset-admin-password:
 	@PW="$(ADMIN_PASSWORD)"; \
 	if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
-	printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
-		user passwd $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1 && \
-	echo "🔑 Password for $(ADMIN_USER) is now: $$PW" && \
-	docker compose -f $(COMPOSE_FILE) restart elemta-web >/dev/null 2>&1 || echo "❌ Could not change the password"
+	if ! docker ps --format '{{.Names}}' | grep -q '^elemta-web$$'; then \
+		echo "❌ elemta-web is not running — start the stack first (make up)"; \
+		exit 1; \
+	fi; \
+	OUT=$$(printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+		user passwd $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
+	if [ $$? -ne 0 ]; then \
+		OUT=$$(printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+			user add $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
+		if [ $$? -ne 0 ]; then \
+			echo "❌ Could not set the password:"; \
+			echo "$$OUT" | sed 's/^/   /'; \
+			exit 1; \
+		fi; \
+		echo "ℹ️  No account existed, so one was created."; \
+	fi; \
+	echo ""; \
+	echo "🔑 Dashboard login"; \
+	echo "   URL:      http://localhost:8025/"; \
+	echo "   Username: $(ADMIN_USER)"; \
+	echo "   Password: $$PW"; \
+	echo ""; \
+	docker compose -f $(COMPOSE_FILE) restart elemta-web >/dev/null 2>&1; \
+	echo "🔄 Web service restarted so the change takes effect."
+
 
 check-tools:
 	@for tool in docker python3 openssl; do \
@@ -375,13 +417,17 @@ print-dev-summary:
 	@echo "=================================="
 	@echo "   📧 SMTP:      localhost:2525"
 	@echo "   📊 Metrics:   http://localhost:8080/metrics"
-	@echo "   🌐 Web UI:    http://localhost:8025"
-	@echo "   👤 Test User: user@example.com / password"
+	@echo "   🌐 Web UI:    http://localhost:8025  (login required)"
+	@echo ""
+	@echo "   👤 Mailbox user:   user@example.com / password   (for sending/receiving mail)"
+	@echo "   🔑 Dashboard login: printed above by bootstrap-admin — a different account"
+	@echo "                       make reset-admin-password if you missed it"
 	@echo ""
 	@echo "📋 Next Steps:"
 	@echo "   make status      # Check service health"
 	@echo "   make logs        # View logs"
 	@echo "   make test-load   # Run load tests"
+	@echo "   make help        # Variables, plugin toggles, and the gotchas"
 
 install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Minimal)"
@@ -446,10 +492,14 @@ install-dev-full: check-tools docker-build ensure-dev-certs ensure-dev-env refre
 	@echo "🚀 Elemta Development Setup (Full)"
 	@echo "=================================="
 	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) configure-plugins
 	@echo "🚀 Starting services..."
-	@docker compose -f $(COMPOSE_FILE) up -d
+	@# See install-dev: without the reseed the settings configured above are
+	@# ignored on every deploy after the first.
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d
 	@echo "⏳ Initializing LDAP..."
 	@./scripts/init-ldap-if-needed.sh || true
+	@$(MAKE) bootstrap-admin
 	@$(MAKE) print-dev-summary
 	@echo "   ✉️  Roundcube: http://localhost:8026"
 
