@@ -12,6 +12,11 @@ services:
     volumes:
       - elemta_queue:/app/queue
       - elemta_logs:/app/logs
+      # The SMTP node reads its configuration from here. Without this mount the
+      # config is only whatever was baked into the image at build time, so a
+      # change saved from the web UI would be written to a file this server
+      # never reads — the toggle would report success and do nothing.
+      - ../../config:/app/config:ro
       # Disable plugins mount for now due to Docker file sharing issues
       # - ./plugins:/app/plugins:ro
     environment:

@@ -1066,13 +1066,19 @@ body {
 }
 
 /* Settings */
+/* The tab bar grows as plugins are enabled, so it wraps rather than clipping.
+   It previously set overflow-x: hidden, which forces overflow-y to compute as
+   auto — and since the row overflowed its height by a single pixel, that drew a
+   vertical scrollbar with arrow buttons next to the tabs. It also overflowed
+   horizontally, so tabs past the edge were simply unreachable. Wrapping removes
+   both: no scrollbar, and every tab stays clickable however many plugins are on. */
 .settings-tabs {
     display: flex;
-    gap: 0.5rem;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
     margin-bottom: 2rem;
     border-bottom: 1px solid var(--border-color);
     padding-bottom: 0;
-    overflow-x: hidden;
 }
 
 .settings-tab {
@@ -2397,3 +2403,163 @@ input:checked + .plugin-slider:before {
 }
 
 .ctx-ip { color: var(--accent-warning); }
+
+/* ============================================================================
+   Plugin management
+   ============================================================================
+   Every plugin gets the same switch. The scanners previously rendered as a
+   static "External Service" label with no control, which made settings that
+   are perfectly editable look fixed. */
+
+.plugin-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+    transition: border-color var(--transition-fast);
+}
+
+.plugin-card.enabled { border-left-color: var(--accent-success); }
+.plugin-card.disabled { border-left-color: var(--text-muted); }
+.plugin-card:hover { border-color: var(--border-strong); }
+
+.plugin-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.plugin-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 1rem;
+}
+
+.plugin-id {
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.1rem;
+}
+
+.plugin-status {
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-top: 0.5rem;
+}
+
+.plugin-status.on { color: var(--accent-success); }
+.plugin-status.off { color: var(--text-muted); }
+
+.plugin-note {
+    font-weight: 400;
+    color: var(--accent-warning);
+    margin-left: 0.5rem;
+}
+
+.plugin-description {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-top: 0.35rem;
+}
+
+.plugin-summary {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    margin-top: 0.4rem;
+    font-family: 'SF Mono', Monaco, monospace;
+}
+
+/* Toggle switch */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.switch input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.switch-track {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.switch-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    background: var(--text-secondary);
+    border-radius: 50%;
+    transition: transform var(--transition-fast), background var(--transition-fast);
+}
+
+.switch input:checked + .switch-track {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+}
+
+.switch input:checked + .switch-track .switch-thumb {
+    transform: translateX(20px);
+    background: #fff;
+}
+
+.switch input:focus-visible + .switch-track {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+}
+
+/* Saved-but-not-applied banner */
+.restart-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid var(--accent-warning);
+    color: var(--text-primary);
+    border-radius: var(--radius-md);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+}
+
+.restart-banner span { flex: 1; min-width: 16rem; }
+
+.restart-note {
+    margin-top: 1rem;
+    padding: 0.6rem 0.85rem;
+    border-left: 3px solid var(--accent-warning);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+}
+
+.panel-intro {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+}
+
+.field-hint {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+}
