@@ -5,6 +5,30 @@ import (
 	"time"
 )
 
+// waitFor polls until cond holds, or fails the test with why.
+//
+// The processor is asynchronous: Start returns immediately and delivery happens
+// on its own goroutine at the configured interval. These tests used to wait for
+// it with a fixed time.Sleep, which is not a synchronisation primitive but a
+// guess about how busy the machine is. On a loaded CI runner the guess ran out
+// and the suite failed with "Expected 0 active messages, got 1" — the delivery
+// was fine, the deadline was not.
+//
+// Polling means a fast machine finishes in milliseconds and a slow one is still
+// correct, so the timeout only has to be longer than the worst case rather than
+// tuned to the typical one.
+func waitFor(t *testing.T, why string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", why)
+}
+
 func TestProcessor(t *testing.T) {
 	// Create a temporary directory for testing
 	queueDir := t.TempDir()
@@ -67,8 +91,11 @@ func TestProcessor(t *testing.T) {
 		}
 		defer processor.Stop()
 
-		// Wait for processing
-		time.Sleep(500 * time.Millisecond)
+		// The assertions below are about what was delivered and what is left in
+		// the queue, so wait for both rather than for one and hope.
+		waitFor(t, "the message to be delivered and removed from the queue", func() bool {
+			return len(mockHandler.GetDeliveries()) == 1 && manager.GetStats().ActiveCount == 0
+		})
 
 		// Check that message was delivered
 		deliveries := mockHandler.GetDeliveries()
@@ -178,8 +205,9 @@ func TestProcessor(t *testing.T) {
 		}
 		defer processor.Stop()
 
-		// Wait for processing
-		time.Sleep(500 * time.Millisecond)
+		waitFor(t, "both messages to be delivered", func() bool {
+			return len(mockHandler.GetDeliveries()) == 2
+		})
 
 		// Check delivery order (high priority should be delivered first)
 		deliveries := mockHandler.GetDeliveries()
@@ -283,8 +311,10 @@ func TestProcessor(t *testing.T) {
 		}
 		defer processor.Stop()
 
-		// Wait for processing
-		time.Sleep(500 * time.Millisecond)
+		waitFor(t, "the message to be processed and delivered", func() bool {
+			m := processor.GetMetrics()
+			return m.ProcessedTotal >= 1 && m.DeliveredTotal >= 1 && len(mockHandler.GetDeliveries()) >= 1
+		})
 
 		// Check metrics
 		metrics := processor.GetMetrics()
