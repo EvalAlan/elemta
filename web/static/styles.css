@@ -3006,3 +3006,9 @@ input:checked + .plugin-slider:before {
     }
     .campaign-actions { justify-content: flex-start; }
 }
+
+/* A change the server applies on its own reads differently from one that needs
+   an outage, so it should not look identical to a restart warning. */
+.restart-note.reload-note {
+    border-left-color: var(--accent-success);
+}

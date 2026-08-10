@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/busybox42/elemta/internal/config"
 	"github.com/busybox42/elemta/internal/logging"
 	"github.com/busybox42/elemta/internal/runtimepaths"
 	"github.com/busybox42/elemta/internal/server"
@@ -214,6 +216,23 @@ func startServer() {
 	// Set up signal channel
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Configuration reload. Restarting an MTA to apply a setting drops the
+	// connections in progress, and a session killed mid-DATA is a message the
+	// sender has to send again — so scanner and policy changes are picked up in
+	// place instead, on SIGHUP or when the shared configuration file changes.
+	reloadChan := make(chan os.Signal, 1)
+	signal.Notify(reloadChan, syscall.SIGHUP)
+	reloadCtx, stopReloadWatcher := context.WithCancel(context.Background())
+	defer stopReloadWatcher()
+	if resolvedConfig, err := config.FindConfigFile(configPath); err == nil {
+		slog.Info("Watching configuration for changes",
+			"config", resolvedConfig, "interval", configReloadInterval)
+		go watchConfigForReload(reloadCtx, server, resolvedConfig, reloadChan)
+	} else {
+		slog.Warn("Configuration file could not be resolved; reload on change is disabled",
+			"error", err)
+	}
 
 	// Wait for shutdown signal or server error
 	errChan := make(chan error, 1)
