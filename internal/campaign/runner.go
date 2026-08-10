@@ -313,11 +313,15 @@ func (r *Runner) sendOne(c *Campaign, recipient Recipient) error {
 	if err != nil {
 		return fmt.Errorf("build message: %w", err)
 	}
+	sender, err := EnvelopeSender(snapshot.From)
+	if err != nil {
+		return err
+	}
 
 	// Bulk mail queues at low priority so a campaign cannot overtake ordinary
 	// transactional mail waiting behind it.
 	_, err = r.queue.EnqueueMessage(
-		snapshot.From,
+		sender,
 		[]string{recipient.Email},
 		Merge(snapshot.Subject, recipient.Vars),
 		body,
@@ -344,8 +348,12 @@ func (r *Runner) SendTest(c *Campaign, to string) error {
 	if err != nil {
 		return err
 	}
+	sender, err := EnvelopeSender(snapshot.From)
+	if err != nil {
+		return err
+	}
 	_, err = r.queue.EnqueueMessage(
-		snapshot.From, []string{to}, snapshot.Subject, body, queue.PriorityNormal, time.Now(),
+		sender, []string{to}, snapshot.Subject, body, queue.PriorityNormal, time.Now(),
 	)
 	return err
 }

@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260810-tabbar-wrap">
+    <link rel="stylesheet" href="/static/styles.css?v=20260810-mass-mailer">
 </head>
 
 <body>
@@ -103,6 +103,16 @@
                         <line x1="6" y1="20" x2="6" y2="14" />
                     </svg>
                     <span>Reports</span>
+                </a>
+                <!-- Hidden until the mass mailer plugin is on: a section that
+                     answers every click with "not enabled" is worse than one
+                     that is not there. -->
+                <a href="#" class="nav-item" data-view="campaigns" id="nav-campaigns" style="display: none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+                        <polyline points="22,6 12,13 2,6" />
+                    </svg>
+                    <span>Mass Mailer</span>
                 </a>
                 <a href="#" class="nav-item" data-view="logs">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -765,6 +775,154 @@
                 </div>
             </section>
 
+            <!-- Mass Mailer View -->
+            <section class="view" id="view-campaigns">
+                <!-- The list and the editor are two screens rather than two
+                     panes: an editor squeezed beside a table gives the message
+                     less room than the message it is composing. -->
+                <div id="campaign-list-screen">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Campaigns</h3>
+                            <div class="card-actions">
+                                <button class="btn btn-secondary btn-sm" onclick="refreshCampaigns()">Refresh</button>
+                                <button class="btn btn-primary btn-sm" onclick="newCampaign()">New Campaign</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="campaigns-loading" class="loading-placeholder">Loading campaigns...</div>
+                            <div id="campaigns-list"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="campaign-editor-screen" style="display: none;">
+                    <div class="editor-head">
+                        <button class="btn btn-secondary btn-sm" onclick="closeCampaignEditor()">&larr; Campaigns</button>
+                        <h2 id="campaign-editor-title">New Campaign</h2>
+                        <span class="campaign-state" id="campaign-editor-state"></span>
+                    </div>
+
+                    <div id="campaign-editor-notice"></div>
+
+                    <div class="card">
+                        <div class="card-header"><h3>Details</h3></div>
+                        <div class="card-body">
+                            <div class="config-grid">
+                                <div class="config-item">
+                                    <label for="campaign-name">Campaign name</label>
+                                    <input type="text" id="campaign-name" placeholder="March newsletter">
+                                    <div class="field-hint">For your own reference; recipients never see it.</div>
+                                </div>
+                                <div class="config-item">
+                                    <label for="campaign-rate">Rate (messages per minute)</label>
+                                    <input type="number" id="campaign-rate" min="0" placeholder="600">
+                                    <div class="field-hint">Blank uses the configured default. Campaign mail is queued at low priority.</div>
+                                </div>
+                                <div class="config-item">
+                                    <label for="campaign-from">From</label>
+                                    <input type="text" id="campaign-from" placeholder="News &lt;news@example.com&gt;">
+                                </div>
+                                <div class="config-item">
+                                    <label for="campaign-reply-to">Reply-To</label>
+                                    <input type="text" id="campaign-reply-to" placeholder="Optional">
+                                </div>
+                                <div class="config-item config-item-wide">
+                                    <label for="campaign-subject">Subject</label>
+                                    <input type="text" id="campaign-subject" placeholder="Hello {{first_name}}">
+                                </div>
+                            </div>
+                            <div class="merge-fields" id="campaign-merge-fields"></div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Message</h3>
+                            <div class="editor-modes">
+                                <button class="mode-btn active" data-mode="rich" onclick="setEditorMode('rich')">Rich text</button>
+                                <button class="mode-btn" data-mode="html" onclick="setEditorMode('html')">HTML</button>
+                                <button class="mode-btn" data-mode="preview" onclick="setEditorMode('preview')">Preview</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="wysiwyg-toolbar" id="wysiwyg-toolbar">
+                                <button type="button" data-cmd="bold" title="Bold"><strong>B</strong></button>
+                                <button type="button" data-cmd="italic" title="Italic"><em>I</em></button>
+                                <button type="button" data-cmd="underline" title="Underline"><u>U</u></button>
+                                <span class="toolbar-sep"></span>
+                                <button type="button" data-cmd="formatBlock" data-value="h2" title="Heading">H2</button>
+                                <button type="button" data-cmd="formatBlock" data-value="h3" title="Subheading">H3</button>
+                                <button type="button" data-cmd="formatBlock" data-value="p" title="Paragraph">P</button>
+                                <span class="toolbar-sep"></span>
+                                <button type="button" data-cmd="insertUnorderedList" title="Bullet list">&bull; List</button>
+                                <button type="button" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+                                <button type="button" data-cmd="formatBlock" data-value="blockquote" title="Quote">&rdquo;</button>
+                                <span class="toolbar-sep"></span>
+                                <button type="button" data-cmd="createLink" title="Link">Link</button>
+                                <button type="button" data-cmd="unlink" title="Remove link">Unlink</button>
+                                <button type="button" data-cmd="insertImage" title="Image by URL">Image</button>
+                                <button type="button" data-cmd="insertHorizontalRule" title="Divider">&mdash;</button>
+                                <span class="toolbar-sep"></span>
+                                <button type="button" data-cmd="removeFormat" title="Clear formatting">Clear</button>
+                                <button type="button" data-cmd="mergeField" title="Insert a merge field">{{ }}</button>
+                            </div>
+
+                            <div class="wysiwyg" id="campaign-html" contenteditable="true" spellcheck="true"></div>
+                            <textarea id="campaign-html-source" class="code-area" spellcheck="false" style="display: none;"></textarea>
+                            <!-- The preview is sandboxed with no allow-scripts:
+                                 campaign HTML is often pasted in from elsewhere,
+                                 and it renders here inside the admin session. -->
+                            <iframe id="campaign-preview" class="email-preview" sandbox referrerpolicy="no-referrer" style="display: none;"></iframe>
+
+                            <div class="text-alternative">
+                                <div class="text-alternative-head">
+                                    <label for="campaign-text">Plain text alternative</label>
+                                    <button class="btn btn-secondary btn-sm" onclick="generatePlainText()">Generate from HTML</button>
+                                </div>
+                                <textarea id="campaign-text" rows="8"
+                                    placeholder="Sent alongside the HTML for clients that will not show it. Bulk mail without one looks like bulk mail."></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Recipients</h3>
+                            <div class="card-actions">
+                                <input type="file" id="campaign-recipients-file" accept=".csv,.tsv,.txt" style="display: none;">
+                                <button class="btn btn-secondary btn-sm"
+                                    onclick="document.getElementById('campaign-recipients-file').click()">Upload CSV</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <textarea id="campaign-recipients" rows="8" class="code-area" spellcheck="false"
+                                placeholder="one@example.com&#10;two@example.com&#10;&#10;or CSV with a header row:&#10;email,first_name,city&#10;three@example.com,Alice,Berlin"></textarea>
+                            <div class="field-hint">
+                                Duplicates are dropped. Lines that are not addresses are reported rather than skipped in silence.
+                            </div>
+                            <div id="campaign-recipients-summary" class="recipients-summary"></div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header"><h3>Send</h3></div>
+                        <div class="card-body">
+                            <div class="send-row">
+                                <input type="text" id="campaign-test-address" placeholder="you@example.com">
+                                <button class="btn btn-secondary" onclick="sendCampaignTest()">Send test</button>
+                                <span class="field-hint">One copy, merged with the first recipient's values.</span>
+                            </div>
+                            <div class="form-actions">
+                                <span class="save-status" id="campaign-save-status"></span>
+                                <button class="btn btn-secondary" onclick="saveCampaign()">Save draft</button>
+                                <button class="btn btn-primary" id="campaign-start-btn" onclick="startCampaign()">Start sending</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Settings View -->
             <section class="view" id="view-settings">
                 <div class="settings-tabs">
@@ -1093,7 +1251,8 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20260810-tabbar-wrap"></script>
+    <script src="/static/app.js?v=20260810-mass-mailer"></script>
+    <script src="/static/campaigns.js?v=20260810-mass-mailer"></script>
 </body>
 
 </html>
