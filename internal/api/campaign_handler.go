@@ -288,6 +288,7 @@ func campaignSummary(c *campaign.Campaign) map[string]interface{} {
 		"total":           c.Total(),
 		"sent":            c.Sent,
 		"failed":          c.Failed,
+		"skipped":         c.Skipped,
 		"remaining":       c.Remaining(),
 		"rate_per_minute": c.RatePerMinute,
 		"last_error":      c.LastError,
