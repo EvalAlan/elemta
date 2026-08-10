@@ -1814,6 +1814,18 @@ const PLUGIN_SETTINGS_SCHEMA = {
               hint: 'Off delivers unscanned mail; on turns a scanner outage into a mail outage' },
         ],
     },
+    access_control: {
+        fields: [
+            { key: 'allow_ips', label: 'Allowed addresses', type: 'list',
+              hint: 'CIDR ranges or single addresses, one per line. An allow entry beats a deny entry.' },
+            { key: 'deny_ips', label: 'Denied addresses', type: 'list',
+              hint: 'Refused at connect, before the greeting' },
+            { key: 'allow_domains', label: 'Allowed sender domains', type: 'list',
+              hint: 'One per line. Subdomains are covered.' },
+            { key: 'deny_domains', label: 'Denied sender domains', type: 'list',
+              hint: 'Matched against MAIL FROM and its subdomains; the empty sender is never refused' },
+        ],
+    },
     rspamd: {
         fields: [
             { key: 'address', label: 'Address', type: 'text', hint: 'Base URL of the rspamd worker' },
@@ -1988,6 +2000,16 @@ function renderPluginPanel(plugin) {
         const value = cfg[f.key];
         const id = `plugin-${plugin.name}-${f.key}`;
         const hint = f.hint ? `<div class="field-hint">${escapeHtml(f.hint)}</div>` : '';
+
+        if (f.type === 'list') {
+            const lines = Array.isArray(value) ? value.join('\n') : '';
+            return `
+                <div class="config-item config-item-wide">
+                    <label for="${id}">${escapeHtml(f.label)}</label>
+                    <textarea id="${id}" rows="4" spellcheck="false">${escapeHtml(lines)}</textarea>
+                    ${hint}
+                </div>`;
+        }
 
         if (f.type === 'checkbox') {
             return `

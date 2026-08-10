@@ -179,6 +179,7 @@ func fullyPopulatedConfig() *Config {
 		Metrics:                   &smtp.MetricsConfig{Enabled: true},
 		Memory:                    smtp.DefaultMemoryConfig(),
 		Resources:                 &smtp.ResourceConfig{MaxConnections: 100},
+		AccessControl:             &smtp.AccessControlConfig{Enabled: true},
 		Antivirus:                 &smtp.AntivirusConfig{Enabled: true},
 		Antispam:                  &smtp.AntispamConfig{Enabled: true},
 		DKIM:                      &dkim.Config{Enabled: true},
