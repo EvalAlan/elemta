@@ -160,7 +160,6 @@ function switchView(viewName) {
         dashboard: 'Dashboard',
         health: 'Health',
         queues: 'Mail Queues',
-        compose: 'Send Test',
         reports: 'Reports',
         logs: 'Logs',
         settings: 'Settings'
@@ -2199,96 +2198,7 @@ function formatBytes(bytes) {
 }
 
 // ============================================================================
-// Compose / Send Test Email
 // ============================================================================
-const sendHistory = [];
-
-async function sendTestEmail(event) {
-    event.preventDefault();
-
-    const from = document.getElementById('compose-from').value;
-    const to = document.getElementById('compose-to').value;
-    const subject = document.getElementById('compose-subject').value;
-    const body = document.getElementById('compose-body').value;
-
-    const sendBtn = document.getElementById('send-btn');
-    sendBtn.disabled = true;
-    sendBtn.innerHTML = '<span class="loading">Sending...</span>';
-
-    try {
-        const response = await fetch(`${API_BASE}/send-test`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from, to, subject, body })
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            showToast('Test email queued successfully!', 'success');
-
-            // Add to history
-            sendHistory.unshift({
-                id: data.message_id,
-                from,
-                to,
-                subject,
-                timestamp: new Date()
-            });
-            updateSendHistory();
-        } else {
-            showToast(data.error || 'Failed to send email', 'error');
-        }
-    } catch (error) {
-        showToast('Failed to send email: ' + error.message, 'error');
-    } finally {
-        sendBtn.disabled = false;
-        sendBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="22" y1="2" x2="11" y2="13"/>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-            </svg>
-            Send Test Email
-        `;
-    }
-}
-
-function clearComposeForm() {
-    document.getElementById('compose-form').reset();
-    document.getElementById('compose-subject').value = 'Test Email from Elemta';
-    document.getElementById('compose-body').value = `This is a test email sent from the Elemta web interface.
-
-If you received this message, your mail server is working correctly!`;
-}
-
-function updateSendHistory() {
-    const container = document.getElementById('send-history');
-
-    if (sendHistory.length === 0) {
-        container.innerHTML = '<div class="loading-placeholder">No test emails sent yet</div>';
-        return;
-    }
-
-    container.innerHTML = sendHistory.slice(0, 10).map(item => `
-        <div class="activity-item">
-            <div class="activity-icon sent">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="20 6 9 17 4 12"/>
-                </svg>
-            </div>
-            <div class="activity-content">
-                <div class="activity-title">${escapeHtml(item.subject)}</div>
-                <div class="activity-meta">To: ${escapeHtml(item.to)} • ${formatTimeAgo(item.timestamp)}</div>
-            </div>
-        </div>
-    `).join('');
-}
-
-// ============================================================================
-// Reports / Delivery Statistics
-// ============================================================================
-let chartInstance = null;
-
 async function refreshReports() {
     try {
         console.log(`Loading reports with timeScale: ${currentTimeScale}`);

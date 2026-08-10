@@ -96,13 +96,6 @@
                     </svg>
                     <span>Mail Queues</span>
                 </a>
-                <a href="#" class="nav-item" data-view="compose">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 20h9" />
-                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                    </svg>
-                    <span>Send Test</span>
-                </a>
                 <a href="#" class="nav-item" data-view="reports">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="20" x2="18" y2="10" />
@@ -631,57 +624,6 @@
             </section>
 
             <!-- Compose View -->
-            <section class="view" id="view-compose">
-                <div class="compose-grid">
-                    <div class="card compose-form-card">
-                        <div class="card-header">
-                            <h3>Send Test Email</h3>
-                        </div>
-                        <div class="card-body">
-                            <form id="compose-form" onsubmit="sendTestEmail(event)">
-                                <div class="form-group">
-                                    <label for="compose-from">From</label>
-                                    <input type="email" id="compose-from" placeholder="sender@example.com" required>
-                                </div>
-                                <div class="form-group">
-                                    <label for="compose-to">To</label>
-                                    <input type="email" id="compose-to" placeholder="recipient@example.com" required>
-                                </div>
-                                <div class="form-group">
-                                    <label for="compose-subject">Subject</label>
-                                    <input type="text" id="compose-subject" placeholder="Test Email from Elemta"
-                                        value="Test Email from Elemta">
-                                </div>
-                                <div class="form-group">
-                                    <label for="compose-body">Message Body</label>
-                                    <textarea id="compose-body" rows="8" placeholder="Enter your message here...">This is a test email sent from the Elemta web interface.
-
-If you received this message, your mail server is working correctly!</textarea>
-                                </div>
-                                <div class="form-actions">
-                                    <button type="button" class="btn btn-secondary"
-                                        onclick="clearComposeForm()">Clear</button>
-                                    <button type="submit" class="btn btn-primary" id="send-btn">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <line x1="22" y1="2" x2="11" y2="13" />
-                                            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                                        </svg>
-                                        Send Test Email
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Send History</h3>
-                        </div>
-                        <div class="card-body" id="send-history">
-                            <div class="loading-placeholder">No test emails sent yet</div>
-                        </div>
-                    </div>
-                </div>
-            </section>
 
             <!-- Reports View -->
             <section class="view" id="view-reports">

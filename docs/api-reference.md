@@ -53,7 +53,6 @@ API namespace:
 
 ### Utility
 
-- `POST /api/send-test`
 
 ---
 
