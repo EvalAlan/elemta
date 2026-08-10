@@ -13,16 +13,15 @@ import (
 // deliberately leaves to ApplyDefaults or to another subsystem. Adding a field
 // here is a conscious decision; forgetting a field is not.
 var fieldsIntentionallyUnmapped = map[string]string{
-	"Cache":                   "not exposed via TOML (json tags only)",
-	"Rules":                   "not exposed via TOML (json tags only)",
-	"KeepDeliveredMessages":   "consumed by the queue, not the SMTP server",
-	"KeepMessageData":         "consumed by the queue, not the SMTP server",
-	"QueuePriorityEnabled":    "not currently consumed",
-	"MessageRetentionHours":   "not currently consumed",
-	"ConnectTimeout":          "not currently consumed",
-	"SMTPTimeout":             "not currently consumed",
-	"MaxConnectionsPerDomain": "not currently consumed",
-	"API":                     "API server is configured separately",
+	"Cache":                 "not exposed via TOML (json tags only)",
+	"Rules":                 "not exposed via TOML (json tags only)",
+	"KeepDeliveredMessages": "consumed by the queue, not the SMTP server",
+	"KeepMessageData":       "consumed by the queue, not the SMTP server",
+	"QueuePriorityEnabled":  "not currently consumed",
+	"MessageRetentionHours": "not currently consumed",
+	"ConnectTimeout":        "not currently consumed",
+	"SMTPTimeout":           "not currently consumed",
+	"API":                   "API server is configured separately",
 }
 
 // TestToSMTPConfig_AllFieldsMapped is the guard rail for the bug class this
@@ -163,6 +162,7 @@ func fullyPopulatedConfig() *Config {
 		QueueDir:                  "/var/spool/elemta",
 		MaxSize:                   50 * 1024 * 1024,
 		MaxWorkers:                8,
+		MaxConnectionsPerDomain:   5,
 		MaxRetries:                7,
 		MaxQueueTime:              3600,
 		RetrySchedule:             []int{60, 300},

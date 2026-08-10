@@ -212,6 +212,25 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			return nil, nil, fmt.Errorf("unsupported delivery mode %q (want smtp or lmtp)", deliveryMode)
 		}
 
+		// Per-destination traffic shaping. max_connections_per_domain was
+		// configured, surfaced and unused until now; it finally reaches the
+		// thing that opens the connections. Remote SMTP only: LMTP goes to one
+		// local mailbox server that does not need protecting from us.
+		if smtpHandler, ok := deliveryHandler.(*queue.SMTPDeliveryHandler); ok {
+			shaping := queue.DefaultShapingConfig()
+			if maxPerDomain > 0 {
+				shaping.MaxConnectionsPerDomain = maxPerDomain
+			}
+			if config.Delivery != nil && config.Delivery.MaxMessagesPerMinutePerDomain > 0 {
+				shaping.MaxMessagesPerMinute = config.Delivery.MaxMessagesPerMinutePerDomain
+			}
+			smtpHandler.SetShaper(queue.NewShaper(shaping))
+			slogger.Info("Per-destination traffic shaping enabled",
+				"max_connections_per_domain", shaping.MaxConnectionsPerDomain,
+				"max_messages_per_minute_per_domain", shaping.MaxMessagesPerMinute,
+				"backoff", shaping.BackoffInitial.String()+" doubling to "+shaping.BackoffMax.String())
+		}
+
 		// Attach the already-validated DKIM signer only to remote SMTP delivery.
 		// Local LMTP delivery is intentionally not signed.
 		if dkimSigner != nil {

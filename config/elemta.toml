@@ -6,6 +6,15 @@ listen_addr = ":2525"
 local_domains = ["example.com", "evil-admin.com", "localhost", "mail.example.com"]
 max_size = 52428800  # 50MB
 
+# Outbound traffic shaping: how hard to push at one destination.
+#
+# Large receivers do not publish a rate — they tell you by deferring — so the
+# per-destination rate limit below is off by default and the backoff does the
+# work. A destination that returns a 4xx is left alone for a while, and only
+# that destination; a message for one in backoff is deferred rather than held,
+# so a slow receiver cannot stall the queue behind it.
+max_connections_per_domain = 10
+
 # Enforce RFC 5321 CRLF line endings in DATA (default: true).
 # This is the primary defence against SMTP smuggling: a bare LF that this
 # server treats as ordinary content may be read as a line terminator by a
@@ -91,6 +100,7 @@ datasource_db = "dc=example,dc=com"
 
 [delivery]
 mode = "lmtp"
+max_messages_per_minute_per_domain = 0  # 0 = no limit
 host = "elemta-dovecot"
 port = 2424
 timeout = 30
