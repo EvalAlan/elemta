@@ -1066,13 +1066,19 @@ body {
 }
 
 /* Settings */
+/* The tab bar grows as plugins are enabled, so it wraps rather than clipping.
+   It previously set overflow-x: hidden, which forces overflow-y to compute as
+   auto — and since the row overflowed its height by a single pixel, that drew a
+   vertical scrollbar with arrow buttons next to the tabs. It also overflowed
+   horizontally, so tabs past the edge were simply unreachable. Wrapping removes
+   both: no scrollbar, and every tab stays clickable however many plugins are on. */
 .settings-tabs {
     display: flex;
-    gap: 0.5rem;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
     margin-bottom: 2rem;
     border-bottom: 1px solid var(--border-color);
     padding-bottom: 0;
-    overflow-x: hidden;
 }
 
 .settings-tab {

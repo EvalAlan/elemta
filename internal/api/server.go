@@ -1015,6 +1015,7 @@ func (s *Server) handleGetQueueStorage(w http.ResponseWriter, r *http.Request) {
 
 // handleLoginPage serves the public login page
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	setHTMLNoCache(w)
 	http.ServeFile(w, r, "web/login.html")
 }
 
@@ -1044,7 +1045,25 @@ func (s *Server) handleLogo(w http.ResponseWriter, r *http.Request) {
 
 // handleDashboard serves the main dashboard page
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	setHTMLNoCache(w)
 	http.ServeFile(w, r, s.webRoot+"/index.html")
+}
+
+// setHTMLNoCache stops browsers reusing a stale application shell.
+//
+// The HTML references its CSS and JS with a version query string, so those can
+// be cached hard. The document that carries those references cannot: it was
+// served with only Last-Modified, which browsers are free to satisfy from cache
+// without revalidating. A stale shell then keeps requesting the asset versions
+// it was built with, so an updated UI simply never arrives — the symptom being
+// a page that still shows old styling and duplicate controls long after the
+// server was rebuilt.
+//
+// must-revalidate rather than no-store: the response may still be cached, the
+// browser just has to ask whether it is current, which a Last-Modified check
+// answers cheaply.
+func setHTMLNoCache(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 }
 
 // Authentication handlers
