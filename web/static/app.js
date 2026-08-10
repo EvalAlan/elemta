@@ -161,6 +161,7 @@ function switchView(viewName) {
         health: 'Health',
         queues: 'Mail Queues',
         reports: 'Reports',
+        campaigns: 'Mass Mailer',
         logs: 'Logs',
         settings: 'Settings'
     };
@@ -172,6 +173,11 @@ function switchView(viewName) {
     // Load view-specific data when the user opens a section. Do not rely on
     // initial page load: remote deploys, slow API startup, and browser cache can
     // otherwise leave sections stuck on placeholders.
+    // Campaign progress polls itself while a send is in flight; leaving the
+    // section stops it rather than leaving a timer running against an API
+    // nobody is looking at.
+    if (viewName !== 'campaigns') stopCampaignPolling();
+
     switch (viewName) {
         case 'dashboard':
             refreshAllData();
@@ -185,6 +191,9 @@ function switchView(viewName) {
             break;
         case 'reports':
             refreshReports();
+            break;
+        case 'campaigns':
+            refreshCampaigns();
             break;
         case 'logs':
             refreshLogs();
@@ -1873,6 +1882,9 @@ async function refreshPlugins() {
         }
 
         renderPluginTabs(plugins);
+        // The mass mailer is a section of its own, so its nav item follows the
+        // toggle in the same breath as the settings tabs do.
+        applyMassMailerVisibility(plugins);
 
         loadingEl.style.display = 'none';
         contentEl.style.display = 'block';
