@@ -268,6 +268,9 @@ type Config struct {
 	// RBL holds the DNS blocklists consulted for the connecting address.
 	RBL *smtp.RBLConfig `toml:"rbl"`
 
+	// InboundAuth holds SPF/DKIM/DMARC verification of arriving mail.
+	InboundAuth *smtp.InboundAuthConfig `toml:"inbound_auth"`
+
 	// MassMailer configures bulk campaign sending in the web interface.
 	MassMailer *MassMailerConfig `toml:"mass_mailer"`
 

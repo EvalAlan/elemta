@@ -73,6 +73,9 @@ type Config struct {
 	// RBL holds the DNS blocklists consulted for the connecting address.
 	RBL *RBLConfig `toml:"rbl" json:"rbl"`
 
+	// InboundAuth holds SPF/DKIM/DMARC verification of arriving mail.
+	InboundAuth *InboundAuthConfig `toml:"inbound_auth" json:"inbound_auth"`
+
 	// Rules configuration
 	Rules *RulesConfig `toml:"rules" json:"rules"`
 
@@ -324,6 +327,19 @@ type AccessControlConfig struct {
 	// subdomains, so "example.com" also covers "mail.example.com".
 	AllowDomains []string `toml:"allow_domains" json:"allow_domains"`
 	DenyDomains  []string `toml:"deny_domains" json:"deny_domains"`
+}
+
+// InboundAuthConfig configures verification of who a message claims to be from.
+type InboundAuthConfig struct {
+	Enabled bool `toml:"enabled" json:"enabled"`
+	// EnforceDMARC honours a sending domain's published policy. Off by default:
+	// the first thing enforcement does on a real server is reject mail from
+	// forwarders and mailing lists, which break SPF alignment by design, so the
+	// results should be watched before they are acted on.
+	EnforceDMARC bool `toml:"enforce_dmarc" json:"enforce_dmarc"`
+	// Timeout bounds the DNS work for one message, in seconds. Verification
+	// happens while a client waits at end-of-DATA.
+	Timeout int `toml:"timeout" json:"timeout"`
 }
 
 // RBLConfig configures DNS blocklist checks on the connecting address.
