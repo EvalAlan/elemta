@@ -245,7 +245,16 @@ body {
     flex-direction: column;
     overflow: visible;
     width: 100%;
-    min-width: 800px;
+    /* min-width: 0, not a pixel floor.
+       A flex item defaults to min-width:auto, so it refuses to shrink below its
+       content — which is what a wide table gives it. The fix for that is to let
+       it shrink and let the wide child scroll, not to pin the container: a
+       floor of 800px meant that in a 900px window the content was still laid
+       out at 800px beside a 260px sidebar, putting its right edge at 987px and
+       88px of every page off-screen with no way to scroll to it. That is an
+       ordinary un-maximised laptop window, not a phone.
+       This is also what makes overflow-x on the tables below do anything. */
+    min-width: 0;
 }
 
 /* Header */
@@ -1113,10 +1122,13 @@ body {
     height: 18px;
 }
 
+/* The settings containers carried pixel floors of their own — 700, 600 and 500
+   — so removing the one on .main-content alone would only have moved the
+   overflow down a level. They are block-level and already width:100%, so they
+   need no floor to keep their width. */
 .settings-content {
     position: relative;
     width: 100%;
-    min-width: 700px;
     display: block;
     z-index: 1;
     min-height: 500px;
@@ -1131,7 +1143,6 @@ body {
     display: block;
     animation: fadeIn 0.2s ease-in-out;
     width: 100%;
-    min-width: 600px;
     min-height: 400px;
     position: relative;
     z-index: 2;
@@ -1156,7 +1167,6 @@ body {
 .settings-grid {
     display: block;
     width: 100%;
-    min-width: 500px;
     min-height: 300px;
     position: relative;
     z-index: 3;
@@ -1570,6 +1580,17 @@ body.hide-failed-queue .failed-health-stat {
 
     .messages-table-container {
         overflow-x: auto;
+    }
+
+    /* Control bars wrap rather than run off the edge. Unlike the tables, which
+       sit in a container that scrolls, these are inside .card — which is
+       overflow:hidden for its rounded corners — so anything past the edge is
+       not merely off-screen but unreachable. Measured at a 900px window: the
+       Refresh button sits at the end of both rows and was clipped away
+       entirely. */
+    .log-filters,
+    .chart-controls {
+        flex-wrap: wrap;
     }
 
     .modal-container {
