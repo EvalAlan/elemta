@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// handleSendTestEmail builds RFC 5322 headers by string concatenation from
-// request fields. Before validateTestEmailRequest existed, a subject of
+// Message construction concatenates request fields into RFC 5322 headers.
+// Before validateTestEmailRequest existed, a subject of
 // "x\r\nBcc: hidden@..." wrote its own header, and a from of
 // "a@b\r\n\r\n<body>" terminated the header block outright. These tests call
 // the validation the handler actually uses.
