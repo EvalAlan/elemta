@@ -17,6 +17,7 @@ services:
       # change saved from the web UI would be written to a file this server
       # never reads — the toggle would report success and do nothing.
       - ../../config:/app/config:ro
+      - elemta_config:/app/runtime-config:rw
       # Disable plugins mount for now due to Docker file sharing issues
       # - ./plugins:/app/plugins:ro
     environment:
@@ -92,8 +93,9 @@ services:
       - elemta_queue:/app/queue:rw
       - elemta_logs:/app/logs:rw
       - ../../config:/app/config:ro
+      - elemta_config:/app/runtime-config:rw
       # Web files are now included in the Docker image
-    command: [ "/bin/sh", "-lc", "cp /app/config/elemta.toml /tmp/elemta-web.toml && chmod 600 /tmp/elemta-web.toml && exec /app/elemta --config /tmp/elemta-web.toml web --listen 0.0.0.0:8025 --web-root /app/web/static" ]
+    command: [ "/bin/sh", "-lc", "exec /app/elemta --config \"$(/app/prepare-config.sh)\" web --listen 0.0.0.0:8025 --web-root /app/web/static" ]
     environment:
       - TZ=UTC
       - NODE_ID=web
@@ -395,6 +397,10 @@ networks:
 
 volumes:
   elemta_queue:
+    driver: local
+  # The configuration the services actually read. Shared so a change saved in
+  # the web UI reaches the SMTP node, and durable so it survives a restart.
+  elemta_config:
     driver: local
   elemta_logs:
     driver: local
