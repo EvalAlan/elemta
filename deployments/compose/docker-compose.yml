@@ -22,6 +22,14 @@ services:
       # - ./plugins:/app/plugins:ro
     environment:
       - TZ=UTC
+      # Set by `make install-dev` so a dev install re-applies config/elemta.toml.
+      # Unset for ordinary up/restart, which must not discard what the UI saved.
+      - ELEMTA_CONFIG_RESEED=${ELEMTA_CONFIG_RESEED:-}
+      # This is a development stack, so it may issue itself a short-lived
+      # certificate when it cannot read one. Never set this in production: a
+      # server that quietly self-signs looks healthy while being untrusted.
+      - ELEMTA_DEV_CERT=true
+      - ELEMTA_DEV_CERT_DAYS=${ELEMTA_DEV_CERT_DAYS:-7}
       - DEBUG=true
       - NODE_ID=0
       - TEST_MODE=true
@@ -98,6 +106,14 @@ services:
     command: [ "/bin/sh", "-lc", "exec /app/elemta --config \"$(/app/prepare-config.sh)\" web --listen 0.0.0.0:8025 --web-root /app/web/static" ]
     environment:
       - TZ=UTC
+      # Set by `make install-dev` so a dev install re-applies config/elemta.toml.
+      # Unset for ordinary up/restart, which must not discard what the UI saved.
+      - ELEMTA_CONFIG_RESEED=${ELEMTA_CONFIG_RESEED:-}
+      # This is a development stack, so it may issue itself a short-lived
+      # certificate when it cannot read one. Never set this in production: a
+      # server that quietly self-signs looks healthy while being untrusted.
+      - ELEMTA_DEV_CERT=true
+      - ELEMTA_DEV_CERT_DAYS=${ELEMTA_DEV_CERT_DAYS:-7}
       - NODE_ID=web
       - VALKEY_ADDR=elemta-valkey:6379
     # Security configuration for the container

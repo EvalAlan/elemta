@@ -61,4 +61,75 @@ fi
 # so tighten whatever we ended up with rather than assuming.
 chmod 600 "$RUNTIME_CONFIG" 2>/dev/null || true
 
+# TLS material.
+#
+# A certificate and its key are one thing, not two files, and every rule below
+# follows from that. Staging them independently produced a runtime directory
+# holding the host's certificate next to a key generated in the container: both
+# files present, both readable, and no possible handshake. It only appeared to
+# work because the server had already loaded the pair before the second service
+# started and overwrote half of it.
+#
+# So: take both from the host or neither, and check that what ends up in place
+# actually matches before trusting it.
+#
+# Staged rather than read in place because a private key has to be 0600 and
+# owned by the user that reads it, while a bind mount carries the host's
+# ownership — and this process is not the host user.
+
+pair_matches() {
+    _crt="$1"; _key="$2"
+    [ -s "$_crt" ] && [ -s "$_key" ] || return 1
+    command -v openssl >/dev/null 2>&1 || return 0  # cannot check; assume caller knows
+    _c=$(openssl x509 -noout -modulus -in "$_crt" 2>/dev/null) || return 1
+    _k=$(openssl rsa -noout -modulus -in "$_key" 2>/dev/null) || return 1
+    [ "$_c" = "$_k" ]
+}
+
+if [ -r /app/config/test.crt ] && [ -r /app/config/test.key ]; then
+    # Both halves are readable: the host's pair wins, so a renewed certificate
+    # takes effect on the next start.
+    cp /app/config/test.crt "$RUNTIME_DIR/test.crt" 2>/dev/null || true
+    cp /app/config/test.key "$RUNTIME_DIR/test.key" 2>/dev/null || true
+    chmod 600 "$RUNTIME_DIR/test.key" 2>/dev/null || true
+    chmod 644 "$RUNTIME_DIR/test.crt" 2>/dev/null || true
+fi
+
+# A development stack generates its own pair when it does not have a usable one.
+#
+# The usual reason is that the host's key is 0600 and owned by whoever ran
+# `make certs`, so it is unreadable here whatever the bind mount says.
+# Generating inside the container sidesteps ownership entirely: the file is
+# created by the user that will read it.
+#
+# Gated on ELEMTA_DEV_CERT, deliberately. A server that quietly issues itself a
+# certificate when its real one is missing looks healthy while being untrusted
+# by every sender; in production the right behaviour is to fail loudly, which is
+# what happens without this.
+if ! pair_matches "$RUNTIME_DIR/test.crt" "$RUNTIME_DIR/test.key"; then
+    if [ "${ELEMTA_DEV_CERT:-}" = "true" ] && command -v openssl >/dev/null 2>&1; then
+        days="${ELEMTA_DEV_CERT_DAYS:-7}"
+        host="${ELEMTA_HOSTNAME:-mail.dev.evil-admin.com}"
+        echo "prepare-config: generating a ${days}-day self-signed development certificate" >&2
+        if openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$RUNTIME_DIR/test.key.new" \
+            -out "$RUNTIME_DIR/test.crt.new" \
+            -days "$days" \
+            -subj "/CN=${host}/O=Elemta Dev/C=US" \
+            -addext "subjectAltName=DNS:${host},DNS:localhost" >/dev/null 2>&1; then
+            # Move into place only once both halves exist, so a failure part-way
+            # through cannot leave the mismatch this whole block exists to avoid.
+            chmod 600 "$RUNTIME_DIR/test.key.new" 2>/dev/null || true
+            chmod 644 "$RUNTIME_DIR/test.crt.new" 2>/dev/null || true
+            mv "$RUNTIME_DIR/test.key.new" "$RUNTIME_DIR/test.key"
+            mv "$RUNTIME_DIR/test.crt.new" "$RUNTIME_DIR/test.crt"
+        else
+            rm -f "$RUNTIME_DIR/test.crt.new" "$RUNTIME_DIR/test.key.new"
+            echo "prepare-config: certificate generation failed" >&2
+        fi
+    elif [ -e "$RUNTIME_DIR/test.crt" ] || [ -e "$RUNTIME_DIR/test.key" ]; then
+        echo "prepare-config: the TLS certificate and key do not match; TLS will fail to start" >&2
+    fi
+fi
+
 echo "$RUNTIME_CONFIG"

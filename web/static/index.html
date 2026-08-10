@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260810-tracing2">
+    <link rel="stylesheet" href="/static/styles.css?v=20260810-tls">
 </head>
 
 <body>
@@ -333,6 +333,15 @@
 
             <!-- Health View -->
             <section class="view" id="view-health">
+                <div class="card" id="tls-cert-card" style="margin-bottom: 1.5rem;">
+                    <div class="card-header">
+                        <h3>TLS Certificate</h3>
+                        <button class="btn btn-secondary btn-sm" onclick="refreshCertificate()">Refresh</button>
+                    </div>
+                    <div class="card-body" id="tls-cert-body">
+                        <div class="loading-placeholder">Checking the certificate...</div>
+                    </div>
+                </div>
                 <div class="stats-grid health-stats">
                     <div class="stat-card">
                         <div class="stat-icon active-icon">
@@ -1287,8 +1296,8 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20260810-tracing2"></script>
-    <script src="/static/campaigns.js?v=20260810-tracing2"></script>
+    <script src="/static/app.js?v=20260810-tls"></script>
+    <script src="/static/campaigns.js?v=20260810-tls"></script>
 </body>
 
 </html>

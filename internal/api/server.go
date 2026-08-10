@@ -59,7 +59,12 @@ type MainConfig struct {
 	AuthAllowDeprecatedSHA1   *bool       `json:"auth_allow_deprecated_sha1,omitempty"`
 	RateLimiterPluginConfig   interface{} `json:"rate_limiter"`
 	TLS                       interface{} `json:"tls"`
-	API                       interface{} `json:"api"`
+	// The certificate path is mirrored explicitly rather than dug out of the
+	// TLS blob above: expiry reporting should not depend on a type assertion
+	// that quietly yields nothing.
+	TLSEnabled  bool        `json:"tls_enabled"`
+	TLSCertFile string      `json:"tls_cert_file,omitempty"`
+	API         interface{} `json:"api"`
 
 	// Scanner configuration, mirrored here because internal/api cannot import
 	// internal/smtp (smtp already imports api for the throughput counters).
@@ -602,6 +607,10 @@ func (s *Server) Start() error {
 	// Message tracing. Read-only and derived from the logs, but a trace names
 	// senders, recipients and subjects, so it follows the same auth as the rest
 	// of the dashboard rather than being open.
+	// Certificate expiry. Read-only, and it is the panel an operator wants when
+	// TLS has started failing, so it follows dashboard auth like the rest.
+	api.Handle("/tls/certificate", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTLSCertificate))).Methods("GET")
+
 	api.Handle("/messages/search", s.requireAuthIfConfigured(http.HandlerFunc(s.handleSearchMessages))).Methods("GET")
 	api.Handle("/messages/{id}/trace", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTraceMessage))).Methods("GET")
 
