@@ -70,7 +70,11 @@ func (s *Server) handleGetCampaignRecipients(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	const limit = 200
+	// Large enough that an ordinary campaign comes back whole. The UI edits the
+	// list it is given, so a low limit would make most campaigns read-only:
+	// saving a truncated list back would replace the stored one with the
+	// fragment on screen. Past this size the UI says so and stops editing.
+	const limit = 5000
 	recipients := c.Recipients
 	truncated := false
 	if len(recipients) > limit {

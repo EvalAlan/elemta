@@ -82,6 +82,20 @@ func UnresolvedFields(template string, recipients []Recipient) []string {
 	return out
 }
 
+// EnvelopeSender is the address a campaign's mail is sent from on the wire.
+//
+// It is the bare address, not the From header. The two are different things: a
+// From of `News <news@example.com>` is a correct header and an invalid MAIL
+// FROM, and a delivery agent handed the display-name form either refuses it or
+// strips it into something else — which is where bounces then go.
+func EnvelopeSender(from string) (string, error) {
+	addr, err := mail.ParseAddress(from)
+	if err != nil {
+		return "", fmt.Errorf("from address: %w", err)
+	}
+	return addr.Address, nil
+}
+
 // BuildMessage renders one recipient's copy as RFC 5322 bytes.
 //
 // Every header value that comes from the campaign is validated or encoded

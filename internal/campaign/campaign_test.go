@@ -317,6 +317,51 @@ func TestRunnerSendsEveryRecipientOnce(t *testing.T) {
 	}
 }
 
+// TestRunnerUsesTheBareAddressAsEnvelopeSender.
+//
+// `News <news@example.com>` is a correct From header and an invalid MAIL FROM.
+// Handing the display-name form to delivery got it stripped into
+// `News <news@example.com` — an address with no closing bracket — which is
+// where bounces for the campaign would then have gone. Found by watching a real
+// send: the delivery agent logged "MAIL FROM still contains extra parameters
+// after cleanup, stripping". Every campaign in these tests used a bare address,
+// which is why nothing caught it.
+func TestRunnerUsesTheBareAddressAsEnvelopeSender(t *testing.T) {
+	store, q := NewStore(), &fakeQueue{}
+	runner := NewRunner(store, q, "mail.example.com", quiet())
+	c := testCampaign()
+	c.From = "News <news@example.com>"
+	store.Put(c)
+
+	if err := runner.Start(c); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return c.Clone().State == StateCompleted })
+
+	msgs := q.all()
+	if len(msgs) == 0 {
+		t.Fatal("nothing was enqueued")
+	}
+	for _, m := range msgs {
+		if m.From != "news@example.com" {
+			t.Errorf("envelope sender = %q, want the bare address", m.From)
+		}
+		// The header keeps the display name; only the envelope is stripped.
+		if !strings.Contains(m.Body, `From: "News" <news@example.com>`) &&
+			!strings.Contains(m.Body, "From: News <news@example.com>") {
+			t.Errorf("the From header lost its display name:\n%s", firstLines(m.Body, 6))
+		}
+	}
+}
+
+func firstLines(s string, n int) string {
+	lines := strings.SplitN(s, "\r\n", n+1)
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}
+
 // TestRunnerResumesWithoutResending is what makes pause safe: a resumed
 // campaign must not mail the people it already reached.
 func TestRunnerResumesWithoutResending(t *testing.T) {
