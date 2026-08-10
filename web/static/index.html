@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260810-reload">
+    <link rel="stylesheet" href="/static/styles.css?v=20260810-tracing2">
 </head>
 
 <body>
@@ -113,6 +113,13 @@
                         <polyline points="22,6 12,13 2,6" />
                     </svg>
                     <span>Mass Mailer</span>
+                </a>
+                <a href="#" class="nav-item" data-view="tracing">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    <span>Tracing</span>
                 </a>
                 <a href="#" class="nav-item" data-view="logs">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -775,6 +782,35 @@
                 </div>
             </section>
 
+            <!-- Message Tracing View -->
+            <section class="view" id="view-tracing">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Find a message</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="send-row">
+                            <input type="text" id="trace-query"
+                                placeholder="Message ID, sender, recipient or subject">
+                            <button class="btn btn-primary" onclick="searchMessages()">Search</button>
+                        </div>
+                        <div class="field-hint">
+                            Searches the recent log, so it finds messages that have already been
+                            delivered or refused — not just what is still queued.
+                        </div>
+                        <div id="trace-search-results"></div>
+                    </div>
+                </div>
+
+                <div class="card" id="trace-detail-card" style="display: none;">
+                    <div class="card-header">
+                        <h3 id="trace-detail-title">Message</h3>
+                        <button class="btn btn-secondary btn-sm" onclick="closeTrace()">Close</button>
+                    </div>
+                    <div class="card-body" id="trace-detail"></div>
+                </div>
+            </section>
+
             <!-- Mass Mailer View -->
             <section class="view" id="view-campaigns">
                 <!-- The list and the editor are two screens rather than two
@@ -1251,8 +1287,8 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20260810-reload"></script>
-    <script src="/static/campaigns.js?v=20260810-reload"></script>
+    <script src="/static/app.js?v=20260810-tracing2"></script>
+    <script src="/static/campaigns.js?v=20260810-tracing2"></script>
 </body>
 
 </html>
