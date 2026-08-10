@@ -75,6 +75,30 @@ func (s *Server) applyPluginConfig(plugin string, cfg map[string]interface{}) er
 		}
 		*s.mainConfig.AccessControl = next
 
+	case "rbl":
+		if s.mainConfig.RBL == nil {
+			s.mainConfig.RBL = &RBLStatus{}
+		}
+		next := *s.mainConfig.RBL
+		r.list("zones", &next.Zones, validateRBLZone)
+		r.list("skip_ips", &next.SkipIPs, validateAccessAddress)
+		r.boolv("reject", &next.Reject)
+		r.intv("timeout", &next.Timeout, 1, 60)
+		r.intv("cache_ttl", &next.CacheTTL, 60, 86400)
+		// The cache must stay bounded: keyed by peer address and unbounded it
+		// is a memory exhaustion vector, so there is no "0 means unlimited".
+		r.intv("cache_size", &next.CacheSize, 100, 1_000_000)
+		if err := r.err(); err != nil {
+			return err
+		}
+		// Enabled with nothing to query is a filter the operator believes is
+		// protecting them, and it is also what the server refuses to start
+		// with — so it is caught here rather than at the next restart.
+		if next.Enabled && len(next.Zones) == 0 {
+			return errors.New("zones: at least one blocklist is required while the plugin is enabled")
+		}
+		*s.mainConfig.RBL = next
+
 	case "mass_mailer":
 		if s.mainConfig.MassMailer == nil {
 			s.mainConfig.MassMailer = &MassMailerStatus{}
@@ -308,6 +332,22 @@ func validateAccessAddress(v string) error {
 	}
 	if net.ParseIP(v) == nil {
 		return fmt.Errorf("%q is not a valid address or network", v)
+	}
+	return nil
+}
+
+// validateRBLZone rejects what a blocklist zone is not. A URL or a bare label
+// produces a query that can never match, so the plugin would look configured
+// and filter nothing.
+func validateRBLZone(v string) error {
+	if strings.Contains(v, "://") {
+		return fmt.Errorf("%q is a URL; a blocklist zone is a domain name", v)
+	}
+	if strings.ContainsAny(v, " \t/:") {
+		return fmt.Errorf("%q is not a domain name", v)
+	}
+	if !strings.Contains(strings.Trim(v, "."), ".") {
+		return fmt.Errorf("%q is not a domain name", v)
 	}
 	return nil
 }

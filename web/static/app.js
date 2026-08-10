@@ -1846,6 +1846,22 @@ const PLUGIN_SETTINGS_SCHEMA = {
               hint: 'Off delivers spam tagged with X-Spam headers for downstream filtering' },
         ],
     },
+    rbl: {
+        fields: [
+            { key: 'zones', label: 'Blocklist zones', type: 'list',
+              hint: 'One per line, e.g. zen.spamhaus.org. All are queried together and one listing is enough. Check each list’s terms — most require a paid feed above a low query volume.' },
+            { key: 'reject', label: 'Refuse listed senders', type: 'checkbox',
+              hint: 'Off adds an X-RBL-Listed header instead, so you can see what a new list would have refused before it refuses anything' },
+            { key: 'skip_ips', label: 'Never check these addresses', type: 'list',
+              hint: 'CIDR ranges or single addresses: relays, monitoring, your own networks. Authenticated senders are always exempt.' },
+            { key: 'timeout', label: 'Timeout (seconds)', type: 'number',
+              hint: 'Bounds the whole check, not each zone' },
+            { key: 'cache_ttl', label: 'Cache lifetime (seconds)', type: 'number',
+              hint: 'How long an answer is reused. Shorter means a delisted sender recovers sooner.' },
+            { key: 'cache_size', label: 'Cache entries', type: 'number',
+              hint: 'Bounded on purpose: keyed by peer address and left to grow, the cache is a memory exhaustion vector' },
+        ],
+    },
     mass_mailer: {
         fields: [
             { key: 'default_rate_per_minute', label: 'Default rate (messages/minute)', type: 'number',

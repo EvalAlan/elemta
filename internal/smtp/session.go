@@ -40,6 +40,8 @@ type Session struct {
 	tlsManager      TLSHandler
 	scannerManager  *ScannerManager
 	accessControl   *AccessControl
+	rblChecker      *RBLChecker
+	rblDecision     RBLDecision
 	resourceManager *ResourceManager
 	// enhancedValidator would be added here if needed
 
@@ -207,6 +209,88 @@ func (s *Session) SetAccessControl(accessControl *AccessControl) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.accessControl = accessControl
+}
+
+// SetRBLChecker provides the DNS blocklists consulted at MAIL FROM.
+//
+// The check is here rather than at connect so that it overlaps with nothing the
+// client is waiting on twice: a peer that connects and never sends MAIL FROM
+// costs no DNS query at all, and an authenticated client is exempt by the time
+// the check runs. Refusing at connect would spend a lookup on every connection,
+// including the submission clients that are exempt anyway.
+func (s *Session) SetRBLChecker(checker *RBLChecker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rblChecker = checker
+}
+
+// checkRBL consults the blocklists for this session's peer.
+//
+// It returns an SMTP error only when the checker is configured to reject.
+// Otherwise the decision is kept on the session so the DATA stage can mark the
+// message, which is how an operator evaluates a new blocklist before trusting
+// it with their mail.
+func (s *Session) checkRBL(ctx context.Context) error {
+	s.mu.RLock()
+	checker := s.rblChecker
+	s.mu.RUnlock()
+
+	if !checker.Enabled() {
+		return nil
+	}
+	// Authenticated senders are never blocklisted. They have proved who they
+	// are, which is a stronger statement than an address reputation, and the
+	// addresses submission clients come from are exactly the residential and
+	// mobile ranges blocklists cover.
+	if s.state.IsAuthenticated() {
+		return nil
+	}
+
+	host, _, err := net.SplitHostPort(s.remoteAddr)
+	if err != nil {
+		host = s.remoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil
+	}
+
+	decision := checker.Check(ctx, ip)
+	if !decision.Listed {
+		return nil
+	}
+
+	s.mu.Lock()
+	s.rblDecision = decision
+	s.mu.Unlock()
+
+	if !checker.Reject() {
+		s.logger.InfoContext(ctx, "Peer is listed on a blocklist; marking the message",
+			"event_type", "policy",
+			"zone", decision.Zone,
+			"code", decision.Code,
+			"client_ip", host,
+		)
+		return nil
+	}
+
+	s.logger.WarnContext(ctx, "Peer refused by a blocklist",
+		"event_type", "rejection",
+		"zone", decision.Zone,
+		"code", decision.Code,
+		"client_ip", host,
+	)
+	// 554 rather than 550: this is about the client host, not the address it
+	// is trying to send from.
+	return fmt.Errorf("554 5.7.1 %s", decision.Message())
+}
+
+// RBLDecision returns what the blocklists said about this session's peer, so
+// the DATA stage can mark a message that was allowed through.
+func (s *Session) RBLDecision() RBLDecision {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.rblDecision
 }
 
 // SetResourceManager sets the resource manager for the session
