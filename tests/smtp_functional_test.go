@@ -6,7 +6,6 @@ import (
 	"net"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/busybox42/elemta/internal/smtp"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +19,7 @@ func createFunctionalTestConfig(t *testing.T) *smtp.Config {
 
 	config := &smtp.Config{
 		Hostname:          "test.example.com",
-		ListenAddr:        ":0", // Use random available port
+		ListenAddr:        "127.0.0.1:0", // Kernel-assigned port, loopback only
 		QueueDir:          queueDir,
 		LocalDomains:      []string{"test.example.com", "example.com"},
 		MaxSize:           1024 * 1024,         // 1MB
@@ -31,47 +30,10 @@ func createFunctionalTestConfig(t *testing.T) *smtp.Config {
 
 // setupFunctionalServer creates and starts a test server like the working tests
 func setupFunctionalServer(t *testing.T) (*smtp.Server, net.Conn, *bufio.Reader) {
+	t.Helper()
 	config := createFunctionalTestConfig(t)
 	config.Auth = nil
-
-	server, err := smtp.NewServer(config)
-	require.NoError(t, err)
-
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- server.Start() }()
-
-	// Wait for server to start and get address
-	var addr net.Addr
-	for i := 0; i < 50; i++ { // Wait up to 500ms
-		// Check if server failed (non-blocking)
-		select {
-		case err := <-serverErr:
-			if err != nil {
-				t.Fatalf("Server failed to start: %v", err)
-			}
-		default:
-			// Server still running, check if address is available
-			time.Sleep(10 * time.Millisecond)
-			addr = server.Addr()
-			if addr != nil {
-				goto serverStarted
-			}
-		}
-	}
-	require.NotNil(t, addr, "Server address should not be nil after waiting")
-
-serverStarted:
-
-	conn, err := net.Dial("tcp", addr.String())
-	require.NoError(t, err)
-
-	reader := bufio.NewReader(conn)
-
-	// Read greeting
-	_, err = reader.ReadString('\n')
-	require.NoError(t, err)
-
-	return server, conn, reader
+	return startTestServer(t, config)
 }
 
 // setupSMTPSession establishes a proper SMTP session like the working tests.
