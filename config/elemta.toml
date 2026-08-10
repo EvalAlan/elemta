@@ -98,6 +98,22 @@ retry_delay = 60
 #
 # reject_on_failure / reject_on_spam stay false so that a scanner outage
 # degrades to delivering unscanned mail rather than refusing it.
+# Access control: allow and deny lists applied before mail is accepted.
+#
+# Separate from trusted_networks, which decides how strictly a peer's content is
+# validated. This decides whether the peer may connect at all, and whether a
+# sender domain may be used.
+#
+# Allow beats deny, so a known-good host inside a denied range can be permitted
+# without restating the range. Addresses may be CIDR ranges or single hosts.
+# Domain rules cover subdomains, and the empty sender (bounces) is never refused.
+[access_control]
+enabled = false
+allow_ips = []
+deny_ips = []
+allow_domains = []
+deny_domains = []
+
 [antivirus]
 enabled = true
 reject_on_failure = false

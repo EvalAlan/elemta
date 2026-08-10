@@ -39,6 +39,7 @@ type Session struct {
 	queueManager    queue.QueueManager
 	tlsManager      TLSHandler
 	scannerManager  *ScannerManager
+	accessControl   *AccessControl
 	resourceManager *ResourceManager
 	// enhancedValidator would be added here if needed
 
@@ -197,6 +198,15 @@ func (s *Session) SetScannerManager(scannerManager *ScannerManager) {
 	if s.dataHandler != nil {
 		s.dataHandler.scannerManager = scannerManager
 	}
+}
+
+// SetAccessControl provides the allow/deny lists used at MAIL FROM. The peer
+// check happens before a session exists, so only the sender rules are needed
+// here.
+func (s *Session) SetAccessControl(accessControl *AccessControl) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.accessControl = accessControl
 }
 
 // SetResourceManager sets the resource manager for the session
