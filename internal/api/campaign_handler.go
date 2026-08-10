@@ -37,11 +37,12 @@ type campaignRequest struct {
 }
 
 func (s *Server) handleListCampaigns(w http.ResponseWriter, r *http.Request) {
-	if s.campaigns == nil {
+	store, _ := s.massMailer()
+	if store == nil {
 		http.Error(w, "Mass mailer is not enabled", http.StatusServiceUnavailable)
 		return
 	}
-	list := s.campaigns.List()
+	list := store.List()
 	summaries := make([]map[string]interface{}, 0, len(list))
 	for _, c := range list {
 		summaries = append(summaries, campaignSummary(c))
@@ -84,7 +85,8 @@ func (s *Server) handleGetCampaignRecipients(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleCreateCampaign(w http.ResponseWriter, r *http.Request) {
-	if s.campaigns == nil {
+	store, _ := s.massMailer()
+	if store == nil {
 		http.Error(w, "Mass mailer is not enabled", http.StatusServiceUnavailable)
 		return
 	}
@@ -106,7 +108,7 @@ func (s *Server) handleCreateCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.campaigns.Put(c)
+	store.Put(c)
 	response := campaignSummary(c)
 	response["warnings"] = warnings
 	writeJSON(w, response)
@@ -130,7 +132,16 @@ func (s *Server) handleUpdateCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stored, _ := s.campaigns.Get(mux.Vars(r)["id"])
+	store, _ := s.massMailer()
+	if store == nil {
+		http.Error(w, "Mass mailer is not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	stored, ok := store.Get(mux.Vars(r)["id"])
+	if !ok {
+		http.Error(w, "Campaign not found", http.StatusNotFound)
+		return
+	}
 	warnings, err := applyCampaignRequest(stored, &req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -150,17 +161,20 @@ func (s *Server) handleDeleteCampaign(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A running campaign cannot be deleted; cancel it first", http.StatusConflict)
 		return
 	}
-	s.campaigns.Delete(c.ID)
+	if store, _ := s.massMailer(); store != nil {
+		store.Delete(c.ID)
+	}
 	writeJSON(w, map[string]string{"status": "success", "id": c.ID})
 }
 
 // handleCampaignAction drives the state machine: start, pause, cancel, test.
 func (s *Server) handleCampaignAction(w http.ResponseWriter, r *http.Request) {
-	if s.campaigns == nil || s.campaignRunner == nil {
+	store, runner := s.massMailer()
+	if store == nil || runner == nil {
 		http.Error(w, "Mass mailer is not enabled", http.StatusServiceUnavailable)
 		return
 	}
-	stored, ok := s.campaigns.Get(mux.Vars(r)["id"])
+	stored, ok := store.Get(mux.Vars(r)["id"])
 	if !ok {
 		http.Error(w, "Campaign not found", http.StatusNotFound)
 		return
@@ -170,11 +184,11 @@ func (s *Server) handleCampaignAction(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch action {
 	case "start":
-		err = s.campaignRunner.Start(stored)
+		err = runner.Start(stored)
 	case "pause":
-		err = s.campaignRunner.Pause(stored)
+		err = runner.Pause(stored)
 	case "cancel":
-		err = s.campaignRunner.Cancel(stored)
+		err = runner.Cancel(stored)
 	case "test":
 		var body struct {
 			To string `json:"to"`
@@ -183,7 +197,7 @@ func (s *Server) handleCampaignAction(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "A 'to' address is required for a test send", http.StatusBadRequest)
 			return
 		}
-		err = s.campaignRunner.SendTest(stored, strings.TrimSpace(body.To))
+		err = runner.SendTest(stored, strings.TrimSpace(body.To))
 	default:
 		http.Error(w, fmt.Sprintf("Unknown action %q", action), http.StatusBadRequest)
 		return
@@ -202,11 +216,12 @@ func (s *Server) handleCampaignAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) lookupCampaign(w http.ResponseWriter, r *http.Request) (*campaign.Campaign, bool) {
-	if s.campaigns == nil {
+	store, _ := s.massMailer()
+	if store == nil {
 		http.Error(w, "Mass mailer is not enabled", http.StatusServiceUnavailable)
 		return nil, false
 	}
-	stored, ok := s.campaigns.Get(mux.Vars(r)["id"])
+	stored, ok := store.Get(mux.Vars(r)["id"])
 	if !ok {
 		http.Error(w, "Campaign not found", http.StatusNotFound)
 		return nil, false
