@@ -88,6 +88,10 @@ func (s *Server) pluginEnabled(plugin string) bool {
 		if ac := s.mainConfig.AccessControl; ac != nil {
 			return ac.Enabled
 		}
+	case "rbl":
+		if r := s.mainConfig.RBL; r != nil {
+			return r.Enabled
+		}
 	case "mass_mailer":
 		if mm := s.mainConfig.MassMailer; mm != nil {
 			return mm.Enabled

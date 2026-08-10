@@ -35,6 +35,7 @@ func testServerWithConfig(t *testing.T, doc string) (*Server, string) {
 			Antivirus:     &ScannerStatus{Enabled: true, Address: "clam:3310", Timeout: 30, ScanLimit: 1024},
 			Antispam:      &ScannerStatus{Enabled: true, Address: "http://rspamd:11333", Timeout: 30, Threshold: 6},
 			AccessControl: &AccessControlStatus{},
+			RBL:           &RBLStatus{Timeout: 5, CacheTTL: 3600, CacheSize: 10000},
 			MassMailer:    &MassMailerStatus{DefaultRatePerMinute: 600},
 		},
 	}, path
@@ -173,6 +174,11 @@ func TestPluginSettingsValidation(t *testing.T) {
 		{"access_control", `{"config":{"deny_domains":["spammer@example.com"]}}`, "an address where a domain belongs"},
 		{"access_control", `{"config":{"deny_domains":["com"]}}`, "a bare label that would never match"},
 		{"access_control", `{"config":{"deny_ips":"10.0.0.0/8"}}`, "a list sent as a single string"},
+		{"rbl", `{"config":{"zones":["http://zen.example.org"]}}`, "a URL where a zone belongs"},
+		{"rbl", `{"config":{"zones":["notadomain"]}}`, "a bare label that can never match"},
+		{"rbl", `{"config":{"cache_size":0}}`, "an unbounded cache keyed by peer address"},
+		{"rbl", `{"config":{"timeout":600}}`, "a timeout long enough to stall every session"},
+		{"rbl", `{"config":{"skip_ips":["nope"]}}`, "a skip rule the server cannot parse"},
 		{"mass_mailer", `{"config":{"default_rate_per_minute":0}}`, "an unbounded default rate"},
 		{"rate_limiter", `{"config":{"max_messages_per_minute":10}}`, "a plugin edited through its own panel"},
 		{"nonesuch", `{"config":{"anything":1}}`, "a plugin that does not exist"},
@@ -267,6 +273,61 @@ func TestScannerSettingsAreNotWrittenAsZeros(t *testing.T) {
 		if strings.Contains(string(raw), unwanted) {
 			t.Errorf("toggling a plugin wrote %q into the config:\n%s", unwanted, raw)
 		}
+	}
+}
+
+// TestRBLCannotBeEnabledWithNoZones: enabled with nothing to query is a filter
+// the operator believes is protecting them, and it is also what the SMTP server
+// refuses to start with — so it is caught at the form rather than at the next
+// restart, when the cause is hours behind.
+func TestRBLCannotBeEnabledWithNoZones(t *testing.T) {
+	s, _ := testServerWithConfig(t, pluginTestTOML)
+
+	if rec := updatePlugin(t, s, "rbl", `{"enabled":true}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("enabling with no zones should be refused, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	// With zones, it is accepted.
+	rec := updatePlugin(t, s, "rbl", `{"enabled":true,"config":{"zones":["zen.example.org"]}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enabling with a zone was refused: %d %s", rec.Code, rec.Body.String())
+	}
+	if !s.mainConfig.RBL.Enabled || len(s.mainConfig.RBL.Zones) != 1 {
+		t.Errorf("config = %+v, want enabled with one zone", s.mainConfig.RBL)
+	}
+}
+
+// TestRBLSettingsSurviveAReload writes through to the file and reads it back
+// with the real parser, since a zone list that does not persist is a blocklist
+// that stops working at the next restart.
+func TestRBLSettingsSurviveAReload(t *testing.T) {
+	s, path := testServerWithConfig(t, pluginTestTOML)
+
+	rec := updatePlugin(t, s, "rbl", `{"enabled":true,"config":{"zones":["zen.example.org","bl.example.net"],"reject":true,"timeout":8}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update rejected: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var probe struct {
+		RBL struct {
+			Enabled bool     `toml:"enabled"`
+			Zones   []string `toml:"zones"`
+			Reject  bool     `toml:"reject"`
+			Timeout int      `toml:"timeout"`
+		} `toml:"rbl"`
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- test-owned temp path
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if err := toml.Unmarshal(raw, &probe); err != nil {
+		t.Fatalf("config no longer parses: %v\n%s", err, raw)
+	}
+	if len(probe.RBL.Zones) != 2 || probe.RBL.Zones[0] != "zen.example.org" {
+		t.Errorf("zones = %v, want both, in order", probe.RBL.Zones)
+	}
+	if !probe.RBL.Enabled || !probe.RBL.Reject || probe.RBL.Timeout != 8 {
+		t.Errorf("rbl = %+v, want the submitted values", probe.RBL)
 	}
 }
 

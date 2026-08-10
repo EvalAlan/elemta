@@ -81,6 +81,19 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		}
 	}
 
+	var rbl *api.RBLStatus
+	if r := cfg.RBL; r != nil {
+		rbl = &api.RBLStatus{
+			Enabled:   r.Enabled,
+			Zones:     r.Zones,
+			Reject:    r.Reject,
+			Timeout:   r.Timeout,
+			SkipIPs:   r.SkipIPs,
+			CacheTTL:  r.CacheTTL,
+			CacheSize: r.CacheSize,
+		}
+	}
+
 	var massMailer *api.MassMailerStatus
 	if mm := cfg.MassMailer; mm != nil {
 		massMailer = &api.MassMailerStatus{
@@ -123,6 +136,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		Antivirus:                 antivirus,
 		Antispam:                  antispam,
 		AccessControl:             accessControl,
+		RBL:                       rbl,
 	}
 }
 
