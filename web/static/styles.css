@@ -3012,3 +3012,75 @@ input:checked + .plugin-slider:before {
 .restart-note.reload-note {
     border-left-color: var(--accent-success);
 }
+
+/* ============================================================================
+   Message Tracing
+   ============================================================================ */
+
+/* A timeline reads down the page: what happened, in order, with the moment it
+   happened on the left. The rail makes the sequence obvious at a glance, which
+   is the whole point of showing it as a timeline rather than a table. */
+.trace-timeline {
+    list-style: none;
+    margin: 1.5rem 0 0;
+    padding: 0 0 0 1rem;
+    border-left: 2px solid var(--border-color);
+}
+
+.trace-event {
+    position: relative;
+    display: flex;
+    gap: 1rem;
+    padding: 0.6rem 0 0.6rem 1rem;
+}
+
+.trace-event::before {
+    content: '';
+    position: absolute;
+    left: -1.4rem;
+    top: 1rem;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    border: 2px solid var(--bg-secondary);
+}
+
+.trace-event.completed::before { background: var(--accent-success); }
+.trace-event.failed::before { background: var(--accent-danger); }
+.trace-event.paused::before { background: var(--accent-warning); }
+.trace-event.running::before { background: var(--accent-primary); }
+
+.trace-time {
+    flex: 0 0 12rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-family: 'SF Mono', Monaco, monospace;
+    padding-top: 0.1rem;
+}
+
+.trace-body { min-width: 0; }
+
+.trace-summary {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+/* The remote server's own words are the thing an operator came for, so they
+   get the monospace treatment rather than being folded into prose. */
+.trace-detail-text {
+    margin-top: 0.25rem;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-family: 'SF Mono', Monaco, monospace;
+    word-break: break-word;
+}
+
+.trace-results { margin-top: 1rem; }
+
+#trace-query { flex: 1 1 24rem; }
+
+@media (max-width: 768px) {
+    .trace-event { flex-direction: column; gap: 0.2rem; }
+    .trace-time { flex: none; }
+}

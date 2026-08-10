@@ -161,6 +161,7 @@ function switchView(viewName) {
         health: 'Health',
         queues: 'Mail Queues',
         reports: 'Reports',
+        tracing: 'Tracing',
         campaigns: 'Mass Mailer',
         logs: 'Logs',
         settings: 'Settings'
@@ -2956,3 +2957,151 @@ async function setLogLevel(level) {
 // ============================================================================
 // View-specific data loading
 // ============================================================================
+
+// ============================================================================
+// Message Tracing
+// ============================================================================
+//
+// "Where did this message go" is what an MTA gets asked most, and the queue
+// views cannot answer it: they show what is still queued, so a message that was
+// delivered — the common case — had disappeared from the interface entirely,
+// and one that was refused never appeared at all.
+
+async function searchMessages() {
+    const query = document.getElementById('trace-query').value.trim();
+    const resultsEl = document.getElementById('trace-search-results');
+    if (query.length < 3) {
+        resultsEl.innerHTML = '<div class="field-hint">Enter at least 3 characters.</div>';
+        return;
+    }
+
+    resultsEl.innerHTML = '<div class="loading-placeholder">Searching...</div>';
+    try {
+        const response = await fetch(`${API_BASE}/messages/search?q=${encodeURIComponent(query)}`);
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        const data = await response.json();
+
+        if (!data.messages || data.messages.length === 0) {
+            // Saying how far back the search looked matters: "no such message"
+            // and "not in the part of the log we read" are different answers.
+            resultsEl.innerHTML = `<div class="empty-state"><p>No messages matching
+                ${escapeHtml(query)} in the recent log.</p></div>`;
+            return;
+        }
+
+        resultsEl.innerHTML = `
+            <table class="messages-table trace-results">
+                <thead><tr>
+                    <th>When</th><th>From</th><th>To</th><th>Subject</th><th>Outcome</th><th></th>
+                </tr></thead>
+                <tbody>
+                    ${data.messages.map(m => `
+                        <tr>
+                            <td>${escapeHtml(formatTimeAgo(m.last_seen))}</td>
+                            <td>${escapeHtml(m.from || '—')}</td>
+                            <td>${escapeHtml((m.to || []).join(', ') || '—')}</td>
+                            <td>${escapeHtml(m.subject || '—')}</td>
+                            <td><span class="campaign-state ${escapeHtml(outcomeClass(m.outcome))}">${escapeHtml(m.outcome)}</span></td>
+                            <td><button class="btn btn-secondary btn-sm"
+                                onclick="traceMessage('${escapeJsArg(m.message_id)}')">Trace</button></td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+            ${data.truncated ? `<div class="field-hint">The search stopped before the
+                beginning of the log, so there may be older matches.</div>` : ''}`;
+    } catch (error) {
+        console.error('Message search failed:', error);
+        resultsEl.innerHTML = `<div class="error-message">Search failed: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+// outcomeClass reuses the campaign state colours: delivered reads as success,
+// bounced and rejected as failure, deferred as something still in progress.
+function outcomeClass(outcome) {
+    switch (outcome) {
+        case 'delivered': return 'completed';
+        case 'bounced':
+        case 'rejected': return 'failed';
+        case 'deferred': return 'paused';
+        case 'in queue':
+        case 'accepted': return 'running';
+        default: return '';
+    }
+}
+
+async function traceMessage(id) {
+    const card = document.getElementById('trace-detail-card');
+    const body = document.getElementById('trace-detail');
+    card.style.display = '';
+    body.innerHTML = '<div class="loading-placeholder">Loading trace...</div>';
+
+    try {
+        const response = await fetch(`${API_BASE}/messages/${encodeURIComponent(id)}/trace`);
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        const trace = await response.json();
+
+        document.getElementById('trace-detail-title').textContent = `Message ${shortMessageId(trace.message_id)}`;
+
+        if (!trace.events || trace.events.length === 0) {
+            body.innerHTML = `<div class="empty-state"><p>Nothing recorded for this message
+                ${trace.truncated ? 'in the part of the log that was searched' : ''}.</p></div>`;
+            return;
+        }
+
+        body.innerHTML = `
+            <div class="config-grid">
+                <div class="config-item"><label>From</label><div>${escapeHtml(trace.from || '—')}</div></div>
+                <div class="config-item"><label>To</label><div>${escapeHtml((trace.to || []).join(', ') || '—')}</div></div>
+                <div class="config-item"><label>Subject</label><div>${escapeHtml(trace.subject || '—')}</div></div>
+                <div class="config-item"><label>Outcome</label>
+                    <div><span class="campaign-state ${escapeHtml(outcomeClass(trace.outcome))}">${escapeHtml(trace.outcome)}</span></div></div>
+            </div>
+            <ol class="trace-timeline">
+                ${trace.events.map(e => `
+                    <li class="trace-event ${escapeHtml(outcomeClass(outcomeOf(e)))}">
+                        <div class="trace-time">${escapeHtml(formatDate(e.time))}</div>
+                        <div class="trace-body">
+                            <div class="trace-summary">${escapeHtml(e.summary)}</div>
+                            ${e.detail ? `<div class="trace-detail-text">${escapeHtml(e.detail)}</div>` : ''}
+                        </div>
+                    </li>`).join('')}
+            </ol>
+            ${trace.in_queue ? `<div class="restart-note">This message is still in the queue.</div>` : ''}
+            ${trace.truncated ? `<div class="field-hint">The scan stopped before the beginning of
+                the log, so earlier events for this message may exist.</div>` : ''}`;
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (error) {
+        console.error('Trace failed:', error);
+        body.innerHTML = `<div class="error-message">Could not load the trace: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+// outcomeOf colours one step of the timeline.
+//
+// Detection is not disposition: a message can be classified as spam or flagged
+// by the virus scanner and still be delivered, which is what reject_on_spam
+// and reject_on_failure being off mean. Colouring those red says the message
+// was refused when it was not, so they are marked as noteworthy rather than
+// as a failure.
+function outcomeOf(event) {
+    switch (event.event) {
+        case 'delivery': return 'delivered';
+        case 'bounce': return 'bounced';
+        case 'rejection': return 'rejected';
+        case 'deferral':
+        case 'tempfail':
+        case 'virus_detected':
+        case 'spam_detected': return 'deferred';
+        default: return '';
+    }
+}
+
+function closeTrace() {
+    document.getElementById('trace-detail-card').style.display = 'none';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('trace-query')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') searchMessages();
+    });
+});

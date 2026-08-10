@@ -2095,10 +2095,17 @@ func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, bod
 	// before sending mail carrying the require_tls annotation.
 	dh.saveDSNAnnotations(ctx, msgID)
 
-	// Log message reception with timing
+	// Log message reception with timing.
+	//
+	// QueueID is the id the queue assigned, not the session's own. They are
+	// different values, and this record is the only place both appear: without
+	// it, reception is logged under one id and every delivery attempt under
+	// another, with nothing tying them together. Tracing a message then shows
+	// it accepted and never delivered, or delivered with no record of it
+	// arriving — which is exactly the question tracing exists to answer.
 	dh.msgLogger.LogReception(logging.MessageContext{
 		MessageID:      metadata.MessageID,
-		QueueID:        metadata.MessageID,
+		QueueID:        msgID,
 		From:           metadata.From,
 		To:             metadata.To,
 		Subject:        metadata.Subject,
