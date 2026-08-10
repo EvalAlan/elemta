@@ -2000,10 +2000,18 @@ func (s *Server) persistConfig() error {
 
 	// Write via a temp file in the same directory so a failure part-way through
 	// cannot leave a half-written config behind.
+	//
+	// #nosec G703 -- configPath is resolved once at startup from --config or
+	// config discovery and is never derived from a request. No handler writes
+	// it, so there is no request-controlled component in this path; the taint
+	// analysis is flagging the absence of a string literal, not a reachable
+	// traversal.
 	tmp := s.configPath + ".tmp"
+	// #nosec G703 -- see above: configPath is startup-resolved, not request-derived.
 	if err := os.WriteFile(tmp, doc, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", tmp, err)
 	}
+	// #nosec G703 -- same path, same provenance.
 	if err := os.Rename(tmp, s.configPath); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("replace %s: %w", s.configPath, err)
