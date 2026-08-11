@@ -3126,3 +3126,7 @@ input:checked + .plugin-slider:before {
 @media (max-width: 768px) {
     .cert-row { grid-template-columns: 1fr; gap: 0.1rem; }
 }
+
+/* Skipped is not failed: an address passed over because it is suppressed is
+   not a delivery problem to investigate. */
+.campaign-skipped { color: var(--text-muted); margin-left: 0.4rem; }

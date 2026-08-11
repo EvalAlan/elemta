@@ -6,6 +6,7 @@ import (
 
 	"github.com/busybox42/elemta/internal/campaign"
 	"github.com/busybox42/elemta/internal/config"
+	"github.com/busybox42/elemta/internal/suppression"
 )
 
 // Turning the mass mailer on and off at runtime.
@@ -56,6 +57,12 @@ func (s *Server) setMassMailerEnabled(enabled bool) error {
 		slog.Default().With("component", "mass-mailer"),
 	)
 
+	// A campaign asks the suppression list before every recipient, so a run
+	// started tomorrow does not mail the addresses that bounced today.
+	if s.suppressed != nil {
+		s.campaignRunner.SetSuppressionList(s.suppressed)
+	}
+
 	// A development stack gets a worked example, so the Mass Mailer does not
 	// open on an empty list that explains nothing. Draft, local recipients,
 	// never started — see demo_campaign.go.
@@ -65,6 +72,11 @@ func (s *Server) setMassMailerEnabled(enabled bool) error {
 			"note", "a draft addressed to this stack's own mailboxes; it is not sent")
 	}
 	return nil
+}
+
+// suppressionStore returns the list, or nil when it could not be opened.
+func (s *Server) suppressionStore() *suppression.Store {
+	return s.suppressed
 }
 
 func (s *Server) massMailerHostname() string {

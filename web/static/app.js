@@ -196,6 +196,7 @@ function switchView(viewName) {
             break;
         case 'campaigns':
             refreshCampaigns();
+            refreshSuppression();
             break;
         case 'logs':
             refreshLogs();

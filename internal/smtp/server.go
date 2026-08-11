@@ -17,6 +17,7 @@ import (
 	deliverymetrics "github.com/busybox42/elemta/internal/metrics"
 	"github.com/busybox42/elemta/internal/plugin"
 	"github.com/busybox42/elemta/internal/queue"
+	"github.com/busybox42/elemta/internal/suppression"
 	"github.com/google/uuid"
 	"github.com/sony/gobreaker"
 	"golang.org/x/sync/errgroup"
@@ -257,6 +258,25 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		}
 	} else {
 		slogger.Info("Queue processor disabled")
+	}
+
+	// The suppression list: addresses that permanently failed and must not be
+	// mailed again. It lives beside the queue because both processes reach it
+	// there — the SMTP node writes bounces, the web process reads them when a
+	// campaign runs.
+	//
+	// A store that cannot be opened is a warning, not a failure. Delivery must
+	// not depend on it; the cost is that bounces are not recorded until it is
+	// fixed, which the log says plainly.
+	if queueProcessor != nil && config.QueueDir != "" {
+		suppressionPath := filepath.Join(config.QueueDir, "suppression.db")
+		if store, err := suppression.Open(suppressionPath); err != nil {
+			slogger.Warn("Suppression list unavailable; permanent failures will not be recorded",
+				"path", suppressionPath, "error", err)
+		} else {
+			queueProcessor.SetSuppressionRecorder(suppression.NewRecorder(store, slogger))
+			slogger.Info("Suppression list ready", "path", suppressionPath)
+		}
 	}
 
 	return queueManager, queueProcessor, nil

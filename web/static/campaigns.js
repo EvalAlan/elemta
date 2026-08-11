@@ -102,7 +102,10 @@ async function refreshCampaigns() {
 
 function renderCampaignRow(c) {
     const total = c.total || 0;
-    const done = (c.sent || 0) + (c.failed || 0);
+    // Skipped counts as done: those recipients have been dealt with, and a
+    // progress bar that never reaches the end because a third of the list was
+    // suppressed reads as a stuck campaign.
+    const done = (c.sent || 0) + (c.failed || 0) + (c.skipped || 0);
     const percent = total > 0 ? Math.round((done / total) * 100) : 0;
     const id = escapeJsArg(c.id);
 
@@ -135,6 +138,11 @@ function renderCampaignRow(c) {
     const failed = c.failed > 0
         ? `<span class="campaign-failed">${c.failed} failed</span>`
         : '';
+    // Shown apart from failed: an address passed over because it is suppressed
+    // is not a delivery problem to investigate.
+    const skipped = c.skipped > 0
+        ? `<span class="campaign-skipped" title="on the suppression list">${c.skipped} skipped</span>`
+        : '';
     const lastError = c.last_error
         ? `<div class="campaign-error">${escapeHtml(c.last_error)}</div>`
         : '';
@@ -156,7 +164,7 @@ function renderCampaignRow(c) {
             </div>
             <div class="campaign-progress">
                 <div class="progress-bar"><div class="progress-fill ${escapeHtml(c.state)}" style="width: ${percent}%"></div></div>
-                <div class="progress-label">${c.sent || 0} / ${total} sent ${failed}</div>
+                <div class="progress-label">${c.sent || 0} / ${total} sent ${failed} ${skipped}</div>
             </div>
             <div class="campaign-actions">${actions}</div>
         </div>`;
@@ -887,3 +895,88 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeCampaignEditor();
     refreshMassMailerVisibility();
 });
+
+// ============================================================================
+// Suppression list
+// ============================================================================
+//
+// Addresses that permanently failed or complained. Campaigns skip them; this is
+// where an operator sees who, and why, and can put an address back when it was
+// suppressed in error.
+
+async function refreshSuppression() {
+    const listEl = document.getElementById('suppression-list');
+    if (!listEl) return;
+    const query = document.getElementById('suppression-search')?.value.trim() || '';
+
+    try {
+        const response = await fetch(`${API_BASE}/suppression?q=${encodeURIComponent(query)}`);
+        if (response.status === 503) {
+            listEl.innerHTML = '<div class="field-hint">The suppression list is not available on this server.</div>';
+            return;
+        }
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        const data = await response.json();
+
+        if (!data.suppressed || data.suppressed.length === 0) {
+            listEl.innerHTML = query
+                ? `<div class="field-hint">No suppressed address matches ${escapeHtml(query)}.</div>`
+                : '<div class="field-hint">Nothing is suppressed. Addresses appear here when a message to them fails permanently.</div>';
+            return;
+        }
+
+        listEl.innerHTML = `
+            <table class="messages-table trace-results">
+                <thead><tr><th>Address</th><th>Why</th><th>Reason</th><th>When</th><th></th></tr></thead>
+                <tbody>
+                    ${data.suppressed.map(e => `
+                        <tr>
+                            <td>${escapeHtml(e.address)}</td>
+                            <td><span class="campaign-state ${e.source === 'complaint' ? 'failed' : 'paused'}">${escapeHtml(e.source)}</span></td>
+                            <td class="trace-detail-text">${escapeHtml(e.reason || '—')}</td>
+                            <td>${escapeHtml(formatTimeAgo(e.created_at))}</td>
+                            <td><button class="btn btn-secondary btn-sm"
+                                onclick="unsuppressAddress('${escapeJsArg(e.address)}')">Allow again</button></td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+            <div class="field-hint">${data.total} address${data.total === 1 ? '' : 'es'} suppressed.</div>`;
+    } catch (error) {
+        console.error('Suppression list failed:', error);
+        listEl.innerHTML = `<div class="error-message">Could not load the list: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+async function suppressAddress() {
+    const input = document.getElementById('suppression-add');
+    const address = input.value.trim();
+    if (!address) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/suppression`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address, reason: 'added from the dashboard' }),
+        });
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        input.value = '';
+        showToast(`${address} will not be mailed`, 'success');
+        await refreshSuppression();
+    } catch (error) {
+        showToast(`Could not suppress: ${error.message}`, 'error');
+    }
+}
+
+async function unsuppressAddress(address) {
+    // Confirmed because it is the one action here that starts mail flowing
+    // again, and the address is on the list for a reason someone recorded.
+    if (!confirm(`Allow mail to ${address} again?\n\nIt was suppressed because delivery failed permanently or the recipient complained.`)) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/suppression/${encodeURIComponent(address)}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        showToast(`${address} can be mailed again`, 'success');
+        await refreshSuppression();
+    } catch (error) {
+        showToast(`Could not remove: ${error.message}`, 'error');
+    }
+}
