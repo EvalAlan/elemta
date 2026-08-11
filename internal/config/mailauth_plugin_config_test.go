@@ -28,6 +28,12 @@ enabled = true
 enforce = false
 timeout = 6
 
+[plugins.arc]
+enabled = true
+verify = true
+seal = false
+timeout = 8
+
 `)
 	var cfg Config
 	if err := toml.Unmarshal(doc, &cfg); err != nil {
@@ -37,7 +43,7 @@ timeout = 6
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Plugins == nil || out.Plugins.SPF == nil || out.Plugins.DKIM == nil || out.Plugins.DMARC == nil {
+	if out.Plugins == nil || out.Plugins.SPF == nil || out.Plugins.DKIM == nil || out.Plugins.DMARC == nil || out.Plugins.ARC == nil {
 		t.Fatalf("mail-auth plugins were not mapped: %+v", out.Plugins)
 	}
 	if !out.Plugins.SPF.Enabled || out.Plugins.SPF.Timeout != 4 {
@@ -70,6 +76,7 @@ func TestMailAuthPluginValidationRejectsImpossibleRuntime(t *testing.T) {
 		Enabled: true, Sign: true, HeaderCanonicalization: "invented",
 	}
 	cfg.Plugins.DMARC = &smtp.DMARCPluginConfig{Enabled: true, Timeout: 301}
+	cfg.Plugins.ARC = &smtp.ARCPluginConfig{Enabled: true, Seal: true}
 	result := &ValidationResult{Valid: true}
 	cfg.validateMailAuthPlugins(result)
 	if result.Valid {
@@ -85,6 +92,9 @@ func TestMailAuthPluginValidationRejectsImpossibleRuntime(t *testing.T) {
 		"plugins.dkim.domains",
 		"plugins.dmarc.timeout",
 		"plugins.dmarc",
+		"plugins.arc.domain",
+		"plugins.arc.selector",
+		"plugins.arc.private_key_path",
 	} {
 		if !strings.Contains(fields, want) {
 			t.Errorf("missing validation for %s: %s", want, fields)

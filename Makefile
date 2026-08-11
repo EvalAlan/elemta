@@ -30,6 +30,7 @@ PLUGIN_MASS_MAILER ?= on
 PLUGIN_SPF ?= on
 PLUGIN_DKIM ?= on
 PLUGIN_DMARC ?= on
+PLUGIN_ARC ?= on
 
 # The dashboard's first account.
 #
@@ -60,7 +61,7 @@ help:
 	@echo "  make install-dev              # Minimal dev stack, plugins on, prints a dashboard login"
 	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
 	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
-	@echo "  make mailauth-lab             # Deterministic SPF/DKIM/DMARC DNS + remote SMTP sink"
+	@echo "  make mailauth-lab             # Deterministic SPF/DKIM/DMARC/ARC DNS + remote SMTP sink"
 	@echo "  make mailauth-lab-check       # Queue a signed example; inspect it at :8027"
 	@echo "  make mailauth-lab-check-fail  # Queue an accepted SPF/DMARC failure (enforcement is off)"
 	@echo "  make mailauth-lab-down        # Remove lab services and restore the normal LMTP config"
@@ -107,7 +108,7 @@ help:
 	@echo "  QUEUE_BACKEND=$(QUEUE_BACKEND)         file | sqlite | postgres"
 	@echo "  PLUGIN_RATE_LIMITER=$(PLUGIN_RATE_LIMITER)      PLUGIN_CLAMAV=$(PLUGIN_CLAMAV)   PLUGIN_RSPAMD=$(PLUGIN_RSPAMD)"
 	@echo "  PLUGIN_ACCESS_CONTROL=$(PLUGIN_ACCESS_CONTROL)    PLUGIN_RBL=$(PLUGIN_RBL)      PLUGIN_MASS_MAILER=$(PLUGIN_MASS_MAILER)"
-	@echo "  PLUGIN_SPF=$(PLUGIN_SPF)  PLUGIN_DKIM=$(PLUGIN_DKIM)  PLUGIN_DMARC=$(PLUGIN_DMARC)"
+	@echo "  PLUGIN_SPF=$(PLUGIN_SPF)  PLUGIN_DKIM=$(PLUGIN_DKIM)  PLUGIN_DMARC=$(PLUGIN_DMARC)  PLUGIN_ARC=$(PLUGIN_ARC)"
 	@echo "    e.g. make install-dev PLUGIN_RBL=off CERT_DAYS=90"
 	@echo ""
 	@echo "💡 Things that surprise people:"
@@ -116,7 +117,7 @@ help:
 	@echo "    'make install-dev' re-seeds from the file; 'up' and 'restart' do not."
 	@echo "  • Scanner, allow/deny, blocklist and inbound mail-auth verification changes apply"
 	@echo "    on their own within ~5 seconds. Listen address, size limits, timeouts, queue"
-	@echo "    backend and DKIM signing need a restart; the UI and logs say so."
+	@echo "    backend, DKIM signing and ARC sealing need a restart; the UI and logs say so."
 	@echo "  • The dev TLS certificate expires in $(CERT_DAYS) days on purpose, so the expiry warning on"
 	@echo "    the Health page is exercised. It is regenerated when it lapses."
 	@echo "  • The dev stack is self-signed and binds 0.0.0.0. Fine on a laptop; bind 127.0.0.1"
@@ -298,6 +299,7 @@ configure-plugins:
 		spf=$(PLUGIN_SPF) \
 		dkim=$(PLUGIN_DKIM) \
 		dmarc=$(PLUGIN_DMARC) \
+		arc=$(PLUGIN_ARC) \
 		rate_limiter=$(PLUGIN_RATE_LIMITER) \
 		clamav=$(PLUGIN_CLAMAV) \
 		rspamd=$(PLUGIN_RSPAMD) \
