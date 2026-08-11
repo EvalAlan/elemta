@@ -204,6 +204,97 @@ func TestPluginSettingsValidation(t *testing.T) {
 	}
 }
 
+// TestDashboardSigningDomainPayloadIsAccepted pins the exact JSON the settings
+// form produces for DKIM signing domains.
+//
+// The dashboard builds this from a repeating row editor, and the server decodes
+// it into typed signing domains. Those two live in different languages and
+// different files, so nothing but a test keeps them agreeing — and the failure
+// mode is silent: a renamed key decodes to an empty string and the operator
+// sees "saved" while signing quietly stops.
+//
+// The body below was captured from the rendered form, not written by hand.
+func TestDashboardSigningDomainPayloadIsAccepted(t *testing.T) {
+	s, path := testServerWithConfig(t, pluginTestTOML)
+
+	const fromTheForm = `{"config":{
+		"verify": true,
+		"sign": true,
+		"header_canonicalization": "relaxed",
+		"body_canonicalization": "simple",
+		"domains": [
+			{"domain":"example.com","selector":"mail","private_key_path":"/etc/elemta/dkim/example.com.key"},
+			{"domain":"other.example","selector":"s2","private_key_path":"/k/o.key","headers_to_sign":["From","Subject"]},
+			{"domain":"third.example","selector":"s3","private_key_path":"/k/third.key"}
+		]}}`
+
+	if rec := updatePlugin(t, s, "dkim", fromTheForm); rec.Code != http.StatusOK {
+		t.Fatalf("the dashboard's own payload was rejected: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var probe struct {
+		Plugins struct {
+			DKIM struct {
+				Domains []struct {
+					Domain         string   `toml:"domain"`
+					Selector       string   `toml:"selector"`
+					PrivateKeyPath string   `toml:"private_key_path"`
+					HeadersToSign  []string `toml:"headers_to_sign"`
+				} `toml:"domains"`
+			} `toml:"dkim"`
+		} `toml:"plugins"`
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := toml.Unmarshal(raw, &probe); err != nil {
+		t.Fatalf("persisted config does not parse: %v\n%s", err, raw)
+	}
+
+	domains := probe.Plugins.DKIM.Domains
+	if len(domains) != 3 {
+		t.Fatalf("persisted %d signing domains, want 3: %+v", len(domains), domains)
+	}
+	if domains[0].Domain != "example.com" || domains[0].PrivateKeyPath != "/etc/elemta/dkim/example.com.key" {
+		t.Errorf("first domain did not survive: %+v", domains[0])
+	}
+	// A per-domain header list is the field most likely to be dropped by a
+	// shape change, because most domains do not set it.
+	if len(domains[1].HeadersToSign) != 2 || domains[1].HeadersToSign[0] != "From" {
+		t.Errorf("headers_to_sign did not survive: %+v", domains[1])
+	}
+	// Omitted rather than sent empty: an empty list must not be mistaken for
+	// "sign no headers".
+	if len(domains[2].HeadersToSign) != 0 {
+		t.Errorf("domain with no header override gained one: %+v", domains[2])
+	}
+}
+
+// TestSigningDomainsRejectsWhatTheFormCannotProduce keeps the server strict
+// even though the form now constrains the input: the API is reachable directly.
+func TestSigningDomainsRejectsWhatTheFormCannotProduce(t *testing.T) {
+	cases := []struct {
+		body string
+		why  string
+	}{
+		{`{"config":{"domains":[{"domain":"example.com","selector":"mail"}]}}`, "no private key path"},
+		{`{"config":{"domains":[{"domain":"not a domain","selector":"mail","private_key_path":"/k"}]}}`, "an unusable domain"},
+		{`{"config":{"domains":[{"domain":"example.com","selector":"bad selector","private_key_path":"/k"}]}}`, "a selector that is not a DNS label"},
+		{`{"config":{"domains":[{"domain":"a.example","selector":"m","private_key_path":"/k"},{"domain":"a.example","selector":"n","private_key_path":"/k2"}]}}`, "the same domain twice"},
+		{`{"config":{"domains":"example.com"}}`, "a string where the array belongs"},
+		{`{"config":{"sign":true,"domains":[]}}`, "signing enabled with nothing to sign with"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.why, func(t *testing.T) {
+			s, _ := testServerWithConfig(t, pluginTestTOML)
+			if rec := updatePlugin(t, s, "dkim", tc.body); rec.Code != http.StatusBadRequest {
+				t.Errorf("%s should be refused, got %d %s", tc.why, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestMailAuthPluginSettingsPersistAsTypedTables(t *testing.T) {
 	s, path := testServerWithConfig(t, pluginTestTOML)
 	rec := updatePlugin(t, s, "dkim", `{"enabled":true,"config":{"verify":true,"sign":true,"domains":[{"domain":"pass.auth.test","selector":"mail","private_key_path":"/run/keys/mail.key","headers_to_sign":["From","Subject"]}]}}`)

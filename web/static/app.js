@@ -1843,10 +1843,18 @@ const PLUGIN_SETTINGS_SCHEMA = {
             { key: 'verify', label: 'Verify inbound signatures', type: 'checkbox' },
             { key: 'sign', label: 'Sign outbound remote-SMTP mail', type: 'checkbox',
               hint: 'The development LMTP route is not signed; use the mail-auth lab to exercise this path' },
-            { key: 'header_canonicalization', label: 'Header canonicalization', type: 'text', hint: 'relaxed or simple' },
-            { key: 'body_canonicalization', label: 'Body canonicalization', type: 'text', hint: 'relaxed or simple' },
-            { key: 'domains', label: 'Signing domains (JSON)', type: 'json',
-              hint: 'Array of {"domain":"example.com","selector":"mail","private_key_path":"/path/key"}. Private key bytes are never returned by the API.' },
+            { key: 'header_canonicalization', label: 'Header canonicalization', type: 'select',
+              options: ['relaxed', 'simple'], hint: 'relaxed tolerates the whitespace changes relays make' },
+            { key: 'body_canonicalization', label: 'Body canonicalization', type: 'select',
+              options: ['relaxed', 'simple'] },
+            { key: 'domains', label: 'Signing domains', type: 'rows', itemLabel: 'signing domain',
+              columns: [
+                  { key: 'domain', label: 'Domain', placeholder: 'example.com' },
+                  { key: 'selector', label: 'Selector', placeholder: 'mail' },
+                  { key: 'private_key_path', label: 'Private key path', placeholder: '/etc/elemta/dkim/example.com.key' },
+                  { key: 'headers_to_sign', label: 'Headers to sign', placeholder: 'leave blank for the default set' },
+              ],
+              hint: 'The key file must be readable only by the server (0600). Private key bytes are never returned by the API.' },
         ],
     },
     dmarc: {
@@ -1866,9 +1874,12 @@ const PLUGIN_SETTINGS_SCHEMA = {
             { key: 'selector', label: 'Selector', type: 'text' },
             { key: 'private_key_path', label: 'RSA private key path', type: 'text',
               hint: 'The file must be private (0600); its contents are never exposed in the dashboard' },
-            { key: 'header_canonicalization', label: 'Header canonicalization', type: 'text', hint: 'relaxed or simple' },
-            { key: 'body_canonicalization', label: 'Body canonicalization', type: 'text', hint: 'relaxed or simple' },
-            { key: 'headers_to_sign', label: 'Headers to sign', type: 'list' },
+            { key: 'header_canonicalization', label: 'Header canonicalization', type: 'select',
+              options: ['relaxed', 'simple'], hint: 'relaxed tolerates the whitespace changes relays make' },
+            { key: 'body_canonicalization', label: 'Body canonicalization', type: 'select',
+              options: ['relaxed', 'simple'] },
+            { key: 'headers_to_sign', label: 'Headers to sign', type: 'list',
+              hint: 'One per line. Leave blank for the default set, which includes DKIM-Signature.' },
             { key: 'timeout', label: 'DNS timeout (seconds)', type: 'number' },
         ],
     },
@@ -2096,6 +2107,37 @@ function renderPluginTabs(plugins) {
 // renderPluginPanel builds the settings form for one plugin from its schema.
 // The rate limiter keeps its existing hand-built panel; it is only relabelled
 // so the dynamic tab can point at it.
+// pluginRowHtml renders one record of a repeating field.
+//
+// Values are escaped rather than interpolated raw: these come back from the API
+// and end up in an attribute, so a quote in a stored path would otherwise break
+// out of it.
+function pluginRowHtml(pluginName, fieldKey, row = {}) {
+    const schema = PLUGIN_SETTINGS_SCHEMA[pluginName];
+    const field = (schema?.fields || []).find(f => f.key === fieldKey);
+    const columns = field?.columns || [];
+    const cells = columns.map(column => {
+        let value = row[column.key];
+        // A list column is shown comma-separated; blank means "use the default".
+        if (Array.isArray(value)) value = value.join(', ');
+        return `<input type="text" data-col="${escapeHtml(column.key)}"
+                       placeholder="${escapeHtml(column.placeholder || '')}"
+                       value="${escapeHtml(value === undefined || value === null ? '' : String(value))}">`;
+    }).join('');
+    return `
+        <div class="rows-editor-row" style="grid-template-columns: repeat(${columns.length}, 1fr) auto;">
+            ${cells}
+            <button type="button" class="btn btn-secondary btn-sm" title="Remove"
+                    onclick="this.closest('.rows-editor-row').remove()">Remove</button>
+        </div>`;
+}
+
+function addPluginRow(pluginName, fieldKey) {
+    const container = document.getElementById(`plugin-${pluginName}-${fieldKey}`);
+    if (!container) return;
+    container.insertAdjacentHTML('beforeend', pluginRowHtml(pluginName, fieldKey, {}));
+}
+
 function renderPluginPanel(plugin) {
     const schema = PLUGIN_SETTINGS_SCHEMA[plugin.name];
     if (!schema) return;
@@ -2128,6 +2170,44 @@ function renderPluginPanel(plugin) {
         const value = cfg[f.key];
         const id = `plugin-${plugin.name}-${f.key}`;
         const hint = f.hint ? `<div class="field-hint">${escapeHtml(f.hint)}</div>` : '';
+
+        if (f.type === 'select') {
+            // Only two values are ever valid and the server rejects anything
+            // else, so a free-text box could only ever produce a typo.
+            const options = (f.options || []).map(option => {
+                const chosen = String(value === undefined || value === null ? '' : value) === option;
+                return `<option value="${escapeHtml(option)}"${chosen ? ' selected' : ''}>${escapeHtml(option)}</option>`;
+            }).join('');
+            return `
+                <div class="config-item">
+                    <label for="${id}">${escapeHtml(f.label)}</label>
+                    <select id="${id}">${options}</select>
+                    ${hint}
+                </div>`;
+        }
+
+        if (f.type === 'rows') {
+            // A repeating record edited as one JSON blob means a misplaced
+            // comma silently loses a signing domain, and the operator has to
+            // know the field names. Give it real inputs.
+            const list = Array.isArray(value) ? value : [];
+            const heads = (f.columns || []).map(c => `<span>${escapeHtml(c.label)}</span>`).join('');
+            return `
+                <div class="config-item config-item-wide">
+                    <label>${escapeHtml(f.label)}</label>
+                    <div class="rows-editor" id="${id}" data-plugin="${escapeHtml(plugin.name)}" data-field="${escapeHtml(f.key)}">
+                        <div class="rows-editor-head" style="grid-template-columns: repeat(${(f.columns || []).length}, 1fr) auto;">
+                            ${heads}<span></span>
+                        </div>
+                        ${list.map(row => pluginRowHtml(plugin.name, f.key, row)).join('')}
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm"
+                            onclick="addPluginRow('${escapeJsArg(plugin.name)}', '${escapeJsArg(f.key)}')">
+                        Add ${escapeHtml(f.itemLabel || 'row')}
+                    </button>
+                    ${hint}
+                </div>`;
+        }
 
         if (f.type === 'list' || f.type === 'json') {
             const lines = f.type === 'json'
@@ -2236,6 +2316,28 @@ async function savePluginSettings(pluginName, enableOnSave = false) {
             config[f.key] = el.checked;
         } else if (f.type === 'list') {
             config[f.key] = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+        } else if (f.type === 'rows') {
+            const rows = [];
+            for (const rowEl of el.querySelectorAll('.rows-editor-row')) {
+                const record = {};
+                let blank = true;
+                for (const input of rowEl.querySelectorAll('[data-col]')) {
+                    const raw = input.value.trim();
+                    if (raw) blank = false;
+                    const column = (f.columns || []).find(c => c.key === input.dataset.col);
+                    if (column && column.list !== false && input.dataset.col.endsWith('_to_sign')) {
+                        const items = raw.split(/[,\n]/).map(x => x.trim()).filter(Boolean);
+                        if (items.length) record[input.dataset.col] = items;
+                    } else {
+                        record[input.dataset.col] = raw;
+                    }
+                }
+                // A row the operator added and left empty is not a record they
+                // meant to save; sending it would fail validation on a field
+                // they never filled in.
+                if (!blank) rows.push(record);
+            }
+            config[f.key] = rows;
         } else if (f.type === 'json') {
             try {
                 config[f.key] = JSON.parse(el.value);
