@@ -10,6 +10,8 @@ import (
 
 	"github.com/busybox42/elemta/internal/api"
 	"github.com/busybox42/elemta/internal/config"
+	"github.com/busybox42/elemta/internal/datasource"
+	"github.com/busybox42/elemta/internal/smtp"
 	"github.com/spf13/cobra"
 )
 
@@ -343,6 +345,16 @@ func runWeb(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Attach the account directory used for campaign recipient import.
+	//
+	// Best effort on purpose: a directory that is absent or unreachable must
+	// not stop the dashboard from starting. The import endpoint reports the
+	// reason itself, which is far more useful than a web interface that
+	// refuses to come up because LDAP is down.
+	if ds := openAccountDirectory(cfg.Auth); ds != nil {
+		server.SetDirectory(ds)
+	}
+
 	if err := server.Start(); err != nil {
 		slog.Error("Failed to start API server; the web interface cannot start",
 			"error", err,
@@ -364,4 +376,32 @@ func runWeb(cmd *cobra.Command, args []string) {
 	if err := server.Stop(); err != nil {
 		log.Printf("Error during shutdown: %v", err)
 	}
+}
+
+// openAccountDirectory connects to the same accounts the SMTP server
+// authenticates against, for campaign recipient import.
+//
+// Returns nil rather than an error when there is nothing to connect to: most
+// deployments authenticate against a file with no listable directory, and that
+// is a normal configuration rather than a fault.
+func openAccountDirectory(auth *smtp.AuthConfig) api.DirectoryLister {
+	if auth == nil || !auth.Enabled || auth.DataSourceName == "" {
+		return nil
+	}
+
+	ds, err := datasource.Factory(smtp.AuthDataSourceConfig(auth))
+	if err != nil {
+		slog.Warn("Campaign recipient import is unavailable; the account directory could not be created",
+			"error", err, "datasource", auth.DataSourceName)
+		return nil
+	}
+	if err := ds.Connect(); err != nil {
+		slog.Warn("Campaign recipient import is unavailable; the account directory could not be reached",
+			"error", err, "datasource", auth.DataSourceName,
+			"hint", "the dashboard still starts; the import endpoint reports this")
+		return nil
+	}
+
+	slog.Info("Campaign recipient import enabled", "datasource", auth.DataSourceName)
+	return ds
 }

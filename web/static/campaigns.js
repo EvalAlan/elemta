@@ -980,3 +980,80 @@ async function unsuppressAddress(address) {
         showToast(`Could not remove: ${error.message}`, 'error');
     }
 }
+
+// importDirectoryRecipients loads the account directory into the recipient box.
+//
+// The addresses are put in the textarea rather than attached to the campaign as
+// "everyone", so the operator sees exactly who is about to be mailed and can
+// edit the list. A campaign that resolves "everyone" when it starts sends to a
+// different set of people than the one that was reviewed, and there is no way
+// to check it beforehand.
+async function importDirectoryRecipients() {
+    const button = document.getElementById('campaign-import-directory');
+    const box = document.getElementById('campaign-recipients');
+    if (!box) return;
+
+    const original = button ? button.textContent : '';
+    if (button) { button.disabled = true; button.textContent = 'Importing...'; }
+
+    try {
+        const response = await fetch(`${API_BASE}/directory/recipients`);
+        const data = await response.json().catch(() => ({}));
+
+        if (!data.available) {
+            // Not an error state: plenty of deployments have no directory.
+            showToast(data.reason || 'No account directory is available', 'warning');
+            return;
+        }
+
+        const recipients = data.recipients || [];
+        if (recipients.length === 0) {
+            showToast('The directory returned no usable addresses', 'warning');
+            return;
+        }
+
+        // Emitted as CSV with the merge variables the directory supplied, so
+        // the existing parser handles it and the operator can see the columns.
+        const hasVars = recipients.some(r => r.vars && Object.keys(r.vars).length > 0);
+        let text;
+        if (hasVars) {
+            const columns = ['email', ...new Set(recipients.flatMap(r => Object.keys(r.vars || {})))];
+            const rows = recipients.map(r => columns.map(c =>
+                csvCell(c === 'email' ? r.email : ((r.vars || {})[c] || ''))).join(','));
+            text = [columns.join(','), ...rows].join('\n');
+        } else {
+            text = recipients.map(r => r.email).join('\n');
+        }
+
+        // Appended rather than replacing: an operator who has already pasted a
+        // list should not lose it to a mis-click.
+        const existing = box.value.trim();
+        box.value = existing ? `${existing}\n${text}` : text;
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+
+        let message = `Imported ${recipients.length} recipient${recipients.length === 1 ? '' : 's'}`;
+        if (data.truncated) message += ' (the directory has more than were imported)';
+        showToast(message, data.truncated ? 'warning' : 'success');
+
+        // Anything the directory could not be used for is shown rather than
+        // dropped, so the count difference is explainable.
+        if (data.skipped && data.skipped.length > 0) {
+            const summary = document.getElementById('campaign-recipients-summary');
+            if (summary) {
+                summary.innerHTML = `<div class="field-hint">Skipped ${data.skipped.length} directory
+                    account${data.skipped.length === 1 ? '' : 's'}: ${escapeHtml(data.skipped.slice(0, 10).join('; '))}${
+                    data.skipped.length > 10 ? ' and more' : ''}</div>`;
+            }
+        }
+    } catch (error) {
+        showToast(`Directory import failed: ${error.message}`, 'error');
+    } finally {
+        if (button) { button.disabled = false; button.textContent = original; }
+    }
+}
+
+// csvCell quotes a value that would otherwise break the column layout.
+function csvCell(value) {
+    const text = String(value === undefined || value === null ? '' : value);
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}

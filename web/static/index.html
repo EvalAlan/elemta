@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260811-settings-tabs">
+    <link rel="stylesheet" href="/static/styles.css?v=20260811-directory-import">
 </head>
 
 <body>
@@ -957,6 +957,8 @@
                             <h3>Recipients</h3>
                             <div class="card-actions">
                                 <input type="file" id="campaign-recipients-file" accept=".csv,.tsv,.txt" style="display: none;">
+                                <button class="btn btn-secondary btn-sm" id="campaign-import-directory"
+                                    onclick="importDirectoryRecipients()">Import from directory</button>
                                 <button class="btn btn-secondary btn-sm"
                                     onclick="document.getElementById('campaign-recipients-file').click()">Upload CSV</button>
                             </div>
@@ -1317,8 +1319,8 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20260811-settings-tabs"></script>
-    <script src="/static/campaigns.js?v=20260810-suppression"></script>
+    <script src="/static/app.js?v=20260811-directory-import"></script>
+    <script src="/static/campaigns.js?v=20260811-directory-import"></script>
 </body>
 
 </html>
