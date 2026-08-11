@@ -33,9 +33,12 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 		LocalDomains:  c.EffectiveLocalDomains(),
 		Hostname:      c.EffectiveHostname(),
 		MaxWorkers:    c.MaxWorkers,
-		MaxRetries:    c.MaxRetries,
-		MaxQueueTime:  c.MaxQueueTime,
-		RetrySchedule: c.RetrySchedule,
+		// Reaches the delivery handler's traffic shaper. Unmapped until now,
+		// which is why the setting did nothing.
+		MaxConnectionsPerDomain: c.MaxConnectionsPerDomain,
+		MaxRetries:              c.MaxRetries,
+		MaxQueueTime:            c.MaxQueueTime,
+		RetrySchedule:           c.RetrySchedule,
 
 		QueueSQLite: smtp.QueueSQLiteConfig{
 			Path:          c.Queue.SQLite.Path,
@@ -97,7 +100,6 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 	//   MessageRetentionHours   - not currently consumed
 	//   ConnectTimeout          - not currently consumed
 	//   SMTPTimeout             - not currently consumed
-	//   MaxConnectionsPerDomain - not currently consumed
 
 	if c.SessionTimeout != "" {
 		d, err := time.ParseDuration(c.SessionTimeout)

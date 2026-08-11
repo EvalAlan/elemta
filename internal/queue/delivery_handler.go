@@ -113,8 +113,11 @@ type SMTPDeliveryHandler struct {
 	mtastsManager             mtastsEnforcer
 	resolver                  mxResolver
 	dialContext               func(context.Context, string, string) (net.Conn, error)
-	mxRetrySleep              func(context.Context, time.Duration) error
-	signer                    messageSigner // optional DKIM signer; nil = signing disabled
+	// shaper applies per-destination connection and rate limits, and the
+	// backoff a destination asks for by deferring. Nil means unshaped.
+	shaper       *Shaper
+	mxRetrySleep func(context.Context, time.Duration) error
+	signer       messageSigner // optional DKIM signer; nil = signing disabled
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -230,6 +233,17 @@ func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 			if !(&Processor{}).isTemporaryFailure(err) {
 				status = RecipientPermanentFailure
 			}
+			// A temporary failure is the destination asking us to slow down, so
+			// back off from it — and only from it. A permanent one is about the
+			// message or the recipient and says nothing about pace; backing off
+			// on those would slow a queue because one address does not exist.
+			// A refusal we caused ourselves by backing off is not new news.
+			if h.shaper != nil && status == RecipientTemporaryFailure && !errors.Is(err, ErrDestinationBackingOff) {
+				backoff := h.shaper.ReportDeferral(domain)
+				h.logger.Info("Backing off from a destination that deferred",
+					"event_type", "traffic_shaping",
+					"domain", domain, "backoff", backoff.String())
+			}
 			for _, recipient := range recipients[len(domainOutcomes):] {
 				outcomes = append(outcomes, RecipientOutcome{Recipient: recipient, Status: status, Diagnostic: err.Error(), Route: domain})
 			}
@@ -239,6 +253,12 @@ func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 			}
 			for _, recipient := range recipients[len(domainOutcomes):] {
 				outcomes = append(outcomes, RecipientOutcome{Recipient: recipient, Status: RecipientDelivered, Route: host})
+			}
+			// One delivery is enough to clear a backoff: the destination is
+			// evidently willing again, and holding the pause after that slows
+			// the queue for no reason.
+			if h.shaper != nil {
+				h.shaper.ReportSuccess(domain)
 			}
 			h.logger.Info("Successfully delivered to domain",
 				"domain", domain,
@@ -317,7 +337,24 @@ func (h *SMTPDeliveryHandler) groupRecipientsByDomain(recipients []string) map[s
 }
 
 // deliverToDomainWithMetadata delivers messages to all recipients in a specific domain and returns delivery metadata
+// SetShaper attaches per-destination traffic shaping.
+func (h *SMTPDeliveryHandler) SetShaper(shaper *Shaper) {
+	h.shaper = shaper
+}
+
 func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, msg Message, domain string, recipients []string, content []byte, requireTLS bool) (string, string, []RecipientOutcome, error) {
+	// Take a slot for this destination first. A destination that is backing off
+	// refuses here and the message is deferred, rather than a worker sleeping
+	// until the destination is ready — one slow receiver would otherwise stall
+	// the whole queue behind it.
+	if h.shaper != nil {
+		release, err := h.shaper.Acquire(ctx, domain)
+		if err != nil {
+			return "", "", nil, err
+		}
+		defer release()
+	}
+
 	// Look up MX records for the domain
 	mxRecords, err := h.lookupMX(ctx, domain)
 	if err != nil {
