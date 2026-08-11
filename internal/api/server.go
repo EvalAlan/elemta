@@ -210,6 +210,11 @@ type Server struct {
 	stopDone        chan struct{}
 	stopErr         error
 	listenerFactory func() (net.Listener, error)
+
+	// directory lists accounts for campaign recipient import. Nil when the
+	// deployment authenticates against something with no listable directory,
+	// which the import endpoint reports rather than treating as an error.
+	directory DirectoryLister
 }
 
 type serverLifecycleState uint8
@@ -664,6 +669,7 @@ func (s *Server) Start() error {
 		api.Handle("/campaigns/{id}", manage(http.HandlerFunc(s.handleDeleteCampaign))).Methods("DELETE")
 		api.Handle("/campaigns/{id}/recipients", manage(http.HandlerFunc(s.handleGetCampaignRecipients))).Methods("GET")
 		api.Handle("/campaigns/{id}/{action}", manage(http.HandlerFunc(s.handleCampaignAction))).Methods("POST")
+		api.Handle("/directory/recipients", manage(http.HandlerFunc(s.handleDirectoryRecipients))).Methods("GET")
 	} else {
 		api.HandleFunc("/campaigns", s.handleListCampaigns).Methods("GET")
 		api.HandleFunc("/campaigns", s.handleCreateCampaign).Methods("POST")
@@ -672,6 +678,7 @@ func (s *Server) Start() error {
 		api.HandleFunc("/campaigns/{id}", s.handleDeleteCampaign).Methods("DELETE")
 		api.HandleFunc("/campaigns/{id}/recipients", s.handleGetCampaignRecipients).Methods("GET")
 		api.HandleFunc("/campaigns/{id}/{action}", s.handleCampaignAction).Methods("POST")
+		api.HandleFunc("/directory/recipients", s.handleDirectoryRecipients).Methods("GET")
 	}
 
 	// Message tracing. Read-only and derived from the logs, but a trace names
