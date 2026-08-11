@@ -46,6 +46,47 @@ type authDataSourceFactory func(config datasource.Config) (datasource.DataSource
 
 var newAuthDataSource authDataSourceFactory = datasource.Factory
 
+// AuthDataSourceConfig turns the SMTP auth settings into a datasource config.
+//
+// Exported so anything else that needs to read the same accounts — the
+// dashboard's campaign recipient import, for one — builds an identical
+// datasource rather than its own approximation. Two copies of this mapping
+// would let the dashboard list one directory while the server authenticates
+// against another, and the difference would only show up as a campaign
+// addressed to the wrong people.
+//
+// Note that Type comes from DataSourceName rather than DataSourceType. That is
+// how deployments in the field are configured, so it stays; changing it would
+// break every existing config file.
+func AuthDataSourceConfig(config *AuthConfig) datasource.Config {
+	dsConfig := datasource.Config{
+		Type:     config.DataSourceName,
+		Name:     config.DataSourceName,
+		Host:     config.DataSourceHost,
+		Port:     config.DataSourcePort,
+		Database: config.DataSourceDB,
+		Username: config.DataSourceUser,
+		Password: config.DataSourcePass,
+		Options:  make(map[string]interface{}),
+	}
+
+	// Both file and db_path are set for backward compatibility.
+	if config.DataSourcePath != "" {
+		dsConfig.Options["file"] = config.DataSourcePath
+		dsConfig.Options["db_path"] = config.DataSourcePath
+	}
+
+	if config.DataSourceName == "ldap" {
+		if config.DataSourceDB != "" {
+			dsConfig.Options["base_dn"] = config.DataSourceDB
+		}
+		dsConfig.Options["user_dn"] = "ou=people"
+		dsConfig.Options["group_dn"] = "ou=groups"
+	}
+
+	return dsConfig
+}
+
 // NewAuthenticator creates a new SMTP authenticator
 func NewAuthenticator(config *AuthConfig) (*SMTPAuthenticator, error) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -62,35 +103,7 @@ func NewAuthenticator(config *AuthConfig) (*SMTPAuthenticator, error) {
 		return auth, nil
 	}
 
-	// Create and connect to the datasource
-	dsConfig := datasource.Config{
-		Type:     config.DataSourceName,
-		Name:     config.DataSourceName,
-		Host:     config.DataSourceHost,
-		Port:     config.DataSourcePort,
-		Database: config.DataSourceDB,
-		Username: config.DataSourceUser,
-		Password: config.DataSourcePass,
-		Options:  make(map[string]interface{}),
-	}
-
-	// Set both file and db_path options to ensure backward compatibility
-	if config.DataSourcePath != "" {
-		dsConfig.Options["file"] = config.DataSourcePath
-		dsConfig.Options["db_path"] = config.DataSourcePath
-	}
-
-	// For LDAP, map the database field to base_dn and set user/group DNs
-	if config.DataSourceName == "ldap" {
-		if config.DataSourceDB != "" {
-			dsConfig.Options["base_dn"] = config.DataSourceDB
-		}
-		// Set default user and group DNs for our LDAP setup
-		dsConfig.Options["user_dn"] = "ou=people"
-		dsConfig.Options["group_dn"] = "ou=groups"
-	}
-
-	ds, err := newAuthDataSource(dsConfig)
+	ds, err := newAuthDataSource(AuthDataSourceConfig(config))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create datasource: %w", err)
 	}
