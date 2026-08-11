@@ -12,11 +12,22 @@ import (
 // defaultSignedHeaders is the header set an ARC-Message-Signature covers when
 // the operator has not chosen one.
 //
-// ARC-Seal is deliberately absent: a message signature must not cover the seal
-// that will be computed over it, and RFC 8617 §4.1.2 forbids it outright.
+// No ARC header appears here: a message signature must not cover the seal that
+// will be computed over it, and RFC 8617 §4.1.2 forbids listing ARC fields at
+// all. Every hop prepends its own set, so any rule for picking "the" ARC header
+// would be evaluated against a different header block by the signer and the
+// verifier.
+//
+// DKIM-Signature is included on purpose. Sealing happens after DKIM signing, so
+// the signature this hop just applied is present, and covering it means the
+// chain attests to it: a later reader can tell that the DKIM signature was
+// there when we vouched for the message, rather than having been added or
+// swapped afterwards. Omitting it leaves the one piece of evidence our
+// Authentication-Results is talking about outside what we signed.
 var defaultSignedHeaders = []string{
 	"From", "To", "Cc", "Subject", "Date", "Message-ID",
 	"MIME-Version", "Content-Type", "Reply-To", "In-Reply-To", "References",
+	"DKIM-Signature",
 }
 
 // sealMessage adds one ARC set to a message.
