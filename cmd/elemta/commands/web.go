@@ -103,6 +103,63 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		}
 	}
 
+	var spfStatus *api.SPFStatus
+	var dkimStatus *api.DKIMStatus
+	var dmarcStatus *api.DMARCStatus
+	if p := cfg.Plugins.SPF; p != nil {
+		spfStatus = &api.SPFStatus{Enabled: p.Enabled, Timeout: p.Timeout}
+	}
+	if p := cfg.Plugins.DKIM; p != nil {
+		domains := make([]api.SigningDomainStatus, 0, len(p.Domains))
+		for _, domain := range p.Domains {
+			domains = append(domains, api.SigningDomainStatus{
+				Domain: domain.Domain, Selector: domain.Selector,
+				PrivateKeyPath: domain.PrivateKeyPath,
+				HeadersToSign:  append([]string(nil), domain.HeadersToSign...),
+			})
+		}
+		dkimStatus = &api.DKIMStatus{
+			Enabled: p.Enabled, Verify: p.Verify, Sign: p.Sign,
+			HeaderCanonicalization: p.HeaderCanonicalization,
+			BodyCanonicalization:   p.BodyCanonicalization, Domains: domains,
+		}
+	}
+	if p := cfg.Plugins.DMARC; p != nil {
+		dmarcStatus = &api.DMARCStatus{Enabled: p.Enabled, Enforce: p.Enforce, Timeout: p.Timeout}
+	}
+	// Legacy sections remain visible during migration. An explicitly configured
+	// plugin table wins; missing plugin tables inherit the old aggregate values.
+	// The first successful dashboard write then persists all canonical tables and
+	// removes the legacy section, including from an otherwise ambiguous file.
+	if cfg.InboundAuth != nil {
+		if spfStatus == nil {
+			spfStatus = &api.SPFStatus{Enabled: cfg.InboundAuth.Enabled, Timeout: cfg.InboundAuth.Timeout}
+		}
+		if dkimStatus == nil {
+			dkimStatus = &api.DKIMStatus{Enabled: cfg.InboundAuth.Enabled, Verify: cfg.InboundAuth.Enabled}
+		}
+		if dmarcStatus == nil {
+			dmarcStatus = &api.DMARCStatus{Enabled: cfg.InboundAuth.Enabled, Enforce: cfg.InboundAuth.EnforceDMARC, Timeout: cfg.InboundAuth.Timeout}
+		}
+	}
+	if cfg.DKIM != nil {
+		if dkimStatus == nil {
+			dkimStatus = &api.DKIMStatus{}
+		}
+		domains := make([]api.SigningDomainStatus, 0, len(cfg.DKIM.Domains))
+		for _, domain := range cfg.DKIM.Domains {
+			domains = append(domains, api.SigningDomainStatus{
+				Domain: domain.Domain, Selector: domain.Selector,
+				PrivateKeyPath: domain.PrivateKeyPath, HeadersToSign: append([]string(nil), domain.HeadersToSign...),
+			})
+		}
+		dkimStatus.Enabled = dkimStatus.Enabled || cfg.DKIM.Enabled
+		dkimStatus.Sign = cfg.DKIM.Enabled
+		dkimStatus.HeaderCanonicalization = cfg.DKIM.HeaderCanonicalization
+		dkimStatus.BodyCanonicalization = cfg.DKIM.BodyCanonicalization
+		dkimStatus.Domains = domains
+	}
+
 	return &api.MainConfig{
 		Hostname:                  hostname,
 		ListenAddr:                listenAddr,
@@ -138,12 +195,17 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 			}
 			return ""
 		}(),
-		API:           nil, // API config not available in main config
-		MassMailer:    massMailer,
-		Antivirus:     antivirus,
-		Antispam:      antispam,
-		AccessControl: accessControl,
-		RBL:           rbl,
+		API:               nil, // API config not available in main config
+		MassMailer:        massMailer,
+		Antivirus:         antivirus,
+		Antispam:          antispam,
+		AccessControl:     accessControl,
+		RBL:               rbl,
+		SPF:               spfStatus,
+		DKIM:              dkimStatus,
+		DMARC:             dmarcStatus,
+		LegacyInboundAuth: cfg.InboundAuth != nil,
+		LegacyDKIM:        cfg.DKIM != nil,
 	}
 }
 

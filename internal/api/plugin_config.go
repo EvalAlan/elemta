@@ -32,6 +32,54 @@ func (s *Server) applyPluginConfig(plugin string, cfg map[string]interface{}) er
 	r := &cfgReader{cfg: cfg}
 
 	switch plugin {
+	case "spf":
+		if s.mainConfig.SPF == nil {
+			s.mainConfig.SPF = &SPFStatus{}
+		}
+		next := *s.mainConfig.SPF
+		r.intv("timeout", &next.Timeout, 1, 60)
+		if err := r.err(); err != nil {
+			return err
+		}
+		*s.mainConfig.SPF = next
+
+	case "dkim":
+		if s.mainConfig.DKIM == nil {
+			s.mainConfig.DKIM = &DKIMStatus{}
+		}
+		next := *s.mainConfig.DKIM
+		r.boolv("verify", &next.Verify)
+		r.boolv("sign", &next.Sign)
+		r.str("header_canonicalization", &next.HeaderCanonicalization, validateCanonicalization)
+		r.str("body_canonicalization", &next.BodyCanonicalization, validateCanonicalization)
+		if raw, ok := cfg["domains"]; ok {
+			domains, err := decodeSigningDomains(raw)
+			if err != nil {
+				r.bad("domains: %v", err)
+			} else {
+				next.Domains = domains
+			}
+		}
+		if err := r.err(); err != nil {
+			return err
+		}
+		if next.Sign && len(next.Domains) == 0 {
+			return errors.New("domains: at least one signing domain is required when outbound signing is enabled")
+		}
+		*s.mainConfig.DKIM = next
+
+	case "dmarc":
+		if s.mainConfig.DMARC == nil {
+			s.mainConfig.DMARC = &DMARCStatus{}
+		}
+		next := *s.mainConfig.DMARC
+		r.boolv("enforce", &next.Enforce)
+		r.intv("timeout", &next.Timeout, 1, 60)
+		if err := r.err(); err != nil {
+			return err
+		}
+		*s.mainConfig.DMARC = next
+
 	case "clamav":
 		if s.mainConfig.Antivirus == nil {
 			s.mainConfig.Antivirus = &ScannerStatus{}
@@ -124,6 +172,84 @@ func (s *Server) applyPluginConfig(plugin string, cfg map[string]interface{}) er
 	}
 
 	return nil
+}
+
+func validateCanonicalization(value string) error {
+	if value == "" || value == "relaxed" || value == "simple" {
+		return nil
+	}
+	return errors.New("must be relaxed or simple")
+}
+
+func validateDNSLabel(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > 63 || strings.HasPrefix(value, "-") || strings.HasSuffix(value, "-") {
+		return errors.New("must be a valid DNS label")
+	}
+	for _, r := range value {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-') {
+			return errors.New("must be one DNS label using letters, digits or hyphens")
+		}
+	}
+	return nil
+}
+
+func validateHeaderName(value string) error {
+	if value == "" {
+		return errors.New("must not be empty")
+	}
+	for _, r := range value {
+		if r < 33 || r > 126 || r == ':' {
+			return errors.New("must be an RFC 5322 header field name")
+		}
+	}
+	return nil
+}
+
+func decodeSigningDomains(raw interface{}) ([]SigningDomainStatus, error) {
+	items, ok := raw.([]interface{})
+	if !ok {
+		return nil, errors.New("must be a JSON array")
+	}
+	domains := make([]SigningDomainStatus, 0, len(items))
+	seen := make(map[string]bool)
+	for i, item := range items {
+		obj, ok := item.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("item %d must be an object", i+1)
+		}
+		domain, _ := obj["domain"].(string)
+		selector, _ := obj["selector"].(string)
+		keyPath, _ := obj["private_key_path"].(string)
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		selector = strings.TrimSpace(selector)
+		keyPath = strings.TrimSpace(keyPath)
+		if err := validateAccessDomain(domain); err != nil {
+			return nil, fmt.Errorf("item %d domain: %w", i+1, err)
+		}
+		if err := validateDNSLabel(selector); err != nil {
+			return nil, fmt.Errorf("item %d selector: %w", i+1, err)
+		}
+		if keyPath == "" {
+			return nil, fmt.Errorf("item %d private_key_path is required", i+1)
+		}
+		if seen[domain] {
+			return nil, fmt.Errorf("domain %q appears more than once", domain)
+		}
+		seen[domain] = true
+		var headers []string
+		if rawHeaders, ok := obj["headers_to_sign"]; ok {
+			r := &cfgReader{cfg: map[string]interface{}{"headers": rawHeaders}}
+			r.list("headers", &headers, validateHeaderName)
+			if err := r.err(); err != nil {
+				return nil, fmt.Errorf("item %d %w", i+1, err)
+			}
+		}
+		domains = append(domains, SigningDomainStatus{Domain: domain, Selector: selector, PrivateKeyPath: keyPath, HeadersToSign: headers})
+	}
+	return domains, nil
 }
 
 // cfgReader pulls typed values out of a decoded JSON object, collecting every

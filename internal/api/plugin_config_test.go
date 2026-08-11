@@ -37,6 +37,9 @@ func testServerWithConfig(t *testing.T, doc string) (*Server, string) {
 			AccessControl: &AccessControlStatus{},
 			RBL:           &RBLStatus{Timeout: 5, CacheTTL: 3600, CacheSize: 10000},
 			MassMailer:    &MassMailerStatus{DefaultRatePerMinute: 600},
+			SPF:           &SPFStatus{Enabled: true, Timeout: 10},
+			DKIM:          &DKIMStatus{Enabled: true, Verify: true, HeaderCanonicalization: "relaxed", BodyCanonicalization: "relaxed"},
+			DMARC:         &DMARCStatus{Enabled: true, Timeout: 10},
 		},
 	}, path
 }
@@ -180,6 +183,9 @@ func TestPluginSettingsValidation(t *testing.T) {
 		{"rbl", `{"config":{"timeout":600}}`, "a timeout long enough to stall every session"},
 		{"rbl", `{"config":{"skip_ips":["nope"]}}`, "a skip rule the server cannot parse"},
 		{"mass_mailer", `{"config":{"default_rate_per_minute":0}}`, "an unbounded default rate"},
+		{"spf", `{"config":{"timeout":0}}`, "an unbounded SPF lookup"},
+		{"dkim", `{"config":{"header_canonicalization":"invented"}}`, "an unknown DKIM canonicalization"},
+		{"dkim", `{"config":{"sign":true,"domains":[]}}`, "DKIM signing with no key"},
 		{"rate_limiter", `{"config":{"max_messages_per_minute":10}}`, "a plugin edited through its own panel"},
 		{"nonesuch", `{"config":{"anything":1}}`, "a plugin that does not exist"},
 	}
@@ -190,6 +196,144 @@ func TestPluginSettingsValidation(t *testing.T) {
 			rec := updatePlugin(t, s, tc.plugin, tc.body)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("%s should be refused, got %d %s", tc.why, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestMailAuthPluginSettingsPersistAsTypedTables(t *testing.T) {
+	s, path := testServerWithConfig(t, pluginTestTOML)
+	rec := updatePlugin(t, s, "dkim", `{"enabled":true,"config":{"verify":true,"sign":true,"domains":[{"domain":"pass.auth.test","selector":"mail","private_key_path":"/run/keys/mail.key","headers_to_sign":["From","Subject"]}]}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DKIM update rejected: %d %s", rec.Code, rec.Body.String())
+	}
+	var probe struct {
+		Plugins struct {
+			DKIM struct {
+				Enabled bool `toml:"enabled"`
+				Sign    bool `toml:"sign"`
+				Domains []struct {
+					Domain         string `toml:"domain"`
+					Selector       string `toml:"selector"`
+					PrivateKeyPath string `toml:"private_key_path"`
+				} `toml:"domains"`
+			} `toml:"dkim"`
+		} `toml:"plugins"`
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := toml.Unmarshal(raw, &probe); err != nil {
+		t.Fatalf("persisted config does not parse: %v\n%s", err, raw)
+	}
+	if !probe.Plugins.DKIM.Enabled || !probe.Plugins.DKIM.Sign || len(probe.Plugins.DKIM.Domains) != 1 {
+		t.Fatalf("DKIM config did not survive: %+v", probe.Plugins.DKIM)
+	}
+	if probe.Plugins.DKIM.Domains[0].PrivateKeyPath != "/run/keys/mail.key" {
+		t.Errorf("DKIM key path = %q", probe.Plugins.DKIM.Domains[0].PrivateKeyPath)
+	}
+}
+
+func TestMailAuthPluginWriteMigratesLegacyTables(t *testing.T) {
+	const legacy = `hostname = "mail.example.com"
+
+[inbound_auth]
+enabled = true
+enforce_dmarc = false
+
+[dkim]
+enabled = true
+
+[[dkim.domains]]
+domain = "legacy.example.com"
+selector = "mail"
+private_key_path = "/run/keys/legacy.key"
+
+# This comment belongs to queue and must survive migration.
+[queue]
+backend = "sqlite"
+`
+	s, path := testServerWithConfig(t, legacy)
+	s.mainConfig.LegacyInboundAuth = true
+	s.mainConfig.LegacyDKIM = true
+	s.mainConfig.DKIM.Sign = true
+	s.mainConfig.DKIM.Domains = []SigningDomainStatus{{
+		Domain: "legacy.example.com", Selector: "mail", PrivateKeyPath: "/run/keys/legacy.key",
+	}}
+
+	rec := updatePlugin(t, s, "spf", `{"config":{"timeout":12}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SPF update rejected: %d %s", rec.Code, rec.Body.String())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(raw)
+	if strings.Contains(doc, "[inbound_auth]") || strings.Contains(doc, "[dkim]") || strings.Contains(doc, "[[dkim.domains]]") {
+		t.Fatalf("legacy tables survived the dashboard migration:\n%s", doc)
+	}
+	for _, want := range []string{"[plugins.spf]", "[plugins.dkim]", "# This comment belongs to queue", `backend = "sqlite"`} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("migration removed %q:\n%s", want, doc)
+		}
+	}
+	var probe struct {
+		Plugins struct {
+			SPF struct {
+				Enabled bool `toml:"enabled"`
+				Timeout int  `toml:"timeout"`
+			} `toml:"spf"`
+			DKIM struct {
+				Enabled bool `toml:"enabled"`
+				Sign    bool `toml:"sign"`
+			} `toml:"dkim"`
+		} `toml:"plugins"`
+		Queue struct {
+			Backend string `toml:"backend"`
+		} `toml:"queue"`
+	}
+	if err := toml.Unmarshal(raw, &probe); err != nil {
+		t.Fatalf("migrated config does not parse: %v\n%s", err, raw)
+	}
+	if !probe.Plugins.SPF.Enabled || probe.Plugins.SPF.Timeout != 12 || !probe.Plugins.DKIM.Enabled || !probe.Plugins.DKIM.Sign {
+		t.Errorf("canonical plugin settings were not retained: %+v", probe.Plugins)
+	}
+	if probe.Queue.Backend != "sqlite" {
+		t.Errorf("queue backend changed to %q", probe.Queue.Backend)
+	}
+}
+
+func TestDisablingOutboundAuthOperationsReportsRestart(t *testing.T) {
+	cases := []struct {
+		plugin string
+		body   string
+		setup  func(*MainConfig)
+	}{
+		{
+			plugin: "dkim",
+			body:   `{"config":{"sign":false}}`,
+			setup: func(c *MainConfig) {
+				c.DKIM.Enabled = true
+				c.DKIM.Sign = true
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.plugin, func(t *testing.T) {
+			s, _ := testServerWithConfig(t, pluginTestTOML)
+			tc.setup(s.mainConfig)
+			rec := updatePlugin(t, s, tc.plugin, tc.body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("update rejected: %d %s", rec.Code, rec.Body.String())
+			}
+			var response map[string]interface{}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response["requires_restart"] != true || response["applies_on_reload"] == true {
+				t.Errorf("response = %v; removing an active outbound signer/sealer needs restart", response)
 			}
 		})
 	}

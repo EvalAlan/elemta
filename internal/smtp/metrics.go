@@ -53,6 +53,10 @@ type Metrics struct {
 	AuthAttempts  prometheus.Counter
 	AuthSuccesses prometheus.Counter
 	AuthFailures  prometheus.Counter
+	// MailAuthResults records message-authentication outcomes independently of
+	// SMTP AUTH, which is user login and answers a different question.
+	MailAuthResults     *prometheus.CounterVec
+	MailAuthDisposition *prometheus.CounterVec
 
 	// Rate limiting metrics
 	RateLimitConnectionsHit    prometheus.Counter
@@ -172,6 +176,14 @@ func newMetrics() *Metrics {
 			Name: "elemta_auth_failures_total",
 			Help: "Total number of failed authentications",
 		}),
+		MailAuthResults: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "elemta_mail_auth_results_total",
+			Help: "Message authentication results by method and verdict",
+		}, []string{"method", "result"}),
+		MailAuthDisposition: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "elemta_mail_auth_dispositions_total",
+			Help: "Final message authentication dispositions",
+		}, []string{"disposition"}),
 
 		// Rate limiting metrics
 		RateLimitConnectionsHit: promauto.NewCounter(prometheus.CounterOpts{

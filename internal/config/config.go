@@ -206,8 +206,11 @@ type Config struct {
 
 	// Plugins configuration
 	Plugins struct {
-		Directory string   `toml:"directory"`
-		Enabled   []string `toml:"enabled"`
+		Directory string                  `toml:"directory"`
+		Enabled   []string                `toml:"enabled"`
+		SPF       *smtp.SPFPluginConfig   `toml:"spf"`
+		DKIM      *smtp.DKIMPluginConfig  `toml:"dkim"`
+		DMARC     *smtp.DMARCPluginConfig `toml:"dmarc"`
 	} `toml:"plugins"`
 
 	// Rate Limiter Plugin configuration
@@ -718,6 +721,7 @@ func (c *Config) Validate() *ValidationResult {
 
 	// Validate plugins configuration
 	c.validatePlugins(result, securityValidator)
+	c.validateMailAuthPlugins(result)
 
 	// Validate authentication configuration
 	c.validateAuth(result, securityValidator)
@@ -1139,6 +1143,57 @@ func (c *Config) validatePlugins(result *ValidationResult, sv *SecurityValidator
 			if err := sv.ValidateFileSize(pluginPath, fmt.Sprintf("plugins.enabled[%d]", i)); err != nil {
 				result.AddError(fmt.Sprintf("plugins.enabled[%d]", i), plugin, err.Error())
 			}
+		}
+	}
+}
+
+// validateMailAuthPlugins validates the built-in SPF/DKIM/DMARC tables.
+// These do not depend on the external .so plugin directory and must therefore
+// still be checked when that older plugin mechanism is disabled.
+func (c *Config) validateMailAuthPlugins(result *ValidationResult) {
+	validCanon := func(value string) bool {
+		return value == "" || strings.EqualFold(value, "simple") || strings.EqualFold(value, "relaxed")
+	}
+	validTimeout := func(field string, value int) {
+		if value < 0 || value > 300 {
+			result.AddError(field, value, "timeout must be between 1 and 300 seconds, or 0 for the default")
+		}
+	}
+	if p := c.Plugins.SPF; p != nil {
+		validTimeout("plugins.spf.timeout", p.Timeout)
+	}
+	if p := c.Plugins.DKIM; p != nil {
+		if !validCanon(p.HeaderCanonicalization) {
+			result.AddError("plugins.dkim.header_canonicalization", p.HeaderCanonicalization, "canonicalization must be simple or relaxed")
+		}
+		if !validCanon(p.BodyCanonicalization) {
+			result.AddError("plugins.dkim.body_canonicalization", p.BodyCanonicalization, "canonicalization must be simple or relaxed")
+		}
+		if p.Enabled && !p.Verify && !p.Sign {
+			result.AddError("plugins.dkim", nil, "enabled DKIM plugin must verify, sign, or both")
+		}
+		if p.Sign && len(p.Domains) == 0 {
+			result.AddError("plugins.dkim.domains", p.Domains, "at least one signing domain is required when DKIM signing is enabled")
+		}
+		for i, domain := range p.Domains {
+			prefix := fmt.Sprintf("plugins.dkim.domains[%d]", i)
+			if strings.TrimSpace(domain.Domain) == "" {
+				result.AddError(prefix+".domain", domain.Domain, "domain is required")
+			}
+			if strings.TrimSpace(domain.Selector) == "" {
+				result.AddError(prefix+".selector", domain.Selector, "selector is required")
+			}
+			if strings.TrimSpace(domain.PrivateKeyPath) == "" {
+				result.AddError(prefix+".private_key_path", domain.PrivateKeyPath, "private key path is required")
+			}
+		}
+	}
+	if p := c.Plugins.DMARC; p != nil {
+		validTimeout("plugins.dmarc.timeout", p.Timeout)
+		spfAvailable := c.Plugins.SPF != nil && c.Plugins.SPF.Enabled
+		dkimAvailable := c.Plugins.DKIM != nil && c.Plugins.DKIM.Enabled && c.Plugins.DKIM.Verify
+		if p.Enabled && !spfAvailable && !dkimAvailable {
+			result.AddError("plugins.dmarc", nil, "DMARC requires SPF or DKIM verification to be enabled")
 		}
 	}
 }

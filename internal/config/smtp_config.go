@@ -23,6 +23,16 @@ import (
 //
 // TestToSMTPConfig_AllFieldsMapped enforces the first rule via reflection.
 func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
+	// The legacy aggregate sections and the built-in plugin tables describe the
+	// same runtime components. Refuse ambiguous files instead of guessing which
+	// copy an operator meant to edit.
+	if c.InboundAuth != nil && (c.Plugins.SPF != nil || c.Plugins.DKIM != nil || c.Plugins.DMARC != nil) {
+		return nil, fmt.Errorf("mail authentication is configured in both legacy [inbound_auth] and [plugins.spf/dkim/dmarc]")
+	}
+	if c.DKIM != nil && c.Plugins.DKIM != nil && c.Plugins.DKIM.Sign {
+		return nil, fmt.Errorf("DKIM signing is configured in both legacy [dkim] and [plugins.dkim]")
+	}
+
 	out := &smtp.Config{
 		ListenAddr:    c.EffectiveListenAddr(),
 		QueueDir:      c.EffectiveQueueDir(),
@@ -112,12 +122,18 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 		out.SessionTimeout = c.Timeouts.SessionTimeout
 	}
 
-	if len(c.Plugins.Enabled) > 0 {
+	if len(c.Plugins.Enabled) > 0 || c.Plugins.SPF != nil || c.Plugins.DKIM != nil || c.Plugins.DMARC != nil {
 		out.Plugins = &smtp.PluginConfig{
-			Enabled:    true,
+			Enabled:    len(c.Plugins.Enabled) > 0,
 			PluginPath: c.Plugins.Directory,
 			Plugins:    c.Plugins.Enabled,
+			SPF:        c.Plugins.SPF,
+			DKIM:       c.Plugins.DKIM,
+			DMARC:      c.Plugins.DMARC,
 		}
+	}
+	if c.Plugins.DKIM != nil {
+		out.DKIM = c.Plugins.DKIM.SigningConfig()
 	}
 
 	out.ApplyDefaults()
