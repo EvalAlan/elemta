@@ -111,6 +111,9 @@ as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
   suppression store; the fix was writing both queries out, not annotating.
 - **staticcheck** via golangci-lint. Catches unused methods, redundant nil
   checks, and inconsistent receiver names.
+- **`gofmt -l .` as a separate step.** golangci-lint does *not* run it, so a
+  clean `golangci-lint run` is not enough — this has already cost one CI round
+  trip. Run `gofmt -l .` over the whole repo before pushing.
 - **`go mod tidy -diff`.** Adding a dependency with `go get` leaves it marked
   `// indirect`; tidy before pushing.
 - `golangci-lint run ./...` and `gosec -severity medium ./...` locally will save
