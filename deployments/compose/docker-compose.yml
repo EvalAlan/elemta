@@ -139,7 +139,12 @@ services:
     depends_on:
       - elemta
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8025/" ]
+      # /api/health, not /. Since the dashboard requires a login, / answers 401
+      # to an unauthenticated probe and `curl -f` exits non-zero, which marked a
+      # perfectly healthy container unhealthy for as long as auth was on — and
+      # would have had an orchestrator restarting it in a loop. /api/health is
+      # public precisely so probes have something to ask.
+      test: [ "CMD", "curl", "-f", "http://localhost:8025/api/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
