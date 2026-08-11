@@ -181,6 +181,11 @@ type Processor struct {
 	workerSem    chan struct{}
 	bounceEngine BounceEngine
 
+	// suppressor records addresses that permanently failed, so a later campaign
+	// does not mail them again. Optional: a nil recorder simply records nothing,
+	// because delivery must not depend on it.
+	suppressor SuppressionRecorder
+
 	// Metrics
 	metricsLock      sync.RWMutex
 	processedCount   int64
@@ -492,6 +497,44 @@ func (p *Processor) processMessage(msg Message) {
 	p.handleDeliveryFailure(msg, deliveryErr, startTime)
 }
 
+// SuppressionRecorder is the part of the suppression list this package needs.
+// Narrowed to one method so the queue does not depend on the store's storage.
+type SuppressionRecorder interface {
+	RecordFailure(address, code, diagnostic string)
+}
+
+// SetSuppressionRecorder attaches the suppression list.
+func (p *Processor) SetSuppressionRecorder(recorder SuppressionRecorder) {
+	p.suppressor = recorder
+}
+
+// recordSuppressions offers each permanently failed recipient to the
+// suppression list.
+//
+// Only permanent failures, and even then the list decides for itself whether
+// the failure was about the recipient — a 5xx can equally be about the message
+// or about us, and removing valid addresses because our IP was blocked is worse
+// than the bounces suppression exists to prevent.
+func (p *Processor) recordSuppressions(permanent []dsnRecipient, outcomes []RecipientOutcome) {
+	if p.suppressor == nil {
+		return
+	}
+	// The diagnostic and enhanced status live on the outcome, so index them by
+	// address rather than trusting the two lists to be in the same order.
+	byAddress := make(map[string]RecipientOutcome, len(outcomes))
+	for _, outcome := range outcomes {
+		byAddress[outcome.Recipient] = outcome
+	}
+	for _, r := range permanent {
+		outcome := byAddress[r.Address]
+		diagnostic := r.Diagnostic
+		if diagnostic == "" {
+			diagnostic = outcome.Diagnostic
+		}
+		p.suppressor.RecordFailure(r.Address, outcome.EnhancedStatusCode, diagnostic)
+	}
+}
+
 // handleRecipientOutcomes persists only retryable recipients before deferral.
 func (p *Processor) handleRecipientOutcomes(msg Message, result *DeliveryResult, deliveryErr error, startTime time.Time) bool {
 	occurrences := recipientOccurrences(msg)
@@ -526,6 +569,9 @@ func (p *Processor) handleRecipientOutcomes(msg Message, result *DeliveryResult,
 		p.handleDeliverySuccess(msg, result)
 		return true
 	}
+	// Before the DSN work below, which can return early: a bounce that fails to
+	// generate must not also lose the fact that the address is dead.
+	p.recordSuppressions(permanentR, result.RecipientOutcomes)
 	if len(permanent) > 0 && strings.TrimSpace(msg.From) != "" && strings.TrimSpace(msg.From) != "<>" && p.bounceEngine != nil {
 		failed := msg
 		failed.To = append([]string(nil), permanent...)

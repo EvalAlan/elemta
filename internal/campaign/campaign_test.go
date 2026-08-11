@@ -1,6 +1,7 @@
 package campaign
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"strings"
@@ -512,5 +513,72 @@ func TestSendTestUsesFirstRecipientVariables(t *testing.T) {
 	}
 	if msgs[0].To[0] != "operator@example.com" {
 		t.Errorf("test went to %s", msgs[0].To[0])
+	}
+}
+
+// fakeSuppressionList answers for a fixed set of addresses.
+type fakeSuppressionList struct{ blocked map[string]string }
+
+func (f *fakeSuppressionList) SuppressedWithReason(_ context.Context, address string) (bool, string) {
+	reason, ok := f.blocked[strings.ToLower(address)]
+	return ok, reason
+}
+
+// TestRunnerSkipsSuppressedRecipients is the point of the suppression list: a
+// campaign started today must not mail the addresses that bounced yesterday.
+func TestRunnerSkipsSuppressedRecipients(t *testing.T) {
+	store, q := NewStore(), &fakeQueue{}
+	runner := NewRunner(store, q, "mail.example.com", quiet())
+	runner.SetSuppressionList(&fakeSuppressionList{blocked: map[string]string{
+		"alice@example.net": "bounce: 550 user unknown",
+	}})
+
+	c := testCampaign()
+	store.Put(c)
+	if err := runner.Start(c); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return c.Clone().State == StateCompleted })
+
+	for _, m := range q.all() {
+		for _, to := range m.To {
+			if strings.EqualFold(to, "alice@example.net") {
+				t.Error("a suppressed address was mailed")
+			}
+		}
+	}
+
+	got := c.Clone()
+	// Counted as skipped rather than sent or failed: "sent" would overstate
+	// reach and "failed" would look like a delivery problem to investigate.
+	if got.Skipped != 1 {
+		t.Errorf("skipped = %d, want 1", got.Skipped)
+	}
+	if got.Sent != 1 {
+		t.Errorf("sent = %d, want 1 (the recipient who is not suppressed)", got.Sent)
+	}
+	if got.Failed != 0 {
+		t.Errorf("failed = %d, want 0 — a skip is not a failure", got.Failed)
+	}
+	// The campaign must still finish rather than stalling on the skipped index.
+	if got.Remaining() != 0 {
+		t.Errorf("remaining = %d, want 0", got.Remaining())
+	}
+}
+
+// TestRunnerWithoutSuppressionListSendsToEveryone keeps the feature optional:
+// a deployment without a list behaves as it did before one existed.
+func TestRunnerWithoutSuppressionListSendsToEveryone(t *testing.T) {
+	store, q := NewStore(), &fakeQueue{}
+	runner := NewRunner(store, q, "mail.example.com", quiet())
+	c := testCampaign()
+	store.Put(c)
+	if err := runner.Start(c); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return c.Clone().State == StateCompleted })
+
+	if len(q.all()) != 2 || c.Clone().Skipped != 0 {
+		t.Errorf("enqueued %d with %d skipped, want 2 and 0", len(q.all()), c.Clone().Skipped)
 	}
 }

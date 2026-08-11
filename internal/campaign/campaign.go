@@ -67,8 +67,14 @@ type Campaign struct {
 
 	// Progress. Sent and Failed only move forward, so a resumed campaign
 	// continues rather than restarting.
-	Sent      int    `json:"sent"`
-	Failed    int    `json:"failed"`
+	Sent   int `json:"sent"`
+	Failed int `json:"failed"`
+	// Skipped counts recipients passed over because they are on the
+	// suppression list. Counted separately because they are neither a success
+	// nor a failure, and folding them into either would misreport the campaign:
+	// "sent" would overstate reach, "failed" would look like a delivery problem
+	// to investigate.
+	Skipped   int    `json:"skipped"`
 	LastError string `json:"last_error,omitempty"`
 
 	CreatedAt   time.Time  `json:"created_at"`
@@ -84,7 +90,7 @@ func (c *Campaign) Total() int { return len(c.Recipients) }
 
 // Remaining is how many are still to be attempted.
 func (c *Campaign) Remaining() int {
-	done := c.Sent + c.Failed
+	done := c.Sent + c.Failed + c.Skipped
 	if done > len(c.Recipients) {
 		return 0
 	}
@@ -158,6 +164,7 @@ func (c *Campaign) cloneLocked() *Campaign {
 		State:         c.State,
 		Sent:          c.Sent,
 		Failed:        c.Failed,
+		Skipped:       c.Skipped,
 		LastError:     c.LastError,
 		CreatedAt:     c.CreatedAt,
 		UpdatedAt:     c.UpdatedAt,
