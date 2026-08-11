@@ -104,6 +104,41 @@ func TestSealThenVerify(t *testing.T) {
 	}
 }
 
+// TestMessageSignatureCoversDKIMSignature: sealing runs after DKIM signing, so
+// the signature is present when the ARC set is built. Covering it is what lets
+// the chain attest to it — otherwise the DKIM-Signature our
+// Authentication-Results is talking about sits outside everything we signed,
+// and a later hop could swap it without breaking the chain.
+func TestMessageSignatureCoversDKIMSignature(t *testing.T) {
+	p, _ := newSealer(t, "example.com", "arc", 2048)
+
+	signed := "DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=mail; b=Zm9v\r\n" + testMessage
+	sealed := mustSeal(t, p, signed, "example.com; spf=pass")
+
+	if !strings.Contains(sealed, "DKIM-Signature") {
+		t.Fatal("test message lost its DKIM-Signature")
+	}
+	// The h= list must name it, or nothing below proves anything.
+	amsLine := sealed[strings.Index(sealed, "ARC-Message-Signature:"):]
+	amsLine = amsLine[:strings.Index(amsLine, "\r\n")]
+	if !strings.Contains(strings.ToLower(amsLine), "dkim-signature") {
+		t.Fatalf("h= does not cover DKIM-Signature: %s", amsLine)
+	}
+
+	if result := p.Verify(context.Background(), []byte(sealed)); result.Value != ChainPass {
+		t.Fatalf("verify = %s (%s)", result.Value, result.Reason)
+	}
+
+	// Swapping the DKIM signature must now break the chain.
+	tampered := strings.Replace(sealed, "b=Zm9v", "b=YmFy", 1)
+	if tampered == sealed {
+		t.Fatal("test did not modify the DKIM signature")
+	}
+	if result := p.Verify(context.Background(), []byte(tampered)); result.Value == ChainPass {
+		t.Error("replacing the DKIM-Signature must invalidate the ARC message signature")
+	}
+}
+
 // TestTwoHopChainVerifies covers the case ARC exists for: a message that has
 // been relayed, where each hop sealed what it saw.
 func TestTwoHopChainVerifies(t *testing.T) {
