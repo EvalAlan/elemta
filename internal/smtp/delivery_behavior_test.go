@@ -29,6 +29,39 @@ func writeDeliveryTestDKIMKey(t *testing.T) string {
 	return path
 }
 
+// TestInitQueueSystemSMTPModeAttachesARCSealer proves the sealer reaches the
+// delivery path. Configuration that parses but never reaches the code that uses
+// it is a failure this repository has hit more than once.
+func TestInitQueueSystemSMTPModeAttachesARCSealer(t *testing.T) {
+	oldMetricsFactory := newQueueMetricsStore
+	defer func() { newQueueMetricsStore = oldMetricsFactory }()
+	newQueueMetricsStore = func(string) (queue.MetricsRecorder, error) {
+		return &deliveryMetricsStub{}, nil
+	}
+
+	cfg := createTestConfig(t)
+	cfg.QueueProcessorEnabled = true
+	cfg.QueueProcessInterval = 1
+	cfg.QueueWorkers = 1
+	cfg.Delivery = &DeliveryConfig{Mode: "smtp"}
+	cfg.Plugins = &PluginConfig{ARC: &ARCPluginConfig{
+		Enabled: true, Verify: true, Seal: true,
+		Domain: "auth.test", Selector: "arc",
+		PrivateKeyPath:         writeDeliveryTestDKIMKey(t),
+		HeaderCanonicalization: "relaxed", BodyCanonicalization: "relaxed",
+	}}
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	manager, _, err := initQueueSystem(cfg, logger)
+	require.NoError(t, err)
+	defer manager.Stop()
+
+	output := logs.String()
+	require.True(t, strings.Contains(output, "ARC outbound sealing enabled"), output)
+	require.True(t, strings.Contains(output, "arc._domainkey.auth.test"), output)
+}
+
 func TestInitQueueSystemRejectsInvalidDKIMWhenProcessorDisabled(t *testing.T) {
 	cfg := createTestConfig(t)
 	cfg.QueueProcessorEnabled = false

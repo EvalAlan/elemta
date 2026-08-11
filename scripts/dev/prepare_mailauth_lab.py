@@ -42,6 +42,12 @@ def main() -> int:
         ("plugins.dkim", "domains"): '[{ domain = "pass.auth.test", selector = "mail", private_key_path = "/app/runtime-config/mailauth.key" }]',
         ("plugins.dmarc", "enabled"): "true",
         ("plugins.dmarc", "enforce"): "false",
+        ("plugins.arc", "enabled"): "true",
+        ("plugins.arc", "verify"): "true",
+        ("plugins.arc", "seal"): "true",
+        ("plugins.arc", "domain"): '"auth.test"',
+        ("plugins.arc", "selector"): '"arc"',
+        ("plugins.arc", "private_key_path"): '"/app/runtime-config/mailauth.key"',
     }
     for (section, key), value in changes.items():
         text = set_key(text, section, key, value)
@@ -64,6 +70,7 @@ fail IN TXT "v=spf1 -all"
 _dmarc.pass IN TXT "v=DMARC1; p=reject; adkim=s; aspf=s"
 _dmarc.fail IN TXT "v=DMARC1; p=reject; adkim=s; aspf=s"
 mail._domainkey.pass IN TXT "v=DKIM1; k=rsa; p={public_key}"
+arc._domainkey IN TXT "v=DKIM1; k=rsa; p={public_key}"
 """
     (out / "auth.test.zone").write_text(zone, encoding="utf-8")
     return 0
