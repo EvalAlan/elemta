@@ -3,6 +3,7 @@ module github.com/busybox42/elemta
 go 1.25.12
 
 require (
+	blitiri.com.ar/go/spf v1.5.1
 	github.com/BurntSushi/toml v1.6.0
 	github.com/bradfitz/gomemcache v0.0.0-20260422231931-4d751bb6e37c
 	github.com/emersion/go-msgauth v0.7.0
@@ -29,7 +30,6 @@ require (
 )
 
 require (
-	blitiri.com.ar/go/spf v1.5.1 // indirect
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
