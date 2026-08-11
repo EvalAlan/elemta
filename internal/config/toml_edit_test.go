@@ -183,6 +183,65 @@ func TestSetTOMLValueRoundTripsThroughTheParser(t *testing.T) {
 	}
 }
 
+func TestSetTOMLValueWritesInlineTableArrays(t *testing.T) {
+	domains := []map[string]interface{}{
+		{
+			"domain":           "example.com",
+			"headers_to_sign":  []string{"From", "Subject"},
+			"private_key_path": "/run/keys/example.key",
+			"selector":         "mail",
+		},
+	}
+	out, err := SetTOMLValue([]byte("hostname = \"mail.example.com\"\n"), "plugins.dkim", "domains", domains)
+	if err != nil {
+		t.Fatalf("set domains: %v", err)
+	}
+
+	var probe struct {
+		Plugins struct {
+			DKIM struct {
+				Domains []struct {
+					Domain         string   `toml:"domain"`
+					Selector       string   `toml:"selector"`
+					PrivateKeyPath string   `toml:"private_key_path"`
+					HeadersToSign  []string `toml:"headers_to_sign"`
+				} `toml:"domains"`
+			} `toml:"dkim"`
+		} `toml:"plugins"`
+	}
+	if err := decodeTOMLForTest(out, &probe); err != nil {
+		t.Fatalf("inline tables are not valid TOML: %v\n%s", err, out)
+	}
+	if len(probe.Plugins.DKIM.Domains) != 1 || probe.Plugins.DKIM.Domains[0].Selector != "mail" {
+		t.Fatalf("domain config did not round-trip: %+v", probe.Plugins.DKIM.Domains)
+	}
+}
+
+func TestRemoveTOMLSectionRemovesDescendantsOnly(t *testing.T) {
+	doc := []byte(`[dkim]
+enabled = true
+
+[[dkim.domains]]
+domain = "legacy.example.com"
+
+[plugins.dkim]
+enabled = true
+
+# Queue settings must survive the one-way migration.
+[queue]
+backend = "sqlite"
+`)
+	out := string(RemoveTOMLSection(doc, "dkim"))
+	if strings.Contains(out, "[dkim]") || strings.Contains(out, "[[dkim.domains]]") || strings.Contains(out, "legacy.example.com") {
+		t.Fatalf("legacy DKIM tables survived:\n%s", out)
+	}
+	for _, want := range []string{"[plugins.dkim]", "# Queue settings must survive", "[queue]", `backend = "sqlite"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("migration removed %q:\n%s", want, out)
+		}
+	}
+}
+
 // decodeTOMLForTest decodes with the same library the server uses, so the test
 // checks the document against the real parser rather than a lookalike.
 func decodeTOMLForTest(doc []byte, v interface{}) error {

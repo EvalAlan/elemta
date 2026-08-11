@@ -82,8 +82,6 @@ func TestInitQueueSystem_SMTPModeAttachesDKIMSigner(t *testing.T) {
 	require.False(t, strings.Contains(output, "active delivery handler is not the remote SMTP handler"), output)
 }
 
-// TestDeliveryHandlerFactoryEnsuresMockUsed verifies that the injection seam
-// allows substituting a mock delivery handler.
 func TestDeliveryHandlerFactoryEnsuresMockUsed(t *testing.T) {
 	// Override factory for this test
 	oldFactory := newDeliveryHandler

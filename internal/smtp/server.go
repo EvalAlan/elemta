@@ -44,8 +44,8 @@ type Server struct {
 	pluginMu      sync.RWMutex
 	accessControl *AccessControl // Allow/deny lists applied at connect and MAIL FROM
 	rblChecker    *RBLChecker    // DNS blocklists consulted for the connecting address
-	// authVerifier checks SPF/DKIM/DMARC on arriving mail. Fixed at startup
-	// rather than reloadable: it holds no policy the operator edits live.
+	// authVerifier checks the built-in SPF/DKIM/DMARC plugins. It is swapped
+	// with the other session policy objects on reload.
 	authVerifier *authresult.Verifier
 	slogger      *slog.Logger // Structured logger for resource management
 
@@ -67,6 +67,35 @@ func inboundAuthTimeout(cfg *InboundAuthConfig) time.Duration {
 		return time.Duration(cfg.Timeout) * time.Second
 	}
 	return 10 * time.Second
+}
+
+func authPluginRuntimeConfig(config *Config) authresult.Config {
+	runtime := authresult.Config{Hostname: config.Hostname, Timeout: inboundAuthTimeout(config.InboundAuth)}
+	if config.Plugins != nil && (config.Plugins.SPF != nil || config.Plugins.DKIM != nil || config.Plugins.DMARC != nil) {
+		if p := config.Plugins.SPF; p != nil {
+			runtime.SPFEnabled = p.Enabled
+			if p.Timeout > 0 {
+				runtime.SPFTimeout = time.Duration(p.Timeout) * time.Second
+			}
+		}
+		if p := config.Plugins.DKIM; p != nil {
+			runtime.DKIMEnabled = p.Enabled && p.Verify
+		}
+		if p := config.Plugins.DMARC; p != nil {
+			runtime.DMARCEnabled = p.Enabled
+			runtime.EnforceDMARC = p.Enabled && p.Enforce
+			if p.Timeout > 0 {
+				runtime.DMARCTimeout = time.Duration(p.Timeout) * time.Second
+			}
+		}
+		runtime.Enabled = runtime.SPFEnabled || runtime.DKIMEnabled || runtime.DMARCEnabled
+		return runtime
+	}
+	if legacy := config.InboundAuth; legacy != nil {
+		runtime.Enabled = legacy.Enabled
+		runtime.EnforceDMARC = legacy.EnforceDMARC
+	}
+	return runtime
 }
 
 // initPlugins initializes the plugin manager and builtin plugins.
@@ -159,7 +188,6 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize DKIM signer: %w", err)
 	}
-
 	queueManager, err := queue.NewManagerFromBackend(
 		config.QueueDir,
 		config.QueueBackend,
@@ -255,7 +283,6 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 				slogger.Info("DKIM signing configured but active delivery handler is not the remote SMTP handler; signing will apply only on the remote SMTP path")
 			}
 		}
-
 		processorConfig := queue.ProcessorConfig{
 			Enabled:       config.QueueProcessorEnabled,
 			Interval:      time.Duration(config.QueueProcessInterval) * time.Second,
@@ -622,17 +649,16 @@ func NewServer(config *Config) (*Server, error) {
 
 	// Inbound sender authentication. Built here so it is shared by every
 	// session rather than constructed per message.
-	inboundAuth := authresult.New(authresult.Config{
-		Enabled:      config.InboundAuth != nil && config.InboundAuth.Enabled,
-		EnforceDMARC: config.InboundAuth != nil && config.InboundAuth.EnforceDMARC,
-		Timeout:      inboundAuthTimeout(config.InboundAuth),
-		Hostname:     config.Hostname,
-	})
+	inboundAuth := authresult.New(authPluginRuntimeConfig(config))
 	server.authVerifier = inboundAuth
 	if inboundAuth.Enabled() {
-		slogger.Info("Inbound sender authentication enabled",
-			"enforce_dmarc", config.InboundAuth.EnforceDMARC)
-		if !config.InboundAuth.EnforceDMARC {
+		runtime := authPluginRuntimeConfig(config)
+		slogger.Info("Inbound sender authentication plugins enabled",
+			"spf", runtime.SPFEnabled,
+			"dkim", runtime.DKIMEnabled,
+			"dmarc", runtime.DMARCEnabled,
+			"enforce_dmarc", runtime.EnforceDMARC)
+		if runtime.DMARCEnabled && !runtime.EnforceDMARC {
 			slogger.Info("DMARC policies are recorded but not enforced; results appear in Authentication-Results")
 		}
 	}
@@ -1034,12 +1060,12 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	// Read once, so a reload landing between these calls cannot give one
 	// session a mixture of the old policy and the new one.
 	s.pluginMu.RLock()
-	scanners, accessControl, rblChecker := s.scannerManager, s.accessControl, s.rblChecker
+	scanners, accessControl, rblChecker, authVerifier := s.scannerManager, s.accessControl, s.rblChecker, s.authVerifier
 	s.pluginMu.RUnlock()
 	session.SetScannerManager(scanners)
 	session.SetAccessControl(accessControl)
 	session.SetRBLChecker(rblChecker)
-	session.SetAuthVerifier(s.authVerifier)
+	session.SetAuthVerifier(authVerifier)
 
 	// Set queue manager for message processing
 	if s.queueManager != nil {

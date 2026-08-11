@@ -1169,6 +1169,25 @@ body {
     margin-top: 1.5rem;
 }
 
+.plugin-check-row {
+    margin-top: 1rem;
+    align-items: end;
+}
+
+.plugin-check-action {
+    justify-content: end;
+}
+
+.plugin-check-result {
+    min-height: 2.5rem;
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    background: var(--surface-secondary, #111827);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .theme-buttons {
     display: flex;
     gap: 1rem;

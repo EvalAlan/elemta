@@ -328,8 +328,22 @@ func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, mes
 	}
 	clientIP := net.ParseIP(host)
 
-	dkimResults := authresult.VerifyDKIM(ctx, message)
+	var dkimResults []authresult.Result
+	if verifier.DKIMEnabled() {
+		dkimResults = authresult.VerifyDKIM(ctx, message)
+	}
 	results := verifier.Verify(ctx, clientIP, s.state.HeloName(), mailFrom, dkimResults)
+	metrics := GetMetrics()
+	metrics.MailAuthResults.WithLabelValues("spf", orMetricNone(results.SPF.Value)).Inc()
+	if len(results.DKIM) == 0 {
+		metrics.MailAuthResults.WithLabelValues("dkim", "none").Inc()
+	} else {
+		for _, result := range results.DKIM {
+			metrics.MailAuthResults.WithLabelValues("dkim", orMetricNone(result.Value)).Inc()
+		}
+	}
+	metrics.MailAuthResults.WithLabelValues("dmarc", orMetricNone(results.DMARC.Value)).Inc()
+	metrics.MailAuthDisposition.WithLabelValues(orMetricNone(results.Disposition)).Inc()
 
 	s.mu.Lock()
 	s.authResults = results
@@ -358,6 +372,13 @@ func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, mes
 			"event_type", "authentication")
 	}
 	return nil
+}
+
+func orMetricNone(value string) string {
+	if value == "" {
+		return "none"
+	}
+	return value
 }
 
 // AuthResults returns what verification found, and whether it ran at all.

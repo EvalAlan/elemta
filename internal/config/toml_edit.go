@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -94,6 +95,41 @@ func SetTOMLValue(doc []byte, section, key string, value interface{}) ([]byte, e
 	return []byte(strings.Join(out, "\n")), nil
 }
 
+// RemoveTOMLSection removes a table and its descendant tables. It is used only
+// for one-way migrations after the replacement plugin tables have already been
+// written, so a legacy [dkim] plus [[dkim.domains]] cannot remain beside the
+// canonical [plugins.dkim] and make the next reload ambiguous.
+func RemoveTOMLSection(doc []byte, section string) []byte {
+	lines := strings.Split(string(doc), "\n")
+	out := make([]string, 0, len(lines))
+	skipping := false
+	var pendingComments []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			name := strings.Trim(trimmed, "[]")
+			name = strings.TrimSpace(name)
+			remove := name == section || strings.HasPrefix(name, section+".")
+			if skipping && !remove {
+				// Comments immediately before the next table document that table,
+				// not the removed one. Hold them while skipping and restore them
+				// only when an unrelated table proves they were trailing.
+				out = append(out, pendingComments...)
+				pendingComments = nil
+			}
+			skipping = remove
+		}
+		if !skipping {
+			out = append(out, line)
+		} else if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			pendingComments = append(pendingComments, line)
+		} else {
+			pendingComments = nil
+		}
+	}
+	return []byte(strings.Join(out, "\n"))
+}
+
 // tomlAssignmentKey returns the key of a "key = value" line, if it is one.
 // Comments and section headers are not assignments.
 func tomlAssignmentKey(trimmed string) (string, bool) {
@@ -161,6 +197,25 @@ func formatTOMLValue(value interface{}) (string, error) {
 			quoted[i] = strconv.Quote(s)
 		}
 		return "[" + strings.Join(quoted, ", ") + "]", nil
+	case []map[string]interface{}:
+		items := make([]string, 0, len(v))
+		for _, item := range v {
+			keys := make([]string, 0, len(item))
+			for key := range item {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			fields := make([]string, 0, len(keys))
+			for _, key := range keys {
+				formatted, err := formatTOMLValue(item[key])
+				if err != nil {
+					return "", fmt.Errorf("inline table %s: %w", key, err)
+				}
+				fields = append(fields, key+" = "+formatted)
+			}
+			items = append(items, "{ "+strings.Join(fields, ", ")+" }")
+		}
+		return "[" + strings.Join(items, ", ") + "]", nil
 	default:
 		return "", fmt.Errorf("unsupported TOML value type %T", value)
 	}

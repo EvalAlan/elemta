@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"time"
-
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/busybox42/elemta/internal/dkim"
@@ -419,9 +418,54 @@ type RulesConfig struct {
 
 // PluginConfig represents plugin configuration
 type PluginConfig struct {
-	Enabled    bool     `json:"enabled"`
-	PluginPath string   `json:"plugin_path"`
-	Plugins    []string `json:"plugins"`
+	Enabled    bool     `toml:"enabled" json:"enabled"`
+	PluginPath string   `toml:"directory" json:"plugin_path"`
+	Plugins    []string `toml:"enabled_plugins" json:"plugins"`
+
+	// Mail authentication is implemented by built-in plugins. Keeping these
+	// typed here, beside the external-plugin loader settings, lets the SMTP and
+	// web processes decode exactly the same [plugins.*] tables without relying
+	// on map[string]interface{} or silently losing underscored TOML keys.
+	SPF   *SPFPluginConfig   `toml:"spf" json:"spf,omitempty"`
+	DKIM  *DKIMPluginConfig  `toml:"dkim" json:"dkim,omitempty"`
+	DMARC *DMARCPluginConfig `toml:"dmarc" json:"dmarc,omitempty"`
+}
+
+// SPFPluginConfig controls envelope-sender SPF verification.
+type SPFPluginConfig struct {
+	Enabled bool `toml:"enabled" json:"enabled"`
+	Timeout int  `toml:"timeout" json:"timeout"`
+}
+
+// DKIMPluginConfig controls inbound verification and outbound signing. Signing
+// domains deliberately reuse the proven outbound DKIM configuration shape.
+type DKIMPluginConfig struct {
+	Enabled                bool                `toml:"enabled" json:"enabled"`
+	Verify                 bool                `toml:"verify" json:"verify"`
+	Sign                   bool                `toml:"sign" json:"sign"`
+	HeaderCanonicalization string              `toml:"header_canonicalization" json:"header_canonicalization"`
+	BodyCanonicalization   string              `toml:"body_canonicalization" json:"body_canonicalization"`
+	Domains                []dkim.DomainConfig `toml:"domains" json:"domains"`
+}
+
+// SigningConfig returns the outbound signer's existing configuration format.
+func (c *DKIMPluginConfig) SigningConfig() *dkim.Config {
+	if c == nil || !c.Enabled || !c.Sign {
+		return nil
+	}
+	return &dkim.Config{
+		Enabled:                true,
+		HeaderCanonicalization: c.HeaderCanonicalization,
+		BodyCanonicalization:   c.BodyCanonicalization,
+		Domains:                append([]dkim.DomainConfig(nil), c.Domains...),
+	}
+}
+
+// DMARCPluginConfig controls alignment evaluation and optional policy action.
+type DMARCPluginConfig struct {
+	Enabled bool `toml:"enabled" json:"enabled"`
+	Enforce bool `toml:"enforce" json:"enforce"`
+	Timeout int  `toml:"timeout" json:"timeout"`
 }
 
 // APIConfig represents the configuration for the API server

@@ -1816,6 +1816,33 @@ const PLUGIN_SETTINGS_SCHEMA = {
         panelId: 'settings-rate-limiting',
         onShow: () => refreshRateLimiting(),
     },
+    spf: {
+        testable: true,
+        fields: [
+            { key: 'timeout', label: 'DNS timeout (seconds)', type: 'number',
+              hint: 'Bounds SPF DNS work while the sender waits at end-of-DATA' },
+        ],
+    },
+    dkim: {
+        testable: true,
+        fields: [
+            { key: 'verify', label: 'Verify inbound signatures', type: 'checkbox' },
+            { key: 'sign', label: 'Sign outbound remote-SMTP mail', type: 'checkbox',
+              hint: 'The development LMTP route is not signed; use the mail-auth lab to exercise this path' },
+            { key: 'header_canonicalization', label: 'Header canonicalization', type: 'text', hint: 'relaxed or simple' },
+            { key: 'body_canonicalization', label: 'Body canonicalization', type: 'text', hint: 'relaxed or simple' },
+            { key: 'domains', label: 'Signing domains (JSON)', type: 'json',
+              hint: 'Array of {"domain":"example.com","selector":"mail","private_key_path":"/path/key"}. Private key bytes are never returned by the API.' },
+        ],
+    },
+    dmarc: {
+        testable: true,
+        fields: [
+            { key: 'enforce', label: 'Honor quarantine/reject policy', type: 'checkbox',
+              hint: 'Observe results first: forwarding and mailing lists commonly break alignment' },
+            { key: 'timeout', label: 'DNS timeout (seconds)', type: 'number' },
+        ],
+    },
     clamav: {
         fields: [
             { key: 'address', label: 'Address', type: 'text', hint: 'host:port of clamd' },
@@ -1921,6 +1948,7 @@ function renderPluginCard(plugin) {
     const enabled = plugin.enabled === true;
     const schema = PLUGIN_SETTINGS_SCHEMA[name];
     const summary = pluginSummary(plugin);
+    const operational = pluginOperationalSummary(plugin);
 
     return `
         <div class="plugin-card ${enabled ? 'enabled' : 'disabled'}">
@@ -1942,10 +1970,30 @@ function renderPluginCard(plugin) {
             </div>
             <div class="plugin-description">${escapeHtml(plugin.description || '')}</div>
             ${summary ? `<div class="plugin-summary">${summary}</div>` : ''}
+            ${operational ? `<div class="plugin-summary">${operational}</div>` : ''}
             ${enabled && schema ? `<div class="plugin-summary"><a href="#" class="link-button"
                 onclick="switchSettingsTab('plugin-${escapeJsArg(name)}'); return false;">Open settings</a></div>` : ''}
         </div>
     `;
+}
+
+function pluginOperationalSummary(plugin) {
+    const status = plugin.status;
+    if (!status || typeof status !== 'object') return '';
+    if (Array.isArray(status.keys)) {
+        if (status.keys.length === 0) return 'No outbound signing keys configured';
+        return status.keys.map(key => {
+            const state = key.key_loaded
+                ? escapeHtml(key.algorithm || 'loaded')
+                : `key unavailable${key.error ? ` (${escapeHtml(key.error)})` : ''}`;
+            return `${escapeHtml(key.domain || '')}: ${state}`;
+        }).join(' • ');
+    }
+    if (status.key_loaded === true) return `Key loaded • ${escapeHtml(status.dns_name || '')}`;
+    if (status.key_loaded === false) {
+        return `Key unavailable${status.error ? ` (${escapeHtml(status.error)})` : ''} • ${escapeHtml(status.dns_name || '')}`;
+    }
+    return status.dns_name ? `DNS: ${escapeHtml(status.dns_name)}` : '';
 }
 
 // pluginSummary shows the settings that matter at a glance, so the card says
@@ -1959,6 +2007,10 @@ function pluginSummary(plugin) {
     if (c.reject_on_spam) bits.push('rejects spam');
     if (c.reject_on_failure) bits.push('rejects on scan failure');
     if (typeof c.max_messages_per_minute === 'number') bits.push(`${c.max_messages_per_minute}/min`);
+    if (c.verify) bits.push('verifies inbound');
+    if (c.sign) bits.push(`${Array.isArray(c.domains) ? c.domains.length : 0} signing domain(s)`);
+    if (c.seal) bits.push(`seals as ${escapeHtml(String(c.domain || 'unconfigured'))}`);
+    if (c.enforce) bits.push('enforces sender policy');
     return bits.join(' • ');
 }
 
@@ -2048,12 +2100,14 @@ function renderPluginPanel(plugin) {
         const id = `plugin-${plugin.name}-${f.key}`;
         const hint = f.hint ? `<div class="field-hint">${escapeHtml(f.hint)}</div>` : '';
 
-        if (f.type === 'list') {
-            const lines = Array.isArray(value) ? value.join('\n') : '';
+        if (f.type === 'list' || f.type === 'json') {
+            const lines = f.type === 'json'
+                ? JSON.stringify(value === undefined || value === null ? [] : value, null, 2)
+                : (Array.isArray(value) ? value.join('\n') : '');
             return `
                 <div class="config-item config-item-wide">
                     <label for="${id}">${escapeHtml(f.label)}</label>
-                    <textarea id="${id}" rows="4" spellcheck="false">${escapeHtml(lines)}</textarea>
+                    <textarea id="${id}" rows="${f.type === 'json' ? '8' : '4'}" spellcheck="false">${escapeHtml(lines)}</textarea>
                     ${hint}
                 </div>`;
         }
@@ -2114,6 +2168,18 @@ function renderPluginPanel(plugin) {
                         enableOnSave ? 'Save and Enable' : 'Save Settings'}</button>
                     <span class="save-status" id="plugin-${escapeHtml(plugin.name)}-status"></span>
                 </div>
+                ${schema.testable ? `
+                    <div class="config-grid plugin-check-row">
+                        <div class="config-item">
+                            <label for="plugin-${escapeHtml(plugin.name)}-check-domain">Domain to check</label>
+                            <input type="text" id="plugin-${escapeHtml(plugin.name)}-check-domain"
+                                   value="${escapeHtml((cfg.domain || (cfg.domains && cfg.domains[0] && cfg.domains[0].domain) || ''))}">
+                        </div>
+                        <div class="config-item plugin-check-action">
+                            <button class="btn btn-secondary" onclick="checkMailAuthPlugin('${escapeJsArg(plugin.name)}')">Check key and DNS</button>
+                        </div>
+                    </div>
+                    <pre class="plugin-check-result" id="plugin-${escapeHtml(plugin.name)}-check-result"></pre>` : ''}
             </div>
         </div>
     `;
@@ -2141,6 +2207,13 @@ async function savePluginSettings(pluginName, enableOnSave = false) {
             config[f.key] = el.checked;
         } else if (f.type === 'list') {
             config[f.key] = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+        } else if (f.type === 'json') {
+            try {
+                config[f.key] = JSON.parse(el.value);
+            } catch (error) {
+                setSaveStatus(statusEl, `${f.label} is not valid JSON: ${error.message}`, 'error');
+                return;
+            }
         } else if (f.type === 'number') {
             // An empty box means "leave this alone", not zero. Sending 0 for a
             // blank timeout would turn a scanner timeout off.
@@ -2190,6 +2263,26 @@ async function savePluginSettings(pluginName, enableOnSave = false) {
         // The server names the field to fix, so show its words rather than a
         // generic failure.
         setSaveStatus(statusEl, error.message, 'error');
+    }
+}
+
+async function checkMailAuthPlugin(pluginName) {
+    const domainEl = document.getElementById(`plugin-${pluginName}-check-domain`);
+    const resultEl = document.getElementById(`plugin-${pluginName}-check-result`);
+    if (!resultEl) return;
+    resultEl.textContent = 'Checking…';
+    try {
+        const response = await fetch(`${API_BASE}/config/plugins/${encodeURIComponent(pluginName)}/check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domain: domainEl ? domainEl.value.trim() : '' }),
+        });
+        const data = await response.json();
+        resultEl.textContent = JSON.stringify(data, null, 2);
+        resultEl.classList.toggle('error-message', !response.ok);
+    } catch (error) {
+        resultEl.textContent = error.message;
+        resultEl.classList.add('error-message');
     }
 }
 
