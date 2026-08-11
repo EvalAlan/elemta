@@ -171,6 +171,12 @@ type QueueIndexedFSConfig struct {
 
 // DeliveryConfig represents configuration for message delivery
 type DeliveryConfig struct {
+	// MaxMessagesPerMinutePerDomain caps the send rate to a single destination.
+	// Zero means no limit, which is right for most deployments: the backoff
+	// below reacts to what a destination actually asks for, whereas a rate
+	// invented in advance slows everyone including receivers happy to take more.
+	MaxMessagesPerMinutePerDomain int `toml:"max_messages_per_minute_per_domain" json:"max_messages_per_minute_per_domain"`
+
 	Mode          string `toml:"mode" json:"mode"`                     // Delivery mode (smtp, lmtp, etc.)
 	Host          string `toml:"host" json:"host"`                     // Host to deliver to
 	Port          int    `toml:"port" json:"port"`                     // Port to deliver to

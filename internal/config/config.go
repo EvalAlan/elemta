@@ -124,11 +124,14 @@ type MassMailerConfig struct {
 // Config represents the application configuration
 type Config struct {
 	// Top-level server settings (from flat TOML structure)
-	Hostname                  string   `toml:"hostname"`
-	ListenAddr                string   `toml:"listen_addr"`
-	QueueDir                  string   `toml:"queue_dir"`
-	MaxSize                   int64    `toml:"max_size"`
-	MaxWorkers                int      `toml:"max_workers"`
+	Hostname   string `toml:"hostname"`
+	ListenAddr string `toml:"listen_addr"`
+	QueueDir   string `toml:"queue_dir"`
+	MaxSize    int64  `toml:"max_size"`
+	MaxWorkers int    `toml:"max_workers"`
+	// MaxConnectionsPerDomain caps simultaneous outbound deliveries to one
+	// destination. It reaches the delivery handler's traffic shaper.
+	MaxConnectionsPerDomain   int      `toml:"max_connections_per_domain"`
 	MaxRetries                int      `toml:"max_retries"`
 	MaxQueueTime              int      `toml:"max_queue_time"`
 	RetrySchedule             []int    `toml:"retry_schedule"`
