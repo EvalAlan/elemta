@@ -1,0 +1,185 @@
+# Elemta — handoff
+
+Written 2026-08-11. `main` at `a2a1238`; no open PRs.
+
+This is the context that is **not** derivable from the code or git history: the
+traps that cost hours, the reasoning behind decisions that look arbitrary, and
+what is genuinely left to do. Everything else, read from the source.
+
+---
+
+## Getting a working stack
+
+```bash
+make install-dev-full     # or install-dev for the minimal set
+make help                 # targets, variables, and the gotchas below
+```
+
+The dashboard requires a login. `make install-dev*` bootstraps an account and
+prints the password **once**. If you lose it:
+
+```bash
+make reset-admin-password    # creates the account if none exists
+```
+
+The account is `admin` at <http://localhost:8025/>; run the target above for the
+password rather than looking for it written down. No dev credential is recorded
+in this repository on purpose — the stack binds `0.0.0.0`, so a password committed
+here is a password on every machine that ever clones it.
+
+The mailbox user (`user@example.com` / `password`, in LDAP) is a **different**
+account from the dashboard login. People confuse these.
+
+---
+
+## Traps that will cost you time
+
+**Editing `config/elemta.toml` does not change a running stack.** The services
+read a copy on a shared Docker volume, seeded once, because the web UI writes to
+it too. `make install-dev*` re-seeds via `ELEMTA_CONFIG_RESEED=true`; plain `up`
+and `restart` deliberately do not, or a deploy would discard whatever the
+operator saved in the UI. To force it:
+`ELEMTA_CONFIG_RESEED=true docker compose -f deployments/compose/docker-compose.yml up -d --force-recreate elemta elemta-web`
+
+**TOML keys land in the wrong table if you are careless.** A key written after a
+`[section]` header belongs to that section. This bit me twice: scanner settings
+(`reject_on_spam` belongs to `[antispam]`, `address` to `[antispam.rspamd]`) and
+`max_connections_per_domain` (top level, *not* `[delivery]`). Both load cleanly
+and do nothing. Always parse the file back:
+`python3 -c "import tomllib; print(tomllib.load(open('config/elemta.toml','rb')))"`
+
+**Two TOML decoders are in play** — BurntSushi in `internal/smtp`, pelletier in
+`internal/config`. Underscored keys do **not** resolve implicitly against field
+names in either. Every field needs an explicit `toml:"..."` tag or it is
+silently ignored.
+
+**`internal/config` has a reflection tripwire.** `TestToSMTPConfig_AllFieldsMapped`
+fails if you add a field to `smtp.Config` and forget to map it. If it complains,
+map the field — do not add it to `fieldsIntentionallyUnmapped` without a real
+reason. `max_connections_per_domain` sat in that list as "not currently
+consumed" while being shown in the UI as a working setting.
+
+**Scanner/policy changes apply without a restart; most other things do not.**
+The SMTP server watches the config file and reloads the scanners, allow/deny
+lists and blocklists within ~5s (also on `SIGHUP`). Listen address, size limits,
+timeouts and the queue backend still need a restart, and the reload log says so
+every time. The API reports this as `applies_on_reload` vs `requires_restart`.
+
+**The dev stack delivers over LMTP**, so the outbound SMTP path — including
+traffic shaping — does not engage there. Test that path with Go tests, not by
+watching the stack.
+
+**Test servers bind `[::]`**, so a probe connecting to `server.Addr()` arrives
+over IPv6 loopback. Tests that pin an IPv4-derived string (an RBL query name,
+for instance) will fail confusingly. `internal/smtp/rbl_test.go` shows the way
+round it.
+
+**The dashboard users file is read at startup only.** `elemta user add` succeeds
+and the new account cannot log in until `elemta-web` restarts. The CLI says so
+now; the bootstrap target restarts for you.
+
+**Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
+status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
+as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
+`127.0.0.0/24` and logs the rest loudly. Do not "simplify" that.
+
+---
+
+## What CI checks that local `go test` does not
+
+- **gosec** (blocks on MEDIUM+). It flagged SQL string concatenation in the
+  suppression store; the fix was writing both queries out, not annotating.
+- **staticcheck** via golangci-lint. Catches unused methods, redundant nil
+  checks, and inconsistent receiver names.
+- **`go mod tidy -diff`.** Adding a dependency with `go get` leaves it marked
+  `// indirect`; tidy before pushing.
+- `golangci-lint run ./...` and `gosec -severity medium ./...` locally will save
+  a round trip.
+
+One known oddity: on PR #126 the `CodeQL` aggregate check failed with
+*"1 configuration not found"* while the substantive `CodeQL Analysis` passed.
+The same code went green on #127 and #128, so it appears environmental — but if
+you see it again, check before assuming.
+
+---
+
+## Recently landed, with the reasoning worth preserving
+
+| PR | What | The non-obvious part |
+|---|---|---|
+| #126 | Suppression list + bounce classification | Only failures *about the recipient* suppress. "Mailbox full", "message too large", "blocked", and unrecognised 5xx do **not** — suppressing those deletes valid addresses because our IP was blocked, and nobody notices they stopped receiving mail. |
+| #127 | Per-destination traffic shaping | A backed-off destination **refuses immediately** rather than sleeping. Holding a worker until Gmail is ready stalls every other domain behind it. |
+| #128 | Inbound SPF/DKIM/DMARC | Enforcement is off by default: the first thing DMARC enforcement does on a real server is reject forwarders and mailing lists, which break SPF alignment by design. Every inconclusive result resolves towards accepting. |
+| #120 | Config reload | Component objects swap for the *next* session; live sessions keep the policy they started under, so a message is never half-scanned by two policies. |
+| #121 | Message tracing | A message has two IDs (session and queue). Only the reception record carries both — that link is what makes a trace whole. |
+| #123 | Mandatory login | Was wide open: "Guest" was full admin access with a friendlier name. |
+
+---
+
+## What is actually left
+
+**Mass mailer recipients from the auth datasource** (was task #30). Campaigns
+take pasted/CSV recipients only. Pulling them from LDAP/file/SQL is the obvious
+next step for the mass mailer. Start at `internal/campaign/campaign.go`
+(`ParseRecipients`) and `internal/datasource/`.
+
+**Per-domain deliverability reporting.** Reports show aggregate delivery stats.
+Per-destination success/deferral/bounce breakdown is what turns Reports into an
+operations tool — and the shaper (`internal/queue/shaper.go`, `Statuses()`)
+already tracks per-destination state that nothing surfaces yet. Cheap win.
+
+**User management in the UI.** `elemta user add` is shell-only. API keys already
+have a UI; users do not. Note the read-at-startup wart above — fixing that
+properly (re-read on change, like the config reload) would be part of this.
+
+**DKIM key and TLS certificate management.** Certificate *expiry* is reported on
+the Health page (#122); nothing manages renewal, and DKIM keys are
+config/CLI-only.
+
+---
+
+## How this codebase expects to be worked on
+
+- **Comments explain why, not what.** Especially: why a decision went one way
+  when the other way looks reasonable. Most of the value in the recent commits
+  is in those comments — do not strip them.
+- **Verify against the running stack**, not only tests. Most of the real bugs
+  this month were found by sending actual mail and reading actual logs: the
+  envelope-sender bug, the mismatched TLS key pair, the identifier link, the
+  healthcheck. Tests passed throughout.
+- **Commit messages and PR bodies carry the reasoning**, including what was
+  tried and rejected and what a test caught. They are long on purpose.
+- **No AI attribution anywhere** — no co-author trailers, no "generated with"
+  footers, in commits or PR bodies. This is a hard rule in this repo.
+- Branch per change, PR, wait for CI, squash-merge. Do not merge with a red
+  check without saying so plainly.
+
+---
+
+## Quick reference
+
+```bash
+# stack
+make install-dev-full                 # full dev stack
+make status / make logs
+docker compose -f deployments/compose/docker-compose.yml restart elemta elemta-web
+
+# after changing Go code, the dev stack needs a rebuild
+docker build -t elemta:latest .
+ELEMTA_CONFIG_RESEED=true docker compose -f deployments/compose/docker-compose.yml \
+  up -d --force-recreate elemta elemta-web
+
+# tests
+go test ./internal/...                # internal/smtp takes ~135s
+go test -race -run TestReload ./internal/smtp/
+golangci-lint run ./... && gosec -severity medium ./...
+
+# poking the running stack
+printf 'EHLO probe\r\nMAIL FROM:<a@example.com>\r\nRCPT TO:<demo@example.com>\r\nDATA\r\nSubject: x\r\n\r\nhi\r\n.\r\nQUIT\r\n' \
+  | nc localhost 2525
+curl -s -c /tmp/c -X POST http://localhost:8025/auth/login \
+  -H 'Content-Type: application/json' -d '{"username":"admin","password":"..."}'
+curl -s -b /tmp/c http://localhost:8025/api/suppression
+```
+
+Ports: SMTP 2525, dashboard 8025, Roundcube 8026, metrics 8080.
