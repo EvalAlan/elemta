@@ -1,10 +1,12 @@
-.PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres \
+.PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres mailauth-lab mailauth-lab-check mailauth-lab-check-fail mailauth-lab-down \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
 	uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
 	rebuild rebuild-dev docker docker-build docker-run docker-stop docker-setup docker-down update lint lint-fix fmt
 
 # Core paths/config
 COMPOSE_FILE ?= deployments/compose/docker-compose.yml
+MAILAUTH_COMPOSE_FILE ?= deployments/compose/docker-compose-mailauth.yml
+MAILAUTH_LAB_DIR ?= /tmp/elemta-mailauth-lab
 DEV_ENV_FILE ?= .env
 DEV_MIN_SERVICES ?= elemta elemta-web elemta-dovecot elemta-ldap valkey
 
@@ -25,6 +27,9 @@ PLUGIN_RSPAMD ?= on
 PLUGIN_ACCESS_CONTROL ?= on
 PLUGIN_RBL ?= on
 PLUGIN_MASS_MAILER ?= on
+PLUGIN_SPF ?= on
+PLUGIN_DKIM ?= on
+PLUGIN_DMARC ?= on
 
 # The dashboard's first account.
 #
@@ -55,6 +60,10 @@ help:
 	@echo "  make install-dev              # Minimal dev stack, plugins on, prints a dashboard login"
 	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
 	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
+	@echo "  make mailauth-lab             # Deterministic SPF/DKIM/DMARC DNS + remote SMTP sink"
+	@echo "  make mailauth-lab-check       # Queue a signed example; inspect it at :8027"
+	@echo "  make mailauth-lab-check-fail  # Queue an accepted SPF/DMARC failure (enforcement is off)"
+	@echo "  make mailauth-lab-down        # Remove lab services and restore the normal LMTP config"
 	@echo "  make install                  # Interactive production setup"
 	@echo ""
 	@echo "🔑 Accounts & Access:"
@@ -98,15 +107,16 @@ help:
 	@echo "  QUEUE_BACKEND=$(QUEUE_BACKEND)         file | sqlite | postgres"
 	@echo "  PLUGIN_RATE_LIMITER=$(PLUGIN_RATE_LIMITER)      PLUGIN_CLAMAV=$(PLUGIN_CLAMAV)   PLUGIN_RSPAMD=$(PLUGIN_RSPAMD)"
 	@echo "  PLUGIN_ACCESS_CONTROL=$(PLUGIN_ACCESS_CONTROL)    PLUGIN_RBL=$(PLUGIN_RBL)      PLUGIN_MASS_MAILER=$(PLUGIN_MASS_MAILER)"
+	@echo "  PLUGIN_SPF=$(PLUGIN_SPF)  PLUGIN_DKIM=$(PLUGIN_DKIM)  PLUGIN_DMARC=$(PLUGIN_DMARC)"
 	@echo "    e.g. make install-dev PLUGIN_RBL=off CERT_DAYS=90"
 	@echo ""
 	@echo "💡 Things that surprise people:"
 	@echo "  • Editing config/elemta.toml does not change a running stack. The services read a"
 	@echo "    copy on a shared volume, seeded once, because the web UI writes to it too."
 	@echo "    'make install-dev' re-seeds from the file; 'up' and 'restart' do not."
-	@echo "  • Scanner, allow/deny and blocklist changes apply on their own within ~5 seconds —"
-	@echo "    no restart. Listen address, size limits, timeouts and the queue backend do need"
-	@echo "    a restart, and the reload log says so."
+	@echo "  • Scanner, allow/deny, blocklist and inbound mail-auth verification changes apply"
+	@echo "    on their own within ~5 seconds. Listen address, size limits, timeouts, queue"
+	@echo "    backend and DKIM signing need a restart; the UI and logs say so."
 	@echo "  • The dev TLS certificate expires in $(CERT_DAYS) days on purpose, so the expiry warning on"
 	@echo "    the Health page is exercised. It is regenerated when it lapses."
 	@echo "  • The dev stack is self-signed and binds 0.0.0.0. Fine on a laptop; bind 127.0.0.1"
@@ -285,6 +295,9 @@ configure-queue-backend:
 configure-plugins:
 	@echo "🔌 Configuring plugins for this deployment"
 	@python3 ./scripts/configure_plugins.py config/elemta.toml \
+		spf=$(PLUGIN_SPF) \
+		dkim=$(PLUGIN_DKIM) \
+		dmarc=$(PLUGIN_DMARC) \
 		rate_limiter=$(PLUGIN_RATE_LIMITER) \
 		clamav=$(PLUGIN_CLAMAV) \
 		rspamd=$(PLUGIN_RSPAMD) \
@@ -506,6 +519,30 @@ install-dev-full: check-tools docker-build ensure-dev-certs ensure-dev-env refre
 	@$(MAKE) print-dev-summary
 	@echo "   ✉️  Roundcube: http://localhost:8026"
 
+mailauth-lab: check-tools docker-build ensure-dev-certs ensure-dev-env
+	@echo "🔐 Preparing deterministic mail-auth development lab"
+	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) ./scripts/dev/prepare-mailauth-lab.sh >/dev/null
+	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) up -d elemta-mailauth-dns elemta-mailauth-sink
+	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) up -d --force-recreate elemta elemta-web
+	@echo "✅ Mail-auth lab ready"
+	@echo "   Sink UI: http://localhost:8027"
+	@echo "   SPF pass: pass.auth.test    SPF/DMARC fail: fail.auth.test"
+	@echo "   Run: make mailauth-lab-check or make mailauth-lab-check-fail"
+
+mailauth-lab-check:
+	@printf 'EHLO lab\r\nMAIL FROM:<sender@pass.auth.test>\r\nRCPT TO:<user@receiver.auth.test>\r\nDATA\r\nFrom: sender@pass.auth.test\r\nTo: user@receiver.auth.test\r\nSubject: Elemta mail-auth lab\r\nDate: Tue, 11 Aug 2026 12:00:00 -0400\r\nMessage-ID: <mailauth-lab@pass.auth.test>\r\n\r\nSPF, DKIM and DMARC lab message.\r\n.\r\nQUIT\r\n' | nc localhost 2525
+	@echo "Message queued. The remote SMTP worker signs it; inspect http://localhost:8027"
+
+mailauth-lab-check-fail:
+	@printf 'EHLO lab-fail\r\nMAIL FROM:<sender@fail.auth.test>\r\nRCPT TO:<user@receiver.auth.test>\r\nDATA\r\nFrom: sender@fail.auth.test\r\nTo: user@receiver.auth.test\r\nSubject: Elemta mail-auth negative lab\r\nDate: Tue, 11 Aug 2026 12:01:00 -0400\r\nMessage-ID: <mailauth-fail@fail.auth.test>\r\n\r\nExpected SPF and DMARC failure in reporting mode.\r\n.\r\nQUIT\r\n' | nc localhost 2525
+	@echo "Failure example queued. SPF/DMARC fail but reporting mode accepts it."
+
+mailauth-lab-down:
+	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) stop elemta-mailauth-dns elemta-mailauth-sink >/dev/null 2>&1 || true
+	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) rm -f elemta-mailauth-dns elemta-mailauth-sink >/dev/null 2>&1 || true
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta elemta-web
+	@echo "Normal LMTP development configuration restored"
+
 docker-setup: install-dev-full
 
 # Modern Docker commands
@@ -621,5 +658,5 @@ uninstall:
 
 # Legacy update targets (use 'make rebuild' instead)
 update: rebuild
-update-backup: rebuild  
-update-restart: restart 
+update-backup: rebuild
+update-restart: restart

@@ -95,6 +95,14 @@ if [ -r /app/config/test.crt ] && [ -r /app/config/test.key ]; then
     chmod 644 "$RUNTIME_DIR/test.crt" 2>/dev/null || true
 fi
 
+# The mail-auth development lab mounts a generated RSA fixture read-only. Stage
+# it like TLS keys so the runtime process owns a 0600 copy; production images do
+# nothing unless the explicitly named development fixture is mounted.
+if [ -r /app/config/mailauth.key ]; then
+    cp /app/config/mailauth.key "$RUNTIME_DIR/mailauth.key" 2>/dev/null || true
+    chmod 600 "$RUNTIME_DIR/mailauth.key" 2>/dev/null || true
+fi
+
 # A development stack generates its own pair when it does not have a usable one.
 #
 # The usual reason is that the host's key is 0600 and owned by whoever ran

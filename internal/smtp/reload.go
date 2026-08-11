@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+
+	"github.com/busybox42/elemta/internal/authresult"
 )
 
 // Reloading configuration without a restart.
@@ -38,6 +40,7 @@ type reloadableComponents struct {
 	scanners      *ScannerManager
 	accessControl *AccessControl
 	rbl           *RBLChecker
+	authVerifier  *authresult.Verifier
 }
 
 // Reload rebuilds the reloadable components from a freshly loaded
@@ -61,6 +64,7 @@ func (s *Server) Reload(ctx context.Context, newConfig *Config) error {
 	s.scannerManager = next.scanners
 	s.accessControl = next.accessControl
 	s.rblChecker = next.rbl
+	s.authVerifier = next.authVerifier
 	s.pluginMu.Unlock()
 
 	s.slogger.Info("Configuration reloaded",
@@ -69,6 +73,7 @@ func (s *Server) Reload(ctx context.Context, newConfig *Config) error {
 		"antispam", next.scanners.HasAntispamScanners(),
 		"access_control", next.accessControl.Enabled(),
 		"rbl", next.rbl.Enabled(),
+		"mail_auth", next.authVerifier.Enabled(),
 		"note", "listen address, size limits, timeouts and the queue backend still need a restart",
 	)
 	return nil
@@ -97,6 +102,7 @@ func (s *Server) buildReloadable(ctx context.Context, config *Config, logger *sl
 		scanners:      scanners,
 		accessControl: accessControl,
 		rbl:           rbl,
+		authVerifier:  authresult.New(authPluginRuntimeConfig(config)),
 	}, nil
 }
 

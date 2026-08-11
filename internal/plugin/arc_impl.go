@@ -333,22 +333,24 @@ func (p *ARCImpl) verifyARCChain(instances []ARCInstance, message []byte) (*ARCV
 		}
 	}
 
-	// For a complete implementation, we would verify each signature
-	// This is a simplified version that just checks the structure
-
-	// In a real implementation, we would:
-	// 1. Verify the ARC-Message-Signature for each instance
-	// 2. Verify the ARC-Seal for each instance
-	// 3. Check the chain validity based on cv= tag in the most recent ARC-Seal
-
-	// For now, we'll just return a successful result
+	// Everything above is structural: the headers are present, complete and
+	// numbered in order. None of it is cryptography. Verifying the chain means
+	// checking the ARC-Message-Signature and ARC-Seal of every instance against
+	// keys fetched from DNS, and reading the cv= tag of the most recent seal.
+	// That is not implemented here.
+	//
+	// This used to return ARCPass at this point, which made a forged chain
+	// indistinguishable from a real one: anything that looked structurally
+	// plausible passed. A verifier that always succeeds is worse than no
+	// verifier, because callers act on the result. Report that the chain was
+	// not evaluated instead, and leave the decision to the caller.
 	return &ARCVerifyResult{
-		Result:        ARCPass,
+		Result:        ARCNone,
 		Instances:     instances,
 		InstanceCount: len(instances),
 		OldestDomain:  p.extractDomain(instances[0].SealSignature),
 		LatestDomain:  p.extractDomain(instances[len(instances)-1].SealSignature),
-		Reason:        "ARC chain structure is valid",
+		Reason:        "ARC chain structure is well-formed but signatures were not verified; this plugin performs no cryptographic ARC validation",
 	}, nil
 }
 
