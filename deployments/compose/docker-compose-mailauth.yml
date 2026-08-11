@@ -1,0 +1,48 @@
+services:
+  elemta:
+    volumes:
+      # Replace the base stack's read-only /app/config bind as a whole. Docker
+      # cannot create nested file mountpoints inside an existing read-only bind.
+      - ${MAILAUTH_LAB_DIR:-/tmp/elemta-mailauth-lab}:/app/config:ro
+    dns:
+      - 172.31.0.53
+    networks:
+      elemta_network: {}
+      mailauth_network: {}
+
+  elemta-web:
+    volumes:
+      - ${MAILAUTH_LAB_DIR:-/tmp/elemta-mailauth-lab}:/app/config:ro
+    dns:
+      - 172.31.0.53
+    networks:
+      elemta_network: {}
+      mailauth_network: {}
+
+  elemta-mailauth-dns:
+    image: coredns/coredns:1.12.4
+    command: -conf /etc/coredns/Corefile
+    volumes:
+      - ${MAILAUTH_LAB_DIR:-/tmp/elemta-mailauth-lab}/Corefile:/etc/coredns/Corefile:ro
+      - ${MAILAUTH_LAB_DIR:-/tmp/elemta-mailauth-lab}/auth.test.zone:/zones/auth.test.zone:ro
+    networks:
+      mailauth_network:
+        ipv4_address: 172.31.0.53
+
+  elemta-mailauth-sink:
+    image: axllent/mailpit:v1.27
+    environment:
+      MP_SMTP_BIND_ADDR: 0.0.0.0:25
+      MP_UI_BIND_ADDR: 0.0.0.0:8025
+    ports:
+      - "8027:8025"
+    networks:
+      mailauth_network:
+        ipv4_address: 172.31.0.25
+
+networks:
+  mailauth_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24

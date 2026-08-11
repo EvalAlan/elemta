@@ -23,6 +23,15 @@ import sys
 # operator believes is protecting them — and the server refuses to start that
 # way, which would turn a dev deploy into a debugging session.
 PLUGIN_SETTINGS = {
+    "spf": {"section": "plugins.spf", "keys": {"timeout": "10"}},
+    "dkim": {
+        "section": "plugins.dkim",
+        "keys": {"verify": "true", "sign": "false"},
+    },
+    "dmarc": {
+        "section": "plugins.dmarc",
+        "keys": {"enforce": "false", "timeout": "10"},
+    },
     "rate_limiter": {"section": "rate_limiter", "keys": {}},
     "clamav": {"section": "antivirus", "keys": {}, "also": ["antivirus.clamav"]},
     "rspamd": {"section": "antispam", "keys": {}, "also": ["antispam.rspamd"]},

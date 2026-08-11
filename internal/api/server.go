@@ -24,6 +24,7 @@ import (
 	"github.com/busybox42/elemta/internal/auth"
 	"github.com/busybox42/elemta/internal/campaign"
 	"github.com/busybox42/elemta/internal/config"
+	"github.com/busybox42/elemta/internal/dkim"
 	"github.com/busybox42/elemta/internal/metrics"
 	"github.com/busybox42/elemta/internal/queue"
 	"github.com/busybox42/elemta/internal/runtimepaths"
@@ -81,6 +82,40 @@ type MainConfig struct {
 
 	// RBL is the DNS blocklist plugin's configuration.
 	RBL *RBLStatus `json:"rbl,omitempty"`
+
+	SPF   *SPFStatus   `json:"spf,omitempty"`
+	DKIM  *DKIMStatus  `json:"dkim,omitempty"`
+	DMARC *DMARCStatus `json:"dmarc,omitempty"`
+
+	LegacyInboundAuth bool `json:"-"`
+	LegacyDKIM        bool `json:"-"`
+}
+
+type SPFStatus struct {
+	Enabled bool `json:"enabled"`
+	Timeout int  `json:"timeout"`
+}
+
+type SigningDomainStatus struct {
+	Domain         string   `json:"domain"`
+	Selector       string   `json:"selector"`
+	PrivateKeyPath string   `json:"private_key_path"`
+	HeadersToSign  []string `json:"headers_to_sign,omitempty"`
+}
+
+type DKIMStatus struct {
+	Enabled                bool                  `json:"enabled"`
+	Verify                 bool                  `json:"verify"`
+	Sign                   bool                  `json:"sign"`
+	HeaderCanonicalization string                `json:"header_canonicalization"`
+	BodyCanonicalization   string                `json:"body_canonicalization"`
+	Domains                []SigningDomainStatus `json:"domains"`
+}
+
+type DMARCStatus struct {
+	Enabled bool `json:"enabled"`
+	Enforce bool `json:"enforce"`
+	Timeout int  `json:"timeout"`
 }
 
 // RBLStatus is the API's view of the DNS blocklists.
@@ -140,6 +175,8 @@ type Server struct {
 	rateLimiter    *RateLimitMiddleware
 	corsMiddleware *CORSMiddleware
 	metricsStore   MetricsStore
+	// mailAuthLookupTXT is replaceable for deterministic DNS preflight tests.
+	mailAuthLookupTXT func(context.Context, string) ([]string, error)
 
 	// Mass mailer. Guarded because the plugin toggle builds and tears these
 	// down while requests are in flight, unlike the rest of the server's
@@ -654,12 +691,15 @@ func (s *Server) Start() error {
 		api.Handle("/config", configHandler).Methods("PUT")
 		pluginHandler := s.authMiddleware.RequirePermission(auth.PermissionSystemConfig)(http.HandlerFunc(s.handleUpdatePlugin))
 		api.Handle("/config/plugins/{plugin}", pluginHandler).Methods("PUT")
+		pluginCheckHandler := s.authMiddleware.RequirePermission(auth.PermissionSystemConfig)(http.HandlerFunc(s.handleCheckMailAuthPlugin))
+		api.Handle("/config/plugins/{plugin}/check", pluginCheckHandler).Methods("POST")
 		restartHandler := s.authMiddleware.RequirePermission(auth.PermissionSystemAdmin)(http.HandlerFunc(s.handleServerRestart))
 		api.Handle("/config/restart", restartHandler).Methods("POST")
 	} else {
 		// If auth is disabled, allow config operations without authentication (development mode)
 		api.HandleFunc("/config", s.handleUpdateConfig).Methods("PUT")
 		api.HandleFunc("/config/plugins/{plugin}", s.handleUpdatePlugin).Methods("PUT")
+		api.HandleFunc("/config/plugins/{plugin}/check", s.handleCheckMailAuthPlugin).Methods("POST")
 		api.HandleFunc("/config/restart", s.handleServerRestart).Methods("POST")
 	}
 
@@ -1941,7 +1981,69 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	spfEnabled, spfConfig := false, map[string]interface{}(nil)
+	if p := s.mainConfig.SPF; p != nil {
+		spfEnabled = p.Enabled
+		spfConfig = map[string]interface{}{"timeout": p.Timeout}
+	}
+	dkimEnabled, dkimConfig, dkimNeedsConfig := false, map[string]interface{}(nil), false
+	var dkimInventory []map[string]interface{}
+	if p := s.mainConfig.DKIM; p != nil {
+		dkimEnabled = p.Enabled
+		dkimNeedsConfig = p.Sign && len(p.Domains) == 0
+		dkimConfig = map[string]interface{}{
+			"verify": p.Verify, "sign": p.Sign,
+			"header_canonicalization": p.HeaderCanonicalization,
+			"body_canonicalization":   p.BodyCanonicalization,
+			"domains":                 p.Domains,
+		}
+		for _, domain := range p.Domains {
+			item := map[string]interface{}{
+				"domain": domain.Domain, "selector": domain.Selector,
+				"dns_name": domain.Selector + "._domainkey." + domain.Domain,
+			}
+			algorithm, err := dkim.LoadSigningKeyInfo(domain.PrivateKeyPath)
+			item["key_loaded"] = err == nil
+			if err == nil {
+				item["algorithm"] = algorithm
+			} else {
+				item["error"] = err.Error()
+			}
+			dkimInventory = append(dkimInventory, item)
+		}
+	}
+	dmarcEnabled, dmarcConfig := false, map[string]interface{}(nil)
+	if p := s.mainConfig.DMARC; p != nil {
+		dmarcEnabled = p.Enabled
+		dmarcConfig = map[string]interface{}{"enforce": p.Enforce, "timeout": p.Timeout}
+	}
 	plugins := []map[string]interface{}{
+		{
+			"name": "spf", "title": "SPF", "enabled": spfEnabled,
+			"description": "Verify the envelope sender against its published SPF policy",
+			"config":      spfConfig, "configurable": true,
+			"requires_restart": false, "applies_on_reload": true,
+			"metrics": []string{"elemta_mail_auth_results_total{method=\"spf\"}"},
+		},
+		{
+			"name": "dkim", "title": "DKIM", "enabled": dkimEnabled,
+			"description": "Verify inbound signatures and sign outbound remote-SMTP mail",
+			"config":      dkimConfig, "configurable": true,
+			// Verification reloads; changing signing keys still rebuilds the
+			// outbound delivery component at restart.
+			"requires_restart":  s.mainConfig.DKIM != nil && s.mainConfig.DKIM.Sign,
+			"applies_on_reload": s.mainConfig.DKIM == nil || !s.mainConfig.DKIM.Sign,
+			"needs_config":      dkimNeedsConfig,
+			"status":            map[string]interface{}{"keys": dkimInventory},
+			"metrics":           []string{"elemta_mail_auth_results_total{method=\"dkim\"}"},
+		},
+		{
+			"name": "dmarc", "title": "DMARC", "enabled": dmarcEnabled,
+			"description": "Evaluate SPF/DKIM alignment and optionally honor the sender's policy",
+			"config":      dmarcConfig, "configurable": true,
+			"requires_restart": false, "applies_on_reload": true,
+			"metrics": []string{"elemta_mail_auth_results_total{method=\"dmarc\"}", "elemta_mail_auth_dispositions_total"},
+		},
 		{
 			"name":             "rate_limiter",
 			"title":            "Rate Limiting",
@@ -2168,6 +2270,46 @@ func (s *Server) persistConfig() error {
 			edit{"rate_limiter", "max_recipients_per_message", rc.MaxRecipientsPerMessage},
 		)
 	}
+	if p := s.mainConfig.SPF; p != nil {
+		edits = append(edits, edit{"plugins.spf", "enabled", p.Enabled})
+		if p.Timeout > 0 {
+			edits = append(edits, edit{"plugins.spf", "timeout", p.Timeout})
+		}
+	}
+	if p := s.mainConfig.DKIM; p != nil {
+		edits = append(edits,
+			edit{"plugins.dkim", "enabled", p.Enabled},
+			edit{"plugins.dkim", "verify", p.Verify},
+			edit{"plugins.dkim", "sign", p.Sign},
+		)
+		if p.HeaderCanonicalization != "" {
+			edits = append(edits, edit{"plugins.dkim", "header_canonicalization", p.HeaderCanonicalization})
+		}
+		if p.BodyCanonicalization != "" {
+			edits = append(edits, edit{"plugins.dkim", "body_canonicalization", p.BodyCanonicalization})
+		}
+		domains := make([]map[string]interface{}, 0, len(p.Domains))
+		for _, domain := range p.Domains {
+			item := map[string]interface{}{
+				"domain": domain.Domain, "selector": domain.Selector,
+				"private_key_path": domain.PrivateKeyPath,
+			}
+			if len(domain.HeadersToSign) > 0 {
+				item["headers_to_sign"] = domain.HeadersToSign
+			}
+			domains = append(domains, item)
+		}
+		edits = append(edits, edit{"plugins.dkim", "domains", domains})
+	}
+	if p := s.mainConfig.DMARC; p != nil {
+		edits = append(edits,
+			edit{"plugins.dmarc", "enabled", p.Enabled},
+			edit{"plugins.dmarc", "enforce", p.Enforce},
+		)
+		if p.Timeout > 0 {
+			edits = append(edits, edit{"plugins.dmarc", "timeout", p.Timeout})
+		}
+	}
 
 	// Scanners. The endpoint settings live in the [antivirus.clamav] and
 	// [antispam.rspamd] subsections, while the rejection policy is a property of
@@ -2256,6 +2398,17 @@ func (s *Server) persistConfig() error {
 			return fmt.Errorf("update %s.%s: %w", e.section, e.key, err)
 		}
 	}
+	// Persisting through the dashboard is the migration boundary. Write the
+	// canonical plugin tables first, then remove the legacy aliases; leaving both
+	// would make the SMTP process reject the next reload as ambiguous.
+	migratedInboundAuth := s.mainConfig.LegacyInboundAuth
+	migratedDKIM := s.mainConfig.LegacyDKIM
+	if migratedInboundAuth {
+		doc = config.RemoveTOMLSection(doc, "inbound_auth")
+	}
+	if migratedDKIM {
+		doc = config.RemoveTOMLSection(doc, "dkim")
+	}
 
 	// Write via a temp file in the same directory so a failure part-way through
 	// cannot leave a half-written config behind.
@@ -2274,6 +2427,12 @@ func (s *Server) persistConfig() error {
 	if err := os.Rename(tmp, s.configPath); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("replace %s: %w", s.configPath, err)
+	}
+	if migratedInboundAuth {
+		s.mainConfig.LegacyInboundAuth = false
+	}
+	if migratedDKIM {
+		s.mainConfig.LegacyDKIM = false
 	}
 	return nil
 }
@@ -2309,6 +2468,7 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Send 'enabled' (boolean), 'config' (object), or both", http.StatusBadRequest)
 		return
 	}
+	wasDKIMSigning := s.mainConfig != nil && s.mainConfig.DKIM != nil && s.mainConfig.DKIM.Enabled && s.mainConfig.DKIM.Sign
 
 	// Settings first: a payload that turns a plugin on with settings it will
 	// refuse to start with should not leave the toggle flipped.
@@ -2333,6 +2493,40 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 	requiresRestart := false
 	appliesOnReload := false
 	switch pluginName {
+	case "spf":
+		if s.mainConfig.SPF == nil {
+			s.mainConfig.SPF = &SPFStatus{Timeout: 10}
+		}
+		s.mainConfig.SPF.Enabled = enabled
+		appliesOnReload = true
+
+	case "dkim":
+		if s.mainConfig.DKIM == nil {
+			s.mainConfig.DKIM = &DKIMStatus{Verify: true, HeaderCanonicalization: "relaxed", BodyCanonicalization: "relaxed"}
+		}
+		if enabled && s.mainConfig.DKIM.Sign && len(s.mainConfig.DKIM.Domains) == 0 {
+			http.Error(w, "Add at least one signing domain before enabling outbound DKIM signing", http.StatusBadRequest)
+			return
+		}
+		s.mainConfig.DKIM.Enabled = enabled
+		requiresRestart = wasDKIMSigning || (s.mainConfig.DKIM.Enabled && s.mainConfig.DKIM.Sign)
+		appliesOnReload = !requiresRestart
+
+	case "dmarc":
+		if s.mainConfig.DMARC == nil {
+			s.mainConfig.DMARC = &DMARCStatus{Timeout: 10}
+		}
+		if enabled {
+			spfOn := s.mainConfig.SPF != nil && s.mainConfig.SPF.Enabled
+			dkimOn := s.mainConfig.DKIM != nil && s.mainConfig.DKIM.Enabled && s.mainConfig.DKIM.Verify
+			if !spfOn && !dkimOn {
+				http.Error(w, "Enable SPF or inbound DKIM verification before enabling DMARC", http.StatusBadRequest)
+				return
+			}
+		}
+		s.mainConfig.DMARC.Enabled = enabled
+		appliesOnReload = true
+
 	case "rate_limiter":
 		if rc, ok := s.mainConfig.RateLimiterPluginConfig.(*config.RateLimiterPluginConfig); ok && rc != nil {
 			rc.Enabled = enabled

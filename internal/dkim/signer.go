@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -216,6 +217,66 @@ func (s *Signer) HasKeyFor(domain string) bool {
 	defer s.mu.RUnlock()
 	_, ok := s.keys[strings.ToLower(strings.TrimSpace(domain))]
 	return ok
+}
+
+// KeyInfo reports the public, operational details of loaded signing keys. It
+// never exposes private key bytes and is safe to return through the dashboard.
+type KeyInfo struct {
+	Domain    string `json:"domain"`
+	Selector  string `json:"selector"`
+	Algorithm string `json:"algorithm"`
+}
+
+// Keys returns a stable snapshot of the keys available to the signer.
+func (s *Signer) Keys() []KeyInfo {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keys := make([]KeyInfo, 0, len(s.keys))
+	for domain, key := range s.keys {
+		algorithm := "rsa-sha256"
+		if _, ok := key.signer.(ed25519.PrivateKey); ok {
+			algorithm = "ed25519-sha256"
+		}
+		keys = append(keys, KeyInfo{Domain: domain, Selector: key.selector, Algorithm: algorithm})
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].Domain < keys[j].Domain })
+	return keys
+}
+
+// LoadRSAPrivateKey applies the same permission and format checks as signing
+// and returns the key as RSA. The dashboard's DNS preflight uses it to compare
+// a configured private key against the public key a domain actually publishes,
+// and that comparison is only defined for RSA.
+func LoadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
+	signer, _, err := loadPrivateKey(path)
+	if err != nil {
+		return nil, err
+	}
+	key, ok := signer.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("this check requires an RSA private key")
+	}
+	return key, nil
+}
+
+// LoadSigningKeyInfo validates a configured private key and reports its public
+// algorithm without exposing the signer or key material.
+func LoadSigningKeyInfo(path string) (string, error) {
+	signer, _, err := loadPrivateKey(path)
+	if err != nil {
+		return "", err
+	}
+	switch signer.(type) {
+	case *rsa.PrivateKey:
+		return "rsa-sha256", nil
+	case ed25519.PrivateKey:
+		return "ed25519-sha256", nil
+	default:
+		return "", fmt.Errorf("unsupported signing key type %T", signer)
+	}
 }
 
 // loadPrivateKey reads, permission-checks and parses a PEM private key. It

@@ -138,14 +138,19 @@ func TestARCImpl_VerifyARCChain(t *testing.T) {
 		assert.Equal(t, "Non-sequential instance numbers", result.Reason)
 	})
 
-	t.Run("valid sequential chain returns ARCPass", func(t *testing.T) {
+	// A structurally valid chain must NOT report a pass. Nothing here checks a
+	// signature, so "pass" would mean a forged chain assembled with the right
+	// header shapes is indistinguishable from a real one.
+	t.Run("structurally valid chain is not reported as verified", func(t *testing.T) {
 		instances := []ARCInstance{
 			{InstanceNum: 1, SealSignature: "ARC-Seal: i=1; d=first.com", MessageSignature: "m1", AuthResults: "a1"},
 			{InstanceNum: 2, SealSignature: "ARC-Seal: i=2; d=second.com", MessageSignature: "m2", AuthResults: "a2"},
 		}
 		result, err := p.verifyARCChain(instances, []byte("msg"))
 		require.NoError(t, err)
-		assert.Equal(t, ARCPass, result.Result)
+		assert.NotEqual(t, ARCPass, result.Result, "structure alone must never produce a pass")
+		assert.Equal(t, ARCNone, result.Result)
+		assert.Contains(t, result.Reason, "not verified")
 		assert.Equal(t, 2, result.InstanceCount)
 		assert.Equal(t, "first.com", result.OldestDomain)
 		assert.Equal(t, "second.com", result.LatestDomain)
@@ -162,7 +167,7 @@ func TestARCImpl_VerifyARC(t *testing.T) {
 		assert.Equal(t, "No ARC headers found", result.Reason)
 	})
 
-	t.Run("message with complete single-instance chain returns ARCPass", func(t *testing.T) {
+	t.Run("complete but unverified single-instance chain does not pass", func(t *testing.T) {
 		msg := "ARC-Seal: i=1; a=rsa-sha256; d=example.com\r\n" +
 			"ARC-Message-Signature: i=1; a=rsa-sha256\r\n" +
 			"ARC-Authentication-Results: i=1; mx.example.com\r\n" +
@@ -171,7 +176,9 @@ func TestARCImpl_VerifyARC(t *testing.T) {
 			"body"
 		result, err := p.VerifyARC(strings.NewReader(msg))
 		require.NoError(t, err)
-		assert.Equal(t, ARCPass, result.Result)
+		// The signatures above are not signatures at all, which is precisely why
+		// this must not pass.
+		assert.NotEqual(t, ARCPass, result.Result)
 		assert.Equal(t, 1, result.InstanceCount)
 	})
 

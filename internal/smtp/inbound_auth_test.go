@@ -4,7 +4,36 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/busybox42/elemta/internal/authresult"
 )
+
+func TestMailAuthPluginsAreIndependentlySelected(t *testing.T) {
+	cfg := createTestConfig(t)
+	cfg.InboundAuth = nil
+	cfg.Plugins = &PluginConfig{
+		SPF:   &SPFPluginConfig{Enabled: true, Timeout: 4},
+		DKIM:  &DKIMPluginConfig{Enabled: true, Verify: false},
+		DMARC: &DMARCPluginConfig{Enabled: false, Timeout: 6},
+	}
+	runtime := authPluginRuntimeConfig(cfg)
+	if !runtime.Enabled || !runtime.SPFEnabled || runtime.DKIMEnabled || runtime.DMARCEnabled {
+		t.Fatalf("runtime selection = %+v", runtime)
+	}
+	if runtime.SPFTimeout != 4*time.Second || runtime.DMARCTimeout != 6*time.Second {
+		t.Errorf("plugin timeouts = SPF %s DMARC %s", runtime.SPFTimeout, runtime.DMARCTimeout)
+	}
+}
+
+func TestLegacyInboundAuthStillEnablesSPFDKIMAndDMARC(t *testing.T) {
+	cfg := createTestConfig(t)
+	cfg.Plugins = nil
+	cfg.InboundAuth = &InboundAuthConfig{Enabled: true, EnforceDMARC: true, Timeout: 3}
+	verifier := authresult.New(authPluginRuntimeConfig(cfg))
+	if !verifier.Enabled() || !verifier.DKIMEnabled() {
+		t.Fatal("legacy aggregate configuration no longer enables the original verifier set")
+	}
+}
 
 // Verification runs while a client waits at end-of-DATA and can refuse mail, so
 // these check the two things that matter operationally: that the verdict is

@@ -50,6 +50,12 @@ type Results struct {
 // Config controls verification.
 type Config struct {
 	Enabled bool
+	// Individual switches are used by the built-in plugin UI. When Enabled is
+	// true and all four are false, the legacy aggregate behavior enables
+	// SPF/DKIM/DMARC together for backwards compatibility.
+	SPFEnabled   bool
+	DKIMEnabled  bool
+	DMARCEnabled bool
 	// EnforceDMARC honours a domain's published policy. Off by default: the
 	// first thing DMARC enforcement does on a real server is reject mail from
 	// forwarders and mailing lists, which break SPF alignment by design, so an
@@ -58,6 +64,10 @@ type Config struct {
 	// Timeout bounds all the DNS work for one message. Verification happens
 	// while a client waits at end-of-DATA, so it cannot be unbounded.
 	Timeout time.Duration
+	// Plugin-specific timeouts keep one plugin's dashboard setting from silently
+	// changing another. Zero inherits Timeout for legacy aggregate configs.
+	SPFTimeout   time.Duration
+	DMARCTimeout time.Duration
 	// Hostname identifies this server in the Authentication-Results header.
 	Hostname string
 }
@@ -69,13 +79,29 @@ type Verifier struct {
 }
 
 func New(config Config) *Verifier {
+	if config.Enabled && !config.SPFEnabled && !config.DKIMEnabled && !config.DMARCEnabled {
+		config.SPFEnabled = true
+		config.DKIMEnabled = true
+		config.DMARCEnabled = true
+	}
 	if config.Timeout <= 0 {
 		config.Timeout = 10 * time.Second
+	}
+	if config.SPFTimeout <= 0 {
+		config.SPFTimeout = config.Timeout
+	}
+	if config.DMARCTimeout <= 0 {
+		config.DMARCTimeout = config.Timeout
 	}
 	return &Verifier{config: config, resolver: net.DefaultResolver}
 }
 
-func (v *Verifier) Enabled() bool { return v != nil && v.config.Enabled }
+func (v *Verifier) Enabled() bool {
+	return v != nil && v.config.Enabled &&
+		(v.config.SPFEnabled || v.config.DKIMEnabled || v.config.DMARCEnabled)
+}
+
+func (v *Verifier) DKIMEnabled() bool { return v != nil && v.config.DKIMEnabled }
 
 // Verify checks one message.
 //
@@ -90,14 +116,23 @@ func (v *Verifier) Verify(ctx context.Context, clientIP net.IP, heloName, mailFr
 		return results
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, v.config.Timeout)
-	defer cancel()
-
-	results.SPF = v.checkSPF(ctx, clientIP, heloName, mailFrom)
+	if v.config.SPFEnabled {
+		spfCtx, cancel := context.WithTimeout(ctx, v.config.SPFTimeout)
+		results.SPF = v.checkSPF(spfCtx, clientIP, heloName, mailFrom)
+		cancel()
+	} else {
+		results.SPF = Result{Method: "spf", Value: "none", Reason: "SPF plugin disabled"}
+	}
 	results.DKIM = dkimResults
 
-	fromDomain := domainOf(mailFrom)
-	results.DMARC, results.Policy = v.checkDMARC(ctx, fromDomain, results)
+	if v.config.DMARCEnabled {
+		dmarcCtx, cancel := context.WithTimeout(ctx, v.config.DMARCTimeout)
+		fromDomain := domainOf(mailFrom)
+		results.DMARC, results.Policy = v.checkDMARC(dmarcCtx, fromDomain, results)
+		cancel()
+	} else {
+		results.DMARC = Result{Method: "dmarc", Value: "none", Reason: "DMARC plugin disabled"}
+	}
 
 	// A policy is only acted on when the operator has asked for it.
 	if v.config.EnforceDMARC && results.DMARC.Value == "fail" {

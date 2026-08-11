@@ -154,7 +154,7 @@ skip_ips = []
 cache_ttl = 3600
 cache_size = 10000
 
-# Inbound sender authentication: SPF, DKIM and DMARC on arriving mail.
+# Built-in mail authentication plugins.
 #
 # Writes an Authentication-Results header saying what was checked and what was
 # found, whatever the outcome — a reader can then tell "nothing passed" from
@@ -168,9 +168,21 @@ cache_size = 10000
 # Inconclusive checks resolve towards accepting: a DNS timeout is a temporary
 # error, not a forgery, and refusing mail whenever a resolver hiccups would cost
 # far more than it catches.
-[inbound_auth]
+[plugins.spf]
 enabled = true
-enforce_dmarc = false
+timeout = 10
+
+[plugins.dkim]
+enabled = true
+verify = true
+sign = false
+header_canonicalization = "relaxed"
+body_canonicalization = "relaxed"
+domains = []
+
+[plugins.dmarc]
+enabled = true
+enforce = false
 timeout = 10
 
 # Mass mailer: bulk campaign sending from the web interface.

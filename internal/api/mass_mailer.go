@@ -117,6 +117,12 @@ func (s *Server) pluginEnabled(plugin string) bool {
 		if mm := s.mainConfig.MassMailer; mm != nil {
 			return mm.Enabled
 		}
+	case "spf":
+		return s.mainConfig.SPF != nil && s.mainConfig.SPF.Enabled
+	case "dkim":
+		return s.mainConfig.DKIM != nil && s.mainConfig.DKIM.Enabled
+	case "dmarc":
+		return s.mainConfig.DMARC != nil && s.mainConfig.DMARC.Enabled
 	}
 	return false
 }
