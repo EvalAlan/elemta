@@ -518,17 +518,17 @@ func (ss *SessionState) Reset(ctx context.Context) {
 }
 
 // SetHeloName records the name the client greeted with.
-func (s *SessionState) SetHeloName(name string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.heloName = name
+func (ss *SessionState) SetHeloName(name string) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	ss.heloName = name
 }
 
 // HeloName returns the name the client greeted with.
-func (s *SessionState) HeloName() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.heloName
+func (ss *SessionState) HeloName() string {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
+	return ss.heloName
 }
 
 // SetGreeted records that the client has completed HELO/EHLO (thread-safe).
