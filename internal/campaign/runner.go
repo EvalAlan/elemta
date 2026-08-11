@@ -85,12 +85,25 @@ func (s *Store) Delete(id string) bool {
 	return true
 }
 
+// SuppressionList is the part of the suppression store a campaign needs.
+//
+// Narrowed to one question so the campaign package does not depend on how the
+// list is stored, and so a deployment without one simply answers "no".
+type SuppressionList interface {
+	// SuppressedWithReason answers whether an address must not be mailed, and
+	// why. It does not return an error: a list that cannot be read must not
+	// stop a campaign, because failing closed here would halt all sending
+	// because of a locked database.
+	SuppressedWithReason(ctx context.Context, address string) (bool, string)
+}
+
 // Runner sends campaigns, one goroutine per running campaign.
 type Runner struct {
-	store    *Store
-	queue    Enqueuer
-	hostname string
-	logger   *slog.Logger
+	store       *Store
+	queue       Enqueuer
+	hostname    string
+	logger      *slog.Logger
+	suppression SuppressionList
 
 	mu sync.Mutex
 	// runs is keyed by campaign ID. The token distinguishes one run of a
@@ -105,6 +118,15 @@ type Runner struct {
 type runHandle struct {
 	cancel context.CancelFunc
 	token  uint64
+}
+
+// SetSuppressionList attaches the list of addresses that must not be mailed.
+// Optional: without it a campaign sends to everyone on its list, which is the
+// behaviour before suppression existed.
+func (r *Runner) SetSuppressionList(list SuppressionList) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.suppression = list
 }
 
 func NewRunner(store *Store, q Enqueuer, hostname string, logger *slog.Logger) *Runner {
@@ -259,7 +281,10 @@ func (r *Runner) run(ctx context.Context, c *Campaign, ratePerMinute int, token 
 		// Resume picks up after everything already attempted, which is why
 		// Sent and Failed only ever move forward.
 		c.mu.Lock()
-		index := c.Sent + c.Failed
+		// Skipped counts towards progress as much as sent and failed do:
+		// without it the loop re-reads the suppressed recipient forever,
+		// skipping the same address until something cancels the campaign.
+		index := c.Sent + c.Failed + c.Skipped
 		if c.State != StateRunning || index >= len(c.Recipients) {
 			done := index >= len(c.Recipients)
 			if done && c.State == StateRunning {
@@ -271,12 +296,31 @@ func (r *Runner) run(ctx context.Context, c *Campaign, ratePerMinute int, token 
 			state := c.State
 			sent, failed := c.Sent, c.Failed
 			c.mu.Unlock()
+			c.mu.Lock()
+			skipped := c.Skipped
+			c.mu.Unlock()
 			r.logger.Info("Campaign finished",
-				"campaign_id", c.ID, "state", state, "sent", sent, "failed", failed)
+				"campaign_id", c.ID, "state", state, "sent", sent, "failed", failed,
+				"skipped_suppressed", skipped)
 			return
 		}
 		recipient := c.Recipients[index]
 		c.mu.Unlock()
+
+		// Checked before the tick, not after: a suppressed address costs no
+		// send, so it should not consume a slot in the rate limit either.
+		// Otherwise a list that is mostly suppressed would take as long to skip
+		// as it would have taken to send.
+		if reason, skip := r.suppressed(ctx, recipient.Email); skip {
+			c.mu.Lock()
+			c.Skipped++
+			c.UpdatedAt = time.Now().UTC()
+			c.mu.Unlock()
+			r.logger.Info("Campaign recipient skipped",
+				"event_type", "suppression",
+				"campaign_id", c.ID, "recipient", recipient.Email, "reason", reason)
+			continue
+		}
 
 		select {
 		case <-ctx.Done():
@@ -301,6 +345,18 @@ func (r *Runner) run(ctx context.Context, c *Campaign, ratePerMinute int, token 
 		c.UpdatedAt = time.Now().UTC()
 		c.mu.Unlock()
 	}
+}
+
+// suppressed reports whether an address is on the suppression list.
+func (r *Runner) suppressed(ctx context.Context, address string) (string, bool) {
+	r.mu.Lock()
+	list := r.suppression
+	r.mu.Unlock()
+	if list == nil {
+		return "", false
+	}
+	yes, reason := list.SuppressedWithReason(ctx, address)
+	return reason, yes
 }
 
 // sendOne renders and enqueues a single copy.

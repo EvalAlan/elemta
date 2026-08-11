@@ -27,6 +27,7 @@ import (
 	"github.com/busybox42/elemta/internal/metrics"
 	"github.com/busybox42/elemta/internal/queue"
 	"github.com/busybox42/elemta/internal/runtimepaths"
+	"github.com/busybox42/elemta/internal/suppression"
 	"github.com/gorilla/mux"
 )
 
@@ -147,6 +148,11 @@ type Server struct {
 	campaigns      *campaign.Store
 	campaignRunner *campaign.Runner
 
+	// suppressed is the list of addresses that must not be mailed. Opened once
+	// at startup and read-mostly; nil when it could not be opened, which the
+	// handlers report rather than pretending the list is empty.
+	suppressed *suppression.Store
+
 	lifecycleMu     sync.Mutex
 	lifecycleState  serverLifecycleState
 	ready           chan struct{}
@@ -236,6 +242,19 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 		queueMgr:   queueMgr,
 		listenAddr: listenAddr,
 		webRoot:    webRoot,
+	}
+
+	// The suppression list, in the queue directory where the SMTP node writes
+	// it. Nil on failure: an unavailable list is reported by the endpoints,
+	// which is better than an empty one that silently claims nobody is
+	// suppressed and lets a campaign mail addresses that bounced.
+	if queueDir != "" {
+		suppressionPath := filepath.Join(queueDir, "suppression.db")
+		if store, err := suppression.Open(suppressionPath); err != nil {
+			log.Printf("Warning: suppression list unavailable at %s: %v", suppressionPath, err)
+		} else {
+			server.suppressed = store
+		}
 	}
 
 	// Initialize metrics store (Valkey)
@@ -610,6 +629,19 @@ func (s *Server) Start() error {
 	// Certificate expiry. Read-only, and it is the panel an operator wants when
 	// TLS has started failing, so it follows dashboard auth like the rest.
 	api.Handle("/tls/certificate", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTLSCertificate))).Methods("GET")
+
+	// The suppression list. Adding and removing change who receives mail, so
+	// they take the same permission as queue management rather than read-only
+	// dashboard access.
+	api.Handle("/suppression", s.requireAuthIfConfigured(http.HandlerFunc(s.handleListSuppressed))).Methods("GET")
+	if s.authMiddleware != nil {
+		manage := s.authMiddleware.RequirePermission(auth.PermissionQueueManage)
+		api.Handle("/suppression", manage(http.HandlerFunc(s.handleSuppressAddress))).Methods("POST")
+		api.Handle("/suppression/{address}", manage(http.HandlerFunc(s.handleUnsuppressAddress))).Methods("DELETE")
+	} else {
+		api.HandleFunc("/suppression", s.handleSuppressAddress).Methods("POST")
+		api.HandleFunc("/suppression/{address}", s.handleUnsuppressAddress).Methods("DELETE")
+	}
 
 	api.Handle("/messages/search", s.requireAuthIfConfigured(http.HandlerFunc(s.handleSearchMessages))).Methods("GET")
 	api.Handle("/messages/{id}/trace", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTraceMessage))).Methods("GET")
