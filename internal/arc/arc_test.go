@@ -150,9 +150,11 @@ func TestTamperingIsDetected(t *testing.T) {
 			why:    "the subject is signed by the message signature",
 		},
 		{
-			name:   "From replaced",
-			tamper: func(s string) string { return strings.Replace(s, "From: sender@example.com", "From: ceo@example.com", 1) },
-			why:    "the From identity is the one a reader actually sees",
+			name: "From replaced",
+			tamper: func(s string) string {
+				return strings.Replace(s, "From: sender@example.com", "From: ceo@example.com", 1)
+			},
+			why: "the From identity is the one a reader actually sees",
 		},
 		{
 			name: "authentication results rewritten",
