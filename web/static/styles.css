@@ -3149,3 +3149,50 @@ input:checked + .plugin-slider:before {
 /* Skipped is not failed: an address passed over because it is suppressed is
    not a delivery problem to investigate. */
 .campaign-skipped { color: var(--text-muted); margin-left: 0.4rem; }
+
+/* Repeating-record editor (DKIM signing domains).
+   Columns are set inline per field so one rule serves any record shape. */
+.rows-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.rows-editor-head,
+.rows-editor-row {
+    display: grid;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.rows-editor-head span {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+}
+
+/* The header labels the columns, so it is noise when there are no rows yet. */
+.rows-editor-head:last-child {
+    display: none;
+}
+
+.rows-editor-row input {
+    width: 100%;
+    min-width: 0;
+}
+
+@media (max-width: 900px) {
+    /* Side-by-side columns stop being readable well before this; stack them and
+       let the placeholders carry the labels. */
+    .rows-editor-head {
+        display: none;
+    }
+    .rows-editor-row {
+        grid-template-columns: 1fr !important;
+        padding: 0.5rem;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-sm);
+    }
+}
