@@ -181,6 +181,7 @@ func fullyPopulatedConfig() *Config {
 		Resources:                 &smtp.ResourceConfig{MaxConnections: 100},
 		AccessControl:             &smtp.AccessControlConfig{Enabled: true},
 		RBL:                       &smtp.RBLConfig{Enabled: true, Zones: []string{"zen.example.org"}},
+		InboundAuth:               &smtp.InboundAuthConfig{Enabled: true},
 		Antivirus:                 &smtp.AntivirusConfig{Enabled: true},
 		Antispam:                  &smtp.AntispamConfig{Enabled: true},
 		DKIM:                      &dkim.Config{Enabled: true},
