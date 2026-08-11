@@ -429,6 +429,7 @@ type PluginConfig struct {
 	SPF   *SPFPluginConfig   `toml:"spf" json:"spf,omitempty"`
 	DKIM  *DKIMPluginConfig  `toml:"dkim" json:"dkim,omitempty"`
 	DMARC *DMARCPluginConfig `toml:"dmarc" json:"dmarc,omitempty"`
+	ARC   *ARCPluginConfig   `toml:"arc" json:"arc,omitempty"`
 }
 
 // SPFPluginConfig controls envelope-sender SPF verification.
@@ -466,6 +467,21 @@ type DMARCPluginConfig struct {
 	Enabled bool `toml:"enabled" json:"enabled"`
 	Enforce bool `toml:"enforce" json:"enforce"`
 	Timeout int  `toml:"timeout" json:"timeout"`
+}
+
+// ARCPluginConfig controls RFC 8617 chain verification and outbound sealing.
+// Sealing is RSA-only because ARC-Seal is defined only for rsa-sha256.
+type ARCPluginConfig struct {
+	Enabled                bool     `toml:"enabled" json:"enabled"`
+	Verify                 bool     `toml:"verify" json:"verify"`
+	Seal                   bool     `toml:"seal" json:"seal"`
+	Domain                 string   `toml:"domain" json:"domain"`
+	Selector               string   `toml:"selector" json:"selector"`
+	PrivateKeyPath         string   `toml:"private_key_path" json:"private_key_path,omitempty"`
+	HeaderCanonicalization string   `toml:"header_canonicalization" json:"header_canonicalization"`
+	BodyCanonicalization   string   `toml:"body_canonicalization" json:"body_canonicalization"`
+	HeadersToSign          []string `toml:"headers_to_sign" json:"headers_to_sign"`
+	Timeout                int      `toml:"timeout" json:"timeout"`
 }
 
 // APIConfig represents the configuration for the API server

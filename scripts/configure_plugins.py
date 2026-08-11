@@ -32,6 +32,10 @@ PLUGIN_SETTINGS = {
         "section": "plugins.dmarc",
         "keys": {"enforce": "false", "timeout": "10"},
     },
+    "arc": {
+        "section": "plugins.arc",
+        "keys": {"verify": "true", "seal": "false", "timeout": "10"},
+    },
     "rate_limiter": {"section": "rate_limiter", "keys": {}},
     "clamav": {"section": "antivirus", "keys": {}, "also": ["antivirus.clamav"]},
     "rspamd": {"section": "antispam", "keys": {}, "also": ["antispam.rspamd"]},

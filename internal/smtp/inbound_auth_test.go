@@ -15,13 +15,14 @@ func TestMailAuthPluginsAreIndependentlySelected(t *testing.T) {
 		SPF:   &SPFPluginConfig{Enabled: true, Timeout: 4},
 		DKIM:  &DKIMPluginConfig{Enabled: true, Verify: false},
 		DMARC: &DMARCPluginConfig{Enabled: false, Timeout: 6},
+		ARC:   &ARCPluginConfig{Enabled: true, Verify: true, Timeout: 8},
 	}
 	runtime := authPluginRuntimeConfig(cfg)
-	if !runtime.Enabled || !runtime.SPFEnabled || runtime.DKIMEnabled || runtime.DMARCEnabled {
+	if !runtime.Enabled || !runtime.SPFEnabled || runtime.DKIMEnabled || runtime.DMARCEnabled || !runtime.ARCEnabled {
 		t.Fatalf("runtime selection = %+v", runtime)
 	}
-	if runtime.SPFTimeout != 4*time.Second || runtime.DMARCTimeout != 6*time.Second {
-		t.Errorf("plugin timeouts = SPF %s DMARC %s", runtime.SPFTimeout, runtime.DMARCTimeout)
+	if runtime.SPFTimeout != 4*time.Second || runtime.DMARCTimeout != 6*time.Second || runtime.ARCTimeout != 8*time.Second {
+		t.Errorf("plugin timeouts = SPF %s DMARC %s ARC %s", runtime.SPFTimeout, runtime.DMARCTimeout, runtime.ARCTimeout)
 	}
 }
 

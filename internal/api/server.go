@@ -86,6 +86,7 @@ type MainConfig struct {
 	SPF   *SPFStatus   `json:"spf,omitempty"`
 	DKIM  *DKIMStatus  `json:"dkim,omitempty"`
 	DMARC *DMARCStatus `json:"dmarc,omitempty"`
+	ARC   *ARCStatus   `json:"arc,omitempty"`
 
 	LegacyInboundAuth bool `json:"-"`
 	LegacyDKIM        bool `json:"-"`
@@ -116,6 +117,19 @@ type DMARCStatus struct {
 	Enabled bool `json:"enabled"`
 	Enforce bool `json:"enforce"`
 	Timeout int  `json:"timeout"`
+}
+
+type ARCStatus struct {
+	Enabled                bool     `json:"enabled"`
+	Verify                 bool     `json:"verify"`
+	Seal                   bool     `json:"seal"`
+	Domain                 string   `json:"domain"`
+	Selector               string   `json:"selector"`
+	PrivateKeyPath         string   `json:"private_key_path"`
+	HeaderCanonicalization string   `json:"header_canonicalization"`
+	BodyCanonicalization   string   `json:"body_canonicalization"`
+	HeadersToSign          []string `json:"headers_to_sign"`
+	Timeout                int      `json:"timeout"`
 }
 
 // RBLStatus is the API's view of the DNS blocklists.
@@ -2017,6 +2031,32 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		dmarcEnabled = p.Enabled
 		dmarcConfig = map[string]interface{}{"enforce": p.Enforce, "timeout": p.Timeout}
 	}
+	arcEnabled, arcConfig, arcNeedsConfig := false, map[string]interface{}(nil), false
+	arcOperational := map[string]interface{}{}
+	if p := s.mainConfig.ARC; p != nil {
+		arcEnabled = p.Enabled
+		arcNeedsConfig = p.Seal && (p.Domain == "" || p.Selector == "" || p.PrivateKeyPath == "")
+		arcConfig = map[string]interface{}{
+			"verify": p.Verify, "seal": p.Seal, "domain": p.Domain,
+			"selector": p.Selector, "private_key_path": p.PrivateKeyPath,
+			"header_canonicalization": p.HeaderCanonicalization,
+			"body_canonicalization":   p.BodyCanonicalization,
+			"headers_to_sign":         p.HeadersToSign, "timeout": p.Timeout,
+		}
+		if p.Domain != "" && p.Selector != "" {
+			arcOperational["dns_name"] = p.Selector + "._domainkey." + p.Domain
+		}
+		if p.Seal {
+			_, err := dkim.LoadRSAPrivateKey(p.PrivateKeyPath)
+			arcOperational["key_loaded"] = err == nil
+			if err != nil {
+				arcOperational["error"] = err.Error()
+			} else {
+				arcOperational["algorithm"] = "rsa-sha256"
+			}
+		}
+	}
+
 	plugins := []map[string]interface{}{
 		{
 			"name": "spf", "title": "SPF", "enabled": spfEnabled,
@@ -2043,6 +2083,18 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"config":      dmarcConfig, "configurable": true,
 			"requires_restart": false, "applies_on_reload": true,
 			"metrics": []string{"elemta_mail_auth_results_total{method=\"dmarc\"}", "elemta_mail_auth_dispositions_total"},
+		},
+		{
+			"name": "arc", "title": "ARC", "enabled": arcEnabled,
+			"description": "Verify ARC chains on arriving mail and seal mail this server relays",
+			"config":      arcConfig, "configurable": true,
+			// Verification reloads with the other session policy; sealing is
+			// attached to the delivery handler and only changes on restart.
+			"requires_restart":  s.mainConfig.ARC != nil && s.mainConfig.ARC.Seal,
+			"applies_on_reload": s.mainConfig.ARC == nil || !s.mainConfig.ARC.Seal,
+			"needs_config":      arcNeedsConfig,
+			"status":            arcOperational,
+			"metrics":           []string{"elemta_mail_auth_results_total{method=\"arc\"}"},
 		},
 		{
 			"name":             "rate_limiter",
@@ -2311,6 +2363,27 @@ func (s *Server) persistConfig() error {
 		}
 	}
 
+	if p := s.mainConfig.ARC; p != nil {
+		edits = append(edits,
+			edit{"plugins.arc", "enabled", p.Enabled},
+			edit{"plugins.arc", "verify", p.Verify},
+			edit{"plugins.arc", "seal", p.Seal},
+			edit{"plugins.arc", "domain", p.Domain},
+			edit{"plugins.arc", "selector", p.Selector},
+			edit{"plugins.arc", "private_key_path", p.PrivateKeyPath},
+			edit{"plugins.arc", "headers_to_sign", p.HeadersToSign},
+		)
+		if p.HeaderCanonicalization != "" {
+			edits = append(edits, edit{"plugins.arc", "header_canonicalization", p.HeaderCanonicalization})
+		}
+		if p.BodyCanonicalization != "" {
+			edits = append(edits, edit{"plugins.arc", "body_canonicalization", p.BodyCanonicalization})
+		}
+		if p.Timeout > 0 {
+			edits = append(edits, edit{"plugins.arc", "timeout", p.Timeout})
+		}
+	}
+
 	// Scanners. The endpoint settings live in the [antivirus.clamav] and
 	// [antispam.rspamd] subsections, while the rejection policy is a property of
 	// the stage as a whole and sits in the parent — writing either to the wrong
@@ -2469,6 +2542,7 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wasDKIMSigning := s.mainConfig != nil && s.mainConfig.DKIM != nil && s.mainConfig.DKIM.Enabled && s.mainConfig.DKIM.Sign
+	wasARCSealing := s.mainConfig != nil && s.mainConfig.ARC != nil && s.mainConfig.ARC.Enabled && s.mainConfig.ARC.Seal
 
 	// Settings first: a payload that turns a plugin on with settings it will
 	// refuse to start with should not leave the toggle flipped.
@@ -2526,6 +2600,18 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mainConfig.DMARC.Enabled = enabled
 		appliesOnReload = true
+
+	case "arc":
+		if s.mainConfig.ARC == nil {
+			s.mainConfig.ARC = &ARCStatus{Verify: true, HeaderCanonicalization: "relaxed", BodyCanonicalization: "relaxed", Timeout: 10}
+		}
+		if enabled && s.mainConfig.ARC.Seal && (s.mainConfig.ARC.Domain == "" || s.mainConfig.ARC.Selector == "" || s.mainConfig.ARC.PrivateKeyPath == "") {
+			http.Error(w, "Configure domain, selector and private key before enabling ARC sealing", http.StatusBadRequest)
+			return
+		}
+		s.mainConfig.ARC.Enabled = enabled
+		requiresRestart = wasARCSealing || (s.mainConfig.ARC.Enabled && s.mainConfig.ARC.Seal)
+		appliesOnReload = !requiresRestart
 
 	case "rate_limiter":
 		if rc, ok := s.mainConfig.RateLimiterPluginConfig.(*config.RateLimiterPluginConfig); ok && rc != nil {

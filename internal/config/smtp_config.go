@@ -122,7 +122,7 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 		out.SessionTimeout = c.Timeouts.SessionTimeout
 	}
 
-	if len(c.Plugins.Enabled) > 0 || c.Plugins.SPF != nil || c.Plugins.DKIM != nil || c.Plugins.DMARC != nil {
+	if len(c.Plugins.Enabled) > 0 || c.Plugins.SPF != nil || c.Plugins.DKIM != nil || c.Plugins.DMARC != nil || c.Plugins.ARC != nil {
 		out.Plugins = &smtp.PluginConfig{
 			Enabled:    len(c.Plugins.Enabled) > 0,
 			PluginPath: c.Plugins.Directory,
@@ -130,6 +130,7 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 			SPF:        c.Plugins.SPF,
 			DKIM:       c.Plugins.DKIM,
 			DMARC:      c.Plugins.DMARC,
+			ARC:        c.Plugins.ARC,
 		}
 	}
 	if c.Plugins.DKIM != nil {

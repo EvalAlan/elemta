@@ -211,6 +211,7 @@ type Config struct {
 		SPF       *smtp.SPFPluginConfig   `toml:"spf"`
 		DKIM      *smtp.DKIMPluginConfig  `toml:"dkim"`
 		DMARC     *smtp.DMARCPluginConfig `toml:"dmarc"`
+		ARC       *smtp.ARCPluginConfig   `toml:"arc"`
 	} `toml:"plugins"`
 
 	// Rate Limiter Plugin configuration
@@ -1147,7 +1148,7 @@ func (c *Config) validatePlugins(result *ValidationResult, sv *SecurityValidator
 	}
 }
 
-// validateMailAuthPlugins validates the built-in SPF/DKIM/DMARC tables.
+// validateMailAuthPlugins validates the built-in SPF/DKIM/DMARC/ARC tables.
 // These do not depend on the external .so plugin directory and must therefore
 // still be checked when that older plugin mechanism is disabled.
 func (c *Config) validateMailAuthPlugins(result *ValidationResult) {
@@ -1194,6 +1195,31 @@ func (c *Config) validateMailAuthPlugins(result *ValidationResult) {
 		dkimAvailable := c.Plugins.DKIM != nil && c.Plugins.DKIM.Enabled && c.Plugins.DKIM.Verify
 		if p.Enabled && !spfAvailable && !dkimAvailable {
 			result.AddError("plugins.dmarc", nil, "DMARC requires SPF or DKIM verification to be enabled")
+		}
+	}
+	if p := c.Plugins.ARC; p != nil {
+		validTimeout("plugins.arc.timeout", p.Timeout)
+		if !validCanon(p.HeaderCanonicalization) {
+			result.AddError("plugins.arc.header_canonicalization", p.HeaderCanonicalization, "canonicalization must be simple or relaxed")
+		}
+		if !validCanon(p.BodyCanonicalization) {
+			result.AddError("plugins.arc.body_canonicalization", p.BodyCanonicalization, "canonicalization must be simple or relaxed")
+		}
+		if p.Enabled && !p.Verify && !p.Seal {
+			result.AddError("plugins.arc", nil, "enabled ARC plugin must verify, seal, or both")
+		}
+		// Sealing without an identity produces a header nobody can check, and
+		// the operator would see "sealing enabled" while sending unsigned mail.
+		if p.Seal {
+			if strings.TrimSpace(p.Domain) == "" {
+				result.AddError("plugins.arc.domain", p.Domain, "domain is required when ARC sealing is enabled")
+			}
+			if strings.TrimSpace(p.Selector) == "" {
+				result.AddError("plugins.arc.selector", p.Selector, "selector is required when ARC sealing is enabled")
+			}
+			if strings.TrimSpace(p.PrivateKeyPath) == "" {
+				result.AddError("plugins.arc.private_key_path", p.PrivateKeyPath, "private key path is required when ARC sealing is enabled")
+			}
 		}
 	}
 }

@@ -185,6 +185,20 @@ enabled = true
 enforce = false
 timeout = 10
 
+# ARC (RFC 8617) lets each hop record, signed, what it saw — so a receiver can
+# still see that authentication passed before a forwarder or mailing list broke
+# SPF alignment and the DKIM signature. Verification needs no key and is on by
+# default. Sealing signs mail this server relays and does need one, so it is off
+# until a domain, selector and key are configured.
+[plugins.arc]
+enabled = true
+verify = true
+seal = false
+header_canonicalization = "relaxed"
+body_canonicalization = "relaxed"
+headers_to_sign = ["From", "To", "Subject", "Date", "Message-ID"]
+timeout = 10
+
 # Mass mailer: bulk campaign sending from the web interface.
 #
 # Disabled by default — bulk mail should be turned on deliberately.

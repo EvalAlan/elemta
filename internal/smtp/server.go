@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	arcplugin "github.com/busybox42/elemta/internal/arc"
 	"github.com/busybox42/elemta/internal/authresult"
 	"github.com/busybox42/elemta/internal/dkim"
 	deliverymetrics "github.com/busybox42/elemta/internal/metrics"
@@ -44,7 +45,7 @@ type Server struct {
 	pluginMu      sync.RWMutex
 	accessControl *AccessControl // Allow/deny lists applied at connect and MAIL FROM
 	rblChecker    *RBLChecker    // DNS blocklists consulted for the connecting address
-	// authVerifier checks the built-in SPF/DKIM/DMARC plugins. It is swapped
+	// authVerifier checks the built-in SPF/DKIM/DMARC/ARC plugins. It is swapped
 	// with the other session policy objects on reload.
 	authVerifier *authresult.Verifier
 	slogger      *slog.Logger // Structured logger for resource management
@@ -71,7 +72,7 @@ func inboundAuthTimeout(cfg *InboundAuthConfig) time.Duration {
 
 func authPluginRuntimeConfig(config *Config) authresult.Config {
 	runtime := authresult.Config{Hostname: config.Hostname, Timeout: inboundAuthTimeout(config.InboundAuth)}
-	if config.Plugins != nil && (config.Plugins.SPF != nil || config.Plugins.DKIM != nil || config.Plugins.DMARC != nil) {
+	if config.Plugins != nil && (config.Plugins.SPF != nil || config.Plugins.DKIM != nil || config.Plugins.DMARC != nil || config.Plugins.ARC != nil) {
 		if p := config.Plugins.SPF; p != nil {
 			runtime.SPFEnabled = p.Enabled
 			if p.Timeout > 0 {
@@ -88,7 +89,13 @@ func authPluginRuntimeConfig(config *Config) authresult.Config {
 				runtime.DMARCTimeout = time.Duration(p.Timeout) * time.Second
 			}
 		}
-		runtime.Enabled = runtime.SPFEnabled || runtime.DKIMEnabled || runtime.DMARCEnabled
+		if p := config.Plugins.ARC; p != nil {
+			runtime.ARCEnabled = p.Enabled && p.Verify
+			if p.Timeout > 0 {
+				runtime.ARCTimeout = time.Duration(p.Timeout) * time.Second
+			}
+		}
+		runtime.Enabled = runtime.SPFEnabled || runtime.DKIMEnabled || runtime.DMARCEnabled || runtime.ARCEnabled
 		return runtime
 	}
 	if legacy := config.InboundAuth; legacy != nil {
@@ -96,6 +103,26 @@ func authPluginRuntimeConfig(config *Config) authresult.Config {
 		runtime.EnforceDMARC = legacy.EnforceDMARC
 	}
 	return runtime
+}
+
+// arcPluginConfig resolves the sealing side of the ARC plugin.
+func arcPluginConfig(config *Config) arcplugin.Config {
+	if config.Plugins == nil || config.Plugins.ARC == nil {
+		return arcplugin.Config{}
+	}
+	p := config.Plugins.ARC
+	return arcplugin.Config{
+		Enabled:                p.Enabled,
+		Verify:                 p.Verify,
+		Seal:                   p.Seal,
+		Domain:                 p.Domain,
+		Selector:               p.Selector,
+		PrivateKeyPath:         p.PrivateKeyPath,
+		HeaderCanonicalization: p.HeaderCanonicalization,
+		BodyCanonicalization:   p.BodyCanonicalization,
+		HeadersToSign:          append([]string(nil), p.HeadersToSign...),
+		Timeout:                time.Duration(p.Timeout) * time.Second,
+	}
 }
 
 // initPlugins initializes the plugin manager and builtin plugins.
@@ -188,6 +215,13 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize DKIM signer: %w", err)
 	}
+	// Built alongside the DKIM signer and for the same reason: a sealer with a
+	// missing or unreadable key must fail here, not on the first message.
+	arcSealer, err := arcplugin.New(arcPluginConfig(config))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize ARC plugin: %w", err)
+	}
+
 	queueManager, err := queue.NewManagerFromBackend(
 		config.QueueDir,
 		config.QueueBackend,
@@ -283,6 +317,15 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 				slogger.Info("DKIM signing configured but active delivery handler is not the remote SMTP handler; signing will apply only on the remote SMTP path")
 			}
 		}
+		if arcSealer.Enabled() && config.Plugins != nil && config.Plugins.ARC != nil && config.Plugins.ARC.Seal {
+			if smtpHandler, ok := deliveryHandler.(*queue.SMTPDeliveryHandler); ok {
+				smtpHandler.SetARCSealer(arcSealer)
+				slogger.Info("ARC outbound sealing enabled", "dns_name", arcSealer.DNSName())
+			} else {
+				slogger.Info("ARC sealing configured but active delivery handler is not remote SMTP; sealing will apply only on the remote SMTP path")
+			}
+		}
+
 		processorConfig := queue.ProcessorConfig{
 			Enabled:       config.QueueProcessorEnabled,
 			Interval:      time.Duration(config.QueueProcessInterval) * time.Second,
@@ -657,6 +700,7 @@ func NewServer(config *Config) (*Server, error) {
 			"spf", runtime.SPFEnabled,
 			"dkim", runtime.DKIMEnabled,
 			"dmarc", runtime.DMARCEnabled,
+			"arc", runtime.ARCEnabled,
 			"enforce_dmarc", runtime.EnforceDMARC)
 		if runtime.DMARCEnabled && !runtime.EnforceDMARC {
 			slogger.Info("DMARC policies are recorded but not enforced; results appear in Authentication-Results")

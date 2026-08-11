@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -23,6 +24,13 @@ import (
 // signer means signing is disabled and content passes through unchanged.
 type messageSigner interface {
 	Sign(content []byte, signingDomain string) ([]byte, error)
+}
+
+// ARCSealer adds an RFC 8617 set after DKIM signing and before remote SMTP
+// delivery. Exported so the SMTP server can attach the built-in plugin while
+// tests can supply a stub.
+type ARCSealer interface {
+	Seal(ctx context.Context, message []byte, authResults string) ([]byte, error)
 }
 
 // mtastsEnforcer checks outbound delivery against a domain's MTA-STS policy.
@@ -118,6 +126,7 @@ type SMTPDeliveryHandler struct {
 	shaper       *Shaper
 	mxRetrySleep func(context.Context, time.Duration) error
 	signer       messageSigner // optional DKIM signer; nil = signing disabled
+	arcSealer    ARCSealer     // optional ARC sealer; nil = sealing disabled
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -144,6 +153,42 @@ func (h *SMTPDeliveryHandler) SetDKIMSigner(s *dkim.Signer) {
 		return
 	}
 	h.signer = s
+}
+
+// SetARCSealer attaches the built-in ARC plugin to remote SMTP delivery.
+func (h *SMTPDeliveryHandler) SetARCSealer(sealer ARCSealer) {
+	h.arcSealer = sealer
+}
+
+// authenticationResultsValue returns the unfolded value of the first
+// Authentication-Results header, which is what this hop records in the ARC set
+// it adds. Only that header counts: ARC-Authentication-Results carries an
+// earlier hop's opinion, and sealing it as our own would launder somebody
+// else's verdict into ours.
+func authenticationResultsValue(content []byte) string {
+	headerEnd := bytes.Index(content, []byte("\r\n\r\n"))
+	if headerEnd < 0 {
+		return ""
+	}
+	lines := strings.Split(string(content[:headerEnd]), "\r\n")
+	var value strings.Builder
+	found := false
+	for _, line := range lines {
+		if !found {
+			if strings.HasPrefix(strings.ToLower(line), "authentication-results:") {
+				value.WriteString(strings.TrimSpace(line[len("Authentication-Results:"):]))
+				found = true
+			}
+			continue
+		}
+		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+			value.WriteByte(' ')
+			value.WriteString(strings.TrimSpace(line))
+			continue
+		}
+		break
+	}
+	return value.String()
 }
 
 // signContent applies DKIM signing to the message before delivery. Signing
@@ -195,6 +240,15 @@ func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 	content, err = h.signContent(msg, content)
 	if err != nil {
 		return nil, err
+	}
+	// Sealing happens after signing: the ARC-Message-Signature must cover the
+	// DKIM-Signature this hop just added, or a downstream verifier would see a
+	// signature the chain does not account for.
+	if h.arcSealer != nil {
+		content, err = h.arcSealer.Seal(ctx, content, authenticationResultsValue(content))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Group recipients by domain for efficient delivery

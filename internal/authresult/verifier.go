@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"blitiri.com.ar/go/spf"
+	arcplugin "github.com/busybox42/elemta/internal/arc"
 	"github.com/emersion/go-msgauth/dkim"
 	"github.com/emersion/go-msgauth/dmarc"
 )
@@ -39,6 +40,7 @@ type Results struct {
 	SPF   Result   `json:"spf"`
 	DKIM  []Result `json:"dkim,omitempty"`
 	DMARC Result   `json:"dmarc"`
+	ARC   Result   `json:"arc"`
 	// Policy is what the sender's domain asked us to do with a failure:
 	// none, quarantine or reject. Recorded even when it is not enforced, so an
 	// operator can see what enforcing would have done before turning it on.
@@ -56,6 +58,7 @@ type Config struct {
 	SPFEnabled   bool
 	DKIMEnabled  bool
 	DMARCEnabled bool
+	ARCEnabled   bool
 	// EnforceDMARC honours a domain's published policy. Off by default: the
 	// first thing DMARC enforcement does on a real server is reject mail from
 	// forwarders and mailing lists, which break SPF alignment by design, so an
@@ -68,6 +71,7 @@ type Config struct {
 	// changing another. Zero inherits Timeout for legacy aggregate configs.
 	SPFTimeout   time.Duration
 	DMARCTimeout time.Duration
+	ARCTimeout   time.Duration
 	// Hostname identifies this server in the Authentication-Results header.
 	Hostname string
 }
@@ -76,10 +80,14 @@ type Config struct {
 type Verifier struct {
 	config   Config
 	resolver *net.Resolver
+	// arc is the RFC 8617 chain verifier. It is held here so that a reload
+	// swaps one object and every check moves together, rather than leaving a
+	// session verifying SPF under a new policy and ARC under the old one.
+	arc *arcplugin.Plugin
 }
 
 func New(config Config) *Verifier {
-	if config.Enabled && !config.SPFEnabled && !config.DKIMEnabled && !config.DMARCEnabled {
+	if config.Enabled && !config.SPFEnabled && !config.DKIMEnabled && !config.DMARCEnabled && !config.ARCEnabled {
 		config.SPFEnabled = true
 		config.DKIMEnabled = true
 		config.DMARCEnabled = true
@@ -93,12 +101,22 @@ func New(config Config) *Verifier {
 	if config.DMARCTimeout <= 0 {
 		config.DMARCTimeout = config.Timeout
 	}
-	return &Verifier{config: config, resolver: net.DefaultResolver}
+	if config.ARCTimeout <= 0 {
+		config.ARCTimeout = config.Timeout
+	}
+	// A verification-only plugin needs no key, so this cannot fail; the sealing
+	// side is constructed by the delivery path, which does validate.
+	arcVerifier, _ := arcplugin.New(arcplugin.Config{
+		Enabled: config.ARCEnabled,
+		Verify:  config.ARCEnabled,
+		Timeout: config.ARCTimeout,
+	})
+	return &Verifier{config: config, resolver: net.DefaultResolver, arc: arcVerifier}
 }
 
 func (v *Verifier) Enabled() bool {
 	return v != nil && v.config.Enabled &&
-		(v.config.SPFEnabled || v.config.DKIMEnabled || v.config.DMARCEnabled)
+		(v.config.SPFEnabled || v.config.DKIMEnabled || v.config.DMARCEnabled || v.config.ARCEnabled)
 }
 
 func (v *Verifier) DKIMEnabled() bool { return v != nil && v.config.DKIMEnabled }
@@ -144,6 +162,22 @@ func (v *Verifier) Verify(ctx context.Context, clientIP net.IP, heloName, mailFr
 		}
 	}
 	return results
+}
+
+// VerifyARC evaluates the ARC chain over the message as received.
+//
+// Separate from Verify because it needs the message bytes while the rest needs
+// only the envelope. Unlike SPF and DMARC, a chain that cannot be verified is
+// reported as failed rather than inconclusive: an unverifiable chain is either
+// damaged or forged, and honouring one would defeat the point of ARC. The
+// result is recorded, not enforced — a broken chain means the chain cannot
+// vouch for an earlier authentication result, not that the message is hostile.
+func (v *Verifier) VerifyARC(ctx context.Context, message []byte) Result {
+	if v == nil || !v.config.ARCEnabled || v.arc == nil {
+		return Result{Method: "arc", Value: "none", Reason: "ARC plugin disabled"}
+	}
+	result := v.arc.Verify(ctx, message)
+	return Result{Method: "arc", Value: result.Value, Reason: result.Reason}
 }
 
 func (v *Verifier) checkSPF(ctx context.Context, clientIP net.IP, heloName, mailFrom string) Result {
@@ -264,6 +298,9 @@ func (r Results) Header(hostname string) string {
 		parts = append(parts, part)
 	}
 
+	arcPart := "arc=" + orNone(r.ARC.Value)
+	parts = append(parts, arcPart)
+
 	dmarcPart := "dmarc=" + orNone(r.DMARC.Value)
 	if r.Policy != "" {
 		dmarcPart += " (p=" + r.Policy + ")"
@@ -305,8 +342,8 @@ func domainOf(address string) string {
 
 // String is for logs.
 func (r Results) String() string {
-	return fmt.Sprintf("spf=%s dkim=%d dmarc=%s policy=%s disposition=%s",
-		orNone(r.SPF.Value), len(r.DKIM), orNone(r.DMARC.Value), r.Policy, r.Disposition)
+	return fmt.Sprintf("spf=%s dkim=%d dmarc=%s arc=%s policy=%s disposition=%s",
+		orNone(r.SPF.Value), len(r.DKIM), orNone(r.DMARC.Value), orNone(r.ARC.Value), r.Policy, r.Disposition)
 }
 
 // VerifyDKIM checks the signatures on a received message.
