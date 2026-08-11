@@ -266,7 +266,9 @@ func (s *Shaper) evictIdleLocked(now time.Time) {
 	for domain, state := range s.domains {
 		// Never evict a destination that is still backing off or in use: both
 		// would resume traffic the state exists to prevent.
-		if now.Before(state.deferUntil) || (state.slots != nil && len(state.slots) > 0) {
+		// len() on a nil channel is zero, so the nil check the compiler would
+		// otherwise want here is redundant.
+		if now.Before(state.deferUntil) || len(state.slots) > 0 {
 			continue
 		}
 		if now.Sub(state.lastUsed) > idleEvictionAge {
