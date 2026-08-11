@@ -121,6 +121,8 @@ func (s *Server) pluginEnabled(plugin string) bool {
 		return s.mainConfig.SPF != nil && s.mainConfig.SPF.Enabled
 	case "dkim":
 		return s.mainConfig.DKIM != nil && s.mainConfig.DKIM.Enabled
+	case "arc":
+		return s.mainConfig.ARC != nil && s.mainConfig.ARC.Enabled
 	case "dmarc":
 		return s.mainConfig.DMARC != nil && s.mainConfig.DMARC.Enabled
 	}

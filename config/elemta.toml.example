@@ -110,6 +110,18 @@ enabled = true
 enforce = false
 timeout = 10
 
+# ARC (RFC 8617). Verification is free — it needs no local key. Sealing signs
+# mail this server relays, so that a downstream receiver can trust the
+# authentication results we recorded even after a later hop breaks SPF or DKIM;
+# it needs its own key, published at <selector>._domainkey.<domain>.
+[plugins.arc]
+enabled = true
+verify = true
+seal = false
+header_canonicalization = "relaxed"
+body_canonicalization = "relaxed"
+timeout = 10
+
 [plugins.greylisting]
 enabled = true
 initial_delay = 300

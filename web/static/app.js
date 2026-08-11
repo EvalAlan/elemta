@@ -1843,6 +1843,21 @@ const PLUGIN_SETTINGS_SCHEMA = {
             { key: 'timeout', label: 'DNS timeout (seconds)', type: 'number' },
         ],
     },
+    arc: {
+        testable: true,
+        fields: [
+            { key: 'verify', label: 'Verify inbound ARC chains', type: 'checkbox' },
+            { key: 'seal', label: 'Seal outbound remote-SMTP mail', type: 'checkbox' },
+            { key: 'domain', label: 'Sealing domain', type: 'text' },
+            { key: 'selector', label: 'Selector', type: 'text' },
+            { key: 'private_key_path', label: 'RSA private key path', type: 'text',
+              hint: 'The file must be private (0600); its contents are never exposed in the dashboard' },
+            { key: 'header_canonicalization', label: 'Header canonicalization', type: 'text', hint: 'relaxed or simple' },
+            { key: 'body_canonicalization', label: 'Body canonicalization', type: 'text', hint: 'relaxed or simple' },
+            { key: 'headers_to_sign', label: 'Headers to sign', type: 'list' },
+            { key: 'timeout', label: 'DNS timeout (seconds)', type: 'number' },
+        ],
+    },
     clamav: {
         fields: [
             { key: 'address', label: 'Address', type: 'text', hint: 'host:port of clamd' },

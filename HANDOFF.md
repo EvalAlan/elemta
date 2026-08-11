@@ -1,6 +1,7 @@
 # Elemta — handoff
 
-Written 2026-08-11. `main` at `a2a1238`; no open PRs.
+Written 2026-08-11. Check `git log` for where `main` actually is — a commit hash
+written down here is wrong within the day.
 
 This is the context that is **not** derivable from the code or git history: the
 traps that cost hours, the reasoning behind decisions that look arbitrary, and
@@ -78,6 +79,25 @@ round it.
 and the new account cannot log in until `elemta-web` restarts. The CLI says so
 now; the bootstrap target restarts for you.
 
+**ARC is implemented in-tree, and that was deliberate.** `internal/arc` is a
+first-party RFC 8617 implementation. The only Go ARC libraries in existence had
+0 and 1 GitHub stars respectively, and code that decides whether a message is
+authentic is not a place to take an unvetted dependency. The consequence is that
+its correctness is our problem, so before changing anything in there, run:
+
+```bash
+python3 scripts/dev/arc_crossvalidate.py     # needs a venv with dkimpy
+```
+
+It checks both directions against dkimpy — we verify what they seal, they verify
+what we seal, and both verify a mixed two-hop chain. Testing our signer against
+only our own verifier proves the two agree, not that either is right: a
+canonicalization mistake made consistently in both directions passes every
+self-round-trip test. That script has already caught one real bug in itself
+(dkimpy's `arc_sign` returns `[]` rather than raising when it cannot sign, which
+silently made three checks pass against an unsealed message), so trust its
+guards, not its green output alone.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
@@ -113,6 +133,8 @@ you see it again, check before assuming.
 | #120 | Config reload | Component objects swap for the *next* session; live sessions keep the policy they started under, so a message is never half-scanned by two policies. |
 | #121 | Message tracing | A message has two IDs (session and queue). Only the reception record carries both — that link is what makes a trace whole. |
 | #123 | Mandatory login | Was wide open: "Guest" was full admin access with a friendlier name. |
+| #131 | SPF/DKIM/DMARC as independent plugins | A file carrying both legacy `[inbound_auth]` and new `[plugins.*]` tables is rejected rather than resolved to one of them. A config that means two things should not start a mail server. |
+| — | First-party ARC | Fails **closed**, unlike SPF and DMARC. An inconclusive SPF result says little; an ARC chain that cannot be verified is damaged or forged, and honouring it defeats the point. |
 
 ---
 

@@ -80,6 +80,28 @@ func (s *Server) applyPluginConfig(plugin string, cfg map[string]interface{}) er
 		}
 		*s.mainConfig.DMARC = next
 
+	case "arc":
+		if s.mainConfig.ARC == nil {
+			s.mainConfig.ARC = &ARCStatus{}
+		}
+		next := *s.mainConfig.ARC
+		r.boolv("verify", &next.Verify)
+		r.boolv("seal", &next.Seal)
+		r.str("domain", &next.Domain, validateOptionalDomain)
+		r.str("selector", &next.Selector, validateDNSLabel)
+		r.str("private_key_path", &next.PrivateKeyPath, nil)
+		r.str("header_canonicalization", &next.HeaderCanonicalization, validateCanonicalization)
+		r.str("body_canonicalization", &next.BodyCanonicalization, validateCanonicalization)
+		r.list("headers_to_sign", &next.HeadersToSign, validateHeaderName)
+		r.intv("timeout", &next.Timeout, 1, 60)
+		if err := r.err(); err != nil {
+			return err
+		}
+		if next.Seal && (next.Domain == "" || next.Selector == "" || next.PrivateKeyPath == "") {
+			return errors.New("domain, selector and private_key_path are required when ARC sealing is enabled")
+		}
+		*s.mainConfig.ARC = next
+
 	case "clamav":
 		if s.mainConfig.Antivirus == nil {
 			s.mainConfig.Antivirus = &ScannerStatus{}
@@ -194,6 +216,13 @@ func validateDNSLabel(value string) error {
 		}
 	}
 	return nil
+}
+
+func validateOptionalDomain(value string) error {
+	if value == "" {
+		return nil
+	}
+	return validateAccessDomain(value)
 }
 
 func validateHeaderName(value string) error {

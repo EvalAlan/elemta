@@ -40,6 +40,7 @@ func testServerWithConfig(t *testing.T, doc string) (*Server, string) {
 			SPF:           &SPFStatus{Enabled: true, Timeout: 10},
 			DKIM:          &DKIMStatus{Enabled: true, Verify: true, HeaderCanonicalization: "relaxed", BodyCanonicalization: "relaxed"},
 			DMARC:         &DMARCStatus{Enabled: true, Timeout: 10},
+			ARC:           &ARCStatus{Enabled: true, Verify: true, HeaderCanonicalization: "relaxed", BodyCanonicalization: "relaxed", Timeout: 10},
 		},
 	}, path
 }
@@ -186,6 +187,8 @@ func TestPluginSettingsValidation(t *testing.T) {
 		{"spf", `{"config":{"timeout":0}}`, "an unbounded SPF lookup"},
 		{"dkim", `{"config":{"header_canonicalization":"invented"}}`, "an unknown DKIM canonicalization"},
 		{"dkim", `{"config":{"sign":true,"domains":[]}}`, "DKIM signing with no key"},
+		{"arc", `{"config":{"seal":true}}`, "ARC sealing with no identity or key"},
+		{"arc", `{"config":{"header_canonicalization":"invented"}}`, "an unknown ARC canonicalization"},
 		{"rate_limiter", `{"config":{"max_messages_per_minute":10}}`, "a plugin edited through its own panel"},
 		{"nonesuch", `{"config":{"anything":1}}`, "a plugin that does not exist"},
 	}
@@ -207,6 +210,11 @@ func TestMailAuthPluginSettingsPersistAsTypedTables(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("DKIM update rejected: %d %s", rec.Code, rec.Body.String())
 	}
+	rec = updatePlugin(t, s, "arc", `{"config":{"verify":true,"seal":true,"domain":"auth.test","selector":"arc","private_key_path":"/run/keys/arc.key","timeout":7}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ARC update rejected: %d %s", rec.Code, rec.Body.String())
+	}
+
 	var probe struct {
 		Plugins struct {
 			DKIM struct {
@@ -218,6 +226,11 @@ func TestMailAuthPluginSettingsPersistAsTypedTables(t *testing.T) {
 					PrivateKeyPath string `toml:"private_key_path"`
 				} `toml:"domains"`
 			} `toml:"dkim"`
+			ARC struct {
+				Seal    bool   `toml:"seal"`
+				Domain  string `toml:"domain"`
+				Timeout int    `toml:"timeout"`
+			} `toml:"arc"`
 		} `toml:"plugins"`
 	}
 	raw, err := os.ReadFile(path)
@@ -232,6 +245,9 @@ func TestMailAuthPluginSettingsPersistAsTypedTables(t *testing.T) {
 	}
 	if probe.Plugins.DKIM.Domains[0].PrivateKeyPath != "/run/keys/mail.key" {
 		t.Errorf("DKIM key path = %q", probe.Plugins.DKIM.Domains[0].PrivateKeyPath)
+	}
+	if !probe.Plugins.ARC.Seal || probe.Plugins.ARC.Domain != "auth.test" || probe.Plugins.ARC.Timeout != 7 {
+		t.Errorf("ARC config did not survive: %+v", probe.Plugins.ARC)
 	}
 }
 

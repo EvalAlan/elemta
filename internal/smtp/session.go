@@ -333,6 +333,7 @@ func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, mes
 		dkimResults = authresult.VerifyDKIM(ctx, message)
 	}
 	results := verifier.Verify(ctx, clientIP, s.state.HeloName(), mailFrom, dkimResults)
+	results.ARC = verifier.VerifyARC(ctx, message)
 	metrics := GetMetrics()
 	metrics.MailAuthResults.WithLabelValues("spf", orMetricNone(results.SPF.Value)).Inc()
 	if len(results.DKIM) == 0 {
@@ -343,6 +344,7 @@ func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, mes
 		}
 	}
 	metrics.MailAuthResults.WithLabelValues("dmarc", orMetricNone(results.DMARC.Value)).Inc()
+	metrics.MailAuthResults.WithLabelValues("arc", orMetricNone(results.ARC.Value)).Inc()
 	metrics.MailAuthDisposition.WithLabelValues(orMetricNone(results.Disposition)).Inc()
 
 	s.mu.Lock()
@@ -357,6 +359,7 @@ func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, mes
 		"spf", results.SPF.Value,
 		"dkim_signatures", len(results.DKIM),
 		"dmarc", results.DMARC.Value,
+		"arc", results.ARC.Value,
 		"policy", results.Policy,
 		"disposition", results.Disposition,
 	)

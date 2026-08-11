@@ -162,6 +162,39 @@ func (s *Server) handleCheckMailAuthPlugin(w http.ResponseWriter, r *http.Reques
 				response["key_matches_dns"] = true
 			}
 		}
+	case "arc":
+		if s.mainConfig == nil || s.mainConfig.ARC == nil {
+			err = fmt.Errorf("ARC is not configured")
+			break
+		}
+		p := s.mainConfig.ARC
+		response["domain"] = p.Domain
+		response["selector"] = p.Selector
+		if !p.Seal {
+			// Verification needs no local key and no published record; there is
+			// nothing to preflight, and saying "ok" is the honest answer.
+			response["message"] = "ARC verification needs no local key; sealing is disabled"
+			response["ok"] = true
+			writeJSON(w, response)
+			return
+		}
+		privateKey, loadErr := dkim.LoadRSAPrivateKey(p.PrivateKeyPath)
+		if loadErr != nil {
+			err = fmt.Errorf("private key: %w", loadErr)
+			break
+		}
+		response["key_loaded"] = true
+		err = lookup(p.Selector+"._domainkey."+p.Domain, "v=dkim1")
+		if err == nil {
+			publishedKey, parseErr := publishedRSAKey(matched)
+			if parseErr != nil {
+				err = fmt.Errorf("published ARC key: %w", parseErr)
+			} else if !privateKey.PublicKey.Equal(publishedKey) {
+				err = fmt.Errorf("published ARC key does not match the configured private key")
+			} else {
+				response["key_matches_dns"] = true
+			}
+		}
 	default:
 		http.Error(w, "mail-auth plugin not found", http.StatusNotFound)
 		return

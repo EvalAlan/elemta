@@ -106,6 +106,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 	var spfStatus *api.SPFStatus
 	var dkimStatus *api.DKIMStatus
 	var dmarcStatus *api.DMARCStatus
+	var arcStatus *api.ARCStatus
 	if p := cfg.Plugins.SPF; p != nil {
 		spfStatus = &api.SPFStatus{Enabled: p.Enabled, Timeout: p.Timeout}
 	}
@@ -126,6 +127,15 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 	}
 	if p := cfg.Plugins.DMARC; p != nil {
 		dmarcStatus = &api.DMARCStatus{Enabled: p.Enabled, Enforce: p.Enforce, Timeout: p.Timeout}
+	}
+	if p := cfg.Plugins.ARC; p != nil {
+		arcStatus = &api.ARCStatus{
+			Enabled: p.Enabled, Verify: p.Verify, Seal: p.Seal,
+			Domain: p.Domain, Selector: p.Selector, PrivateKeyPath: p.PrivateKeyPath,
+			HeaderCanonicalization: p.HeaderCanonicalization,
+			BodyCanonicalization:   p.BodyCanonicalization,
+			HeadersToSign:          append([]string(nil), p.HeadersToSign...), Timeout: p.Timeout,
+		}
 	}
 	// Legacy sections remain visible during migration. An explicitly configured
 	// plugin table wins; missing plugin tables inherit the old aggregate values.
@@ -204,6 +214,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		SPF:               spfStatus,
 		DKIM:              dkimStatus,
 		DMARC:             dmarcStatus,
+		ARC:               arcStatus,
 		LegacyInboundAuth: cfg.InboundAuth != nil,
 		LegacyDKIM:        cfg.DKIM != nil,
 	}
