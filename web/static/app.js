@@ -201,6 +201,20 @@ function switchView(viewName) {
         case 'logs':
             refreshLogs();
             break;
+        case 'settings': {
+            // The per-plugin tabs are built from the API response, so the tab
+            // bar has nothing in it until the plugin list has been fetched at
+            // least once. Settings opens on "UI Settings", which fetches
+            // nothing, so without this the plugin tabs appeared only after
+            // visiting the Plugins tab — they looked like they had failed.
+            refreshPlugins();
+            // Whichever panel is showing also needs current data: the panels
+            // keep whatever they were left with on the previous visit.
+            const activeTab = document.querySelector('.settings-tab.active')?.dataset.tab;
+            if (activeTab === 'server') refreshServerConfig();
+            else if (activeTab === 'rate-limiting') refreshRateLimiting();
+            break;
+        }
     }
 }
 
