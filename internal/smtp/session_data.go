@@ -690,6 +690,19 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 		return dh.handleSecurityThreat(ctx, scanResult, metadata)
 	}
 
+	// Who does this message claim to be from? Checked here because DKIM signs
+	// the body, and DMARC needs the DKIM outcome to know whether an aligned
+	// identity passed. The head is what carries the signature and the From
+	// header, which is what these checks read.
+	//
+	// Rejects only when the operator has asked for DMARC to be enforced;
+	// otherwise the verdict is recorded and written into a header below.
+	if dh.session != nil {
+		if err := dh.session.VerifyAuthentication(ctx, metadata.From, head); err != nil {
+			return err
+		}
+	}
+
 	// Build this hop's headers. They are written ahead of the body rather than
 	// concatenated with it, so the body is never copied a second time.
 	headerPrefix := dh.buildServerHeaders(ctx, head, metadata, scanResult)
@@ -1103,6 +1116,17 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 				header += "; " + rbl.Reason
 			}
 			additionalHeaders = append(additionalHeaders, header)
+		}
+	}
+
+	// Authentication-Results: what this server checked about who the message
+	// claims to be from, and what it found. Written whatever the outcome —
+	// omitting it when nothing passed leaves a reader unable to tell that from
+	// "never looked".
+	if dh.session != nil {
+		if results, ok := dh.session.AuthResults(); ok {
+			additionalHeaders = append(additionalHeaders,
+				"Authentication-Results: "+results.Header(dh.config.Hostname))
 		}
 	}
 

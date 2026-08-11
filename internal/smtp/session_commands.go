@@ -133,6 +133,7 @@ func (ch *CommandHandler) HandleHELO(ctx context.Context, args string) error {
 	if err := ch.validateHostname(ctx, args); err != nil {
 		return fmt.Errorf("501 5.0.0 Invalid hostname: %s", args)
 	}
+	ch.state.SetHeloName(args)
 
 	// RFC 5321 §4.1.4: a greeting may arrive at any point and discards the
 	// sender and recipient buffers. Recording the greeting first means Reset
@@ -158,6 +159,7 @@ func (ch *CommandHandler) HandleEHLO(ctx context.Context, args string) error {
 	if err := ch.validateHostname(ctx, args); err != nil {
 		return fmt.Errorf("501 5.0.0 Invalid hostname: %s", args)
 	}
+	ch.state.SetHeloName(args)
 
 	// RFC 5321 §4.1.4: a greeting may arrive at any point and discards the
 	// sender and recipient buffers. Recording the greeting first means Reset

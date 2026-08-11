@@ -154,6 +154,25 @@ skip_ips = []
 cache_ttl = 3600
 cache_size = 10000
 
+# Inbound sender authentication: SPF, DKIM and DMARC on arriving mail.
+#
+# Writes an Authentication-Results header saying what was checked and what was
+# found, whatever the outcome — a reader can then tell "nothing passed" from
+# "never looked".
+#
+# enforce_dmarc is off. Honouring a domain's published policy is the point
+# eventually, but the first thing enforcement does on a real server is reject
+# mail from forwarders and mailing lists, which break SPF alignment by design.
+# Watch the results first, then turn it on.
+#
+# Inconclusive checks resolve towards accepting: a DNS timeout is a temporary
+# error, not a forgery, and refusing mail whenever a resolver hiccups would cost
+# far more than it catches.
+[inbound_auth]
+enabled = true
+enforce_dmarc = false
+timeout = 10
+
 # Mass mailer: bulk campaign sending from the web interface.
 #
 # Disabled by default — bulk mail should be turned on deliberately.
