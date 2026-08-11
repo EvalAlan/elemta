@@ -276,6 +276,10 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			deliveryMode = strings.ToLower(strings.TrimSpace(config.Delivery.Mode))
 		}
 
+		// remoteSMTPHandler is the outbound handler, whether it is the delivery
+		// handler itself or wrapped inside the split router. Everything that
+		// only applies to remote delivery attaches to it.
+		var remoteSMTPHandler *queue.SMTPDeliveryHandler
 		var deliveryHandler queue.DeliveryHandler
 		switch deliveryMode {
 		case "lmtp":
@@ -283,16 +287,39 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			deliveryHandler = newDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours)
 		case "smtp":
 			slogger.Info("Creating SMTP delivery handler", "max_per_domain", maxPerDomain)
-			deliveryHandler = newSMTPDeliveryHandler(config.FailedQueueRetentionHours)
+			smtpHandler := newSMTPDeliveryHandler(config.FailedQueueRetentionHours)
+			deliveryHandler = smtpHandler
+			remoteSMTPHandler = smtpHandler
+		case "split":
+			// The session already decides local-versus-relay per recipient at
+			// RCPT time; this makes delivery honour that decision instead of
+			// pushing everything through one handler chosen at startup.
+			if len(config.LocalDomains) == 0 {
+				return nil, nil, fmt.Errorf(`delivery mode "split" needs local_domains; with none set every recipient is remote, which is what mode "smtp" already does`)
+			}
+			slogger.Info("Creating split delivery handler",
+				"local_domains", config.LocalDomains,
+				"local_host", deliveryHost, "local_port", deliveryPort,
+				"max_per_domain", maxPerDomain)
+			smtpHandler := newSMTPDeliveryHandler(config.FailedQueueRetentionHours)
+			deliveryHandler = queue.NewSplitDeliveryHandler(
+				newDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours),
+				smtpHandler,
+				config.LocalDomains,
+				slogger,
+			)
+			// Shaping, DKIM signing and ARC sealing hang off the remote handler,
+			// so the code below has to find it inside the wrapper.
+			remoteSMTPHandler = smtpHandler
 		default:
-			return nil, nil, fmt.Errorf("unsupported delivery mode %q (want smtp or lmtp)", deliveryMode)
+			return nil, nil, fmt.Errorf("unsupported delivery mode %q (want one of: %s)", deliveryMode, strings.Join(DeliveryModes, ", "))
 		}
 
 		// Per-destination traffic shaping. max_connections_per_domain was
 		// configured, surfaced and unused until now; it finally reaches the
 		// thing that opens the connections. Remote SMTP only: LMTP goes to one
 		// local mailbox server that does not need protecting from us.
-		if smtpHandler, ok := deliveryHandler.(*queue.SMTPDeliveryHandler); ok {
+		if smtpHandler := remoteSMTPHandler; smtpHandler != nil {
 			shaping := queue.DefaultShapingConfig()
 			if maxPerDomain > 0 {
 				shaping.MaxConnectionsPerDomain = maxPerDomain
@@ -310,7 +337,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		// Attach the already-validated DKIM signer only to remote SMTP delivery.
 		// Local LMTP delivery is intentionally not signed.
 		if dkimSigner != nil {
-			if smtpHandler, ok := deliveryHandler.(*queue.SMTPDeliveryHandler); ok {
+			if smtpHandler := remoteSMTPHandler; smtpHandler != nil {
 				smtpHandler.SetDKIMSigner(dkimSigner)
 				slogger.Info("DKIM outbound signing enabled")
 			} else {
@@ -318,7 +345,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			}
 		}
 		if arcSealer.Enabled() && config.Plugins != nil && config.Plugins.ARC != nil && config.Plugins.ARC.Seal {
-			if smtpHandler, ok := deliveryHandler.(*queue.SMTPDeliveryHandler); ok {
+			if smtpHandler := remoteSMTPHandler; smtpHandler != nil {
 				smtpHandler.SetARCSealer(arcSealer)
 				slogger.Info("ARC outbound sealing enabled", "dns_name", arcSealer.DNSName())
 			} else {
