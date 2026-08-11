@@ -75,6 +75,11 @@ func (m DataTransferMode) String() string {
 type SessionState struct {
 	mu    sync.RWMutex
 	phase SMTPPhase
+	// heloName is the name the client greeted with. Kept because SPF needs it:
+	// RFC 7208 §2.4 checks it directly when the envelope sender is empty, which
+	// is every bounce.
+	heloName string
+
 	// greeted records that the client has sent HELO/EHLO. PhaseInit alone
 	// cannot express this: it means both "not yet greeted" and, historically,
 	// where a session landed after RSET or a completed DATA — which forced the
@@ -510,6 +515,20 @@ func (ss *SessionState) Reset(ctx context.Context) {
 	ss.lastActivityTime = time.Now()
 
 	ss.logger.DebugContext(ctx, "Session state reset for new transaction")
+}
+
+// SetHeloName records the name the client greeted with.
+func (ss *SessionState) SetHeloName(name string) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	ss.heloName = name
+}
+
+// HeloName returns the name the client greeted with.
+func (ss *SessionState) HeloName() string {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
+	return ss.heloName
 }
 
 // SetGreeted records that the client has completed HELO/EHLO (thread-safe).

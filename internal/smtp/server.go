@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/busybox42/elemta/internal/authresult"
 	"github.com/busybox42/elemta/internal/dkim"
 	deliverymetrics "github.com/busybox42/elemta/internal/metrics"
 	"github.com/busybox42/elemta/internal/plugin"
@@ -43,7 +44,10 @@ type Server struct {
 	pluginMu      sync.RWMutex
 	accessControl *AccessControl // Allow/deny lists applied at connect and MAIL FROM
 	rblChecker    *RBLChecker    // DNS blocklists consulted for the connecting address
-	slogger       *slog.Logger   // Structured logger for resource management
+	// authVerifier checks SPF/DKIM/DMARC on arriving mail. Fixed at startup
+	// rather than reloadable: it holds no policy the operator edits live.
+	authVerifier *authresult.Verifier
+	slogger      *slog.Logger // Structured logger for resource management
 
 	// Concurrency management
 	workerPool   *WorkerPool        // Standardized worker pool for connection handling
@@ -53,6 +57,16 @@ type Server struct {
 	cancel       context.CancelFunc
 	errGroup     *errgroup.Group // Coordinated goroutine management
 	shutdownOnce sync.Once       // Ensure shutdown is called only once
+}
+
+// inboundAuthTimeout bounds verification. Ten seconds by default: it is DNS
+// work happening while a client waits at end-of-DATA, so a slow resolver must
+// not become a stalled session.
+func inboundAuthTimeout(cfg *InboundAuthConfig) time.Duration {
+	if cfg != nil && cfg.Timeout > 0 {
+		return time.Duration(cfg.Timeout) * time.Second
+	}
+	return 10 * time.Second
 }
 
 // initPlugins initializes the plugin manager and builtin plugins.
@@ -606,6 +620,23 @@ func NewServer(config *Config) (*Server, error) {
 		)
 	}
 
+	// Inbound sender authentication. Built here so it is shared by every
+	// session rather than constructed per message.
+	inboundAuth := authresult.New(authresult.Config{
+		Enabled:      config.InboundAuth != nil && config.InboundAuth.Enabled,
+		EnforceDMARC: config.InboundAuth != nil && config.InboundAuth.EnforceDMARC,
+		Timeout:      inboundAuthTimeout(config.InboundAuth),
+		Hostname:     config.Hostname,
+	})
+	server.authVerifier = inboundAuth
+	if inboundAuth.Enabled() {
+		slogger.Info("Inbound sender authentication enabled",
+			"enforce_dmarc", config.InboundAuth.EnforceDMARC)
+		if !config.InboundAuth.EnforceDMARC {
+			slogger.Info("DMARC policies are recorded but not enforced; results appear in Authentication-Results")
+		}
+	}
+
 	// DNS blocklists, on the same terms: a zone that fails to load is a filter
 	// the operator thinks is running.
 	rblChecker, err := NewRBLChecker(config.RBL, slogger)
@@ -1008,6 +1039,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	session.SetScannerManager(scanners)
 	session.SetAccessControl(accessControl)
 	session.SetRBLChecker(rblChecker)
+	session.SetAuthVerifier(s.authVerifier)
 
 	// Set queue manager for message processing
 	if s.queueManager != nil {

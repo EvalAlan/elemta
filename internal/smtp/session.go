@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/busybox42/elemta/internal/authresult"
 	"github.com/busybox42/elemta/internal/queue"
 	"github.com/google/uuid"
 )
@@ -42,6 +43,9 @@ type Session struct {
 	accessControl   *AccessControl
 	rblChecker      *RBLChecker
 	rblDecision     RBLDecision
+	authVerifier    *authresult.Verifier
+	authResults     authresult.Results
+	authChecked     bool
 	resourceManager *ResourceManager
 	// enhancedValidator would be added here if needed
 
@@ -291,6 +295,76 @@ func (s *Session) RBLDecision() RBLDecision {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.rblDecision
+}
+
+// SetAuthVerifier provides inbound SPF/DKIM/DMARC verification.
+func (s *Session) SetAuthVerifier(verifier *authresult.Verifier) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.authVerifier = verifier
+}
+
+// VerifyAuthentication checks who the message claims to be from.
+//
+// Called once the message body is available, because DKIM signs the body: SPF
+// and DMARC could be decided at MAIL FROM, but DMARC needs the DKIM outcome to
+// know whether an aligned identity passed, so all three happen together here.
+//
+// Returns a rejection only when the operator has asked for DMARC to be
+// enforced. Otherwise the results are recorded, written into a header, and the
+// message is accepted — which is what lets an operator see what enforcement
+// would have done before turning it on.
+func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, message []byte) error {
+	s.mu.RLock()
+	verifier := s.authVerifier
+	s.mu.RUnlock()
+	if !verifier.Enabled() {
+		return nil
+	}
+
+	host, _, err := net.SplitHostPort(s.remoteAddr)
+	if err != nil {
+		host = s.remoteAddr
+	}
+	clientIP := net.ParseIP(host)
+
+	dkimResults := authresult.VerifyDKIM(ctx, message)
+	results := verifier.Verify(ctx, clientIP, s.state.HeloName(), mailFrom, dkimResults)
+
+	s.mu.Lock()
+	s.authResults = results
+	s.authChecked = true
+	s.mu.Unlock()
+
+	s.logger.InfoContext(ctx, "Sender authentication checked",
+		"event_type", "authentication",
+		"client_ip", host,
+		"mail_from", mailFrom,
+		"spf", results.SPF.Value,
+		"dkim_signatures", len(results.DKIM),
+		"dmarc", results.DMARC.Value,
+		"policy", results.Policy,
+		"disposition", results.Disposition,
+	)
+
+	switch results.Disposition {
+	case "reject":
+		return fmt.Errorf("550 5.7.1 Message rejected by the sending domain's DMARC policy (p=reject)")
+	case "quarantine":
+		// Quarantine is not a refusal: the sender asked for suspicious mail to
+		// be set aside, not bounced. Marking it lets the downstream filter act
+		// while the message is still delivered.
+		s.logger.InfoContext(ctx, "DMARC policy asks for quarantine; marking rather than refusing",
+			"event_type", "authentication")
+	}
+	return nil
+}
+
+// AuthResults returns what verification found, and whether it ran at all.
+func (s *Session) AuthResults() (authresult.Results, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.authResults, s.authChecked
 }
 
 // SetResourceManager sets the resource manager for the session
