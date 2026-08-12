@@ -53,7 +53,24 @@ type DeliveryResult struct {
 	DeliveryTime      time.Time
 	ResponseMessage   string
 	RecipientOutcomes []RecipientOutcome
+	// DeliveryMethod is the transport that carried the message: "lmtp" for the
+	// local mailbox server, "smtp" for a remote host. Distinct from a
+	// RecipientOutcome's Route, which records *where* a recipient went rather
+	// than how.
+	//
+	// Empty when nothing was delivered, which the message trace already skips.
+	// This used to be the literal string "lmtp" at every call site, so every
+	// remote delivery was recorded as local and the trace read it back and told
+	// operators the wrong thing.
+	DeliveryMethod string
 }
+
+// The transports a message can be carried by, as reported in the logs and the
+// message trace.
+const (
+	DeliveryMethodLMTP = "lmtp"
+	DeliveryMethodSMTP = "smtp"
+)
 
 type RecipientDeliveryStatus string
 
@@ -474,7 +491,7 @@ func (p *Processor) processMessage(msg Message) {
 			return
 		}
 		logger.Error("Failed to get message content", "error", err)
-		p.moveToFailed(msg, fmt.Sprintf("Failed to read content: %v", err))
+		p.moveToFailed(msg, fmt.Sprintf("Failed to read content: %v", err), "")
 		return
 	}
 
@@ -494,7 +511,7 @@ func (p *Processor) processMessage(msg Message) {
 		return
 	}
 
-	p.handleDeliveryFailure(msg, deliveryErr, startTime)
+	p.handleDeliveryFailure(msg, deliveryErr, startTime, deliveryResult.DeliveryMethod)
 }
 
 // SuppressionRecorder is the part of the suppression list this package needs.
@@ -642,7 +659,7 @@ func (p *Processor) handleRecipientOutcomes(msg Message, result *DeliveryResult,
 		deliveryErr = errors.New("temporary recipient delivery failure")
 	}
 	p.observePartial(msg, result, delivered, len(temporary), len(permanent))
-	p.handleDeliveryFailure(msg, deliveryErr, startTime)
+	p.handleDeliveryFailure(msg, deliveryErr, startTime, result.DeliveryMethod)
 	return true
 }
 
@@ -814,7 +831,8 @@ func (p *Processor) resumeDSNHandoff(msg Message, startTime time.Time) bool {
 		p.logger.Error("DSN resume recipient reduction update failed", "event_type", "dsn_handoff_resume_update_failed", "message_id", msg.ID, "error", err, "duplicate_risk", true)
 		return true
 	}
-	p.handleDeliveryFailure(msg, errors.New("temporary recipient delivery failure"), startTime)
+	// No delivery was attempted on this path, so there is no transport to report.
+	p.handleDeliveryFailure(msg, errors.New("temporary recipient delivery failure"), startTime, "")
 	return true
 }
 
@@ -822,7 +840,7 @@ func (p *Processor) observePartial(msg Message, result *DeliveryResult, delivere
 	if len(delivered) == 0 {
 		return
 	}
-	p.msgLogger.LogDelivery(logging.MessageContext{MessageID: msg.ID, QueueID: msg.ID, From: msg.From, To: delivered, Subject: msg.Subject, Size: msg.Size, ReceptionTime: msg.ReceivedAt, ProcessingTime: msg.CreatedAt, DeliveryTime: result.DeliveryTime, DeliveryIP: result.DeliveryIP, DeliveryHost: result.DeliveryHost, RetryCount: msg.RetryCount, DeliveryMethod: "lmtp"})
+	p.msgLogger.LogDelivery(logging.MessageContext{MessageID: msg.ID, QueueID: msg.ID, From: msg.From, To: delivered, Subject: msg.Subject, Size: msg.Size, ReceptionTime: msg.ReceivedAt, ProcessingTime: msg.CreatedAt, DeliveryTime: result.DeliveryTime, DeliveryIP: result.DeliveryIP, DeliveryHost: result.DeliveryHost, RetryCount: msg.RetryCount, DeliveryMethod: result.DeliveryMethod})
 	if err := p.manager.AddAttempt(msg.ID, "partial", fmt.Sprintf("delivered=%d temporary=%d permanent=%d", len(delivered), temporary, permanent)); err != nil {
 		p.logger.Debug("Could not record partial delivery attempt", "message_id", msg.ID, "error", err)
 	}
@@ -862,7 +880,7 @@ func (p *Processor) handleDeliverySuccess(msg Message, result *DeliveryResult) {
 		DeliveryIP:     result.DeliveryIP,
 		DeliveryHost:   result.DeliveryHost,
 		RetryCount:     msg.RetryCount,
-		DeliveryMethod: "lmtp",
+		DeliveryMethod: result.DeliveryMethod,
 	})
 
 	p.metricsLock.Lock()
@@ -883,8 +901,12 @@ func (p *Processor) handleDeliverySuccess(msg Message, result *DeliveryResult) {
 	}
 }
 
-// handleDeliveryFailure processes a failed message delivery with retry logic
-func (p *Processor) handleDeliveryFailure(msg Message, deliveryErr error, startTime time.Time) {
+// handleDeliveryFailure processes a failed message delivery with retry logic.
+//
+// method is the transport that failed, empty when no delivery was attempted.
+// Which route failed is the first thing an operator asks, so it is carried here
+// rather than guessed.
+func (p *Processor) handleDeliveryFailure(msg Message, deliveryErr error, startTime time.Time, method string) {
 	logger := p.logger.With("message_id", msg.ID, "from", msg.From, "to", msg.To)
 
 	// Determine if it's a tempfail or permanent failure
@@ -902,7 +924,7 @@ func (p *Processor) handleDeliveryFailure(msg Message, deliveryErr error, startT
 			ProcessingTime: msg.CreatedAt,
 			RetryCount:     msg.RetryCount,
 			Error:          deliveryErr.Error(),
-			DeliveryMethod: "lmtp",
+			DeliveryMethod: method,
 		})
 	} else {
 		logger.Error("message_bounced",
@@ -912,7 +934,7 @@ func (p *Processor) handleDeliveryFailure(msg Message, deliveryErr error, startT
 			"to_envelope", msg.To,
 			"message_subject", msg.Subject,
 			"message_size", msg.Size,
-			"delivery_method", "lmtp",
+			"delivery_method", method,
 			"retry_count", msg.RetryCount,
 			"error", deliveryErr.Error(),
 			"status", "permanent_failure",
@@ -931,13 +953,13 @@ func (p *Processor) handleDeliveryFailure(msg Message, deliveryErr error, startT
 
 	// Permanent failures go directly to failed queue
 	if !isTemporary {
-		p.moveToFailed(msg, fmt.Sprintf("Permanent failure: %v", deliveryErr))
+		p.moveToFailed(msg, fmt.Sprintf("Permanent failure: %v", deliveryErr), method)
 		return
 	}
 
 	// For temporary failures, check if we should retry or give up
 	if msg.RetryCount >= p.config.MaxRetries {
-		p.moveToFailed(msg, fmt.Sprintf("Max retries exceeded: %v", deliveryErr))
+		p.moveToFailed(msg, fmt.Sprintf("Max retries exceeded: %v", deliveryErr), method)
 		return
 	}
 
@@ -960,7 +982,7 @@ func (p *Processor) handleDeliveryFailure(msg Message, deliveryErr error, startT
 			NextRetry:      msg.NextRetry,
 			RetryCount:     msg.RetryCount,
 			Error:          deliveryErr.Error(),
-			DeliveryMethod: "lmtp",
+			DeliveryMethod: method,
 		})
 	}
 }
@@ -995,7 +1017,7 @@ func (p *Processor) processDeferredMessages() error {
 }
 
 // moveToFailed moves a message to the failed queue
-func (p *Processor) moveToFailed(msg Message, reason string) {
+func (p *Processor) moveToFailed(msg Message, reason string, method string) {
 	p.metricsLock.Lock()
 	p.failedCount++
 	p.metricsLock.Unlock()
@@ -1038,7 +1060,7 @@ func (p *Processor) moveToFailed(msg Message, reason string) {
 		ProcessingTime: msg.CreatedAt,
 		RetryCount:     msg.RetryCount,
 		Error:          reason,
-		DeliveryMethod: "lmtp",
+		DeliveryMethod: method,
 	})
 
 	// Check failed queue retention setting

@@ -49,8 +49,26 @@ func (h *LMTPDeliveryHandler) DeliverMessage(ctx context.Context, msg Message, c
 	return err
 }
 
-// DeliverMessageWithMetadata attempts to deliver a message via LMTP and returns delivery metadata
+// DeliverMessageWithMetadata attempts to deliver a message via LMTP and returns delivery metadata.
+//
+// The transport is stamped here rather than at each of the dozen places a
+// result is built, because that is exactly how every one of them ended up
+// hardcoding the same string.
 func (h *LMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, msg Message, content []byte) (*DeliveryResult, error) {
+	result, err := h.deliverWithMetadata(ctx, msg, content)
+	// A handler that failed before it could build a result still knows which
+	// transport it was: "which route failed" is the first thing an operator
+	// asks, and a connection refused at the first hop is exactly when they ask.
+	if result == nil {
+		result = &DeliveryResult{Error: err}
+	}
+	if result.DeliveryMethod == "" {
+		result.DeliveryMethod = DeliveryMethodLMTP
+	}
+	return result, err
+}
+
+func (h *LMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Message, content []byte) (*DeliveryResult, error) {
 	h.logger.Info("Attempting LMTP delivery",
 		"message_id", msg.ID,
 		"from", msg.From,
