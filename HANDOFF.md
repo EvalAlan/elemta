@@ -122,6 +122,28 @@ of that report had neither and grew forever.
 that a TTL was set or a set was pruned against a fake, and that package went a
 long time with no tests at all while both sides of the feature stubbed around it.
 
+**Most of `[logging]` does nothing.** Only `level` is read. The server always
+writes line-delimited JSON to stdout and to `/app/logs/elemta.log`; `type`,
+`output` and `file` are parsed into the config struct and ignored, and it warns
+at startup when they are set. The shipped config used to say `type = "elastic"`
+with an Elasticsearch URL, so an operator had every reason to think logs were
+being shipped when nothing was.
+
+Do not fix that by wiring up `internal/logging/elastic.go`. It flushes
+synchronously while holding its own lock, so a slow log store would stall SMTP
+sessions every time the buffer filled; it refuses to construct when
+Elasticsearch is unreachable, so the mail server would not start; and it drops
+logs silently when disconnected. Mail delivery should not depend on a log store.
+`make elk-up` ships the same logs with a Filebeat that reads the log volume, so
+Elasticsearch being down costs you logs and nothing else.
+
+**A red Elasticsearch on a dev box is nearly always disk.** Elasticsearch
+refuses to allocate any shard past 90% full, and the symptom is not "disk full"
+— the stack comes up healthy, indexes nothing, and Filebeat reports bulk-insert
+timeouts. The dev overlay disables the watermark for that reason and `make
+elk-up` warns about free space instead. `docker system df` is usually the
+answer; build cache is normally most of it.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts

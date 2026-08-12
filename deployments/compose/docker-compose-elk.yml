@@ -1,0 +1,114 @@
+# Log shipping to Elasticsearch and Kibana, as an overlay on the dev stack.
+#
+# This adds to a dev stack rather than replacing one. Nothing about how Elemta
+# runs changes: it already writes line-delimited JSON to /app/logs/elemta.log on
+# a shared volume, and Filebeat reads that volume. That is why this is elk-up
+# rather than another install-dev target — unlike the mail-auth stack, it
+# genuinely composes with whatever else is running.
+#
+# Filebeat reads the log volume read-only and is given no Docker socket. The
+# usual container-autodiscover setup needs /var/run/docker.sock, which hands a
+# log shipper effective root on the host; there is no reason to accept that when
+# the logs are already on a volume.
+services:
+  elemta-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: elemta-elasticsearch
+    environment:
+      - discovery.type=single-node
+      # Security off is a development choice. It means no TLS and no
+      # authentication on 9200, which is why the port is published on loopback
+      # only below. Do not copy this into anything reachable.
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      # Elasticsearch will happily take most of the machine. Half a gigabyte is
+      # plenty for a dev stack's log volume and leaves room for the mail server
+      # this is supposed to be observing.
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - bootstrap.memory_lock=true
+      # Disk watermarks off, which is a development choice and would be wrong in
+      # production. Elasticsearch refuses to allocate any shard once the disk is
+      # over 90% full, so on a working machine with a comfortably full disk the
+      # whole stack comes up "healthy" and then silently indexes nothing: the
+      # cluster goes red and Filebeat's bulk writes time out with no obvious
+      # connection to disk space. A log viewer for a dev box should not be the
+      # thing that notices the dev box is full. `make elk-up` warns about free
+      # space instead, where the message can say something useful.
+      - cluster.routing.allocation.disk.threshold_enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - elemta_elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - elemta_network
+    healthcheck:
+      # yellow, not green: a single node can never allocate replica shards, so
+      # green is unreachable here and waiting for it would hang forever.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fs 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=1s' >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+
+  elemta-kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.3
+    container_name: elemta-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elemta-elasticsearch:9200
+      - SERVER_PUBLICBASEURL=http://localhost:5601
+    ports:
+      - "127.0.0.1:5601:5601"
+    depends_on:
+      elemta-elasticsearch:
+        condition: service_healthy
+    networks:
+      - elemta_network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fs http://localhost:5601/api/status >/dev/null || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+    restart: unless-stopped
+
+  elemta-filebeat:
+    image: docker.elastic.co/beats/filebeat:8.15.3
+    container_name: elemta-filebeat
+    # Filebeat refuses a config file that is writable by anyone but its owner,
+    # and a bind mount carries the host's ownership. Running as root is the
+    # documented way round it for a bind-mounted config; the container reads one
+    # volume and talks to Elasticsearch, and nothing else.
+    user: root
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    volumes:
+      - ../elk/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      # Read-only: a log shipper has no business writing to the logs it reads.
+      - elemta_logs:/app/logs:ro
+      # Filebeat's own state, so a restart resumes where it left off instead of
+      # re-shipping the whole file and duplicating every event.
+      - elemta_filebeat_data:/usr/share/filebeat/data
+    depends_on:
+      elemta-elasticsearch:
+        condition: service_healthy
+    networks:
+      - elemta_network
+    restart: unless-stopped
+
+volumes:
+  elemta_elasticsearch_data:
+    driver: local
+  elemta_filebeat_data:
+    driver: local

@@ -70,12 +70,19 @@ max_open_conns = 20
 max_idle_conns = 10
 conn_max_lifetime_seconds = 1800
 
+# Logging. Only level is read; the server always writes line-delimited JSON to
+# stdout and to /app/logs/elemta.log.
+#
+# This section used to say type = "elastic" with an Elasticsearch URL, and none
+# of it was consumed — the config claimed logs were being shipped and they were
+# not. Shipping them from inside the mail server is also the wrong shape: the
+# in-process writer flushes synchronously while holding its lock, so a slow log
+# store would stall SMTP sessions, and it refuses to start at all when the store
+# is unreachable. Mail delivery should not depend on a log store being up.
+#
+# Run 'make elk-up' for a shipper that reads the log volume instead.
 [logging]
-type = "elastic"
 level = "info"
-format = "json"
-output = "http://elemta-elasticsearch:9200"
-options = { index = "elemta-logs", bufferSize = 50, flushInterval = "5s" }
 
 [plugins]
 directory = "/app/plugins"
