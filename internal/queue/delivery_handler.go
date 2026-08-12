@@ -138,7 +138,9 @@ func NewSMTPDeliveryHandler(failedQueueRetentionHours int) *SMTPDeliveryHandler 
 		maxMXLookups:              3,
 		failedQueueRetentionHours: failedQueueRetentionHours,
 		mtastsManager:             delivery.NewMTASTSManager(&delivery.Config{MTASTSEnabled: true}),
-		resolver:                  net.DefaultResolver,
+		// MX lookups go through a short-lived cache. Draining a queue to one
+		// domain used to re-resolve for every message.
+		resolver: newCachingMXResolver(net.DefaultResolver, defaultMXCacheTTL, defaultMXCacheSize),
 	}
 }
 
