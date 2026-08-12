@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260811-plugin-forms">
+    <link rel="stylesheet" href="/static/styles.css?v=20260812-domain-stats">
 </head>
 
 <body>
@@ -747,6 +747,20 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Delivery by destination</h3>
+                        <button class="btn btn-secondary btn-sm" onclick="refreshDomainStats()">Refresh</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="field-hint">
+                            Worst delivery rate first. Destinations with very little traffic sort last,
+                            because one deferral out of two is chance rather than a problem.
+                        </div>
+                        <div id="domain-stats"><div class="loading-placeholder">Loading...</div></div>
+                    </div>
+                </div>
             </section>
 
             <!-- Logs View -->
@@ -1319,8 +1333,8 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20260811-plugin-forms"></script>
-    <script src="/static/campaigns.js?v=20260811-plugin-forms"></script>
+    <script src="/static/app.js?v=20260812-domain-stats"></script>
+    <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
 </body>
 
 </html>

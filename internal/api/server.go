@@ -239,6 +239,7 @@ type MetricsStore interface {
 	GetMetrics(ctx context.Context) (*DeliveryMetricsData, error)
 	GetHourlyStats(ctx context.Context) ([]HourlyStatsData, error)
 	GetRecentErrors(ctx context.Context, limit int64) ([]map[string]string, error)
+	GetDomainStats(ctx context.Context) ([]metrics.DomainStats, error)
 }
 
 // DeliveryMetricsData holds delivery statistics
@@ -405,6 +406,12 @@ func newQueueManagerForAPI(mainConfig *MainConfig, queueDir string, failedQueueR
 // valkeyMetricsAdapter adapts ValkeyStore to MetricsStore interface
 type valkeyMetricsAdapter struct {
 	store *metrics.ValkeyStore
+}
+
+// GetDomainStats passes through unchanged: the shape the store returns is
+// already the shape the API reports.
+func (a *valkeyMetricsAdapter) GetDomainStats(ctx context.Context) ([]metrics.DomainStats, error) {
+	return a.store.GetDomainStats(ctx)
 }
 
 func (a *valkeyMetricsAdapter) GetMetrics(ctx context.Context) (*DeliveryMetricsData, error) {
@@ -654,6 +661,7 @@ func (s *Server) Start() error {
 	// Health stays public for probes; detailed delivery stats follow dashboard auth.
 	api.HandleFunc("/health", s.handleHealthStats).Methods("GET")
 	api.Handle("/stats/delivery", s.requireAuthIfConfigured(http.HandlerFunc(s.handleDeliveryStats))).Methods("GET")
+	api.Handle("/stats/domains", s.requireAuthIfConfigured(http.HandlerFunc(s.handleDomainStats))).Methods("GET")
 
 	// Configuration read endpoints expose operational topology.
 	api.Handle("/config", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetConfig))).Methods("GET")
