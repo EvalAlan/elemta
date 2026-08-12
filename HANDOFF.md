@@ -137,12 +137,16 @@ logs silently when disconnected. Mail delivery should not depend on a log store.
 `make elk-up` ships the same logs with a Filebeat that reads the log volume, so
 Elasticsearch being down costs you logs and nothing else.
 
-**A red Elasticsearch on a dev box is nearly always disk.** Elasticsearch
-refuses to allocate any shard past 90% full, and the symptom is not "disk full"
-— the stack comes up healthy, indexes nothing, and Filebeat reports bulk-insert
-timeouts. The dev overlay disables the watermark for that reason and `make
-elk-up` warns about free space instead. `docker system df` is usually the
-answer; build cache is normally most of it.
+**A red Elasticsearch on a dev box is nearly always disk.** Elasticsearch will
+not allocate a shard to a node past its 90% high watermark, and the symptom is
+not "disk full": the stack comes up healthy, Kibana loads, and the only sign is
+bulk-insert timeouts in Filebeat's log. This was measured, not assumed — at 92%
+used with 77GB free, which is not a machine in trouble, the default watermark
+left the cluster red with four unassigned shards and nothing indexed; the same
+disk with the watermark off gave a yellow cluster and 18,860 events. The dev
+overlay disables it for that reason. If you are debugging a red cluster
+anyway, `docker system df` is usually the answer and build cache is normally
+most of it.
 
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
