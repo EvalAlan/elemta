@@ -27,13 +27,23 @@ services:
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
       - bootstrap.memory_lock=true
       # Disk watermarks off, which is a development choice and would be wrong in
-      # production. Elasticsearch refuses to allocate any shard once the disk is
-      # over 90% full, so on a working machine with a comfortably full disk the
-      # whole stack comes up "healthy" and then silently indexes nothing: the
-      # cluster goes red and Filebeat's bulk writes time out with no obvious
-      # connection to disk space. A log viewer for a dev box should not be the
-      # thing that notices the dev box is full. `make elk-up` warns about free
-      # space instead, where the message can say something useful.
+      # production.
+      #
+      # Elasticsearch will not allocate a shard to a node past its 90% high
+      # watermark, and a developer machine sits above that far more often than
+      # is comfortable. This was measured rather than assumed: at 92% used —
+      # with 77GB free, which is not a machine in trouble — the default
+      # watermark left the cluster red with four unassigned shards and nothing
+      # indexed at all. Turning it off on the same disk gave a yellow cluster
+      # and 18,860 events.
+      #
+      # The failure mode is what makes it worth disabling rather than
+      # documenting: the stack reports healthy, Kibana loads, and the only
+      # symptom is bulk-insert timeouts in Filebeat's log with no mention of
+      # disk. A log viewer for a dev box should not be the thing that notices
+      # the dev box is full. `make elk-up` warns about free space instead, where
+      # the message can say something useful, and `make elk-status` names disk
+      # as the likely cause when the cluster is red.
       - cluster.routing.allocation.disk.threshold_enabled=false
     ulimits:
       memlock:
