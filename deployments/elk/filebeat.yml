@@ -53,6 +53,26 @@ processors:
       ignore_missing: true
       fail_on_error: false
 
+  # Elemta logs `service` as a string; ECS defines service as an object, so
+  # Elasticsearch rejected every document carrying it with "tried to parse field
+  # [service] as object, but found a concrete value" — and Filebeat dropped them
+  # with a warning nobody reads.
+  #
+  # This was not a rounding error. 71% of log lines carry that field: every SMTP
+  # command, every session created, greeted and terminated, every "message
+  # processing completed". The stack looked healthy because the remaining 29% —
+  # connections and deliveries — happen to lack it, so the graphs moved and
+  # three quarters of the evidence was missing.
+  #
+  # service.name is where ECS puts it, so the value is preserved rather than
+  # discarded.
+  - rename:
+      fields:
+        - from: "service"
+          to: "service.name"
+      ignore_missing: true
+      fail_on_error: false
+
   # Host metadata is noise here: every event comes from one container on one
   # machine, and the fields that matter (component, hostname, message_id) are
   # already in the log line.
