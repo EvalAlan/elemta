@@ -298,6 +298,12 @@ func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, ms
 					"event_type", "traffic_shaping",
 					"domain", domain, "backoff", backoff.String())
 			}
+			// Counted but never a reason to slow down: a domain that accepts
+			// everything and bounces most of it is a deliverability problem,
+			// not a pace problem.
+			if h.shaper != nil && status == RecipientPermanentFailure {
+				h.shaper.ReportPermanentFailure(domain)
+			}
 			for _, recipient := range recipients[len(domainOutcomes):] {
 				outcomes = append(outcomes, RecipientOutcome{Recipient: recipient, Status: status, Diagnostic: err.Error(), Route: domain})
 			}

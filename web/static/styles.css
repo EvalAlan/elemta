@@ -3196,3 +3196,15 @@ input:checked + .plugin-slider:before {
         border-radius: var(--radius-sm);
     }
 }
+
+/* Per-destination delivery table.
+   The rate is banded rather than shaded on a gradient: the question is "is this
+   destination a problem", which is a judgement with thresholds, not a hue. */
+.domain-stats-table td.domain-rate {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.domain-rate-ok { color: var(--accent-success); }
+.domain-rate-warn { color: var(--accent-warning); }
+.domain-rate-bad { color: var(--accent-danger); }

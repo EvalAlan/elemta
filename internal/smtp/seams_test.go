@@ -57,6 +57,9 @@ type stubMetricsRecorder struct{}
 func (s *stubMetricsRecorder) IncrDelivered(ctx context.Context) error { return nil }
 func (s *stubMetricsRecorder) IncrFailed(ctx context.Context) error    { return nil }
 func (s *stubMetricsRecorder) IncrDeferred(ctx context.Context) error  { return nil }
+func (s *stubMetricsRecorder) IncrDomainOutcome(ctx context.Context, domain, outcome string) error {
+	return nil
+}
 func (s *stubMetricsRecorder) AddRecentError(ctx context.Context, messageID, recipient, errorMsg string) error {
 	return nil
 }
