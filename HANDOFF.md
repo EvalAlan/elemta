@@ -98,6 +98,30 @@ self-round-trip test. That script has already caught one real bug in itself
 silently made three checks pass against an unsealed message), so trust its
 guards, not its green output alone.
 
+**Delivery mode is one global switch, and the modes live in one list.** A server
+delivers over `lmtp`, over `smtp`, or `split` — which routes by recipient domain,
+local domains to the mailbox server and everything else out. There is no
+per-domain transport map beyond that. The valid modes are `smtp.DeliveryModes`
+and the config validator reads it; they used to be two lists that disagreed in
+both directions, so `local` passed validation then failed at startup and `split`
+was rejected before the runtime that implemented it ever saw it.
+
+**Routing is not authorization.** The session decides at RCPT time whether a
+recipient may be accepted at all. Split delivery only decides where already
+accepted mail goes. Keep those apart — a router that starts deciding who may
+send is one bug away from being an open relay.
+
+**Per-destination counters live in Valkey, never Prometheus.** Mail goes to an
+unbounded set of domains and an unbounded Prometheus label is how a metrics
+endpoint becomes the outage. Anything written per destination needs a TTL that
+each write refreshes, and the set naming them needs pruning; the first version
+of that report had neither and grew forever.
+
+**`internal/metrics` tests need a real Valkey** and skip without one
+(`ELEMTA_TEST_VALKEY` overrides the address). There is no honest way to assert
+that a TTL was set or a set was pruned against a fake, and that package went a
+long time with no tests at all while both sides of the feature stubbed around it.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
@@ -138,20 +162,37 @@ you see it again, check before assuming.
 | #123 | Mandatory login | Was wide open: "Guest" was full admin access with a friendlier name. |
 | #131 | SPF/DKIM/DMARC as independent plugins | A file carrying both legacy `[inbound_auth]` and new `[plugins.*]` tables is rejected rather than resolved to one of them. A config that means two things should not start a mail server. |
 | — | First-party ARC | Fails **closed**, unlike SPF and DMARC. An inconclusive SPF result says little; an ARC chain that cannot be verified is damaged or forged, and honouring it defeats the point. |
+| #135 | Campaign recipients from the directory | Imported into the compose box, not stored as "everyone". A campaign that expands at send time mails a different set than the one that was reviewed. Disabled accounts are never imported. |
+| #137 | Split delivery | A message to both a local mailbox and an outside address is delivered twice and the per-recipient outcomes merged. The queue drops delivered recipients before retrying, so without that a remote deferral redelivers locally on every attempt. |
+| #138 | Delivery method | Six call sites hardcoded `"lmtp"`, and the message trace reads that field back — so the feature built to show how mail left the building was wrong about every remote message. |
+| #139 | Per-destination report | Counted before the success/failure branch, or a domain deferring half our mail looks perfect. Keyed on the recipient's domain, not the MX host, or one destination splits into rows that each look fine. Bounces are counted but never cause backoff. |
 
 ---
 
 ## What is actually left
 
-**Mass mailer recipients from the auth datasource** (was task #30). Campaigns
-take pasted/CSV recipients only. Pulling them from LDAP/file/SQL is the obvious
-next step for the mass mailer. Start at `internal/campaign/campaign.go`
-(`ParseRecipients`) and `internal/datasource/`.
+**Salvage two things out of `internal/delivery`, then delete the rest.** That
+package holds a complete, tested delivery subsystem that nothing constructs —
+`delivery.NewManager` has no caller outside the package. Only `mtasts.go` is
+live, used by the SMTP delivery handler. Do not read "unused" as "worthless";
+the verdict differs per file:
 
-**Per-domain deliverability reporting.** Reports show aggregate delivery stats.
-Per-destination success/deferral/bounce breakdown is what turns Reports into an
-operations tool — and the shaper (`internal/queue/shaper.go`, `Statuses()`)
-already tracks per-destination state that nothing surfaces yet. Cheap win.
+| | |
+|---|---|
+| `dns_cache.go` | **Adopt.** Nothing caches MX today: the SMTP handler falls back to `net.DefaultResolver`, so every delivery attempt re-resolves. `internal/queue` already defines an `mxResolver` interface and `DNSCache.LookupMX` has exactly that signature, so it is close to a drop-in. |
+| `pool.go` | **Adopt.** The queue dials fresh for every delivery. Connection reuse to large receivers is standard in the MTAs this competes with, and it composes with the shaper's per-domain cap. |
+| `tracker.go` | **Drop.** Duplicates the queue's attempts, states and the tracing feature built on them. |
+| `router.go`, `manager.go` | **Drop.** The local-versus-relay decision is the split delivery handler's job now. |
+
+Beware of measuring this with `grep -v internal/delivery/` — that hides
+intra-package use and makes the router look like orphaned code with no tests. It
+has both.
+
+**Feedback loops (ARF).** The suppression list is fed by SMTP-time bounces only.
+Yahoo and Microsoft send ARF complaint reports and nothing consumes them, so a
+recipient who marks a message as spam keeps receiving mail. This is the real
+deliverability gap now that shaping, suppression and per-destination reporting
+exist.
 
 **User management in the UI.** `elemta user add` is shell-only. API keys already
 have a UI; users do not. Note the read-at-startup wart above — fixing that
@@ -160,6 +201,12 @@ properly (re-read on change, like the config reload) would be part of this.
 **DKIM key and TLS certificate management.** Certificate *expiry* is reported on
 the Health page (#122); nothing manages renewal, and DKIM keys are
 config/CLI-only.
+
+**Nobody has driven the dashboard in a browser.** The UI work has been verified
+with jsdom harnesses against the shipped `app.js`, by checking the files the
+container actually serves, and by reading the API responses. That is real
+evidence and it caught real bugs — but the settings-tabs failure was the kind a
+person finds in ten seconds and a harness does not.
 
 ---
 
