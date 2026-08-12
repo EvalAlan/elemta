@@ -148,6 +148,26 @@ overlay disables it for that reason. If you are debugging a red cluster
 anyway, `docker system df` is usually the answer and build cache is normally
 most of it.
 
+**Turning on `reject_on_spam` in the dev stack would reject essentially all
+mail, including clean mail.** The dev Rspamd is untrained and the corpus is sent
+from a domain with no SPF, no DKIM and no rDNS, so ordinary clean messages score
+around 9.4 against a threshold of 6.0. Measured over 900 scanned messages: none
+scored below 6, 758 landed between 6 and 10 (the clean ones) and 142 scored 15
+or over (GTUBE and EICAR). Two clusters, both above the line. `reject_on_spam`
+is `false` in `config/elemta.toml` and has been since 152b165, which is what
+keeps this hidden — spam is flagged and then delivered.
+
+This is a property of the dev environment rather than an Elemta bug, but it has
+two consequences. Any judgement about spam accuracy made on this stack is
+meaningless until Rspamd is trained or the threshold moved. And
+`tests/run_swaks_corpus.sh:67` asserts the GTUBE sample is *rejected*, which
+fails today and will keep failing: the assertion encodes an intent the
+configuration contradicts. Fix it by deciding the policy first — either reject
+at a threshold above the clean cluster, or change the assertion to expect
+acceptance carrying a spam header. Do not simply flip `reject_on_spam` to make
+the test pass; on this stack that rejects everything. The `elemta-spam-scores`
+panel exists to make the two clusters and the threshold's position visible.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts

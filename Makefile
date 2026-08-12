@@ -1,5 +1,5 @@
 .PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
-	elk-up elk-down elk-status \
+	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
 	uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
@@ -96,6 +96,9 @@ help:
 	@echo ""
 	@echo "📊 Logs & Observability:"
 	@echo "  elk-up         - Elasticsearch + Kibana + Filebeat, reading the log volume"
+	@echo "  elk-dashboard  - Import the Elemta overview dashboard into Kibana"
+	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
+	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
 	@echo "  elk-status     - Cluster health and how many events are indexed"
 	@echo "  elk-down       - Stop them (indexed logs are kept in their volume)"
 	@echo "  Kibana http://localhost:5601 > Discover > elemta-*   Elasticsearch :9200"
@@ -593,6 +596,7 @@ elk-up:
 	@for i in $$(seq 1 60); do 		if curl -fs "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=1s" >/dev/null 2>&1; then break; fi; 		sleep 2; 	done
 	@curl -fs "http://localhost:9200/_cluster/health" >/dev/null 2>&1 		&& echo "✅ Elasticsearch is up at http://localhost:9200" 		|| echo "⚠️  Elasticsearch did not become healthy; check 'docker logs elemta-elasticsearch'"
 	@$(MAKE) --no-print-directory elk-data-view
+	@$(MAKE) --no-print-directory elk-dashboard
 	@echo "   📊 Kibana:        http://localhost:5601  (give it a minute on first start)"
 	@echo "   🔎 Logs:          Kibana > Discover > elemta-*"
 	@echo "   Both ports bind to 127.0.0.1 only: this stack has no authentication."
@@ -617,6 +621,35 @@ elk-data-view:
 		echo "⚠️  Kibana refused the data view: $$body"; \
 		echo "    Create it under Stack Management > Data Views (pattern elemta-*, time field @timestamp)"; \
 	fi
+
+# The dashboard ships as an exported saved-object file rather than being built
+# through the API here: building needs a live Kibana and is a development step
+# (scripts/dev/build_elk_dashboard.py), while importing is what a user wants.
+elk-dashboard:
+	@if [ ! -f deployments/elk/elemta-dashboard.ndjson ]; then \
+		echo "⚠️  deployments/elk/elemta-dashboard.ndjson is missing."; \
+		echo "    Rebuild it against a live Kibana with:"; \
+		echo "      python3 scripts/dev/build_elk_dashboard.py"; \
+		exit 0; \
+	fi; \
+	ready=""; for i in $$(seq 1 40); do level=$$(curl -fs http://localhost:5601/api/status 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['status']['overall']['level'])" 2>/dev/null); if [ "$$level" = "available" ]; then ready=yes; break; fi; sleep 3; done; \
+	if [ -z "$$ready" ]; then echo "⚠️  Kibana is not available; the dashboard was not imported."; echo "    Retry with 'make elk-dashboard' once http://localhost:5601 loads."; exit 0; fi; \
+	body=$$(curl -s -X POST 'http://localhost:5601/api/saved_objects/_import?overwrite=true' -H 'kbn-xsrf: true' --form file=@deployments/elk/elemta-dashboard.ndjson 2>/dev/null); \
+	if echo "$$body" | grep -q '"success":true'; then \
+		echo "✅ Dashboard imported: http://localhost:5601/app/dashboards#/view/elemta-overview"; \
+	else \
+		echo "⚠️  Kibana refused the dashboard import: $$body"; \
+	fi
+
+# Checks that each panel would draw something. A panel querying a field nobody
+# logs renders an empty chart, which is indistinguishable from a quiet server.
+elk-dashboard-check:
+	@python3 scripts/dev/check_elk_dashboard.py
+
+# Traffic worth looking at. The dashboard is mostly empty without it, because
+# a mail server with no mail has nothing to show.
+stress-corpus:
+	@python3 scripts/dev/stress_corpus.py --messages $(or $(MESSAGES),300) --concurrency $(or $(CONCURRENCY),10)
 
 elk-status:
 	@# Separates the three states this used to report as one. "No index yet" and
