@@ -484,6 +484,15 @@ type ARCPluginConfig struct {
 	Timeout                int      `toml:"timeout" json:"timeout"`
 }
 
+// DeliveryModes are the delivery modes the server can actually run.
+//
+// One list, because there used to be two. The runtime switch in initQueueSystem
+// accepted smtp and lmtp while the config validator accepted smtp, lmtp and
+// local, so "local" passed validation and then failed at startup with a
+// different error, and a mode added to the runtime was rejected before it ever
+// got there. A mode belongs here and nowhere else; the validator reads it.
+var DeliveryModes = []string{"lmtp", "smtp", "split"}
+
 // APIConfig represents the configuration for the API server
 type APIConfig struct {
 	Enabled    bool   `toml:"enabled" json:"enabled"`         // Whether API server is enabled

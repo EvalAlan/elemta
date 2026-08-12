@@ -34,7 +34,10 @@ def main() -> int:
 
     text = source.read_text(encoding="utf-8")
     changes = {
-        ("delivery", "mode"): '"smtp"',
+        # split, not smtp: local mail still reaches the mailbox server over
+        # LMTP while anything else goes out over SMTP to the sink, so one stack
+        # exercises both paths instead of trading one for the other.
+        ("delivery", "mode"): '"split"',
         ("plugins.spf", "enabled"): "true",
         ("plugins.dkim", "enabled"): "true",
         ("plugins.dkim", "verify"): "true",
