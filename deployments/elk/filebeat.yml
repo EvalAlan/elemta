@@ -1,0 +1,79 @@
+# Filebeat configuration for the Elemta dev ELK stack.
+#
+# Elemta writes line-delimited JSON to /app/logs/elemta.log on a shared volume,
+# so there is nothing to parse with regular expressions and no reason to give
+# this container a Docker socket. It reads the volume read-only and ships to
+# Elasticsearch.
+
+filebeat.inputs:
+  - type: filestream
+    id: elemta-logs
+    enabled: true
+    paths:
+      - /app/logs/*.log
+    parsers:
+      # Decode each line's JSON into real fields. Without this the whole line
+      # lands in `message` as a string and nothing is searchable by field, which
+      # is the entire point of shipping structured logs.
+      - ndjson:
+          target: ""
+          # Elemta's own field wins over anything Filebeat added, so a value the
+          # server reported is never quietly replaced by the shipper's guess.
+          overwrite_keys: true
+          # A line that is not JSON still gets shipped, tagged, rather than
+          # dropped. A shipper that silently discards what it cannot parse is
+          # how an incident gets investigated with half the evidence missing.
+          add_error_key: true
+          message_key: msg
+
+processors:
+  # Elemta emits `time`; Elasticsearch indexes on `@timestamp`. Without this
+  # every event is stamped with the moment Filebeat read it, so ordering
+  # survives only while nothing is delayed — and a backlog after an outage, the
+  # one time ordering matters most, would arrive looking simultaneous.
+  - timestamp:
+      field: time
+      layouts:
+        - "2006-01-02T15:04:05Z"
+        - "2006-01-02T15:04:05.999999999Z"
+        - "2006-01-02T15:04:05.999999999Z07:00"
+      test:
+        - "2026-08-12T06:22:43.403056274Z"
+      ignore_missing: true
+      ignore_failure: true
+  - drop_fields:
+      fields: ["time"]
+      ignore_missing: true
+
+  # Move the level to where Kibana and every ECS dashboard expects it.
+  - rename:
+      fields:
+        - from: "level"
+          to: "log.level"
+      ignore_missing: true
+      fail_on_error: false
+
+  # Host metadata is noise here: every event comes from one container on one
+  # machine, and the fields that matter (component, hostname, message_id) are
+  # already in the log line.
+  - drop_fields:
+      fields: ["agent", "ecs", "input", "host", "log.offset"]
+      ignore_missing: true
+
+output.elasticsearch:
+  hosts: ["http://elemta-elasticsearch:9200"]
+  index: "elemta-%{+yyyy.MM.dd}"
+
+# A daily index needs a template that owns the pattern, or Elasticsearch applies
+# its defaults and the field types are whatever the first document implied.
+setup.template.name: "elemta"
+setup.template.pattern: "elemta-*"
+setup.ilm.enabled: false
+
+# Kibana is configured by the make target rather than here: the data view is
+# created through the API once, which is easier to see and to re-run than a
+# setup step buried in the shipper.
+setup.kibana.host: "elemta-kibana:5601"
+
+logging.level: info
+logging.to_files: false
