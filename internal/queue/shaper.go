@@ -81,6 +81,15 @@ type domainState struct {
 	failures   int
 
 	lastUsed time.Time
+
+	// Outcome counts for this destination since it started being tracked.
+	// Deliberately not a complete ledger: idle destinations are evicted after
+	// an hour and the table is capped, so these describe recent behaviour, not
+	// history. Anything presenting them has to say so, or an operator reads
+	// "0 bounces" as good news when it means "we forgot".
+	delivered uint64
+	deferred  uint64
+	bounced   uint64
 }
 
 func NewShaper(config ShapingConfig) *Shaper {
@@ -162,6 +171,24 @@ func (s *Shaper) ReportSuccess(domain string) {
 	state := s.stateFor(domain, time.Now())
 	state.failures = 0
 	state.deferUntil = time.Time{}
+	state.delivered++
+}
+
+// ReportPermanentFailure records a bounce against a destination without
+// changing how fast we send to it.
+//
+// Separate from ReportDeferral on purpose. A permanent rejection is about one
+// message or one recipient and says nothing about the destination's appetite;
+// backing off on those would slow a whole queue because one address does not
+// exist. It is still worth counting, because a domain that accepts everything
+// and bounces most of it is exactly what a deliverability problem looks like.
+func (s *Shaper) ReportPermanentFailure(domain string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stateFor(domain, time.Now()).bounced++
 }
 
 // ReportDeferral records that a destination asked us to slow down, doubling the
@@ -181,6 +208,7 @@ func (s *Shaper) ReportDeferral(domain string) time.Duration {
 	now := time.Now()
 	state := s.stateFor(domain, now)
 	state.failures++
+	state.deferred++
 
 	backoff := s.config.BackoffInitial
 	for i := 1; i < state.failures && backoff < s.config.BackoffMax; i++ {
@@ -201,6 +229,12 @@ type Status struct {
 	Failures       int       `json:"failures"`
 	BackingOffFor  string    `json:"backing_off_for,omitempty"`
 	LastUsed       time.Time `json:"last_used"`
+
+	// Recent outcomes for this destination. See domainState: these are not
+	// totals for all time.
+	Delivered uint64 `json:"delivered"`
+	Deferred  uint64 `json:"deferred"`
+	Bounced   uint64 `json:"bounced"`
 }
 
 // Statuses reports every destination currently being tracked.
@@ -219,6 +253,9 @@ func (s *Shaper) Statuses() []Status {
 			MaxConnections: s.config.MaxConnectionsPerDomain,
 			Failures:       state.failures,
 			LastUsed:       state.lastUsed,
+			Delivered:      state.delivered,
+			Deferred:       state.deferred,
+			Bounced:        state.bounced,
 		}
 		if state.slots != nil {
 			status.InUse = len(state.slots)

@@ -264,3 +264,67 @@ type resolverFunc func(context.Context, string) ([]*net.MX, error)
 func (f resolverFunc) LookupMX(ctx context.Context, name string) ([]*net.MX, error) {
 	return f(ctx, name)
 }
+
+// TestPerDestinationOutcomesAreCounted. The shaper is already told about every
+// success and deferral per destination, so it is where the per-domain
+// deliverability picture can be built without new bookkeeping anywhere else.
+func TestPerDestinationOutcomesAreCounted(t *testing.T) {
+	shaper := NewShaper(ShapingConfig{BackoffInitial: time.Millisecond, BackoffMax: time.Millisecond})
+
+	shaper.ReportSuccess("busy.example")
+	shaper.ReportSuccess("busy.example")
+	shaper.ReportDeferral("busy.example")
+	shaper.ReportPermanentFailure("busy.example")
+	shaper.ReportPermanentFailure("busy.example")
+	shaper.ReportPermanentFailure("busy.example")
+	shaper.ReportSuccess("quiet.example")
+
+	byDomain := map[string]Status{}
+	for _, s := range shaper.Statuses() {
+		byDomain[s.Domain] = s
+	}
+
+	busy := byDomain["busy.example"]
+	if busy.Delivered != 2 || busy.Deferred != 1 || busy.Bounced != 3 {
+		t.Errorf("busy.example = delivered %d, deferred %d, bounced %d; want 2, 1, 3",
+			busy.Delivered, busy.Deferred, busy.Bounced)
+	}
+	// Counts are per destination, not global: mixing them up would make one
+	// bad domain look like a system-wide problem.
+	quiet := byDomain["quiet.example"]
+	if quiet.Delivered != 1 || quiet.Bounced != 0 {
+		t.Errorf("quiet.example = delivered %d, bounced %d; want 1, 0", quiet.Delivered, quiet.Bounced)
+	}
+}
+
+// TestBouncesNeverSlowTheQueue is the property that matters. A permanent
+// rejection is about one recipient; backing off on it would throttle a whole
+// destination because one address does not exist.
+func TestBouncesNeverSlowTheQueue(t *testing.T) {
+	shaper := NewShaper(ShapingConfig{BackoffInitial: time.Hour, BackoffMax: time.Hour})
+
+	for i := 0; i < 50; i++ {
+		shaper.ReportPermanentFailure("example.com")
+	}
+
+	// Still sendable: no backoff, no accumulated failure count.
+	release, err := shaper.Acquire(context.Background(), "example.com")
+	if err != nil {
+		t.Fatalf("bounces put the destination into backoff: %v", err)
+	}
+	release()
+
+	for _, s := range shaper.Statuses() {
+		if s.Domain == "example.com" {
+			if s.Failures != 0 {
+				t.Errorf("bounces raised the consecutive-failure count to %d", s.Failures)
+			}
+			if s.BackingOffFor != "" {
+				t.Errorf("bounces produced a backoff of %s", s.BackingOffFor)
+			}
+			if s.Bounced != 50 {
+				t.Errorf("bounced = %d, want 50", s.Bounced)
+			}
+		}
+	}
+}

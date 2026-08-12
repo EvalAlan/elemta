@@ -193,6 +193,7 @@ function switchView(viewName) {
             break;
         case 'reports':
             refreshReports();
+            refreshDomainStats();
             break;
         case 'campaigns':
             refreshCampaigns();
@@ -3376,5 +3377,64 @@ async function refreshCertificate() {
     } catch (error) {
         console.error('Certificate check failed:', error);
         body.innerHTML = `<div class="error-message">Could not check the certificate: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+// refreshDomainStats fills the per-destination table on the Reports page.
+//
+// Aggregate numbers say whether the queue is moving; they cannot say that one
+// receiver has been deferring everything for an hour while the rest of the
+// world is fine. That is the question this table exists to answer.
+async function refreshDomainStats() {
+    const container = document.getElementById('domain-stats');
+    if (!container) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/stats/domains`);
+        const data = await response.json().catch(() => ({}));
+
+        if (!data.available) {
+            // An empty table reads as "no mail has been sent", so say why.
+            container.innerHTML = `<div class="loading-placeholder">${
+                escapeHtml(data.reason || 'Per-destination statistics are unavailable')}</div>`;
+            return;
+        }
+
+        const domains = data.domains || [];
+        if (domains.length === 0) {
+            container.innerHTML = '<div class="loading-placeholder">No deliveries recorded yet</div>';
+            return;
+        }
+
+        const rows = domains.map(d => {
+            // Banded rather than a gradient: the point is "is this one a
+            // problem", which is a judgement, not a shade.
+            const state = d.delivered_percent >= 95 ? 'ok'
+                : d.delivered_percent >= 80 ? 'warn' : 'bad';
+            return `
+                <tr>
+                    <td>${escapeHtml(d.domain)}</td>
+                    <td class="domain-rate domain-rate-${state}">${d.delivered_percent}%</td>
+                    <td>${d.delivered}</td>
+                    <td>${d.deferred}</td>
+                    <td>${d.bounced}</td>
+                    <td>${d.total}</td>
+                </tr>`;
+        }).join('');
+
+        container.innerHTML = `
+            <table class="messages-table domain-stats-table">
+                <thead>
+                    <tr>
+                        <th>Destination</th><th>Delivered</th><th>OK</th>
+                        <th>Deferred</th><th>Bounced</th><th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+            ${data.note ? `<div class="field-hint">${escapeHtml(data.note)}</div>` : ''}`;
+    } catch (error) {
+        container.innerHTML = `<div class="error-message">Could not load per-destination statistics: ${
+            escapeHtml(error.message)}</div>`;
     }
 }
