@@ -228,8 +228,25 @@ func (h *SMTPDeliveryHandler) DeliverMessage(ctx context.Context, msg Message, c
 	return err
 }
 
-// DeliverMessageWithMetadata attempts to deliver a message via SMTP and returns delivery metadata
+// DeliverMessageWithMetadata attempts to deliver a message via SMTP and returns delivery metadata.
+//
+// See the LMTP handler: the transport is stamped once here rather than at every
+// place a result is constructed.
 func (h *SMTPDeliveryHandler) DeliverMessageWithMetadata(ctx context.Context, msg Message, content []byte) (*DeliveryResult, error) {
+	result, err := h.deliverWithMetadata(ctx, msg, content)
+	// A handler that failed before it could build a result still knows which
+	// transport it was: "which route failed" is the first thing an operator
+	// asks, and a connection refused at the first hop is exactly when they ask.
+	if result == nil {
+		result = &DeliveryResult{Error: err}
+	}
+	if result.DeliveryMethod == "" {
+		result.DeliveryMethod = DeliveryMethodSMTP
+	}
+	return result, err
+}
+
+func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Message, content []byte) (*DeliveryResult, error) {
 	requireTLS := messageRequiresTLS(msg)
 
 	// DKIM-sign once per delivery attempt, before recipients are grouped, so
