@@ -1341,7 +1341,9 @@ func (c *Config) validateDelivery(result *ValidationResult, sv *SecurityValidato
 	}
 
 	// Validate delivery mode
-	validModes := []string{"smtp", "lmtp", "local"}
+	// The runtime owns this list; duplicating it here is what let the two
+	// disagree in both directions.
+	validModes := smtp.DeliveryModes
 	if c.Delivery.Mode != "" && !contains(validModes, c.Delivery.Mode) {
 		result.AddError("delivery.mode", c.Delivery.Mode, fmt.Sprintf("invalid delivery mode, must be one of: %s", strings.Join(validModes, ", ")))
 	}
