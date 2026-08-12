@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/valkey-io/valkey-go"
 )
@@ -37,10 +38,18 @@ const (
 // domainKeyPrefix namespaces per-destination counters.
 const domainKeyPrefix = "domain:"
 
-// maxTrackedDomains bounds the set. Mail goes to an unbounded number of
-// destinations, and a set that only grows is a slow leak in a store nobody
-// prunes.
-const maxTrackedDomains = 5000
+// domainRetention is how long a destination's counters survive without
+// traffic.
+//
+// Every write refreshes it, so an active destination never expires and a
+// destination we have stopped sending to disappears on its own. The aggregate
+// hourly counters do the same thing with a 24-hour TTL; a report that describes
+// recent behaviour has no business keeping a year of it.
+const domainRetention = 30 * 24 * time.Hour
+
+// maxReportedDomains caps what one report returns. This is a limit on the
+// response, not on the store — the store is bounded by the TTL above.
+const maxReportedDomains = 5000
 
 // IncrDomainOutcome records one outcome against one destination.
 //
@@ -56,9 +65,14 @@ func (s *ValkeyStore) IncrDomainOutcome(ctx context.Context, domain, outcome str
 		return nil
 	}
 
+	// Every key written here gets its lifetime refreshed. Without that the
+	// counters and the destination set grow for as long as the server runs,
+	// which on a relay that sends to a long tail of domains is an unbounded
+	// leak in a store nobody prunes.
 	counter := s.prefix + domainKeyPrefix + domain + ":" + outcome
 	cmds := []valkey.Completed{
 		s.client.B().Incr().Key(counter).Build(),
+		s.client.B().Expire().Key(counter).Seconds(int64(domainRetention.Seconds())).Build(),
 		s.client.B().Sadd().Key(s.prefix + "domains").Member(domain).Build(),
 	}
 	for _, cmd := range cmds {
@@ -76,24 +90,24 @@ func (s *ValkeyStore) GetDomainStats(ctx context.Context) ([]DomainStats, error)
 	if err != nil {
 		return nil, err
 	}
-	if len(members) > maxTrackedDomains {
-		members = members[:maxTrackedDomains]
-	}
-
 	out := make([]DomainStats, 0, len(members))
+	var expired []string
 	for _, domain := range members {
 		stats := DomainStats{Domain: domain}
 		stats.Delivered = s.domainCounter(ctx, domain, OutcomeDelivered)
 		stats.Deferred = s.domainCounter(ctx, domain, OutcomeDeferred)
 		stats.Bounced = s.domainCounter(ctx, domain, OutcomeBounced)
 		if stats.Total() == 0 {
-			// In the set but with nothing recorded: the counters expired or
-			// were cleared. Reporting a row of zeros invites the reading that
-			// the domain is healthy rather than unknown.
+			// The counters have aged out. Drop the destination from the set as
+			// well, or the set is the one thing here that still grows forever.
+			// Reporting it as a row of zeros would also read as "healthy"
+			// rather than "no longer tracked".
+			expired = append(expired, domain)
 			continue
 		}
 		out = append(out, stats)
 	}
+	s.forgetDomains(ctx, expired)
 
 	// Busiest first: a destination we barely use is rarely the one causing the
 	// problem being investigated.
@@ -103,7 +117,26 @@ func (s *ValkeyStore) GetDomainStats(ctx context.Context) ([]DomainStats, error)
 		}
 		return out[i].Domain < out[j].Domain
 	})
+	if len(out) > maxReportedDomains {
+		out = out[:maxReportedDomains]
+	}
 	return out, nil
+}
+
+// forgetDomains removes destinations whose counters have expired.
+//
+// The TTL takes care of the counters; nothing but this takes care of the set
+// that names them, and a set that only grows is the leak this whole change
+// exists to avoid.
+func (s *ValkeyStore) forgetDomains(ctx context.Context, domains []string) {
+	if len(domains) == 0 {
+		return
+	}
+	cmd := s.client.B().Srem().Key(s.prefix + "domains").Member(domains...).Build()
+	if err := s.client.Do(ctx, cmd).Error(); err != nil {
+		// Losing this pass is harmless: the next report tries again.
+		return
+	}
 }
 
 // domainCounter reads one counter, treating anything unreadable as zero. A
