@@ -645,7 +645,6 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 			dh.logger.WarnContext(ctx, "Global memory limit exceeded before message processing",
 				"error", err,
 				"session_id", dh.session.sessionID,
-				"message_size", size,
 			)
 			return fmt.Errorf("552 5.3.4 Server memory limit exceeded")
 		}
@@ -658,7 +657,6 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 			dh.logger.WarnContext(ctx, "Session memory limit exceeded for message processing",
 				"error", err,
 				"session_id", dh.session.sessionID,
-				"message_size", size,
 				"estimated_processing_memory", estimatedProcessingMemory,
 			)
 			return fmt.Errorf("552 5.3.4 Session memory limit exceeded")
@@ -1685,14 +1683,70 @@ func (dh *DataHandler) performSecurityScan(ctx context.Context, view *scanConten
 		return nil, err
 	}
 
-	dh.logger.DebugContext(ctx, "Security scan completed",
+	// The verdict is the point of scanning, so it is reported at a level
+	// somebody runs at. This was Debug, which meant a server doing exactly what
+	// it was configured to do — finding a virus and tagging it — left no trace
+	// anywhere an operator or a dashboard would look. The scan happened, the
+	// header was added, and the fact was discarded.
+	//
+	// A detection is a Warn: an operator filtering to warnings is asking "is
+	// anything wrong", and mail carrying a virus qualifies whether or not the
+	// policy is to reject it. A clean scan is an Info, one per message,
+	// alongside message_accepted and message_delivery which are already there.
+	scanFields := []any{
+		"event_type", "scan",
+		"message_id", metadata.MessageID,
 		"passed", result.Passed,
-		"threats", len(result.Threats),
+		"threat_count", len(result.Threats),
 		"spam_score", result.SpamScore,
+		"spam_detected", result.SpamDetected,
 		"virus_found", result.VirusFound,
-	)
+	}
+	if len(result.Threats) > 0 {
+		// Bounded: a scanner having a bad day can report a great many threats,
+		// and a log line is not the place to find that out.
+		threats := result.Threats
+		if len(threats) > 10 {
+			threats = threats[:10]
+		}
+		scanFields = append(scanFields, "threats", threats)
+	}
+	dh.logger.LogAttrs(ctx, scanVerdictLevel(result), "message_scanned", attrsFrom(scanFields)...)
 
 	return result, nil
+}
+
+// scanVerdictLevel decides how loudly to report a scan.
+//
+// A detection is a warning: an operator filtering to warnings is asking "is
+// anything wrong", and mail carrying a threat qualifies whether or not the
+// configured policy is to reject it. A clean scan is informational, one line
+// per message alongside the acceptance and delivery it sits between.
+//
+// Split out from the logging call so the decision can be tested without a
+// reachable ClamAV or rspamd, which a unit test has no business requiring.
+func scanVerdictLevel(result *SecurityScanResult) slog.Level {
+	if result == nil {
+		return slog.LevelInfo
+	}
+	if result.VirusFound || result.SpamDetected || !result.Passed || len(result.Threats) > 0 {
+		return slog.LevelWarn
+	}
+	return slog.LevelInfo
+}
+
+// attrsFrom converts alternating key/value pairs to slog attributes, so the
+// verdict can be logged at a level chosen at runtime.
+func attrsFrom(pairs []any) []slog.Attr {
+	attrs := make([]slog.Attr, 0, len(pairs)/2)
+	for i := 0; i+1 < len(pairs); i += 2 {
+		key, ok := pairs[i].(string)
+		if !ok {
+			continue
+		}
+		attrs = append(attrs, slog.Any(key, pairs[i+1]))
+	}
+	return attrs
 }
 
 // performAntivirusScan performs antivirus scanning

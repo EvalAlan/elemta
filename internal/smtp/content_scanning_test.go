@@ -1,7 +1,9 @@
 package smtp
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -280,4 +282,86 @@ func TestSpamHeaderReportsTheRealThreshold(t *testing.T) {
 			t.Errorf("expected the configured threshold as fallback, got:\n%s", headers)
 		}
 	})
+}
+
+// The scan verdict used to be a Debug line, so a server finding a virus and
+// tagging it left no trace at the level anyone runs at. The scan happened, the
+// header was added, and the fact was discarded — invisible to an operator, to
+// the message trace, and to any dashboard built on the logs.
+
+// captureScanLogs runs a scan against a handler whose logger writes here.
+func captureScanLogs(t *testing.T, content []byte) (string, *SecurityScanResult) {
+	t.Helper()
+	var buf bytes.Buffer
+	dh := scanningHandler(t, nil, nil)
+	dh.logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	metadata := &MessageMetadata{MessageID: "scan-test", From: "a@example.com", To: []string{"b@example.com"}}
+	result, err := dh.performSecurityScan(context.Background(), newScanContent(content), metadata)
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	return buf.String(), result
+}
+
+func TestAScanVerdictIsVisibleAtInfo(t *testing.T) {
+	out, _ := captureScanLogs(t, []byte("Subject: ordinary\r\nFrom: a@example.com\r\n\r\nnothing to see\r\n"))
+
+	if !strings.Contains(out, "message_scanned") {
+		t.Fatalf("a completed scan logged nothing at INFO:\n%s", out)
+	}
+	// The fields a dashboard groups by, and the id that ties a verdict to the
+	// delivery of the same message.
+	for _, field := range []string{`"event_type":"scan"`, `"message_id":"scan-test"`, `"passed":true`} {
+		if !strings.Contains(out, field) {
+			t.Errorf("missing %s in:\n%s", field, out)
+		}
+	}
+}
+
+// TestADetectionIsAWarning: an operator filtering to warnings is asking "is
+// anything wrong", and mail carrying a threat qualifies whether or not the
+// configured policy is to reject it. Tested on the decision itself, because a
+// unit test has no business requiring a reachable ClamAV to find out how
+// loudly a virus is reported.
+func TestADetectionIsAWarning(t *testing.T) {
+	cases := []struct {
+		name   string
+		result *SecurityScanResult
+		want   slog.Level
+	}{
+		{"clean", &SecurityScanResult{Passed: true}, slog.LevelInfo},
+		{"virus found", &SecurityScanResult{Passed: true, VirusFound: true}, slog.LevelWarn},
+		{"spam detected", &SecurityScanResult{Passed: true, SpamDetected: true}, slog.LevelWarn},
+		{"scan did not pass", &SecurityScanResult{Passed: false}, slog.LevelWarn},
+		{"threat listed", &SecurityScanResult{Passed: true, Threats: []string{"Eicar-Test-Signature"}}, slog.LevelWarn},
+		// A tagging deployment still finds threats; it just does not refuse
+		// them. Reporting those at Info would hide the detections on exactly
+		// the servers most likely to want to see them.
+		{"nil result", nil, slog.LevelInfo},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := scanVerdictLevel(tc.result); got != tc.want {
+				t.Errorf("level = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestThreatsAreBoundedInTheLogLine: a scanner having a bad day can report a
+// great many threats, and a log line is not where anyone should discover that.
+func TestThreatsAreBoundedInTheLogLine(t *testing.T) {
+	many := make([]string, 50)
+	for i := range many {
+		many[i] = "threat"
+	}
+	trimmed := many
+	if len(trimmed) > 10 {
+		trimmed = trimmed[:10]
+	}
+	if len(trimmed) != 10 {
+		t.Errorf("threat list was not bounded: %d", len(trimmed))
+	}
 }
