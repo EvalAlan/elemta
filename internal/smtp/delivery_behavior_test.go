@@ -240,6 +240,9 @@ type deliveryMetricsStub struct{}
 func (s *deliveryMetricsStub) IncrDelivered(ctx context.Context) error { return nil }
 func (s *deliveryMetricsStub) IncrFailed(ctx context.Context) error    { return nil }
 func (s *deliveryMetricsStub) IncrDeferred(ctx context.Context) error  { return nil }
+func (s *deliveryMetricsStub) IncrDomainOutcome(ctx context.Context, domain, outcome string) error {
+	return nil
+}
 func (s *deliveryMetricsStub) AddRecentError(ctx context.Context, messageID, recipient, errorMsg string) error {
 	return nil
 }

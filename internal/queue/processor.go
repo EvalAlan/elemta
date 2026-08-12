@@ -12,6 +12,8 @@ import (
 	"net/textproto"
 	"strings"
 	"sync"
+
+	"github.com/busybox42/elemta/internal/metrics"
 	"time"
 
 	"github.com/busybox42/elemta/internal/logging"
@@ -145,6 +147,10 @@ type MetricsRecorder interface {
 	IncrFailed(ctx context.Context) error
 	IncrDeferred(ctx context.Context) error
 	AddRecentError(ctx context.Context, messageID, recipient, errorMsg string) error
+	// IncrDomainOutcome attributes one outcome to one destination. Aggregate
+	// counters say whether the queue is moving; they cannot say that one
+	// receiver has been deferring everything for an hour.
+	IncrDomainOutcome(ctx context.Context, domain, outcome string) error
 }
 
 // ClaimingStorageBackend defines optional atomic-claim semantics for distributed queue workers.
@@ -254,6 +260,47 @@ func (p *Processor) AddMetricsRecorder(recorder MetricsRecorder) {
 	if recorder != nil {
 		p.metricsRecorders = append(p.metricsRecorders, recorder)
 	}
+}
+
+// recordDomainOutcomes attributes each recipient's outcome to its destination.
+//
+// Derived from the recipient address rather than the route the handler
+// reported: the route is an MX host, and several hosts serve one domain, so
+// counting by host would split a destination's record across rows that each
+// look fine on their own.
+func (p *Processor) recordDomainOutcomes(result *DeliveryResult) {
+	if result == nil {
+		return
+	}
+	for _, outcome := range result.RecipientOutcomes {
+		var name string
+		switch outcome.Status {
+		case RecipientDelivered:
+			name = metrics.OutcomeDelivered
+		case RecipientTemporaryFailure:
+			name = metrics.OutcomeDeferred
+		case RecipientPermanentFailure:
+			name = metrics.OutcomeBounced
+		default:
+			continue
+		}
+		domain := recipientDomain(outcome.Recipient)
+		if domain == "" {
+			continue
+		}
+		p.recordMetric(func(r MetricsRecorder) error {
+			return r.IncrDomainOutcome(p.ctx, domain, name)
+		})
+	}
+}
+
+// recipientDomain is the part after the last @, lowercased.
+func recipientDomain(recipient string) string {
+	at := strings.LastIndex(recipient, "@")
+	if at < 0 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(recipient[at+1:]))
 }
 
 // recordMetric fans a recorder callback out to all registered recorders.
@@ -505,6 +552,12 @@ func (p *Processor) processMessage(msg Message) {
 	if p.handleRecipientOutcomes(msg, deliveryResult, deliveryErr, startTime) {
 		return
 	}
+
+	// Attribute outcomes to destinations before branching, so every path is
+	// counted: a message can be partly delivered and partly deferred, and
+	// recording only on the success branch would make a domain that defers half
+	// our mail look perfect.
+	p.recordDomainOutcomes(deliveryResult)
 
 	if deliveryErr == nil && deliveryResult.Success {
 		p.handleDeliverySuccess(msg, deliveryResult)

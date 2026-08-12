@@ -276,6 +276,16 @@ func (m *Metrics) IncrDeferred(_ context.Context) error {
 	return nil
 }
 
+// IncrDomainOutcome is a no-op for Prometheus, deliberately.
+//
+// Mail goes to an unbounded set of destinations, and a label with unbounded
+// cardinality is how a metrics endpoint becomes the outage. Per-destination
+// counts live in Valkey, where they are a bounded set that can be pruned.
+// Present to satisfy queue.MetricsRecorder.
+func (m *Metrics) IncrDomainOutcome(_ context.Context, _, _ string) error {
+	return nil
+}
+
 // AddRecentError is a no-op for Prometheus: a bounded recent-error list is a
 // Valkey concern, not a metrics counter. Present to satisfy queue.MetricsRecorder.
 func (m *Metrics) AddRecentError(_ context.Context, _, _, _ string) error {

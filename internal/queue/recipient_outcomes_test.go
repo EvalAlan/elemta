@@ -209,11 +209,18 @@ func (b *updateFailBackend) Update(msg Message) error {
 	return b.StorageBackend.Update(msg)
 }
 
-type metricCapture struct{ recent []string }
+type metricCapture struct {
+	recent  []string
+	domains []string // "domain:outcome" pairs, in the order they were recorded
+}
 
 func (*metricCapture) IncrDelivered(context.Context) error { return nil }
 func (*metricCapture) IncrFailed(context.Context) error    { return nil }
 func (*metricCapture) IncrDeferred(context.Context) error  { return nil }
+func (m *metricCapture) IncrDomainOutcome(_ context.Context, domain, outcome string) error {
+	m.domains = append(m.domains, domain+":"+outcome)
+	return nil
+}
 func (m *metricCapture) AddRecentError(_ context.Context, _, _, detail string) error {
 	m.recent = append(m.recent, detail)
 	return nil
