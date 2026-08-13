@@ -216,6 +216,29 @@ contradicts, and it should be resolved by deciding the policy rather than by
 flipping the flag. The antivirus path does work independently of all of this
 (EICAR as an attachment is detected and refused with 554 5.7.1).
 
+**Giving Rspamd Redis switches greylisting on, and it does not look like
+greylisting.** The greylist module does nothing without a Redis backend, so
+adding one for Bayes enabled it as a side effect. A stress run then reported
+clean mail *rejected* and GTUBE spam *accepted*, which reads as a scanner wired
+backwards. What was really happening: every message came from a triplet Rspamd
+had never seen, so it answered `soft reject` with a score of 0 on all of them,
+while GTUBE passed because `reject_on_spam` is false. `docker/rspamd/local.d/
+greylist.conf` now disables it explicitly. A load test sends thousands of
+messages from new triplets and greylisting exists to refuse exactly that, so
+the two cannot both be on and both be meaningful.
+
+Worth knowing separately: a `soft reject` must stay a 451. Turning it into a
+554 tells every first-time sender never to come back.
+`TestGreylistIsADeferralNotARejection` in `internal/antispam` covers it.
+
+**A stale container will send you hunting a bug that is already fixed.** The
+554-instead-of-451 above looked like a live defect in the disposition mapping;
+the mapping was correct and the running image simply predated it. `docker
+compose build elemta && docker compose up -d --force-recreate elemta` before
+concluding anything from the behaviour of a dev stack that has been up for
+hours. Reading the source and testing it directly agreed with each other and
+disagreed with the container, which is the signal.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
