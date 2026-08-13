@@ -112,9 +112,38 @@ def panels(dv):
             "ok": count_column("Accepted", 'event_type: "message_accepted"'),
             "bad": count_column("Rejected", 'msg: "message_scanned" and passed: false')},
          "columnOrder": ["time", "ok", "bad"], "incompleteColumns": {}},
-        {"legend": {"isVisible": True, "position": "right"}, "preferredSeriesType": "bar_stacked",
-         "layers": [{"layerId": "L1", "layerType": "data", "seriesType": "bar_stacked",
-                     "xAccessor": "time", "accessors": ["ok", "bad"]}]})))
+        {"legend": {"isVisible": True, "position": "right"}, "preferredSeriesType": "bar",
+         "layers": [{"layerId": "L1", "layerType": "data", "seriesType": "bar",
+                     "xAccessor": "time", "accessors": ["ok", "bad"],
+                     # Rejections on their own axis, because they are rare by
+                     # design and a shared axis hides them. Measured on a real
+                     # run: 35,000 accepted against 180 rejected puts the
+                     # rejected bar below one pixel, so a server refusing
+                     # everything it should and a server refusing nothing look
+                     # identical — which is the one distinction this panel
+                     # exists to draw.
+                     "yConfig": [{"forAccessor": "bad", "axisMode": "right"}]}]})))
+
+    # Why the delay climbs.
+    #
+    # The latency panel shows reception-to-delivery, which under load is mostly
+    # queue wait, and a rising line there says nothing about the cause. This
+    # says it directly: mail entering the queue against mail leaving it. On a
+    # stress run Elemta accepted ~6,600 a minute and delivered ~1,000, so the
+    # gap accumulated and the delay grew linearly until the run stopped and the
+    # queue drained. Two lines that separate are a server falling behind.
+    out.append(("elemta-backlog", lens(
+        "Into the queue vs out of it", "lnsXY",
+        {"columns": {
+            "time": {"label": "@timestamp", "dataType": "date", "operationType": "date_histogram",
+                     "sourceField": "@timestamp", "isBucketed": True,
+                     "params": {"interval": "auto"}},
+            "in": count_column("Accepted into the queue", 'event_type: "message_accepted"'),
+            "out": count_column("Delivered out of it", 'event_type: "delivery"')},
+         "columnOrder": ["time", "in", "out"], "incompleteColumns": {}},
+        {"legend": {"isVisible": True, "position": "right"}, "preferredSeriesType": "line",
+         "layers": [{"layerId": "L1", "layerType": "data", "seriesType": "line",
+                     "xAccessor": "time", "accessors": ["in", "out"]}]})))
 
     # What the scanners found. This is the panel the scan-verdict logging was
     # added for: the verdict used to be a Debug line and reached nothing.
