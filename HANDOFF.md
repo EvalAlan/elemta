@@ -359,6 +359,22 @@ the queue to actually scale with workers, the work is implementing
 `availableWorkers` rows instead of listing everything. Until then, a large
 backlog drains at tens per second regardless of configuration.
 
+**Two settings cap delivery, and they fight each other if they disagree.**
+`[queue_processor] workers` caps concurrent deliveries; `max_connections_per_domain`
+(top level, default 10) caps concurrent deliveries *to one destination*. The
+corpus sends everything to `example.com`, so with 20 workers against a limit of
+10 the surplus workers claim messages they cannot deliver and those are
+**deferred with retry backoff** rather than waiting for a slot. The queue then
+grows while the server looks like it is falling behind, and the log says
+`temporary failure: domain example.com is over concurrent delivery limit`.
+Keep `max_connections_per_domain` at or above `workers` for any single-domain
+benchmark, or the number measures the shaper.
+
+**Measure delivery, not acceptance.** `make bench-queue` fills the queue, stops
+sending, and times the drain by sampling the queue directory — independent of
+the log shipper. A stress test reporting "150/s" is reporting how fast the
+server said `250 OK`, which it can do while delivering nothing.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
