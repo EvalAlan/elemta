@@ -338,6 +338,27 @@ Filebeat adds or transforms rather than the raw content. It is worth chasing
 before trusting an exact event count; it is not worth blocking on for rates and
 ratios.
 
+**Only the Postgres backend claims work in bounded batches; file and SQLite
+rescan the whole queue every tick.** `Processor.processQueue` uses
+`ClaimMessages` when the backend offers it — and `PostgresStorageBackend` is the
+only one that does. Everything else falls to `ListMessages`, which reads *and
+sorts every message in the queue* on each `interval` (10s by default).
+
+That cost is O(queue depth), so the server slows down exactly when it is
+furthest behind, which is the wrong shape for a queue. It also explains why
+raising `workers` barely helps: the scan happens before any worker is
+dispatched. Measured draining a 20k backlog on the file backend, 5 workers gave
+21.0/s and 20 gave 23.4/s — +11% for 4x the concurrency — with per-minute rates
+swinging between 0.9/s and 40/s, which is the signature of a tick plus an
+expensive listing rather than of saturated delivery.
+
+So the file-vs-SQLite choice is a wash for throughput; both take the same path.
+The tombstone leak was the only real difference and it is fixed. If you want
+the queue to actually scale with workers, the work is implementing
+`ClaimingStorageBackend` for the file and SQLite backends — claiming
+`availableWorkers` rows instead of listing everything. Until then, a large
+backlog drains at tens per second regardless of configuration.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
