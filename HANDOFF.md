@@ -148,25 +148,46 @@ overlay disables it for that reason. If you are debugging a red cluster
 anyway, `docker system df` is usually the answer and build cache is normally
 most of it.
 
-**Turning on `reject_on_spam` in the dev stack would reject essentially all
-mail, including clean mail.** The dev Rspamd is untrained and the corpus is sent
-from a domain with no SPF, no DKIM and no rDNS, so ordinary clean messages score
-around 9.4 against a threshold of 6.0. Measured over 900 scanned messages: none
-scored below 6, 758 landed between 6 and 10 (the clean ones) and 142 scored 15
-or over (GTUBE and EICAR). Two clusters, both above the line. `reject_on_spam`
-is `false` in `config/elemta.toml` and has been since 152b165, which is what
-keeps this hidden — spam is flagged and then delivered.
+**The dev Rspamd scores real ham HIGHER than real spam. Do not tune the
+threshold; there is nothing to tune.** `rspamc stat` reports **`Messages
+learned: 0`** after 95,786 scanned. Bayes is untrained, so content contributes
+essentially nothing and the score is almost entirely infrastructure symbols —
+`HFILTER_HOSTNAME_UNKNOWN` (2.5), `MISSING_MID` (2.5), `DMARC_POLICY_REJECT`
+(2.0), `MISSING_DATE` (1.0), `DATE_IN_PAST` (1.0). Those penalise *replayed
+corpus mail*, not spam, and old legitimate mail trips more of them than modern
+spam does.
 
-This is a property of the dev environment rather than an Elemta bug, but it has
-two consequences. Any judgement about spam accuracy made on this stack is
-meaningless until Rspamd is trained or the threshold moved. And
-`tests/run_swaks_corpus.sh:67` asserts the GTUBE sample is *rejected*, which
-fails today and will keep failing: the assertion encodes an intent the
-configuration contradicts. Fix it by deciding the policy first — either reject
-at a threshold above the clean cluster, or change the assertion to expect
-acceptance carrying a spam header. Do not simply flip `reject_on_spam` to make
-the test pass; on this stack that rejects everything. The `elemta-spam-scores`
-panel exists to make the two clusters and the threshold's position visible.
+Measured on 80 Enron ham against 80 untroubled spam, scored through the dev
+Rspamd:
+
+| | median | p75 | max |
+|---|---|---|---|
+| ham (Enron) | 6.00 | 7.51 | 12.50 |
+| spam (2005) | 4.00 | 4.70 | 17.40 |
+| spam (2026-06) | 4.49 | 6.14 | 11.29 |
+
+86% of real spam scores below the *median ham score*. At the configured
+threshold of 6.0 this catches 14% of spam while flagging 65% of ham. Raising
+the threshold does not help, it just stops flagging: at 12.0 it catches 0% of
+recent spam. The 2026 sample is the control that rules out "the corpus is too
+old" — recent spam scores lower than 2001 ham.
+
+An earlier version of this note claimed clean mail and spam formed "two
+clusters" with spam higher. That was wrong, and wrong in an instructive way: it
+was measured on `tests/corpus`, where the only spam sample is GTUBE — a string
+designed to score enormously by definition. GTUBE proves the plumbing carries a
+score; it says nothing about classification. Any spam-accuracy claim measured
+without real ham *and* real spam is measuring the harness.
+
+So: spam scanning on this stack is not a spam filter, it is a
+missing-authentication detector. `reject_on_spam` is `false` in
+`config/elemta.toml` and has been since 152b165, which is the only reason this
+has not rejected mail. Do not turn it on to make a test pass. Train Bayes, or
+treat the spam verdict as non-functional and judge only the antivirus path,
+which does work (EICAR as an attachment is detected and refused with 554 5.7.1).
+`tests/run_swaks_corpus.sh:67` asserts the GTUBE sample is rejected and fails
+today; that assertion encodes an intent the configuration contradicts, and it
+should be resolved by deciding the policy, not by flipping the flag.
 
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
