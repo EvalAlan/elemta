@@ -414,6 +414,13 @@ func (p *Processor) processCleanup() {
 			} else if deleted > 0 {
 				p.logger.Info("Cleanup completed", "deleted", deleted)
 			}
+			// File-backend claims are held in memory and released when a
+			// message finishes. A crash mid-delivery leaves one behind, so the
+			// expired ones are swept here rather than accumulating for the life
+			// of the process.
+			if expired := forgetExpiredFileClaims(time.Now()); expired > 0 {
+				p.logger.Info("Released expired queue claims", "count", expired)
+			}
 		}
 	}
 }
@@ -443,14 +450,38 @@ func (p *Processor) processQueue(queueType QueueType) error {
 	)
 
 	if claimer, ok := p.manager.storageBackend.(ClaimingStorageBackend); ok {
-		availableWorkers := cap(p.workerSem) - len(p.workerSem)
-		if availableWorkers <= 0 {
-			return nil
-		}
+		// Keep claiming until the queue is empty, rather than one batch per
+		// tick. A single batch caps throughput at workers/interval — with 20
+		// workers on a 10s tick that is 2 messages a second, and it was
+		// measured at exactly that: 40 messages every 20 seconds while 6,000
+		// sat in the queue. The dispatch loop below blocks on the worker
+		// semaphore, so this paces itself and does not spin.
 		leaseUntil := time.Now().Add(15 * time.Minute)
-		messages, err = claimer.ClaimMessages(queueType, availableWorkers, p.workerID, leaseUntil)
-		if err != nil {
-			return fmt.Errorf("failed to claim messages: %w", err)
+		for {
+			select {
+			case <-p.ctx.Done():
+				return nil
+			default:
+			}
+			available := cap(p.workerSem) - len(p.workerSem)
+			if available <= 0 {
+				// Every worker is busy. Wait for one rather than returning,
+				// which would idle until the next tick.
+				select {
+				case <-p.ctx.Done():
+					return nil
+				case <-time.After(50 * time.Millisecond):
+				}
+				continue
+			}
+			batch, err := claimer.ClaimMessages(queueType, available, p.workerID, leaseUntil)
+			if err != nil {
+				return fmt.Errorf("failed to claim messages: %w", err)
+			}
+			if len(batch) == 0 {
+				return nil
+			}
+			p.dispatch(batch)
 		}
 	} else {
 		messages, err = p.manager.ListMessages(queueType)
@@ -459,11 +490,17 @@ func (p *Processor) processQueue(queueType QueueType) error {
 		}
 	}
 
-	// Process messages with concurrency control
+	p.dispatch(messages)
+	return nil
+}
+
+// dispatch hands messages to workers, blocking on the semaphore so it never
+// runs more than MaxConcurrent deliveries at once.
+func (p *Processor) dispatch(messages []Message) {
 	for _, msg := range messages {
 		select {
 		case <-p.ctx.Done():
-			return nil
+			return
 		case p.workerSem <- struct{}{}: // Acquire worker
 			// Check if we're already processing this message
 			p.manager.mutex.Lock()
@@ -479,8 +516,6 @@ func (p *Processor) processQueue(queueType QueueType) error {
 			go p.processMessage(msg)
 		}
 	}
-
-	return nil
 }
 
 // processMessage processes a single message
