@@ -13,7 +13,15 @@ max_size = 52428800  # 50MB
 # work. A destination that returns a 4xx is left alone for a while, and only
 # that destination; a message for one in backoff is deferred rather than held,
 # so a slow receiver cannot stall the queue behind it.
-max_connections_per_domain = 10
+# Concurrent deliveries to a single destination.
+#
+# Keep this at or above [queue_processor] workers. Below it, the surplus workers
+# claim messages they cannot deliver and those are deferred with retry backoff
+# rather than waiting for a slot — so the queue grows, the log fills with
+# "domain X is over concurrent delivery limit", and the server looks like it is
+# failing when it is obeying a limit. The dev stack delivers everything to one
+# domain over LMTP, so that is the normal case here, not an edge case.
+max_connections_per_domain = 20
 
 # Enforce RFC 5321 CRLF line endings in DATA (default: true).
 # This is the primary defence against SMTP smuggling: a bare LF that this
