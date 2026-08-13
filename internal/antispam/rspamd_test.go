@@ -365,3 +365,31 @@ func TestRspamdScoreFallbackRejectsOnlyAtThreshold(t *testing.T) {
 		}
 	}
 }
+
+// TestGreylistIsADeferralNotARejection: Rspamd answers a greylisted message
+// with action "soft reject" and a score of 0, which is a request to retry
+// shortly — not a verdict about the message. Mapping it to a permanent refusal
+// turns "try again in a few minutes" into "never" and discards legitimate mail
+// from every sender the server has not seen before.
+//
+// This is not hypothetical. Enabling Redis for the Bayes classifier switched
+// greylisting on as a side effect, and the dev stack began refusing clean mail
+// while accepting GTUBE — which reads as a scanner wired backwards rather than
+// as a deferral being mishandled.
+func TestGreylistIsADeferralNotARejection(t *testing.T) {
+	r := &Rspamd{threshold: 6.0}
+
+	got := r.resultFrom(RspamdResponse{Action: "soft reject", Score: 0, Required: 15})
+	if got.Disposition != DispositionDefer {
+		t.Fatalf("greylist mapped to %v, want defer", got.Disposition)
+	}
+	if got.Clean {
+		t.Error("a deferred message must not be reported clean, or it bypasses the defer")
+	}
+
+	// A score of 0 with a threshold of 15 must not be read as "well under the
+	// limit, therefore fine": the action carries the meaning here, not the score.
+	if got.Score != 0 {
+		t.Errorf("score = %v, want the 0 Rspamd reported", got.Score)
+	}
+}

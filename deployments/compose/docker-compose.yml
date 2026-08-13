@@ -190,6 +190,8 @@ services:
       # sections. Bayes and its Redis backend belong in local.d.
       - ../../docker/rspamd/local.d/classifier-bayes.conf:/etc/rspamd/local.d/classifier-bayes.conf:ro
       - ../../docker/rspamd/local.d/redis.conf:/etc/rspamd/local.d/redis.conf:ro
+      # Greylisting comes along for free with Redis and nobody asked for it.
+      - ../../docker/rspamd/local.d/greylist.conf:/etc/rspamd/local.d/greylist.conf:ro
       # - ./docker/rspamd/override.d/modules.conf:/etc/rspamd/override.d/modules.conf
       # - ./docker/rspamd/override.d/logging.conf:/etc/rspamd/override.d/logging.conf
       # - ./docker/rspamd/override.d/actions.conf:/etc/rspamd/override.d/actions.conf
