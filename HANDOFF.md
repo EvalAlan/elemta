@@ -213,19 +213,35 @@ Measured after training, sending real mail through SMTP rather than scoring it
 in isolation: **150 of 150 real Enron ham messages were accepted**, and GTUBE is
 refused with `554 5.7.1 identified as spam`.
 
-Be clear about what that buys, because it is less than it sounds. Elemta honours
-Rspamd's *action* rather than re-deciding from the score, and Rspamd only
-returns `reject` at score >= 15. Of 150 real 2026 spam messages, **1 was
-rejected and 149 were accepted and delivered carrying spam headers.** So this
-refuses the certain cases and tags everything else — a conservative and
-defensible policy, but "spam rejection is on" does not mean spam stops arriving.
+How much that refuses is set by Rspamd's `reject` action, not by this flag:
+Elemta honours the action rather than re-deciding from the score. At Rspamd's
+default of 15 it refused almost nothing real — 1 of 150 messages from the 2026
+untroubled corpus, while GTUBE reaches 15 by design, so the corpus test looked
+like spam rejection worked while real spam walked through.
 
-To reject more, lower Rspamd's reject action rather than reaching for
-`reject_on_spam`. From the held-out measurement after training: an action
-threshold of 10 catches 63.5% of spam with 0% of ham flagged, and 8 catches 96%
-at a cost of 1.0% of ham. 15 is where it sits now. Re-measure after any
-retraining; these numbers are a property of the trained classifier, not of the
-code.
+`docker/rspamd/local.d/actions.conf` sets it to 10. Measured live through SMTP
+with real mail at that setting:
+
+| | refused | delivered |
+|---|---|---|
+| real spam (untroubled 2026-06) | **95 of 150 (63.3%)** | 55 |
+| real ham (Enron) | 1 of 150 | 149 |
+
+The single refused "ham" was a PayPal phishing message sitting in a saved
+folder — `From: operations@paypal.com`, scoring 11.81 on `BLACKLIST_DMARC`
+because paypal.com publishes a reject policy. Refusing it is correct, so the
+honest false-positive count is **0 of 150**. Do not treat the Enron corpus as
+clean ham; it contains what a real mailbox contains.
+
+Why 10 and not lower: at 8 the held-out measurement caught 96% of spam and
+flagged 1.0% of ham. Refusing one in a hundred legitimate messages is far worse
+for a mail server than delivering spam somebody can filter, so 10 — the edge
+where ham loss stays at zero — is the trade taken. The live 63.3% matched the
+held-out prediction of 63.5%, which is the main reason to trust the table
+rather than a single run.
+
+These numbers describe the trained classifier. Retrain with `make rspamd-train`
+and re-measure before trusting them.
 
 Two mechanical notes. `reject_on_spam` is **not** hot-reloaded — the setting
 changes nothing until `docker restart elemta-node0`. And the container has two
