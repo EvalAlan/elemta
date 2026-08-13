@@ -179,15 +179,42 @@ designed to score enormously by definition. GTUBE proves the plumbing carries a
 score; it says nothing about classification. Any spam-accuracy claim measured
 without real ham *and* real spam is measuring the harness.
 
-So: spam scanning on this stack is not a spam filter, it is a
-missing-authentication detector. `reject_on_spam` is `false` in
-`config/elemta.toml` and has been since 152b165, which is the only reason this
-has not rejected mail. Do not turn it on to make a test pass. Train Bayes, or
-treat the spam verdict as non-functional and judge only the antivirus path,
-which does work (EICAR as an attachment is detected and refused with 554 5.7.1).
-`tests/run_swaks_corpus.sh:67` asserts the GTUBE sample is rejected and fails
-today; that assertion encodes an intent the configuration contradicts, and it
-should be resolved by deciding the policy, not by flipping the flag.
+So: untrained, spam scanning on this stack is not a spam filter, it is a
+missing-authentication detector.
+
+**Training fixes it, and `make rspamd-train` does the training and the
+measuring.** Bayes needs a Redis backend or it silently keeps nothing —
+`docker/rspamd/local.d/{classifier-bayes,redis.conf}` now point it at the
+Valkey already in the stack, on db5 because Elemta owns db0. Measured on
+held-out mail the classifier was never trained on:
+
+| | median ham | median spam | separation |
+|---|---|---|---|
+| untrained | 6.00 | 4.49 | **-1.51 (inverted)** |
+| ~250 per class | 4.00 | 10.43 | **+6.43** |
+| ~1750 per class | 4.00 | 10.28 | +6.28 |
+
+At a threshold of 8.0 the trained classifier catches 96% of held-out spam and
+flags 1.0% of ham. At the configured 6.0 it still flags 13.5% of ham. **Nearly
+all of the benefit arrives in the first ~250 messages per class**; going to
+1750 moved the separation by 0.04. If you are training, train a few hundred of
+each and spend the remaining effort on whether the labels are right.
+
+Two limits on that result, both of which matter before anyone quotes it. It is
+Enron ham against untroubled spam, so some of what the classifier learned is
+"Enron-ness versus untroubled-ness" — mailing conventions, header styles, date
+ranges — rather than ham versus spam in general, and it will not transfer to
+your own mail at that accuracy. And the Valkey backing it runs with
+`maxmemory-policy allkeys-lru`, so tokens can be evicted under memory pressure
+and the filter degrades without saying so.
+
+`reject_on_spam` is still `false` in `config/elemta.toml` and has been since
+152b165. Do not turn it on to make a test pass; decide the threshold from a
+measurement first. `tests/run_swaks_corpus.sh:67` asserts the GTUBE sample is
+rejected and fails today — that assertion encodes an intent the configuration
+contradicts, and it should be resolved by deciding the policy rather than by
+flipping the flag. The antivirus path does work independently of all of this
+(EICAR as an attachment is detected and refused with 554 5.7.1).
 
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer

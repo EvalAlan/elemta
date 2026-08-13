@@ -186,6 +186,10 @@ services:
       - ../../docker/rspamd/override.d/asn.conf:/etc/rspamd/override.d/asn.conf:ro
       - ../../docker/rspamd/override.d/fuzzy_check.conf:/etc/rspamd/override.d/fuzzy_check.conf:ro
       - ../../docker/rspamd/override.d/options.inc:/etc/rspamd/override.d/options.inc:ro
+      # local.d merges with the packaged config; override.d replaces whole
+      # sections. Bayes and its Redis backend belong in local.d.
+      - ../../docker/rspamd/local.d/classifier-bayes.conf:/etc/rspamd/local.d/classifier-bayes.conf:ro
+      - ../../docker/rspamd/local.d/redis.conf:/etc/rspamd/local.d/redis.conf:ro
       # - ./docker/rspamd/override.d/modules.conf:/etc/rspamd/override.d/modules.conf
       # - ./docker/rspamd/override.d/logging.conf:/etc/rspamd/override.d/logging.conf
       # - ./docker/rspamd/override.d/actions.conf:/etc/rspamd/override.d/actions.conf
