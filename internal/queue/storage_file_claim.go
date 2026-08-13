@@ -127,19 +127,19 @@ func (fs *FileStorageBackend) ClaimMessages(queueType QueueType, limit int, work
 		if err != nil {
 			// Gone between the listing and the read: delivered by someone else,
 			// or consumed. Not this worker's problem, and not an error.
-			fs.ReleaseMessageClaim(id, workerID)
+			_ = fs.ReleaseMessageClaim(id, workerID)
 			continue
 		}
 		msg, err := decodeMessage(data, id, queueType)
 		if err != nil {
-			fs.ReleaseMessageClaim(id, workerID)
+			_ = fs.ReleaseMessageClaim(id, workerID)
 			continue
 		}
 		// A message whose enqueue was already consumed is not deliverable; List
 		// filters these and so must this, or a consumed message is delivered
 		// twice.
 		if err := fs.suppressConsumed(msg); err != nil {
-			fs.ReleaseMessageClaim(id, workerID)
+			_ = fs.ReleaseMessageClaim(id, workerID)
 			continue
 		}
 		messages = append(messages, msg)
