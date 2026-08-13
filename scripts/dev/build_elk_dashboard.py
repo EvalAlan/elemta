@@ -120,17 +120,22 @@ def panels(dv):
             "ok": count_column("Accepted", 'event_type: "message_accepted"'),
             "bad": count_column("Rejected", 'msg: "message_scanned" and passed: false')},
          "columnOrder": ["time", "ok", "bad"], "incompleteColumns": {}},
-        {"legend": {"isVisible": True, "position": "right"}, "preferredSeriesType": "bar",
-         "layers": [{"layerId": "L1", "layerType": "data", "seriesType": "bar",
-                     "xAccessor": "time", "accessors": ["ok", "bad"],
-                     # Rejections on their own axis, because they are rare by
-                     # design and a shared axis hides them. Measured on a real
-                     # run: 35,000 accepted against 180 rejected puts the
-                     # rejected bar below one pixel, so a server refusing
-                     # everything it should and a server refusing nothing look
-                     # identical — which is the one distinction this panel
-                     # exists to draw.
-                     "yConfig": [{"forAccessor": "bad", "axisMode": "right"}]}]})))
+        # Stacked, so the bar height is everything the server was offered and
+        # the split shows what it did with it. Total throughput and outcome in
+        # one shape.
+        #
+        # This costs the guarantee that rejections are visible. They share the
+        # left axis now, so a thin enough slice disappears — and it was very
+        # thin once: before spam rejection was enabled the only refusals were
+        # virus, 180 against 35,000 accepted, which is half a percent and below
+        # a pixel. With Rspamd's reject action at 10 the refused share runs
+        # around 15% of a corpus run and reads clearly. If refusals ever drop
+        # back to a rounding error, a stacked chart will say "nothing is being
+        # refused" and "almost nothing is being refused" in the same picture;
+        # the scan-verdict and spam-score panels are where to check.
+        {"legend": {"isVisible": True, "position": "right"}, "preferredSeriesType": "bar_stacked",
+         "layers": [{"layerId": "L1", "layerType": "data", "seriesType": "bar_stacked",
+                     "xAccessor": "time", "accessors": ["ok", "bad"]}]})))
 
     # Why the delay climbs.
     #
