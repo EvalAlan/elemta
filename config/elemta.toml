@@ -230,7 +230,18 @@ scan_limit = 26214400  # 25MB
 
 [antispam]
 enabled = true
-reject_on_spam = false
+# Refuse only what Rspamd itself calls a reject.
+#
+# Elemta honours Rspamd's action rather than re-deciding from the raw score, so
+# this rejects the "reject" action only — currently score >= 15. Everything
+# Rspamd merely tags is still delivered carrying its spam headers.
+#
+# This was false until the Bayes classifier was trained, and turning it on
+# before that would have refused nearly all mail: untrained, the score was a
+# sum of infrastructure penalties that put ordinary clean mail above the
+# threshold. Trained, 0 of 61 real ham messages reach the reject action while
+# GTUBE reaches it exactly. If you retrain, re-measure before trusting this.
+reject_on_spam = true
 
 [antispam.rspamd]
 enabled = true
