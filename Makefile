@@ -1,4 +1,5 @@
 .PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
+	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
 	uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
@@ -7,6 +8,8 @@
 # Core paths/config
 COMPOSE_FILE ?= deployments/compose/docker-compose.yml
 MAILAUTH_COMPOSE_FILE ?= deployments/compose/docker-compose-mailauth.yml
+ELK_COMPOSE_FILE ?= deployments/compose/docker-compose-elk.yml
+SINK_COMPOSE_FILE ?= deployments/compose/docker-compose-sink.yml
 MAILAUTH_LAB_DIR ?= /tmp/elemta-mailauth-lab
 DEV_ENV_FILE ?= .env
 DEV_MIN_SERVICES ?= elemta elemta-web elemta-dovecot elemta-ldap valkey
@@ -43,7 +46,7 @@ ADMIN_USER ?= admin
 ADMIN_PASSWORD ?=
 
 # Queue backend config
-QUEUE_BACKEND ?= sqlite
+QUEUE_BACKEND ?= file
 QUEUE_POSTGRES_DSN ?= postgres://elemta:elemta@elemta-postgres:5432/elemta_queue?sslmode=disable
 POSTGRES_CONTAINER_NAME ?= elemta-postgres
 POSTGRES_USER ?= elemta
@@ -92,6 +95,21 @@ help:
 	@echo "  refresh-dev-env          - Refresh backend/compose keys in .env"
 	@echo "  certs / clean-certs      - Generate or remove the dev TLS certificate"
 	@echo ""
+	@echo "📊 Logs & Observability:"
+	@echo "  elk-up         - Elasticsearch + Kibana + Filebeat, reading the log volume"
+	@echo "  elk-dashboard  - Import the Elemta overview dashboard into Kibana"
+	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
+	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
+	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
+	@echo "  sink-up / sink-down - Point delivery at a discarding LMTP sink (~4500/s) and back"
+	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
+	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
+	@echo "                   Untrained, the dev scanner scores real ham ABOVE real spam."
+	@echo "  elk-status     - Cluster health and how many events are indexed"
+	@echo "  elk-down       - Stop them (indexed logs are kept in their volume)"
+	@echo "  Kibana http://localhost:5601 > Discover > elemta-*   Elasticsearch :9200"
+	@echo "  Adds to whatever dev stack is running; it changes nothing about Elemta."
+	@echo ""
 	@echo "🔧 Build & Test:"
 	@echo "  build          - Build all binaries (server, queue, cli)   clean - Remove artifacts"
 	@echo "  test           - Go unit tests            test-docker    - Integration suite"
@@ -107,7 +125,7 @@ help:
 	@echo "  ADMIN_USER=admin              Dashboard account name"
 	@echo "  ADMIN_PASSWORD=               Dashboard password (generated when empty)"
 	@echo "  CERT_DAYS=$(CERT_DAYS)                  Dev certificate lifetime, in days"
-	@echo "  QUEUE_BACKEND=$(QUEUE_BACKEND)         file | sqlite | postgres"
+	@echo "  QUEUE_BACKEND=$(QUEUE_BACKEND)           file | sqlite | postgres"
 	@echo "  PLUGIN_RATE_LIMITER=$(PLUGIN_RATE_LIMITER)      PLUGIN_CLAMAV=$(PLUGIN_CLAMAV)   PLUGIN_RSPAMD=$(PLUGIN_RSPAMD)"
 	@echo "  PLUGIN_ACCESS_CONTROL=$(PLUGIN_ACCESS_CONTROL)    PLUGIN_RBL=$(PLUGIN_RBL)      PLUGIN_MASS_MAILER=$(PLUGIN_MASS_MAILER)"
 	@echo "  PLUGIN_SPF=$(PLUGIN_SPF)  PLUGIN_DKIM=$(PLUGIN_DKIM)  PLUGIN_DMARC=$(PLUGIN_DMARC)  PLUGIN_ARC=$(PLUGIN_ARC)"
@@ -124,6 +142,10 @@ help:
 	@echo "    single global setting, so it sends over remote SMTP to a sink at :8027 instead"
 	@echo "    of over LMTP to Roundcube. That is what makes DKIM signing and ARC sealing"
 	@echo "    visible. Run any other install-dev target to go back; it cleans up for you."
+	@echo "  • Logs are line-delimited JSON on stdout and in /app/logs/elemta.log. Only"
+	@echo "    'level' from [logging] is read; type/output/file are ignored and the server"
+	@echo "    warns if they are set. Shipping is 'make elk-up', which reads the log volume"
+	@echo "    rather than making the mail server depend on a log store being up."
 	@echo "  • The dev TLS certificate expires in $(CERT_DAYS) days on purpose, so the expiry warning on"
 	@echo "    the Health page is exercised. It is regenerated when it lapses."
 	@echo "  • The dev stack is self-signed and binds 0.0.0.0. Fine on a laptop; bind 127.0.0.1"
@@ -560,6 +582,164 @@ install-dev-mailauth: check-tools docker-build ensure-dev-certs ensure-dev-env r
 
 # Removes the mail-auth services so an ordinary dev install is not left with
 # orphaned DNS and sink containers from a previous one.
+# ELK adds to whatever dev stack is already running rather than replacing one.
+# Nothing about how Elemta runs changes: it already writes line-delimited JSON
+# to a shared volume, and Filebeat reads that volume. That is why this is
+# elk-up rather than another install-dev target.
+elk-up:
+	@echo "📊 Starting Elasticsearch, Kibana and Filebeat"
+	@# Elasticsearch stores an index per day and Kibana is not small. Warning
+	@# here beats the failure mode this replaces, where a full disk surfaced as
+	@# bulk-insert timeouts with nothing pointing at the cause.
+	@free=$$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2 {print int($$4/1048576)}'); \
+	if [ -n "$$free" ] && [ "$$free" -lt 10 ]; then \
+		echo "⚠️  Only $${free}GB free where Docker stores data."; \
+		echo "    Elasticsearch will run, but it has nowhere to grow."; \
+		echo "    'docker system df' shows what is reclaimable; build cache is usually most of it."; \
+	fi
+	@docker compose -f $(COMPOSE_FILE) -f $(ELK_COMPOSE_FILE) up -d elemta-elasticsearch elemta-kibana elemta-filebeat
+	@echo "⏳ Waiting for Elasticsearch (first start builds indices; this takes a minute)..."
+	@for i in $$(seq 1 60); do 		if curl -fs "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=1s" >/dev/null 2>&1; then break; fi; 		sleep 2; 	done
+	@curl -fs "http://localhost:9200/_cluster/health" >/dev/null 2>&1 		&& echo "✅ Elasticsearch is up at http://localhost:9200" 		|| echo "⚠️  Elasticsearch did not become healthy; check 'docker logs elemta-elasticsearch'"
+	@$(MAKE) --no-print-directory elk-data-view
+	@$(MAKE) --no-print-directory elk-dashboard
+	@echo "   📊 Kibana:        http://localhost:5601  (give it a minute on first start)"
+	@echo "   🔎 Logs:          Kibana > Discover > elemta-*"
+	@echo "   Both ports bind to 127.0.0.1 only: this stack has no authentication."
+	@echo "   Try: make elk-status    to see what has been indexed"
+
+# The data view is what makes Discover usable; without it Kibana shows a setup
+# wizard instead of the logs. Created through the API so it is visible here
+# rather than buried in the shipper's config.
+elk-data-view:
+	@# Kibana answers /api/status with 200 long before it can serve the API, so
+	@# waiting for the endpoint to respond is not waiting for Kibana. Wait for it
+	@# to call itself available, or the data view is created against a Kibana
+	@# that refuses it and the failure gets reported as "already exists".
+	@ready=""; for i in $$(seq 1 60); do level=$$(curl -fs http://localhost:5601/api/status 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['status']['overall']['level'])" 2>/dev/null); if [ "$$level" = "available" ]; then ready=yes; break; fi; sleep 3; done; \
+	if [ -z "$$ready" ]; then echo "⚠️  Kibana did not become available; no data view was created."; echo "    Retry with 'make elk-data-view' once http://localhost:5601 loads."; exit 0; fi; \
+	body=$$(curl -s -X POST http://localhost:5601/api/data_views/data_view -H 'kbn-xsrf: true' -H 'Content-Type: application/json' -d '{"data_view":{"title":"elemta-*","name":"Elemta logs","timeFieldName":"@timestamp"}}' 2>/dev/null); \
+	if echo "$$body" | grep -q '"id"'; then \
+		echo "✅ Kibana data view 'elemta-*' created"; \
+	elif echo "$$body" | grep -qi 'duplicate'; then \
+		echo "✅ Kibana data view 'elemta-*' already exists"; \
+	else \
+		echo "⚠️  Kibana refused the data view: $$body"; \
+		echo "    Create it under Stack Management > Data Views (pattern elemta-*, time field @timestamp)"; \
+	fi
+
+# The dashboard ships as an exported saved-object file rather than being built
+# through the API here: building needs a live Kibana and is a development step
+# (scripts/dev/build_elk_dashboard.py), while importing is what a user wants.
+elk-dashboard:
+	@if [ ! -f deployments/elk/elemta-dashboard.ndjson ]; then \
+		echo "⚠️  deployments/elk/elemta-dashboard.ndjson is missing."; \
+		echo "    Rebuild it against a live Kibana with:"; \
+		echo "      python3 scripts/dev/build_elk_dashboard.py"; \
+		exit 0; \
+	fi; \
+	ready=""; for i in $$(seq 1 40); do level=$$(curl -fs http://localhost:5601/api/status 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['status']['overall']['level'])" 2>/dev/null); if [ "$$level" = "available" ]; then ready=yes; break; fi; sleep 3; done; \
+	if [ -z "$$ready" ]; then echo "⚠️  Kibana is not available; the dashboard was not imported."; echo "    Retry with 'make elk-dashboard' once http://localhost:5601 loads."; exit 0; fi; \
+	body=$$(curl -s -X POST 'http://localhost:5601/api/saved_objects/_import?overwrite=true' -H 'kbn-xsrf: true' --form file=@deployments/elk/elemta-dashboard.ndjson 2>/dev/null); \
+	if echo "$$body" | grep -q '"success":true'; then \
+		echo "✅ Dashboard imported: http://localhost:5601/app/dashboards#/view/elemta-overview"; \
+	else \
+		echo "⚠️  Kibana refused the dashboard import: $$body"; \
+	fi
+
+# Train the Bayes classifier from a labelled corpus, and measure whether it
+# worked on messages it was not trained on.
+#
+# Without this the dev Rspamd has no statistical filter and scores real ham
+# above real spam — see the trap in HANDOFF.md. HAM_DIR and SPAM_DIR must point
+# at directories of plain message files; the untroubled corpus ships .7z
+# archives that need extracting first.
+HAM_DIR ?= /mnt/data/email-corpus/enron/extracted/maildir
+SPAM_DIR ?=
+rspamd-train:
+	@if [ -z "$(SPAM_DIR)" ]; then \
+		echo "SPAM_DIR is not set. Point it at a directory of spam messages:"; \
+		echo "  make rspamd-train SPAM_DIR=/path/to/extracted/spam"; \
+		echo "Optionally HAM_DIR=... (default $(HAM_DIR))"; \
+		exit 1; \
+	fi
+	@python3 scripts/dev/train_rspamd.py --ham-dir "$(HAM_DIR)" --spam-dir "$(SPAM_DIR)" \
+		--train $(or $(TRAIN),2000) --test $(or $(TEST),200)
+
+# Checks that each panel would draw something. A panel querying a field nobody
+# logs renders an empty chart, which is indistinguishable from a quiet server.
+elk-dashboard-check:
+	@python3 scripts/dev/check_elk_dashboard.py
+
+# Point delivery at a discarding LMTP sink instead of Dovecot.
+#
+# Benchmarking against Dovecot measures Dovecot — maildir writes, indexing and
+# sieve, saturating near 70/s. The sink accepts and discards at ~4,500/s, so it
+# cannot be the thing being measured. Dovecot and Roundcube keep running; only
+# where the queue delivers changes.
+sink-up:
+	@docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) up -d elemta-sink
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
+	@# Without the reseed the setting above is ignored: the services read a copy
+	@# of the config on a volume, seeded once. Same trap as install-dev.
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
+	@echo "✅ Delivery now goes to the sink (elemta-sink:2424); nothing is stored."
+	@echo "   Benchmark:  make bench-queue"
+	@echo "   Sink rate:  docker logs -f elemta-sink"
+	@echo "   Undo:       make sink-down"
+
+sink-down:
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
+	@docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) rm -sf elemta-sink >/dev/null 2>&1 || true
+	@echo "✅ Delivery restored to Dovecot; mail lands in real mailboxes again."
+
+# Rewrites [delivery] host/port. Same approach as configure-plugins: the repo
+# config is the source that gets seeded, so it is what has to change.
+DELIVERY_HOST ?= elemta-dovecot
+DELIVERY_PORT ?= 2424
+configure-delivery-target:
+	@python3 scripts/dev/set_delivery_target.py "$(DELIVERY_HOST)" "$(DELIVERY_PORT)"
+
+# Delivery throughput, which is a different number from acceptance throughput.
+# Fills the queue, stops sending, and times the drain.
+bench-queue:
+	@python3 scripts/dev/bench_queue.py --messages $(or $(MESSAGES),6000) --concurrency $(or $(CONCURRENCY),40)
+
+# Traffic worth looking at. The dashboard is mostly empty without it, because
+# a mail server with no mail has nothing to show.
+stress-corpus:
+	@python3 scripts/dev/stress_corpus.py --messages $(or $(MESSAGES),300) --concurrency $(or $(CONCURRENCY),10)
+
+elk-status:
+	@# Separates the three states this used to report as one. "No index yet" and
+	@# "Elasticsearch is down" look identical from a failed curl, and telling an
+	@# operator the store is unreachable when it is merely empty sends them
+	@# debugging the wrong thing.
+	@health=$$(curl -fs "http://localhost:9200/_cluster/health" 2>/dev/null); \
+	if [ -z "$$health" ]; then \
+		echo "❌ Elasticsearch is not answering on http://localhost:9200 (is 'make elk-up' running?)"; \
+		exit 0; \
+	fi; \
+	status=$$(echo "$$health" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])"); \
+	echo "🔎 Cluster: $$status  (yellow is normal for one node: replicas cannot be allocated)"; \
+	if [ "$$status" = "red" ]; then \
+		echo "   A red cluster on a dev box is nearly always disk. Check 'df -h' and 'docker system df'."; \
+	fi; \
+	count=$$(curl -fs "http://localhost:9200/elemta-*/_count" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null); \
+	if [ -z "$$count" ]; then \
+		echo "🔎 No elemta-* index yet. Filebeat creates it on the first log line it ships."; \
+		exit 0; \
+	fi; \
+	echo "🔎 Indexed: $$count log events"; \
+	curl -fs "http://localhost:9200/elemta-*/_search?size=1&sort=@timestamp:desc" 2>/dev/null \
+		| python3 -c "import json,sys; h=json.load(sys.stdin)['hits']['hits']; s=h[0]['_source'] if h else None; print('🔎 Latest:', s.get('@timestamp'), s.get('component'), '-', s.get('msg')) if s else print('🔎 Latest: nothing yet')" 2>/dev/null
+
+elk-down:
+	@docker compose -f $(COMPOSE_FILE) -f $(ELK_COMPOSE_FILE) rm -sf elemta-elasticsearch elemta-kibana elemta-filebeat >/dev/null 2>&1 || true
+	@echo "Stopped the ELK services. Their data volumes are kept;"
+	@echo "'docker volume rm compose_elemta_elasticsearch_data' removes the indexed logs."
+
 stop-mailauth-services:
 	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) rm -sf elemta-mailauth-dns elemta-mailauth-sink >/dev/null 2>&1 || true
 

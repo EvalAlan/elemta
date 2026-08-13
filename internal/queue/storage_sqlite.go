@@ -126,12 +126,23 @@ CREATE TABLE IF NOT EXISTS queue_enqueue_tombstones (
   id TEXT PRIMARY KEY,
   metadata TEXT NOT NULL,
   content BLOB NOT NULL,
-  consumed_at TEXT NOT NULL
+  consumed_at TEXT NOT NULL,
+  content_digest TEXT NOT NULL DEFAULT ''
 );
+
+CREATE INDEX IF NOT EXISTS idx_queue_tombstones_consumed_at ON queue_enqueue_tombstones(consumed_at);
 `
 
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to initialize sqlite schema: %w", err)
+	}
+
+	// CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
+	// a queue created before tombstones carried a digest needs the column added.
+	// A duplicate-column error means a previous start already did it.
+	if _, err := s.db.Exec(`ALTER TABLE queue_enqueue_tombstones ADD COLUMN content_digest TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("failed to add tombstone digest column: %w", err)
 	}
 
 	return nil
@@ -198,10 +209,11 @@ func (s *SQLiteStorageBackend) CreateMessageIfAbsent(msg Message, content []byte
 
 	var tombMetadata string
 	var tombContent []byte
-	err = tx.QueryRow(`SELECT metadata, content FROM queue_enqueue_tombstones WHERE id = ?`, msg.ID).Scan(&tombMetadata, &tombContent)
+	var tombDigest string
+	err = tx.QueryRow(`SELECT metadata, content, content_digest FROM queue_enqueue_tombstones WHERE id = ?`, msg.ID).Scan(&tombMetadata, &tombContent, &tombDigest)
 	if err == nil {
 		var existing Message
-		if json.Unmarshal([]byte(tombMetadata), &existing) != nil || !sameEnqueueMessage(existing, msg) || !bytes.Equal(tombContent, content) {
+		if json.Unmarshal([]byte(tombMetadata), &existing) != nil || !sameEnqueueMessage(existing, msg) || !sameTombstoneContent(tombDigest, tombContent, content) {
 			return false, fmt.Errorf("message ID %q conflicts with consumed enqueue identity", msg.ID)
 		}
 		// Repair a crash/legacy interrupted consume which left a live half behind.
@@ -258,16 +270,19 @@ func (s *SQLiteStorageBackend) DeleteMessageWithTombstone(msg Message, content [
 	// Acquire the writer slot before inspecting the ledger/live pair. Never
 	// overwrite a prior consumed identity: doing so would make conflicting reuse
 	// appear valid after restart.
-	if _, err = tx.Exec(`INSERT OR IGNORE INTO queue_enqueue_tombstones(id, metadata, content, consumed_at) VALUES (?, ?, ?, ?)`, msg.ID, string(metadata), content, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+	// The body is deliberately not stored; the digest is what the conflict
+	// check needs. See internal/queue/tombstone.go.
+	if _, err = tx.Exec(`INSERT OR IGNORE INTO queue_enqueue_tombstones(id, metadata, content, consumed_at, content_digest) VALUES (?, ?, ?, ?, ?)`, msg.ID, string(metadata), []byte{}, time.Now().UTC().Format(time.RFC3339Nano), tombstoneDigest(content)); err != nil {
 		return err
 	}
 	var tombMetadata string
 	var tombContent []byte
-	if err := tx.QueryRow(`SELECT metadata, content FROM queue_enqueue_tombstones WHERE id = ?`, msg.ID).Scan(&tombMetadata, &tombContent); err != nil {
+	var tombDigest string
+	if err := tx.QueryRow(`SELECT metadata, content, content_digest FROM queue_enqueue_tombstones WHERE id = ?`, msg.ID).Scan(&tombMetadata, &tombContent, &tombDigest); err != nil {
 		return err
 	}
 	var tombMessage Message
-	if json.Unmarshal([]byte(tombMetadata), &tombMessage) != nil || !sameEnqueueMessage(tombMessage, msg) || !bytes.Equal(tombContent, content) {
+	if json.Unmarshal([]byte(tombMetadata), &tombMessage) != nil || !sameEnqueueMessage(tombMessage, msg) || !sameTombstoneContent(tombDigest, tombContent, content) {
 		return fmt.Errorf("message ID %q conflicts with consumed enqueue identity", msg.ID)
 	}
 
@@ -504,6 +519,14 @@ func (s *SQLiteStorageBackend) Cleanup(retentionHours int) (int, error) {
 
 	cutoff := time.Now().Add(-time.Duration(retentionHours) * time.Hour)
 	cutoffStr := cutoff.UTC().Format(time.RFC3339Nano)
+
+	// Tombstones are pruned on their own age and independently of whether any
+	// message rows expired. They outnumber live messages several times over, so
+	// returning early on "no old messages" would leave the leak running.
+	tombCutoff := time.Now().Add(-time.Duration(tombstoneRetentionHours) * time.Hour).UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.Exec(`DELETE FROM queue_enqueue_tombstones WHERE consumed_at < ?`, tombCutoff); err != nil {
+		return 0, fmt.Errorf("failed to cleanup enqueue tombstones: %w", err)
+	}
 
 	ids, err := s.listIDsOlderThan(cutoffStr)
 	if err != nil {

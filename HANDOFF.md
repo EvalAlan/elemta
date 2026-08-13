@@ -122,6 +122,283 @@ of that report had neither and grew forever.
 that a TTL was set or a set was pruned against a fake, and that package went a
 long time with no tests at all while both sides of the feature stubbed around it.
 
+**Most of `[logging]` does nothing.** Only `level` is read. The server always
+writes line-delimited JSON to stdout and to `/app/logs/elemta.log`; `type`,
+`output` and `file` are parsed into the config struct and ignored, and it warns
+at startup when they are set. The shipped config used to say `type = "elastic"`
+with an Elasticsearch URL, so an operator had every reason to think logs were
+being shipped when nothing was.
+
+Do not fix that by wiring up `internal/logging/elastic.go`. It flushes
+synchronously while holding its own lock, so a slow log store would stall SMTP
+sessions every time the buffer filled; it refuses to construct when
+Elasticsearch is unreachable, so the mail server would not start; and it drops
+logs silently when disconnected. Mail delivery should not depend on a log store.
+`make elk-up` ships the same logs with a Filebeat that reads the log volume, so
+Elasticsearch being down costs you logs and nothing else.
+
+**A red Elasticsearch on a dev box is nearly always disk.** Elasticsearch will
+not allocate a shard to a node past its 90% high watermark, and the symptom is
+not "disk full": the stack comes up healthy, Kibana loads, and the only sign is
+bulk-insert timeouts in Filebeat's log. This was measured, not assumed — at 92%
+used with 77GB free, which is not a machine in trouble, the default watermark
+left the cluster red with four unassigned shards and nothing indexed; the same
+disk with the watermark off gave a yellow cluster and 18,860 events. The dev
+overlay disables it for that reason. If you are debugging a red cluster
+anyway, `docker system df` is usually the answer and build cache is normally
+most of it.
+
+**The dev Rspamd scores real ham HIGHER than real spam. Do not tune the
+threshold; there is nothing to tune.** `rspamc stat` reports **`Messages
+learned: 0`** after 95,786 scanned. Bayes is untrained, so content contributes
+essentially nothing and the score is almost entirely infrastructure symbols —
+`HFILTER_HOSTNAME_UNKNOWN` (2.5), `MISSING_MID` (2.5), `DMARC_POLICY_REJECT`
+(2.0), `MISSING_DATE` (1.0), `DATE_IN_PAST` (1.0). Those penalise *replayed
+corpus mail*, not spam, and old legitimate mail trips more of them than modern
+spam does.
+
+Measured on 80 Enron ham against 80 untroubled spam, scored through the dev
+Rspamd:
+
+| | median | p75 | max |
+|---|---|---|---|
+| ham (Enron) | 6.00 | 7.51 | 12.50 |
+| spam (2005) | 4.00 | 4.70 | 17.40 |
+| spam (2026-06) | 4.49 | 6.14 | 11.29 |
+
+86% of real spam scores below the *median ham score*. At the configured
+threshold of 6.0 this catches 14% of spam while flagging 65% of ham. Raising
+the threshold does not help, it just stops flagging: at 12.0 it catches 0% of
+recent spam. The 2026 sample is the control that rules out "the corpus is too
+old" — recent spam scores lower than 2001 ham.
+
+An earlier version of this note claimed clean mail and spam formed "two
+clusters" with spam higher. That was wrong, and wrong in an instructive way: it
+was measured on `tests/corpus`, where the only spam sample is GTUBE — a string
+designed to score enormously by definition. GTUBE proves the plumbing carries a
+score; it says nothing about classification. Any spam-accuracy claim measured
+without real ham *and* real spam is measuring the harness.
+
+So: untrained, spam scanning on this stack is not a spam filter, it is a
+missing-authentication detector.
+
+**Training fixes it, and `make rspamd-train` does the training and the
+measuring.** Bayes needs a Redis backend or it silently keeps nothing —
+`docker/rspamd/local.d/{classifier-bayes,redis.conf}` now point it at the
+Valkey already in the stack, on db5 because Elemta owns db0. Measured on
+held-out mail the classifier was never trained on:
+
+| | median ham | median spam | separation |
+|---|---|---|---|
+| untrained | 6.00 | 4.49 | **-1.51 (inverted)** |
+| ~250 per class | 4.00 | 10.43 | **+6.43** |
+| ~1750 per class | 4.00 | 10.28 | +6.28 |
+
+At a threshold of 8.0 the trained classifier catches 96% of held-out spam and
+flags 1.0% of ham. At the configured 6.0 it still flags 13.5% of ham. **Nearly
+all of the benefit arrives in the first ~250 messages per class**; going to
+1750 moved the separation by 0.04. If you are training, train a few hundred of
+each and spend the remaining effort on whether the labels are right.
+
+Two limits on that result, both of which matter before anyone quotes it. It is
+Enron ham against untroubled spam, so some of what the classifier learned is
+"Enron-ness versus untroubled-ness" — mailing conventions, header styles, date
+ranges — rather than ham versus spam in general, and it will not transfer to
+your own mail at that accuracy. And the Valkey backing it runs with
+`maxmemory-policy allkeys-lru`, so tokens can be evicted under memory pressure
+and the filter degrades without saying so.
+
+`reject_on_spam` is now `true`, which was only safe once Bayes was trained.
+Measured after training, sending real mail through SMTP rather than scoring it
+in isolation: **150 of 150 real Enron ham messages were accepted**, and GTUBE is
+refused with `554 5.7.1 identified as spam`.
+
+How much that refuses is set by Rspamd's `reject` action, not by this flag:
+Elemta honours the action rather than re-deciding from the score. At Rspamd's
+default of 15 it refused almost nothing real — 1 of 150 messages from the 2026
+untroubled corpus, while GTUBE reaches 15 by design, so the corpus test looked
+like spam rejection worked while real spam walked through.
+
+`docker/rspamd/local.d/actions.conf` sets it to 10. Measured live through SMTP
+with real mail at that setting:
+
+| | refused | delivered |
+|---|---|---|
+| real spam (untroubled 2026-06) | **95 of 150 (63.3%)** | 55 |
+| real ham (Enron) | 1 of 150 | 149 |
+
+The single refused "ham" was a PayPal phishing message sitting in a saved
+folder — `From: operations@paypal.com`, scoring 11.81 on `BLACKLIST_DMARC`
+because paypal.com publishes a reject policy. Refusing it is correct, so the
+honest false-positive count is **0 of 150**. Do not treat the Enron corpus as
+clean ham; it contains what a real mailbox contains.
+
+Why 10 and not lower: at 8 the held-out measurement caught 96% of spam and
+flagged 1.0% of ham. Refusing one in a hundred legitimate messages is far worse
+for a mail server than delivering spam somebody can filter, so 10 — the edge
+where ham loss stays at zero — is the trade taken. The live 63.3% matched the
+held-out prediction of 63.5%, which is the main reason to trust the table
+rather than a single run.
+
+These numbers describe the trained classifier. Retrain with `make rspamd-train`
+and re-measure before trusting them.
+
+Two mechanical notes. `reject_on_spam` is **not** hot-reloaded — the setting
+changes nothing until `docker restart elemta-node0`. And the container has two
+config paths: `/app/config` is the repo bind-mounted read-only, while
+`/app/runtime-config` is the seeded volume the server actually reads. Editing
+the repo file changes what `/app/config` shows and has no effect on behaviour,
+which is a convincing way to conclude a setting does not work. `tests/run_swaks_corpus.sh:67` asserts the GTUBE sample is
+rejected and fails today — that assertion encodes an intent the configuration
+contradicts, and it should be resolved by deciding the policy rather than by
+flipping the flag. The antivirus path does work independently of all of this
+(EICAR as an attachment is detected and refused with 554 5.7.1).
+
+**Giving Rspamd Redis switches greylisting on, and it does not look like
+greylisting.** The greylist module does nothing without a Redis backend, so
+adding one for Bayes enabled it as a side effect. A stress run then reported
+clean mail *rejected* and GTUBE spam *accepted*, which reads as a scanner wired
+backwards. What was really happening: every message came from a triplet Rspamd
+had never seen, so it answered `soft reject` with a score of 0 on all of them,
+while GTUBE passed because `reject_on_spam` is false. `docker/rspamd/local.d/
+greylist.conf` now disables it explicitly. A load test sends thousands of
+messages from new triplets and greylisting exists to refuse exactly that, so
+the two cannot both be on and both be meaningful.
+
+Worth knowing separately: a `soft reject` must stay a 451. Turning it into a
+554 tells every first-time sender never to come back.
+`TestGreylistIsADeferralNotARejection` in `internal/antispam` covers it.
+
+**A stale container will send you hunting a bug that is already fixed.** The
+554-instead-of-451 above looked like a live defect in the disposition mapping;
+the mapping was correct and the running image simply predated it. `docker
+compose build elemta && docker compose up -d --force-recreate elemta` before
+concluding anything from the behaviour of a dev stack that has been up for
+hours. Reading the source and testing it directly agreed with each other and
+disagreed with the container, which is the signal.
+
+**Elemta accepts mail several times faster than it delivers it, and the only
+visible symptom is a rising delivery delay.** Measured during a stress run:
+~6,600 messages a minute accepted into the queue against ~1,000 a minute
+delivered out of it, so the backlog grew by ~5,700 a minute and
+reception-to-delivery delay climbed linearly to 18 minutes. It drained back to
+6 seconds within a couple of minutes of the load stopping, so nothing is stuck
+— intake simply outruns delivery. Whether that matters depends on what the
+queue is for, but a delay graph that only ever climbs during a load test is
+this, not a broken metric. The `elemta-backlog` panel plots both rates so the
+cause is visible next to the effect.
+
+**Counting `event_type: "rejection"` double-counts.** Every rejection is logged
+twice under that name: once as an operational warning in
+`internal/smtp/session_data.go` and once by `LogRejection` in
+`internal/logging/message_logger.go:134`, which feeds the message trace. Both
+are wanted; the name collision is the problem. For a count of refused messages
+use `msg: "message_scanned" and passed: false`, which is emitted once. The 2:1
+ratio is how this was spotted.
+
+**The queue defaults to the file backend, and a pre-existing SQLite queue is
+carrying a leak.** Enqueue tombstones stored the whole message body and nothing
+ever deleted them, in the SQLite *and* Postgres backends. Measured on a dev
+queue after two days of load testing: 296,707 tombstones holding 1.9GB of
+bodies, 93% of a 2.6GB database, against 62,464 live messages. Beyond the disk,
+every enqueue probes an index that never stops growing, which is the likeliest
+reason delivery-rate measurements drifted downward across a session.
+
+Fixed in `internal/queue/tombstone.go`: tombstones store a SHA-256 digest
+instead of the body, and `Cleanup` prunes them at `tombstoneRetentionHours`
+(24h). The conflict check the body existed for — same ID, different bytes —
+still works, on the digest. Rows written before the fix keep their body and no
+digest, and are still compared by content until they age out; no migration
+rewrites the table.
+
+`QUEUE_BACKEND` now defaults to `file` while the SQLite path is re-measured
+under load. A queue created before the fix still contains the old tombstones —
+delete it rather than trusting a benchmark taken against it.
+
+**Elemta logs several fields ECS defines as objects, and Elasticsearch drops
+the whole event when it sees one.** `service` (82% of lines), `server` (2.4%,
+but 33% of a delivery-heavy run — it is on every "Attempting LMTP delivery"),
+`error` (2.7%), plus one-off `source`, `file` and `host` on startup lines. Each
+is a plain string where ECS expects an object, so Elasticsearch answers "tried
+to parse field [x] as object, but found a concrete value" and Filebeat discards
+the event with a warning nobody reads. `deployments/elk/filebeat.yml` renames
+them to their ECS homes.
+
+This has now been found three times, always by accident, because the symptom is
+a dashboard that looks quiet rather than broken. `make elk-dashboard-check` now
+reports Filebeat's drop count first, so the next one announces itself. To
+identify the field, replay real log lines as `_bulk` `create` ops against the
+`elemta-*` data stream and read the per-item errors — Filebeat's own warning
+does not name the field, and its debug logging routes the detail to a separate
+event-log sink.
+
+**About 3% of log lines are still dropped and I could not reproduce it.**
+Replaying the same lines by hand indexes them cleanly, so it is something
+Filebeat adds or transforms rather than the raw content. It is worth chasing
+before trusting an exact event count; it is not worth blocking on for rates and
+ratios.
+
+**Only the Postgres backend claims work in bounded batches; file and SQLite
+rescan the whole queue every tick.** `Processor.processQueue` uses
+`ClaimMessages` when the backend offers it — and `PostgresStorageBackend` is the
+only one that does. Everything else falls to `ListMessages`, which reads *and
+sorts every message in the queue* on each `interval` (10s by default).
+
+That cost is O(queue depth), so the server slows down exactly when it is
+furthest behind, which is the wrong shape for a queue. It also explains why
+raising `workers` barely helps: the scan happens before any worker is
+dispatched. Measured draining a 20k backlog on the file backend, 5 workers gave
+21.0/s and 20 gave 23.4/s — +11% for 4x the concurrency — with per-minute rates
+swinging between 0.9/s and 40/s, which is the signature of a tick plus an
+expensive listing rather than of saturated delivery.
+
+So the file-vs-SQLite choice is a wash for throughput; both take the same path.
+The tombstone leak was the only real difference and it is fixed. If you want
+the queue to actually scale with workers, the work is implementing
+`ClaimingStorageBackend` for the file and SQLite backends — claiming
+`availableWorkers` rows instead of listing everything. Until then, a large
+backlog drains at tens per second regardless of configuration.
+
+**Two settings cap delivery, and they fight each other if they disagree.**
+`[queue_processor] workers` caps concurrent deliveries; `max_connections_per_domain`
+(top level, default 10) caps concurrent deliveries *to one destination*. The
+corpus sends everything to `example.com`, so with 20 workers against a limit of
+10 the surplus workers claim messages they cannot deliver and those are
+**deferred with retry backoff** rather than waiting for a slot. The queue then
+grows while the server looks like it is falling behind, and the log says
+`temporary failure: domain example.com is over concurrent delivery limit`.
+Keep `max_connections_per_domain` at or above `workers` for any single-domain
+benchmark, or the number measures the shaper.
+
+**Measure delivery, not acceptance.** `make bench-queue` fills the queue, stops
+sending, and times the drain by sampling the queue directory — independent of
+the log shipper. A stress test reporting "150/s" is reporting how fast the
+server said `250 OK`, which it can do while delivering nothing.
+
+**Dovecot is not the delivery bottleneck; Elemta is.** `make sink-up` repoints
+`[delivery]` at an LMTP sink that accepts and discards, measured at ~4,500/s for
+10KB messages against Dovecot's ~70/s. Draining the same backlog to each:
+
+| destination | average | peak |
+|---|---|---|
+| Dovecot | 28.8/s | 94.6/s |
+| sink (~50x faster) | 37.9/s | 91.8/s |
+
+The same peak against a destination fifty times quicker. Roughly 90/s across 20
+workers is about 220ms per message spent inside Elemta, not in delivery. Any
+work aimed at delivery throughput belongs there, not in the mailbox server.
+
+More workers do not help: 50 workers measured *worse* than 20 (30.7/s average,
+58.1/s peak) on a host at load 3 of 16 cores, so it is contention rather than
+saturation. `Processor.processQueue` and `processMessage` both take the single
+`manager.mutex`, which is the first place to look. Not profiled yet — that is a
+lead, not a conclusion.
+
+**A container created by `make sink-up` carries `ELEMTA_CONFIG_RESEED=true`, so
+every restart re-seeds and discards edits to the runtime config.** Change
+`config/elemta.toml` and restart instead; editing `/app/runtime-config` silently
+reverts. This cost a benchmark run that reported the old worker count.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
