@@ -239,6 +239,25 @@ concluding anything from the behaviour of a dev stack that has been up for
 hours. Reading the source and testing it directly agreed with each other and
 disagreed with the container, which is the signal.
 
+**Elemta accepts mail several times faster than it delivers it, and the only
+visible symptom is a rising delivery delay.** Measured during a stress run:
+~6,600 messages a minute accepted into the queue against ~1,000 a minute
+delivered out of it, so the backlog grew by ~5,700 a minute and
+reception-to-delivery delay climbed linearly to 18 minutes. It drained back to
+6 seconds within a couple of minutes of the load stopping, so nothing is stuck
+— intake simply outruns delivery. Whether that matters depends on what the
+queue is for, but a delay graph that only ever climbs during a load test is
+this, not a broken metric. The `elemta-backlog` panel plots both rates so the
+cause is visible next to the effect.
+
+**Counting `event_type: "rejection"` double-counts.** Every rejection is logged
+twice under that name: once as an operational warning in
+`internal/smtp/session_data.go` and once by `LogRejection` in
+`internal/logging/message_logger.go:134`, which feeds the message trace. Both
+are wanted; the name collision is the problem. For a count of refused messages
+use `msg: "message_scanned" and passed: false`, which is emitted once. The 2:1
+ratio is how this was spotted.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
