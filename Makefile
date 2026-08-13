@@ -2,17 +2,23 @@
 	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
-	uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
+	install-dev-bench uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
 	rebuild rebuild-dev docker docker-build docker-run docker-stop docker-setup docker-down update lint lint-fix fmt
 
 # Core paths/config
 COMPOSE_FILE ?= deployments/compose/docker-compose.yml
 MAILAUTH_COMPOSE_FILE ?= deployments/compose/docker-compose-mailauth.yml
 ELK_COMPOSE_FILE ?= deployments/compose/docker-compose-elk.yml
-SINK_COMPOSE_FILE ?= deployments/compose/docker-compose-sink.yml
 MAILAUTH_LAB_DIR ?= /tmp/elemta-mailauth-lab
 DEV_ENV_FILE ?= .env
-DEV_MIN_SERVICES ?= elemta elemta-web elemta-dovecot elemta-ldap valkey
+# elemta-sink runs in every dev stack but is not the delivery target: keeping it
+# up means 'make sink-up' is a restart rather than a deploy, and mail still goes
+# to a real mailbox until someone asks otherwise.
+DEV_MIN_SERVICES ?= elemta elemta-web elemta-dovecot elemta-ldap valkey elemta-sink
+DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-roundcube
+# The benchmarking stack: everything that scans, nothing that stores. Roundcube
+# is pointless here because delivery is discarded.
+DEV_BENCH_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd
 
 # Development TLS certificate.
 #
@@ -64,6 +70,7 @@ help:
 	@echo "⚡ Quick Start:"
 	@echo "  make install-dev              # Minimal dev stack, plugins on, prints a dashboard login"
 	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
+	@echo "  make install-dev-bench        # Scanners on, delivery DISCARDED — for throughput work"
 	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
 	@echo "  make install-dev-mailauth     # Dev stack for SPF/DKIM/DMARC/ARC: fixed DNS, mail lands at :8027"
 	@echo "  make install                  # Interactive production setup"
@@ -101,7 +108,8 @@ help:
 	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
 	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
 	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
-	@echo "  sink-up / sink-down - Point delivery at a discarding LMTP sink (~4500/s) and back"
+	@echo "  sink-up        - Discard delivered mail (~4500/s) so benchmarks measure Elemta"
+	@echo "  sink-down      - Delivery to real mailboxes + Roundcube at :8026"
 	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
 	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
 	@echo "                   Untrained, the dev scanner scores real ham ABOVE real spam."
@@ -132,6 +140,9 @@ help:
 	@echo "    e.g. make install-dev PLUGIN_RBL=off CERT_DAYS=90"
 	@echo ""
 	@echo "💡 Things that surprise people:"
+	@echo "  • Benchmarks against Dovecot measure Dovecot (~70/s: maildir writes, indexing)."
+	@echo "    'make sink-up' points delivery at a sink that absorbs ~4500/s, so the number"
+	@echo "    is about Elemta. Mail is discarded while it is on; 'make sink-down' undoes it."
 	@echo "  • Editing config/elemta.toml does not change a running stack. The services read a"
 	@echo "    copy on a shared volume, seeded once, because the web UI writes to it too."
 	@echo "    'make install-dev' re-seeds from the file; 'up' and 'restart' do not."
@@ -465,6 +476,17 @@ print-dev-summary:
 	@echo "   📊 Metrics:   http://localhost:8080/metrics"
 	@echo "   🌐 Web UI:    http://localhost:8025  (login required)"
 	@echo ""
+	@# Report where mail actually goes rather than asserting it. The two installs
+	@# differ on this, and a summary that guesses is worse than none.
+	@target=$$(docker exec elemta-node0 sh -c "sed -n '/^\[delivery\]/,/^\[/p' /app/runtime-config/elemta.toml | grep -m1 '^host'" 2>/dev/null | sed 's/.*= *//; s/"//g'); \
+	if [ "$$target" = "elemta-sink" ]; then \
+		echo "   📭 Delivery:  a DISCARDING SINK. Delivered mail is not stored anywhere."; \
+		echo "                 make sink-down   → real mailboxes + Roundcube"; \
+	elif [ -n "$$target" ]; then \
+		echo "   📬 Delivery:  $$target — mail lands in real mailboxes."; \
+		echo "                 make sink-up     → discard instead, for throughput work"; \
+	fi
+	@echo ""
 	@echo "   👤 Mailbox user:   user@example.com / password   (for sending/receiving mail)"
 	@echo "   🔑 Dashboard login: printed above by bootstrap-admin — a different account"
 	@echo "                       make reset-admin-password if you missed it"
@@ -493,6 +515,38 @@ install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-de
 	@./scripts/init-ldap-if-needed.sh || true
 	@$(MAKE) bootstrap-admin
 	@$(MAKE) print-dev-summary
+
+# A stack for measuring throughput: scanners on, delivery discarded.
+#
+# Separate from install-dev-full rather than a flag on it, because "mail is
+# thrown away" is not a detail to bury in an option. Anyone running this has
+# said so.
+install-dev-bench: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+	@echo "🚀 Elemta Development Setup (Benchmarking)"
+	@echo "=========================================="
+	@$(MAKE) stop-mailauth-services
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) configure-plugins
+	@echo "🚀 Starting services..."
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d $(DEV_BENCH_SERVICES)
+	@# 'up -d <list>' starts what is listed and stops nothing, so a Roundcube
+	@# left over from install-dev-full would keep running against mail that is
+	@# now being discarded.
+	@docker compose -f $(COMPOSE_FILE) rm -sf elemta-roundcube >/dev/null 2>&1 || true
+	@echo "⏳ Initializing LDAP..."
+	@./scripts/init-ldap-if-needed.sh || true
+	@$(MAKE) bootstrap-admin
+	@# sink-up rather than a configure step: it force-recreates elemta, which is
+	@# what actually makes the reseed happen. Compose will not recreate a
+	@# container whose spec has not changed, so setting the target without it
+	@# leaves the running server delivering to the old destination.
+	@$(MAKE) --no-print-directory sink-up
+	@$(MAKE) print-dev-summary
+	@echo "   Measure with: make bench-queue"
+	@# The repo config stays as shipped: the sink lives in the seeded copy the
+	@# server reads, and a benchmarking run should not rewrite the default
+	@# everyone else gets.
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424 >/dev/null
 
 install-dev-postgres:
 	@echo "🐘 Elemta Development Setup (Postgres Queue)"
@@ -545,7 +599,7 @@ install-dev-full: check-tools docker-build ensure-dev-certs ensure-dev-env refre
 	@echo "🚀 Starting services..."
 	@# See install-dev: without the reseed the settings configured above are
 	@# ignored on every deploy after the first.
-	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d $(DEV_FULL_SERVICES)
 	@echo "⏳ Initializing LDAP..."
 	@./scripts/init-ldap-if-needed.sh || true
 	@$(MAKE) bootstrap-admin
@@ -678,21 +732,22 @@ elk-dashboard-check:
 # cannot be the thing being measured. Dovecot and Roundcube keep running; only
 # where the queue delivers changes.
 sink-up:
-	@docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) up -d elemta-sink
+	@docker compose -f $(COMPOSE_FILE) up -d elemta-sink
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
 	@# Without the reseed the setting above is ignored: the services read a copy
 	@# of the config on a volume, seeded once. Same trap as install-dev.
-	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
-	@echo "✅ Delivery now goes to the sink (elemta-sink:2424); nothing is stored."
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
+	@echo "✅ Delivery goes to the sink (elemta-sink:2424). Mail is discarded."
 	@echo "   Benchmark:  make bench-queue"
 	@echo "   Sink rate:  docker logs -f elemta-sink"
-	@echo "   Undo:       make sink-down"
 
+# Real mailboxes: deliver to Dovecot and start Roundcube to read the result.
 sink-down:
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424
 	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
-	@docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) rm -sf elemta-sink >/dev/null 2>&1 || true
-	@echo "✅ Delivery restored to Dovecot; mail lands in real mailboxes again."
+	@docker compose -f $(COMPOSE_FILE) up -d elemta-roundcube >/dev/null 2>&1 || true
+	@echo "✅ Delivery goes to Dovecot; mail lands in real mailboxes."
+	@echo "   ✉️  Roundcube: http://localhost:8026  (user@example.com / password)"
 
 # Rewrites [delivery] host/port. Same approach as configure-plugins: the repo
 # config is the source that gets seeded, so it is what has to change.

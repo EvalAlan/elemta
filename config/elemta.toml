@@ -121,6 +121,15 @@ datasource_pass = "admin"
 datasource_db = "dc=example,dc=com"
 
 [delivery]
+# Delivery goes to a real mailbox server, because a mail server that discards
+# mail by default is a bad thing to hand someone.
+#
+# For throughput work this is the wrong destination: Dovecot's maildir writes
+# and indexing cost ~100ms a message and saturate near 70/s, so a benchmark
+# against it measures Dovecot. 'make sink-up' repoints delivery at a sink that
+# absorbs ~4,500/s and therefore cannot be what is being measured;
+# 'make sink-down' brings it back here. The sink container runs either way, so
+# switching costs a restart and nothing else.
 mode = "lmtp"
 max_messages_per_minute_per_domain = 0  # 0 = no limit
 host = "elemta-dovecot"
