@@ -375,6 +375,14 @@ sending, and times the drain by sampling the queue directory — independent of
 the log shipper. A stress test reporting "150/s" is reporting how fast the
 server said `250 OK`, which it can do while delivering nothing.
 
+**The dev stack discards delivered mail by default.** `[delivery]` points at
+`elemta-sink`, an LMTP sink that accepts and drops everything, because
+delivering to Dovecot measures Dovecot. Roundcube is not started for the same
+reason — there is nothing for it to show. `make sink-down` switches delivery to
+Dovecot and starts Roundcube at :8026; `make sink-up` switches back. Anyone
+debugging "my mail vanished" on a fresh stack is looking at this, and the
+install summary says so in full.
+
 **Dovecot is not the delivery bottleneck; Elemta is.** `make sink-up` repoints
 `[delivery]` at an LMTP sink that accepts and discards, measured at ~4,500/s for
 10KB messages against Dovecot's ~70/s. Draining the same backlog to each:

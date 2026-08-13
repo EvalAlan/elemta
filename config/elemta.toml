@@ -121,9 +121,19 @@ datasource_pass = "admin"
 datasource_db = "dc=example,dc=com"
 
 [delivery]
+# Delivery goes to a discarding sink by default, not to Dovecot.
+#
+# Mail delivered here is GONE — nothing stores it. That is deliberate: measuring
+# delivery against Dovecot measures Dovecot's maildir writes and indexing
+# (~70/s), which is the wrong number for everything except "how fast does this
+# reach a real mailbox". The sink absorbs ~4,500/s and so cannot be what is
+# being measured.
+#
+# 'make sink-down' points this back at elemta-dovecot and starts Roundcube,
+# which is what to use when you need to read delivered mail.
 mode = "lmtp"
 max_messages_per_minute_per_domain = 0  # 0 = no limit
-host = "elemta-dovecot"
+host = "elemta-sink"
 port = 2424
 timeout = 30
 retry_delay = 60

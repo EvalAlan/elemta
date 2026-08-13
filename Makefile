@@ -9,10 +9,13 @@
 COMPOSE_FILE ?= deployments/compose/docker-compose.yml
 MAILAUTH_COMPOSE_FILE ?= deployments/compose/docker-compose-mailauth.yml
 ELK_COMPOSE_FILE ?= deployments/compose/docker-compose-elk.yml
-SINK_COMPOSE_FILE ?= deployments/compose/docker-compose-sink.yml
 MAILAUTH_LAB_DIR ?= /tmp/elemta-mailauth-lab
 DEV_ENV_FILE ?= .env
-DEV_MIN_SERVICES ?= elemta elemta-web elemta-dovecot elemta-ldap valkey
+# Roundcube is deliberately absent: the default delivery destination is a sink,
+# so there is no delivered mail for a webmail client to show. 'make sink-down'
+# switches to real mailboxes and starts it.
+DEV_MIN_SERVICES ?= elemta elemta-web elemta-dovecot elemta-ldap valkey elemta-sink
+DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd
 
 # Development TLS certificate.
 #
@@ -63,7 +66,7 @@ help:
 	@echo ""
 	@echo "⚡ Quick Start:"
 	@echo "  make install-dev              # Minimal dev stack, plugins on, prints a dashboard login"
-	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
+	@echo "  make install-dev-full         # Everything, incl. ClamAV and Rspamd (no Roundcube)"
 	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
 	@echo "  make install-dev-mailauth     # Dev stack for SPF/DKIM/DMARC/ARC: fixed DNS, mail lands at :8027"
 	@echo "  make install                  # Interactive production setup"
@@ -101,7 +104,8 @@ help:
 	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
 	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
 	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
-	@echo "  sink-up / sink-down - Point delivery at a discarding LMTP sink (~4500/s) and back"
+	@echo "  sink-up        - Delivery to a discarding sink (~4500/s). THE DEFAULT."
+	@echo "  sink-down      - Delivery to real mailboxes + Roundcube at :8026"
 	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
 	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
 	@echo "                   Untrained, the dev scanner scores real ham ABOVE real spam."
@@ -132,6 +136,9 @@ help:
 	@echo "    e.g. make install-dev PLUGIN_RBL=off CERT_DAYS=90"
 	@echo ""
 	@echo "💡 Things that surprise people:"
+	@echo "  • Delivered mail is DISCARDED by default. Delivery goes to a sink so that"
+	@echo "    throughput measures Elemta rather than Dovecot. 'make sink-down' switches"
+	@echo "    to real mailboxes and starts Roundcube; 'make sink-up' switches back."
 	@echo "  • Editing config/elemta.toml does not change a running stack. The services read a"
 	@echo "    copy on a shared volume, seeded once, because the web UI writes to it too."
 	@echo "    'make install-dev' re-seeds from the file; 'up' and 'restart' do not."
@@ -465,6 +472,10 @@ print-dev-summary:
 	@echo "   📊 Metrics:   http://localhost:8080/metrics"
 	@echo "   🌐 Web UI:    http://localhost:8025  (login required)"
 	@echo ""
+	@echo "   📭 Delivery:  a DISCARDING SINK. Delivered mail is not stored anywhere."
+	@echo "                 This is for measuring throughput without measuring Dovecot."
+	@echo "                 make sink-down   → deliver to real mailboxes + Roundcube"
+	@echo ""
 	@echo "   👤 Mailbox user:   user@example.com / password   (for sending/receiving mail)"
 	@echo "   🔑 Dashboard login: printed above by bootstrap-admin — a different account"
 	@echo "                       make reset-admin-password if you missed it"
@@ -545,12 +556,11 @@ install-dev-full: check-tools docker-build ensure-dev-certs ensure-dev-env refre
 	@echo "🚀 Starting services..."
 	@# See install-dev: without the reseed the settings configured above are
 	@# ignored on every deploy after the first.
-	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d $(DEV_FULL_SERVICES)
 	@echo "⏳ Initializing LDAP..."
 	@./scripts/init-ldap-if-needed.sh || true
 	@$(MAKE) bootstrap-admin
 	@$(MAKE) print-dev-summary
-	@echo "   ✉️  Roundcube: http://localhost:8026"
 
 # install-dev-mailauth is a dev stack in its own right, not a mode layered on
 # another one. Delivery mode is a single global setting, so a stack cannot
@@ -678,21 +688,22 @@ elk-dashboard-check:
 # cannot be the thing being measured. Dovecot and Roundcube keep running; only
 # where the queue delivers changes.
 sink-up:
-	@docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) up -d elemta-sink
+	@docker compose -f $(COMPOSE_FILE) up -d elemta-sink
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
 	@# Without the reseed the setting above is ignored: the services read a copy
 	@# of the config on a volume, seeded once. Same trap as install-dev.
-	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
-	@echo "✅ Delivery now goes to the sink (elemta-sink:2424); nothing is stored."
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
+	@echo "✅ Delivery goes to the sink (elemta-sink:2424). Mail is discarded."
 	@echo "   Benchmark:  make bench-queue"
 	@echo "   Sink rate:  docker logs -f elemta-sink"
-	@echo "   Undo:       make sink-down"
 
+# Real mailboxes: deliver to Dovecot and start Roundcube to read the result.
 sink-down:
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424
 	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
-	@docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) rm -sf elemta-sink >/dev/null 2>&1 || true
-	@echo "✅ Delivery restored to Dovecot; mail lands in real mailboxes again."
+	@docker compose -f $(COMPOSE_FILE) up -d elemta-roundcube >/dev/null 2>&1 || true
+	@echo "✅ Delivery goes to Dovecot; mail lands in real mailboxes."
+	@echo "   ✉️  Roundcube: http://localhost:8026  (user@example.com / password)"
 
 # Rewrites [delivery] host/port. Same approach as configure-plugins: the repo
 # config is the source that gets seeded, so it is what has to change.
