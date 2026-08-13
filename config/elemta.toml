@@ -89,7 +89,16 @@ enabled = []
 [queue_processor]
 enabled = true
 interval = 10
-workers = 5
+# Measured on a clean file-backed queue draining a 20k backlog: 5 workers gave
+# 21.0/s, 20 gave 23.4/s. Only +11% for 4x the workers, because workers are not
+# what limits this — see the claiming note below — but it is free, so take it.
+#
+# An earlier measurement said 20 was *worse* than 5. That was taken against a
+# SQLite queue whose tombstone table had grown to 2.6GB and was degrading as it
+# ran; the control re-measured at the same setting drifted 56/s to 38/s, a
+# noise floor wider than the effect being claimed. Do not trust a queue
+# benchmark taken on a queue that is itself changing.
+workers = 20
 debug = false
 
 [auth] 
