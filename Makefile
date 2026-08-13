@@ -1,5 +1,5 @@
 .PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
-	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue \
+	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
 	uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
@@ -9,6 +9,7 @@
 COMPOSE_FILE ?= deployments/compose/docker-compose.yml
 MAILAUTH_COMPOSE_FILE ?= deployments/compose/docker-compose-mailauth.yml
 ELK_COMPOSE_FILE ?= deployments/compose/docker-compose-elk.yml
+SINK_COMPOSE_FILE ?= deployments/compose/docker-compose-sink.yml
 MAILAUTH_LAB_DIR ?= /tmp/elemta-mailauth-lab
 DEV_ENV_FILE ?= .env
 DEV_MIN_SERVICES ?= elemta elemta-web elemta-dovecot elemta-ldap valkey
@@ -100,6 +101,7 @@ help:
 	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
 	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
 	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
+	@echo "  sink-up / sink-down - Point delivery at a discarding LMTP sink (~4500/s) and back"
 	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
 	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
 	@echo "                   Untrained, the dev scanner scores real ham ABOVE real spam."
@@ -668,6 +670,36 @@ rspamd-train:
 # logs renders an empty chart, which is indistinguishable from a quiet server.
 elk-dashboard-check:
 	@python3 scripts/dev/check_elk_dashboard.py
+
+# Point delivery at a discarding LMTP sink instead of Dovecot.
+#
+# Benchmarking against Dovecot measures Dovecot — maildir writes, indexing and
+# sieve, saturating near 70/s. The sink accepts and discards at ~4,500/s, so it
+# cannot be the thing being measured. Dovecot and Roundcube keep running; only
+# where the queue delivers changes.
+sink-up:
+	@docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) up -d elemta-sink
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
+	@# Without the reseed the setting above is ignored: the services read a copy
+	@# of the config on a volume, seeded once. Same trap as install-dev.
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
+	@echo "✅ Delivery now goes to the sink (elemta-sink:2424); nothing is stored."
+	@echo "   Benchmark:  make bench-queue"
+	@echo "   Sink rate:  docker logs -f elemta-sink"
+	@echo "   Undo:       make sink-down"
+
+sink-down:
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
+	@docker compose -f $(COMPOSE_FILE) -f $(SINK_COMPOSE_FILE) rm -sf elemta-sink >/dev/null 2>&1 || true
+	@echo "✅ Delivery restored to Dovecot; mail lands in real mailboxes again."
+
+# Rewrites [delivery] host/port. Same approach as configure-plugins: the repo
+# config is the source that gets seeded, so it is what has to change.
+DELIVERY_HOST ?= elemta-dovecot
+DELIVERY_PORT ?= 2424
+configure-delivery-target:
+	@python3 scripts/dev/set_delivery_target.py "$(DELIVERY_HOST)" "$(DELIVERY_PORT)"
 
 # Delivery throughput, which is a different number from acceptance throughput.
 # Fills the queue, stops sending, and times the drain.
