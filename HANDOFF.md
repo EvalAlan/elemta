@@ -208,9 +208,31 @@ your own mail at that accuracy. And the Valkey backing it runs with
 `maxmemory-policy allkeys-lru`, so tokens can be evicted under memory pressure
 and the filter degrades without saying so.
 
-`reject_on_spam` is still `false` in `config/elemta.toml` and has been since
-152b165. Do not turn it on to make a test pass; decide the threshold from a
-measurement first. `tests/run_swaks_corpus.sh:67` asserts the GTUBE sample is
+`reject_on_spam` is now `true`, which was only safe once Bayes was trained.
+Measured after training, sending real mail through SMTP rather than scoring it
+in isolation: **150 of 150 real Enron ham messages were accepted**, and GTUBE is
+refused with `554 5.7.1 identified as spam`.
+
+Be clear about what that buys, because it is less than it sounds. Elemta honours
+Rspamd's *action* rather than re-deciding from the score, and Rspamd only
+returns `reject` at score >= 15. Of 150 real 2026 spam messages, **1 was
+rejected and 149 were accepted and delivered carrying spam headers.** So this
+refuses the certain cases and tags everything else — a conservative and
+defensible policy, but "spam rejection is on" does not mean spam stops arriving.
+
+To reject more, lower Rspamd's reject action rather than reaching for
+`reject_on_spam`. From the held-out measurement after training: an action
+threshold of 10 catches 63.5% of spam with 0% of ham flagged, and 8 catches 96%
+at a cost of 1.0% of ham. 15 is where it sits now. Re-measure after any
+retraining; these numbers are a property of the trained classifier, not of the
+code.
+
+Two mechanical notes. `reject_on_spam` is **not** hot-reloaded — the setting
+changes nothing until `docker restart elemta-node0`. And the container has two
+config paths: `/app/config` is the repo bind-mounted read-only, while
+`/app/runtime-config` is the seeded volume the server actually reads. Editing
+the repo file changes what `/app/config` shows and has no effect on behaviour,
+which is a convincing way to conclude a setting does not work. `tests/run_swaks_corpus.sh:67` asserts the GTUBE sample is
 rejected and fails today — that assertion encodes an intent the configuration
 contradicts, and it should be resolved by deciding the policy rather than by
 flipping the flag. The antivirus path does work independently of all of this
