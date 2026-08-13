@@ -192,6 +192,8 @@ services:
       - ../../docker/rspamd/local.d/redis.conf:/etc/rspamd/local.d/redis.conf:ro
       # Greylisting comes along for free with Redis and nobody asked for it.
       - ../../docker/rspamd/local.d/greylist.conf:/etc/rspamd/local.d/greylist.conf:ro
+      # The reject threshold is what decides how much spam Elemta refuses.
+      - ../../docker/rspamd/local.d/actions.conf:/etc/rspamd/local.d/actions.conf:ro
       # - ./docker/rspamd/override.d/modules.conf:/etc/rspamd/override.d/modules.conf
       # - ./docker/rspamd/override.d/logging.conf:/etc/rspamd/override.d/logging.conf
       # - ./docker/rspamd/override.d/actions.conf:/etc/rspamd/override.d/actions.conf
