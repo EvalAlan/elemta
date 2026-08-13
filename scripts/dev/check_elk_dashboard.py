@@ -11,6 +11,7 @@ in a browser.
 """
 
 import json
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -57,7 +58,39 @@ def es(path, body=None):
                          f"Start it with 'make elk-up'.")
 
 
+def dropped_events():
+    """Count events Filebeat threw away rather than shipped.
+
+    Elasticsearch rejects a document whose field collides with an ECS object —
+    Elemta logs `service`, `server` and `error` as plain strings, ECS defines
+    all three as objects — and Filebeat drops it with a warning nobody reads.
+    This has been found three times by accident. Once it cost 71% of the log,
+    once 33%, and in both cases the dashboard looked merely quiet rather than
+    broken, which is the whole problem: a silent shipper and an idle server
+    draw the same picture.
+    """
+    try:
+        out = subprocess.run(
+            ["docker", "logs", "elemta-filebeat", "--since", "10m"],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (out.stdout + out.stderr).count("dropping event")
+
+
 def main():
+    dropped = dropped_events()
+    if dropped is None:
+        print("Could not read Filebeat's log; skipping the dropped-event check.\n")
+    elif dropped:
+        print(f"WARNING: Filebeat dropped {dropped} events in the last 10 minutes.\n"
+              f"  Elasticsearch is rejecting them, usually because a field collides\n"
+              f"  with an ECS object type. Find the field by replaying real log lines\n"
+              f"  as _bulk create ops against the elemta-* data stream and reading the\n"
+              f"  per-item errors; then add a rename to deployments/elk/filebeat.yml.\n")
+    else:
+        print("Filebeat is not dropping events.\n")
+
     total = es("/elemta-*/_count").get("count", 0)
     if total == 0:
         raise SystemExit("The elemta-* index is empty. Send some mail first:\n"

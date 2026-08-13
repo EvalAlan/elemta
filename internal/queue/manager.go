@@ -401,18 +401,6 @@ func (m *Manager) enqueueMessageStreamWithID(id, from string, to []string, subje
 
 func (m *Manager) enqueueMessageWithID(id, from string, to []string, subject string, data []byte, priority Priority, receivedAt time.Time) (string, error) {
 
-	m.logger.Info("message_accepted",
-		"event_type", "message_accepted",
-		"message_id", id,
-		"from_envelope", from,
-		"to_envelope", to,
-		"to_count", len(to),
-		"message_size", len(data),
-		"priority", priority,
-		"queue_type", "active",
-		"enqueue_time", time.Now().Format(time.RFC3339),
-	)
-
 	msg := m.newEnqueueMessage(id, from, to, subject, int64(len(data)), priority, receivedAt)
 
 	if atomic, ok := m.storageBackend.(AtomicEnqueueStorage); ok {
@@ -467,7 +455,15 @@ func (m *Manager) newEnqueueMessage(id, from string, to []string, subject string
 	return msg
 }
 
-// recordEnqueued updates queue statistics for an accepted message.
+// recordEnqueued updates queue statistics for an accepted message, and reports
+// the acceptance.
+//
+// The report lives here because this is where the two enqueue paths converge.
+// It used to live at the top of enqueueMessageWithID, which meant a backend
+// that streams — the file backend does — never emitted it at all: "message
+// accepted" appeared or vanished depending on which storage was configured,
+// and the throughput panel simply went blank. It also fired before the message
+// was stored, so it announced an acceptance that could still fail.
 func (m *Manager) recordEnqueued(msg Message) {
 	m.statsLock.Lock()
 	m.queueStats.ActiveCount++
@@ -476,10 +472,18 @@ func (m *Manager) recordEnqueued(msg Message) {
 	activeCount := m.queueStats.ActiveCount
 	m.statsLock.Unlock()
 
-	m.logger.Debug("message enqueued successfully",
+	m.logger.Info("message_accepted",
+		"event_type", "message_accepted",
 		"message_id", msg.ID,
+		"from_envelope", msg.From,
+		"to_envelope", msg.To,
+		"to_count", len(msg.To),
+		"message_size", msg.Size,
+		"priority", msg.Priority,
 		"queue_type", Active,
-		"active_count", activeCount)
+		"active_count", activeCount,
+		"enqueue_time", time.Now().Format(time.RFC3339),
+	)
 }
 
 // GetMessageContent retrieves the content data for a message

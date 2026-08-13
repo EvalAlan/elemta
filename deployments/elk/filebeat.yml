@@ -73,6 +73,35 @@ processors:
       ignore_missing: true
       fail_on_error: false
 
+  # Same collision, two more fields. ECS defines `server` and `error` as objects;
+  # Elemta logs both as plain strings, so Elasticsearch rejects the whole event
+  # with "tried to parse field [server] as object, but found a concrete value"
+  # and Filebeat drops it.
+  #
+  # `server` is the expensive one: it appears on every "Attempting LMTP
+  # delivery" line, which was 33% of the log — a third of the delivery path
+  # invisible, while the dashboard looked merely quiet.
+  #
+  # This is the third time this class of bug has appeared (see `service` above).
+  # To find the next one, replay real log lines into the data stream and read
+  # the per-item bulk errors, rather than trusting the graphs to look wrong:
+  #   docker exec elemta-node0 tail -4000 /app/logs/elemta.log > /tmp/s.log
+  #   # then POST them as _bulk "create" ops against the elemta-* data stream
+  - rename:
+      fields:
+        - from: "server"
+          to: "server.address"
+        - from: "error"
+          to: "error.message"
+        # One-off startup lines, but the collision is the same and a dropped
+        # startup line is the one you want when a stack will not come up.
+        - from: "source"
+          to: "source.address"
+        - from: "file"
+          to: "file.path"
+      ignore_missing: true
+      fail_on_error: false
+
   # Host metadata is noise here: every event comes from one container on one
   # machine, and the fields that matter (component, hostname, message_id) are
   # already in the log line.
