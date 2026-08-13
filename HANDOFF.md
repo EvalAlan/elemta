@@ -375,6 +375,30 @@ sending, and times the drain by sampling the queue directory — independent of
 the log shipper. A stress test reporting "150/s" is reporting how fast the
 server said `250 OK`, which it can do while delivering nothing.
 
+**Dovecot is not the delivery bottleneck; Elemta is.** `make sink-up` repoints
+`[delivery]` at an LMTP sink that accepts and discards, measured at ~4,500/s for
+10KB messages against Dovecot's ~70/s. Draining the same backlog to each:
+
+| destination | average | peak |
+|---|---|---|
+| Dovecot | 28.8/s | 94.6/s |
+| sink (~50x faster) | 37.9/s | 91.8/s |
+
+The same peak against a destination fifty times quicker. Roughly 90/s across 20
+workers is about 220ms per message spent inside Elemta, not in delivery. Any
+work aimed at delivery throughput belongs there, not in the mailbox server.
+
+More workers do not help: 50 workers measured *worse* than 20 (30.7/s average,
+58.1/s peak) on a host at load 3 of 16 cores, so it is contention rather than
+saturation. `Processor.processQueue` and `processMessage` both take the single
+`manager.mutex`, which is the first place to look. Not profiled yet — that is a
+lead, not a conclusion.
+
+**A container created by `make sink-up` carries `ELEMTA_CONFIG_RESEED=true`, so
+every restart re-seeds and discards edits to the runtime config.** Change
+`config/elemta.toml` and restart instead; editing `/app/runtime-config` silently
+reverts. This cost a benchmark run that reported the old worker count.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
