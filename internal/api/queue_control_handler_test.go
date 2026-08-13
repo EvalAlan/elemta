@@ -69,11 +69,16 @@ func TestQueueObservabilityAndControlRoutes(t *testing.T) {
 		assert.Equal(t, "test requeue", msg.Annotations["admin_reason"])
 	})
 
-	t.Run("POST /api/queue/message/{id}/release-claim rejects unsupported backend", func(t *testing.T) {
+	// The file backend used to answer 400 here because it had no concept of a
+	// claim: the processor listed the whole queue every tick instead. It claims
+	// in bounded batches now, so releasing one is a supported operation and the
+	// endpoint has to say so. Backends that still lack claiming — sqlite and
+	// indexedfs — keep returning 400 through the same handler.
+	t.Run("POST /api/queue/message/{id}/release-claim on a claiming backend", func(t *testing.T) {
 		resp, err := client.Post(baseURL+"/queue/message/"+deferredID+"/release-claim", "application/json", bytes.NewBufferString(`{"worker_id":"worker-1"}`))
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 }
 
