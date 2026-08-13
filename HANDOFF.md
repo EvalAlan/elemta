@@ -315,6 +315,29 @@ rewrites the table.
 under load. A queue created before the fix still contains the old tombstones —
 delete it rather than trusting a benchmark taken against it.
 
+**Elemta logs several fields ECS defines as objects, and Elasticsearch drops
+the whole event when it sees one.** `service` (82% of lines), `server` (2.4%,
+but 33% of a delivery-heavy run — it is on every "Attempting LMTP delivery"),
+`error` (2.7%), plus one-off `source`, `file` and `host` on startup lines. Each
+is a plain string where ECS expects an object, so Elasticsearch answers "tried
+to parse field [x] as object, but found a concrete value" and Filebeat discards
+the event with a warning nobody reads. `deployments/elk/filebeat.yml` renames
+them to their ECS homes.
+
+This has now been found three times, always by accident, because the symptom is
+a dashboard that looks quiet rather than broken. `make elk-dashboard-check` now
+reports Filebeat's drop count first, so the next one announces itself. To
+identify the field, replay real log lines as `_bulk` `create` ops against the
+`elemta-*` data stream and read the per-item errors — Filebeat's own warning
+does not name the field, and its debug logging routes the detail to a separate
+event-log sink.
+
+**About 3% of log lines are still dropped and I could not reproduce it.**
+Replaying the same lines by hand indexes them cleanly, so it is something
+Filebeat adds or transforms rather than the raw content. It is worth chasing
+before trusting an exact event count; it is not worth blocking on for rates and
+ratios.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
