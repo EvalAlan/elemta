@@ -1,5 +1,5 @@
 .PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
-	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus \
+	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
 	uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
@@ -99,6 +99,9 @@ help:
 	@echo "  elk-dashboard  - Import the Elemta overview dashboard into Kibana"
 	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
 	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
+	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
+	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
+	@echo "                   Untrained, the dev scanner scores real ham ABOVE real spam."
 	@echo "  elk-status     - Cluster health and how many events are indexed"
 	@echo "  elk-down       - Stop them (indexed logs are kept in their volume)"
 	@echo "  Kibana http://localhost:5601 > Discover > elemta-*   Elasticsearch :9200"
@@ -640,6 +643,25 @@ elk-dashboard:
 	else \
 		echo "⚠️  Kibana refused the dashboard import: $$body"; \
 	fi
+
+# Train the Bayes classifier from a labelled corpus, and measure whether it
+# worked on messages it was not trained on.
+#
+# Without this the dev Rspamd has no statistical filter and scores real ham
+# above real spam — see the trap in HANDOFF.md. HAM_DIR and SPAM_DIR must point
+# at directories of plain message files; the untroubled corpus ships .7z
+# archives that need extracting first.
+HAM_DIR ?= /mnt/data/email-corpus/enron/extracted/maildir
+SPAM_DIR ?=
+rspamd-train:
+	@if [ -z "$(SPAM_DIR)" ]; then \
+		echo "SPAM_DIR is not set. Point it at a directory of spam messages:"; \
+		echo "  make rspamd-train SPAM_DIR=/path/to/extracted/spam"; \
+		echo "Optionally HAM_DIR=... (default $(HAM_DIR))"; \
+		exit 1; \
+	fi
+	@python3 scripts/dev/train_rspamd.py --ham-dir "$(HAM_DIR)" --spam-dir "$(SPAM_DIR)" \
+		--train $(or $(TRAIN),2000) --test $(or $(TEST),200)
 
 # Checks that each panel would draw something. A panel querying a field nobody
 # logs renders an empty chart, which is indistinguishable from a quiet server.
