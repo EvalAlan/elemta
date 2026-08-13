@@ -57,8 +57,16 @@ def data_view_id():
 
 
 def count_column(label, query=None):
-    return {"label": label, "dataType": "number", "operationType": "count",
-            "isBucketed": False, "sourceField": "___records___",
+    """A counted metric.
+
+    customLabel matters: without it Lens ignores the label and every metric in
+    every panel renders as "Count of records", so a chart comparing accepted
+    against rejected shows two identically-named series and the reader has to
+    guess which is which from the colour.
+    """
+    return {"label": label, "customLabel": True, "dataType": "number",
+            "operationType": "count", "isBucketed": False,
+            "sourceField": "___records___",
             **({"filter": {"language": "kuery", "query": query}} if query else {})}
 
 
@@ -91,7 +99,7 @@ def panels(dv):
     out.append(("elemta-throughput", lens(
         "Messages accepted over time", "lnsXY",
         {"columns": {
-            "time": {"label": "@timestamp", "dataType": "date", "operationType": "date_histogram",
+            "time": {"label": "Time", "customLabel": True, "dataType": "date", "operationType": "date_histogram",
                      "sourceField": "@timestamp", "isBucketed": True,
                      "params": {"interval": "auto"}},
             "count": count_column("Accepted")},
@@ -106,7 +114,7 @@ def panels(dv):
     out.append(("elemta-outcomes", lens(
         "Accepted vs rejected", "lnsXY",
         {"columns": {
-            "time": {"label": "@timestamp", "dataType": "date", "operationType": "date_histogram",
+            "time": {"label": "Time", "customLabel": True, "dataType": "date", "operationType": "date_histogram",
                      "sourceField": "@timestamp", "isBucketed": True,
                      "params": {"interval": "auto"}},
             "ok": count_column("Accepted", 'event_type: "message_accepted"'),
@@ -135,7 +143,7 @@ def panels(dv):
     out.append(("elemta-backlog", lens(
         "Into the queue vs out of it", "lnsXY",
         {"columns": {
-            "time": {"label": "@timestamp", "dataType": "date", "operationType": "date_histogram",
+            "time": {"label": "Time", "customLabel": True, "dataType": "date", "operationType": "date_histogram",
                      "sourceField": "@timestamp", "isBucketed": True,
                      "params": {"interval": "auto"}},
             "in": count_column("Accepted into the queue", 'event_type: "message_accepted"'),
@@ -150,7 +158,7 @@ def panels(dv):
     out.append(("elemta-scan-verdicts", lens(
         "Scanner verdicts", "lnsPie",
         {"columns": {
-            "verdict": {"label": "Verdict", "dataType": "string", "operationType": "filters",
+            "verdict": {"label": "Verdict", "customLabel": True, "dataType": "string", "operationType": "filters",
                         "isBucketed": True,
                         "params": {"filters": [
                             {"input": {"language": "kuery", "query": "virus_found: true"}, "label": "Virus"},
@@ -176,7 +184,7 @@ def panels(dv):
     out.append(("elemta-spam-scores", lens(
         "Spam scores against the threshold", "lnsXY",
         {"columns": {
-            "band": {"label": "Score", "dataType": "string", "operationType": "filters",
+            "band": {"label": "Spam score band", "customLabel": True, "dataType": "string", "operationType": "filters",
                      "isBucketed": True,
                      "params": {"filters": [
                          {"input": {"language": "kuery", "query": "spam_score < 6"}, "label": "under 6 (below threshold)"},
@@ -195,12 +203,12 @@ def panels(dv):
     out.append(("elemta-latency", lens(
         "Delivery delay (median and 95th percentile)", "lnsXY",
         {"columns": {
-            "time": {"label": "@timestamp", "dataType": "date", "operationType": "date_histogram",
+            "time": {"label": "Time", "customLabel": True, "dataType": "date", "operationType": "date_histogram",
                      "sourceField": "@timestamp", "isBucketed": True,
                      "params": {"interval": "auto"}},
-            "p50": {"label": "median ms", "dataType": "number", "operationType": "percentile",
+            "p50": {"label": "Median delay (ms)", "customLabel": True, "dataType": "number", "operationType": "percentile",
                     "sourceField": "total_delay_ms", "isBucketed": False, "params": {"percentile": 50}},
-            "p95": {"label": "95th percentile ms", "dataType": "number", "operationType": "percentile",
+            "p95": {"label": "95th percentile delay (ms)", "customLabel": True, "dataType": "number", "operationType": "percentile",
                     "sourceField": "total_delay_ms", "isBucketed": False, "params": {"percentile": 95}}},
          "columnOrder": ["time", "p50", "p95"], "incompleteColumns": {}},
         {"legend": {"isVisible": True, "position": "right"}, "preferredSeriesType": "line",
@@ -212,10 +220,10 @@ def panels(dv):
     out.append(("elemta-problems", lens(
         "Warnings and errors", "lnsXY",
         {"columns": {
-            "time": {"label": "@timestamp", "dataType": "date", "operationType": "date_histogram",
+            "time": {"label": "Time", "customLabel": True, "dataType": "date", "operationType": "date_histogram",
                      "sourceField": "@timestamp", "isBucketed": True,
                      "params": {"interval": "auto"}},
-            "level": {"label": "Level", "dataType": "string", "operationType": "terms",
+            "level": {"label": "Severity", "customLabel": True, "dataType": "string", "operationType": "terms",
                       "sourceField": "log.level", "isBucketed": True,
                       "params": {"size": 3, "orderBy": {"type": "column", "columnId": "count"},
                                  "orderDirection": "desc"}},
@@ -231,7 +239,7 @@ def panels(dv):
     out.append(("elemta-components", lens(
         "Events by component", "lnsDatatable",
         {"columns": {
-            "component": {"label": "Component", "dataType": "string", "operationType": "terms",
+            "component": {"label": "Component", "customLabel": True, "dataType": "string", "operationType": "terms",
                           "sourceField": "component", "isBucketed": True,
                           "params": {"size": 15, "orderBy": {"type": "column", "columnId": "count"},
                                      "orderDirection": "desc"}},
