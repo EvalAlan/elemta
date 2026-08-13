@@ -296,6 +296,25 @@ are wanted; the name collision is the problem. For a count of refused messages
 use `msg: "message_scanned" and passed: false`, which is emitted once. The 2:1
 ratio is how this was spotted.
 
+**The queue defaults to the file backend, and a pre-existing SQLite queue is
+carrying a leak.** Enqueue tombstones stored the whole message body and nothing
+ever deleted them, in the SQLite *and* Postgres backends. Measured on a dev
+queue after two days of load testing: 296,707 tombstones holding 1.9GB of
+bodies, 93% of a 2.6GB database, against 62,464 live messages. Beyond the disk,
+every enqueue probes an index that never stops growing, which is the likeliest
+reason delivery-rate measurements drifted downward across a session.
+
+Fixed in `internal/queue/tombstone.go`: tombstones store a SHA-256 digest
+instead of the body, and `Cleanup` prunes them at `tombstoneRetentionHours`
+(24h). The conflict check the body existed for — same ID, different bytes —
+still works, on the digest. Rows written before the fix keep their body and no
+digest, and are still compared by content until they age out; no migration
+rewrites the table.
+
+`QUEUE_BACKEND` now defaults to `file` while the SQLite path is re-measured
+under load. A queue created before the fix still contains the old tombstones —
+delete it rather than trusting a benchmark taken against it.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts

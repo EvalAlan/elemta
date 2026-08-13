@@ -29,15 +29,26 @@ const postgresEnqueueLockSQL = `SELECT pg_advisory_xact_lock(hashtextextended($1
 const postgresCreateMessageSQL = `INSERT INTO queue_messages(id, queue_type, metadata, created_at, updated_at)
 VALUES ($1,$2,$3::jsonb,$4,$5) ON CONFLICT (id) DO NOTHING`
 
-const postgresInsertTombstoneSQL = `INSERT INTO queue_enqueue_tombstones(id, metadata, content, consumed_at)
-VALUES ($1,$2::jsonb,$3,NOW()) ON CONFLICT(id) DO NOTHING`
+// The body is deliberately not stored; the digest is what the conflict check
+// needs. See internal/queue/tombstone.go.
+const postgresInsertTombstoneSQL = `INSERT INTO queue_enqueue_tombstones(id, metadata, content, consumed_at, content_digest)
+VALUES ($1,$2::jsonb,$3,NOW(),$4) ON CONFLICT(id) DO NOTHING`
 
 const postgresTombstoneSchemaSQL = `CREATE TABLE IF NOT EXISTS queue_enqueue_tombstones (
   id TEXT PRIMARY KEY,
   metadata JSONB NOT NULL,
   content BYTEA NOT NULL,
-  consumed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  consumed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  content_digest TEXT NOT NULL DEFAULT ''
 )`
+
+// CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a
+// queue created before tombstones carried a digest needs the column added.
+const postgresTombstoneMigrationSQL = `ALTER TABLE queue_enqueue_tombstones
+ADD COLUMN IF NOT EXISTS content_digest TEXT NOT NULL DEFAULT ''`
+
+const postgresTombstoneIndexSQL = `CREATE INDEX IF NOT EXISTS idx_queue_tombstones_consumed_at
+ON queue_enqueue_tombstones(consumed_at)`
 
 // Ensure PostgresStorageBackend implements StorageBackend interface.
 var _ StorageBackend = (*PostgresStorageBackend)(nil)
@@ -110,6 +121,12 @@ CREATE TABLE IF NOT EXISTS queue_contents (
 	if _, err := p.db.Exec(postgresTombstoneSchemaSQL); err != nil {
 		return fmt.Errorf("failed to initialize postgres tombstone schema: %w", err)
 	}
+	if _, err := p.db.Exec(postgresTombstoneMigrationSQL); err != nil {
+		return fmt.Errorf("failed to add tombstone digest column: %w", err)
+	}
+	if _, err := p.db.Exec(postgresTombstoneIndexSQL); err != nil {
+		return fmt.Errorf("failed to index tombstone consumed_at: %w", err)
+	}
 	return nil
 }
 
@@ -181,10 +198,11 @@ func (p *PostgresStorageBackend) CreateMessageIfAbsent(msg Message, content []by
 		return false, err
 	}
 	var tombMetadata, tombContent []byte
-	err = tx.QueryRow(`SELECT metadata, content FROM queue_enqueue_tombstones WHERE id=$1`, msg.ID).Scan(&tombMetadata, &tombContent)
+	var tombDigest string
+	err = tx.QueryRow(`SELECT metadata, content, content_digest FROM queue_enqueue_tombstones WHERE id=$1`, msg.ID).Scan(&tombMetadata, &tombContent, &tombDigest)
 	if err == nil {
 		var existing Message
-		if json.Unmarshal(tombMetadata, &existing) != nil || !sameEnqueueMessage(existing, msg) || !bytes.Equal(tombContent, content) {
+		if json.Unmarshal(tombMetadata, &existing) != nil || !sameEnqueueMessage(existing, msg) || !sameTombstoneContent(tombDigest, tombContent, content) {
 			return false, fmt.Errorf("message ID %q conflicts with consumed enqueue identity", msg.ID)
 		}
 		return false, tx.Commit()
@@ -260,15 +278,16 @@ WHERE m.id=$1 FOR UPDATE OF m, c`, msg.ID).Scan(&liveMetadata, &liveContent); er
 	}
 	// Preserve the first consumed identity rather than allowing a later caller
 	// to replace it. Everything remains in this transaction with the live delete.
-	if _, err = tx.Exec(postgresInsertTombstoneSQL, msg.ID, string(metadata), content); err != nil {
+	if _, err = tx.Exec(postgresInsertTombstoneSQL, msg.ID, string(metadata), []byte{}, tombstoneDigest(content)); err != nil {
 		return err
 	}
 	var tombMetadata, tombContent []byte
-	if err = tx.QueryRow(`SELECT metadata, content FROM queue_enqueue_tombstones WHERE id=$1 FOR UPDATE`, msg.ID).Scan(&tombMetadata, &tombContent); err != nil {
+	var tombDigest string
+	if err = tx.QueryRow(`SELECT metadata, content, content_digest FROM queue_enqueue_tombstones WHERE id=$1 FOR UPDATE`, msg.ID).Scan(&tombMetadata, &tombContent, &tombDigest); err != nil {
 		return err
 	}
 	var tomb Message
-	if json.Unmarshal(tombMetadata, &tomb) != nil || !sameEnqueueMessage(tomb, msg) || !bytes.Equal(tombContent, content) {
+	if json.Unmarshal(tombMetadata, &tomb) != nil || !sameEnqueueMessage(tomb, msg) || !sameTombstoneContent(tombDigest, tombContent, content) {
 		return fmt.Errorf("message ID %q conflicts with consumed enqueue identity", msg.ID)
 	}
 	res, err := tx.Exec(`DELETE FROM queue_messages WHERE id=$1`, msg.ID)
@@ -557,6 +576,15 @@ func (p *PostgresStorageBackend) Cleanup(retentionHours int) (int, error) {
 	}
 
 	cutoff := time.Now().Add(-time.Duration(retentionHours) * time.Hour).UTC()
+
+	// Tombstones are pruned on their own age, independently of whether any
+	// message rows expired. They outnumber live messages several times over, so
+	// tying them to message expiry would leave the leak running.
+	tombCutoff := time.Now().Add(-time.Duration(tombstoneRetentionHours) * time.Hour).UTC()
+	if _, err := p.db.Exec(`DELETE FROM queue_enqueue_tombstones WHERE consumed_at < $1`, tombCutoff); err != nil {
+		return 0, fmt.Errorf("failed to cleanup enqueue tombstones: %w", err)
+	}
+
 	res, err := p.db.Exec(`DELETE FROM queue_messages WHERE created_at < $1`, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("failed to cleanup old messages: %w", err)
