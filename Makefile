@@ -1,5 +1,5 @@
 .PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
-	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train \
+	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
 	uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
@@ -99,6 +99,7 @@ help:
 	@echo "  elk-dashboard  - Import the Elemta overview dashboard into Kibana"
 	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
 	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
+	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
 	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
 	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
 	@echo "                   Untrained, the dev scanner scores real ham ABOVE real spam."
@@ -667,6 +668,11 @@ rspamd-train:
 # logs renders an empty chart, which is indistinguishable from a quiet server.
 elk-dashboard-check:
 	@python3 scripts/dev/check_elk_dashboard.py
+
+# Delivery throughput, which is a different number from acceptance throughput.
+# Fills the queue, stops sending, and times the drain.
+bench-queue:
+	@python3 scripts/dev/bench_queue.py --messages $(or $(MESSAGES),6000) --concurrency $(or $(CONCURRENCY),40)
 
 # Traffic worth looking at. The dashboard is mostly empty without it, because
 # a mail server with no mail has nothing to show.
