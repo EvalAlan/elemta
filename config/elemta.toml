@@ -13,7 +13,15 @@ max_size = 52428800  # 50MB
 # work. A destination that returns a 4xx is left alone for a while, and only
 # that destination; a message for one in backoff is deferred rather than held,
 # so a slow receiver cannot stall the queue behind it.
-max_connections_per_domain = 10
+# Concurrent deliveries to a single destination.
+#
+# Keep this at or above [queue_processor] workers. Below it, the surplus workers
+# claim messages they cannot deliver and those are deferred with retry backoff
+# rather than waiting for a slot — so the queue grows, the log fills with
+# "domain X is over concurrent delivery limit", and the server looks like it is
+# failing when it is obeying a limit. The dev stack delivers everything to one
+# domain over LMTP, so that is the normal case here, not an edge case.
+max_connections_per_domain = 20
 
 # Enforce RFC 5321 CRLF line endings in DATA (default: true).
 # This is the primary defence against SMTP smuggling: a bare LF that this
@@ -51,7 +59,16 @@ queue_dir = "/app/queue"
 
 [queue]
 dir = "/app/queue"
-backend = "sqlite"
+# The file backend is the default while the SQLite one is being reworked.
+#
+# SQLite is not wrong, but the queue it produced under sustained load testing
+# was not something to benchmark against: enqueue tombstones stored whole
+# message bodies and nothing pruned them, so the database reached 2.6GB — 93% of
+# it dead tombstones — and every enqueue probed an index that never stopped
+# growing. The leak is fixed (see internal/queue/tombstone.go), but any queue
+# created before that fix still carries it, and the fix has not been measured
+# under load yet. Switch back with QUEUE_BACKEND=sqlite, on a fresh queue.
+backend = "file"
 [queue.indexedfs]
 index_path = "/app/queue/index"
 content_dir = "/app/queue/data"
@@ -71,11 +88,7 @@ max_idle_conns = 10
 conn_max_lifetime_seconds = 1800
 
 [logging]
-type = "elastic"
 level = "info"
-format = "json"
-output = "http://elemta-elasticsearch:9200"
-options = { index = "elemta-logs", bufferSize = 50, flushInterval = "5s" }
 
 [plugins]
 directory = "/app/plugins"
@@ -84,7 +97,16 @@ enabled = []
 [queue_processor]
 enabled = true
 interval = 10
-workers = 5
+# Measured on a clean file-backed queue draining a 20k backlog: 5 workers gave
+# 21.0/s, 20 gave 23.4/s. Only +11% for 4x the workers, because workers are not
+# what limits this — see the claiming note below — but it is free, so take it.
+#
+# An earlier measurement said 20 was *worse* than 5. That was taken against a
+# SQLite queue whose tombstone table had grown to 2.6GB and was degrading as it
+# ran; the control re-measured at the same setting drifted 56/s to 38/s, a
+# noise floor wider than the effect being claimed. Do not trust a queue
+# benchmark taken on a queue that is itself changing.
+workers = 20
 debug = false
 
 [auth] 
@@ -223,7 +245,18 @@ scan_limit = 26214400  # 25MB
 
 [antispam]
 enabled = true
-reject_on_spam = false
+# Refuse only what Rspamd itself calls a reject.
+#
+# Elemta honours Rspamd's action rather than re-deciding from the raw score, so
+# this rejects the "reject" action only — currently score >= 15. Everything
+# Rspamd merely tags is still delivered carrying its spam headers.
+#
+# This was false until the Bayes classifier was trained, and turning it on
+# before that would have refused nearly all mail: untrained, the score was a
+# sum of infrastructure penalties that put ordinary clean mail above the
+# threshold. Trained, 0 of 61 real ham messages reach the reject action while
+# GTUBE reaches it exactly. If you retrain, re-measure before trusting this.
+reject_on_spam = true
 
 [antispam.rspamd]
 enabled = true

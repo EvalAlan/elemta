@@ -28,6 +28,9 @@ from dataclasses import dataclass, asdict
 import random
 from datetime import datetime, timedelta
 
+DEFAULT_CORPUS_DIR = 'tests/corpus'
+
+
 @dataclass
 class StressTestConfig:
     """Configuration for stress test"""
@@ -57,6 +60,7 @@ class StressTestConfig:
     auth_failure_rate: float = 0.0  # Rate of intentional auth failures (0.0-1.0)
     # Email content options
     corpus_dir: str = 'tests/corpus'  # Directory containing email files
+    corpus_dir_explicit: bool = False  # True when --corpus-dir was given on the command line
     use_corpus: bool = True  # Use real email files from corpus
     corpus_limit: int = 20000  # Max messages to index; 0 means no limit
     corpus_max_bytes: int = 25 * 1024 * 1024  # Skip corpus files larger than this
@@ -247,6 +251,19 @@ class SMTPStressTester:
     _CORPUS_SKIP_SUFFIXES = ('.tar', '.gz', '.bz2', '.zip', '.7z', '.xz', '.md', '.txt.gz')
     _CORPUS_SKIP_NAMES = ('.extracted', 'cmds', 'index')
 
+    def _fail_or_warn(self, problem: str):
+        """Stop when the corpus was asked for by name; warn when it was not."""
+        if self.config.corpus_dir_explicit:
+            print(f"❌ {problem}.", file=sys.stderr)
+            print("   --corpus-dir was given explicitly, so falling back to synthetic",
+                  file=sys.stderr)
+            print("   content would measure a repeated string rather than your mail.",
+                  file=sys.stderr)
+            print("   To limit how many messages are indexed, use --corpus-limit N.",
+                  file=sys.stderr)
+            sys.exit(2)
+        print(f"⚠️  {problem}, using synthetic content")
+
     def _load_corpus_files(self):
         """Index message files under the corpus directory.
 
@@ -265,7 +282,15 @@ class SMTPStressTester:
 
         corpus_path = Path(self.config.corpus_dir)
         if not corpus_path.exists():
-            print(f"⚠️  Corpus directory {self.config.corpus_dir} not found, using synthetic content")
+            # Falling back to synthetic content is right when nobody asked for a
+            # particular corpus, and wrong when they did: a run launched to
+            # exercise 40,000 real messages would otherwise send one repeated
+            # string 40,000 times and report throughput as if it meant
+            # something. The warning scrolls past in a long run. This is exactly
+            # how '--corpus-dir /mnt/data/email-corpus ... --corpus-dir 40000'
+            # — a duplicated flag where --corpus-limit was meant — silently
+            # measured nothing.
+            self._fail_or_warn(f"Corpus directory {self.config.corpus_dir} not found")
             return
 
         self.corpus_stats = {'clean': 0, 'spam': 0, 'virus': 0, 'other': 0}
@@ -304,7 +329,7 @@ class SMTPStressTester:
                     if count:
                         print(f"   {email_type}: {count}")
             else:
-                print(f"⚠️  No usable messages found in {self.config.corpus_dir}, using synthetic content")
+                self._fail_or_warn(f"No usable messages found in {self.config.corpus_dir}")
 
         except Exception as e:
             print(f"⚠️  Error indexing corpus: {e}")
@@ -1315,7 +1340,7 @@ def parse_arguments():
                        help='Rate of intentional auth failures (0.0-1.0, default: 0.0)')
     
     # Email content options
-    parser.add_argument('--corpus-dir', default='tests/corpus',
+    parser.add_argument('--corpus-dir', default=None,
                        help='Directory containing email files (default: tests/corpus)')
     parser.add_argument('--corpus-limit', type=int, default=20000,
                         help='Maximum number of corpus messages to index; 0 for no limit (default: 20000)')
@@ -1383,7 +1408,8 @@ def main():
         malformed_commands=args.malformed,
         auth_failure_rate=args.auth_failure_rate,
         use_corpus=args.use_corpus,
-        corpus_dir=args.corpus_dir,
+        corpus_dir=args.corpus_dir or DEFAULT_CORPUS_DIR,
+        corpus_dir_explicit=args.corpus_dir is not None,
         corpus_limit=args.corpus_limit,
         # Authentication options
         auth_user_prefix=args.auth_user_prefix,
