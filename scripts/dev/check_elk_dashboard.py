@@ -31,6 +31,8 @@ CHECKS = [
      {"term": {"virus_found": True}}),
     ("elemta-scan-verdicts", "spam verdicts",
      {"term": {"spam_detected": True}}),
+    ("elemta-backlog", "messages leaving the queue",
+     {"term": {"event_type": "delivery"}}),
     ("elemta-spam-scores", "messages carrying a spam score",
      {"exists": {"field": "spam_score"}}),
     ("elemta-latency", "delivery events with a delay",
