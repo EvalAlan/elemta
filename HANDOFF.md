@@ -375,6 +375,25 @@ sending, and times the drain by sampling the queue directory — independent of
 the log shipper. A stress test reporting "150/s" is reporting how fast the
 server said `250 OK`, which it can do while delivering nothing.
 
+**Discarding delivery is opt-in, and deliberately so.** `install-dev` and
+`install-dev-full` deliver to Dovecot and mail lands in real mailboxes;
+`install-dev-bench` (or `make sink-up` on a running stack) repoints delivery at
+an LMTP sink that drops everything. A mail server whose default is to silently
+eat mail is a bad thing to hand someone, and this file already documents enough
+traps without manufacturing another.
+
+`elemta-sink` runs in every dev stack regardless, so switching is a restart
+rather than a deploy. `print-dev-summary` reads the *running* delivery target
+rather than asserting one, because the two installs disagree and a summary that
+guesses is worse than none.
+
+Two things that bite when writing targets like this: `docker compose up -d
+<list>` starts what is listed and stops nothing, so a Roundcube left from an
+earlier install keeps running; and compose will not recreate a container whose
+spec has not changed, so `ELEMTA_CONFIG_RESEED=true` does nothing without
+`--force-recreate` and the server keeps delivering to the old destination. Both
+were live bugs in the first version of `install-dev-bench`.
+
 **Dovecot is not the delivery bottleneck; Elemta is.** `make sink-up` repoints
 `[delivery]` at an LMTP sink that accepts and discards, measured at ~4,500/s for
 10KB messages against Dovecot's ~70/s. Draining the same backlog to each:
