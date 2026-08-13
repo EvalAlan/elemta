@@ -51,7 +51,16 @@ queue_dir = "/app/queue"
 
 [queue]
 dir = "/app/queue"
-backend = "sqlite"
+# The file backend is the default while the SQLite one is being reworked.
+#
+# SQLite is not wrong, but the queue it produced under sustained load testing
+# was not something to benchmark against: enqueue tombstones stored whole
+# message bodies and nothing pruned them, so the database reached 2.6GB — 93% of
+# it dead tombstones — and every enqueue probed an index that never stopped
+# growing. The leak is fixed (see internal/queue/tombstone.go), but any queue
+# created before that fix still carries it, and the fix has not been measured
+# under load yet. Switch back with QUEUE_BACKEND=sqlite, on a fresh queue.
+backend = "file"
 [queue.indexedfs]
 index_path = "/app/queue/index"
 content_dir = "/app/queue/data"

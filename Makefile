@@ -45,7 +45,7 @@ ADMIN_USER ?= admin
 ADMIN_PASSWORD ?=
 
 # Queue backend config
-QUEUE_BACKEND ?= sqlite
+QUEUE_BACKEND ?= file
 QUEUE_POSTGRES_DSN ?= postgres://elemta:elemta@elemta-postgres:5432/elemta_queue?sslmode=disable
 POSTGRES_CONTAINER_NAME ?= elemta-postgres
 POSTGRES_USER ?= elemta
@@ -122,7 +122,7 @@ help:
 	@echo "  ADMIN_USER=admin              Dashboard account name"
 	@echo "  ADMIN_PASSWORD=               Dashboard password (generated when empty)"
 	@echo "  CERT_DAYS=$(CERT_DAYS)                  Dev certificate lifetime, in days"
-	@echo "  QUEUE_BACKEND=$(QUEUE_BACKEND)         file | sqlite | postgres"
+	@echo "  QUEUE_BACKEND=$(QUEUE_BACKEND)           file | sqlite | postgres"
 	@echo "  PLUGIN_RATE_LIMITER=$(PLUGIN_RATE_LIMITER)      PLUGIN_CLAMAV=$(PLUGIN_CLAMAV)   PLUGIN_RSPAMD=$(PLUGIN_RSPAMD)"
 	@echo "  PLUGIN_ACCESS_CONTROL=$(PLUGIN_ACCESS_CONTROL)    PLUGIN_RBL=$(PLUGIN_RBL)      PLUGIN_MASS_MAILER=$(PLUGIN_MASS_MAILER)"
 	@echo "  PLUGIN_SPF=$(PLUGIN_SPF)  PLUGIN_DKIM=$(PLUGIN_DKIM)  PLUGIN_DMARC=$(PLUGIN_DMARC)  PLUGIN_ARC=$(PLUGIN_ARC)"
