@@ -47,7 +47,7 @@ func TestTombstoneKeepsTheBodyByDefault(t *testing.T) {
 // And with the body switched off, it is not written.
 func TestTombstoneDropsTheBodyWhenConfigured(t *testing.T) {
 	backend := newTestSQLiteBackend(t)
-	backend.tombstoneBody = tombstoneBodyPolicy{dropBody: true}
+	backend.tombstoneBody.setRetain(false)
 
 	body := []byte("a message body that should not be stored")
 	msg := Message{ID: "drops-body", QueueType: Active, From: "a@example.com",

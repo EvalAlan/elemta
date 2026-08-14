@@ -30,8 +30,24 @@ RUNTIME_CONFIG="$RUNTIME_DIR/elemta.toml"
 
 mkdir -p "$RUNTIME_DIR" 2>/dev/null || true
 
-if [ "${ELEMTA_CONFIG_RESEED:-}" = "true" ]; then
+# Reseed once per container, not once per start.
+#
+# ELEMTA_CONFIG_RESEED is set by `make install-dev*` to mean "this deploy is
+# authoritative, take the template again". Compose bakes it into the container's
+# environment, so it was still true on every subsequent `docker restart` — and
+# each restart deleted the runtime config and re-copied the template, silently
+# discarding everything the operator had saved in the web UI. A setting that
+# survives until the next restart is worse than one that never saved at all,
+# because it looks like it worked.
+#
+# The marker lives in the container's own filesystem rather than on the config
+# volume, which is what makes it mean "this container instance". A recreate —
+# what install-dev actually does — gets a fresh filesystem and reseeds. A plain
+# restart finds the marker and leaves the operator's config alone.
+RESEED_MARKER="/tmp/.elemta-config-reseeded"
+if [ "${ELEMTA_CONFIG_RESEED:-}" = "true" ] && [ ! -f "$RESEED_MARKER" ]; then
     rm -f "$RUNTIME_CONFIG"
+    : > "$RESEED_MARKER" 2>/dev/null || true
 fi
 
 if [ ! -f "$RUNTIME_CONFIG" ]; then

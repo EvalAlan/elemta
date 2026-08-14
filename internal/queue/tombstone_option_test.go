@@ -24,12 +24,12 @@ func TestWithTombstoneBodyReachesEveryBackend(t *testing.T) {
 			var got bool
 			switch b := m.storageBackend.(type) {
 			case *FileStorageBackend:
-				got = b.tombstoneBody.dropBody
+				got = b.tombstoneBody.drop.Load()
 			case *SQLiteStorageBackend:
-				got = b.tombstoneBody.dropBody
+				got = b.tombstoneBody.drop.Load()
 			case *IndexedFSStorageBackend:
 				// Embeds the file backend and writes tombstones through it.
-				got = b.FileStorageBackend.tombstoneBody.dropBody
+				got = b.FileStorageBackend.tombstoneBody.drop.Load()
 			default:
 				t.Fatalf("unhandled backend type %T; add it here or the setting "+
 					"can be silently ignored on that path", b)
@@ -49,8 +49,33 @@ func TestTombstoneBodyIsKeptWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("building manager: %v", err)
 	}
-	if m.storageBackend.(*FileStorageBackend).tombstoneBody.dropBody {
+	if m.storageBackend.(*FileStorageBackend).tombstoneBody.drop.Load() {
 		t.Error("a manager built without the option drops the body; the default " +
 			"must be the side that cannot refuse mail after a rollback")
+	}
+}
+
+// The setting has to reach a manager that is already running, because that is
+// how a config reload delivers it. Before this, saving in the web UI changed
+// the file, reported success, and did nothing until someone restarted.
+func TestSetTombstoneBodyAppliesToARunningManager(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewManagerFromBackend(dir, "file", SQLiteConfig{}, PostgresConfig{},
+		IndexedFSConfig{}, 24)
+	if err != nil {
+		t.Fatalf("building manager: %v", err)
+	}
+	backend := m.storageBackend.(*FileStorageBackend)
+
+	if backend.tombstoneBody.drop.Load() {
+		t.Fatal("a fresh manager should keep the body")
+	}
+	m.SetTombstoneBody(false)
+	if !backend.tombstoneBody.drop.Load() {
+		t.Error("SetTombstoneBody(false) did not reach the running backend")
+	}
+	m.SetTombstoneBody(true)
+	if backend.tombstoneBody.drop.Load() {
+		t.Error("SetTombstoneBody(true) did not restore the body")
 	}
 }

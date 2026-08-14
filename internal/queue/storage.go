@@ -944,6 +944,6 @@ func (fs *FileStorageBackend) writeFileAtomic(_ string, _ []byte, _ os.FileMode)
 	return fmt.Errorf("path-based atomic writes are disabled")
 }
 
-func (fs *FileStorageBackend) setTombstoneBody(policy tombstoneBodyPolicy) {
-	fs.tombstoneBody = policy
+func (fs *FileStorageBackend) setTombstoneBody(retain bool) {
+	fs.tombstoneBody.setRetain(retain)
 }

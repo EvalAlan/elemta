@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"sync/atomic"
 )
 
 // Enqueue tombstones record that a message ID was consumed, so a repeated
@@ -69,13 +70,25 @@ func sameTombstoneContent(storedDigest string, storedContent, content []byte) bo
 // Pruning bounds the disk cost either way, and incidentally bounds the rollback
 // window: nothing older than the retention period survives to be misread.
 type tombstoneBodyPolicy struct {
-	dropBody bool
+	// Atomic because an operator can change this while mail is being delivered:
+	// the reload path writes it from one goroutine while every delivery reads it
+	// from another. A plain bool here is a data race that only appears when
+	// someone saves a setting under load, which is exactly when it would.
+	//
+	// The zero value is false — keep the body — so a backend built as a struct
+	// literal cannot opt into the unsafe side by omission.
+	drop atomic.Bool
 }
 
 // bodyFor returns what should be stored as the tombstone body.
-func (p tombstoneBodyPolicy) bodyFor(content []byte) []byte {
-	if p.dropBody {
+func (p *tombstoneBodyPolicy) bodyFor(content []byte) []byte {
+	if p.drop.Load() {
 		return []byte{}
 	}
 	return content
+}
+
+// setRetain records whether the body should be kept.
+func (p *tombstoneBodyPolicy) setRetain(retain bool) {
+	p.drop.Store(!retain)
 }

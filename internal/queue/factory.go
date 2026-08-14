@@ -64,9 +64,7 @@ type ManagerOption func(*Manager)
 // what dropping it buys and costs.
 func WithTombstoneBody(retain bool) ManagerOption {
 	return func(m *Manager) {
-		if setter, ok := m.storageBackend.(tombstoneBodySetter); ok {
-			setter.setTombstoneBody(tombstoneBodyPolicy{dropBody: !retain})
-		}
+		m.SetTombstoneBody(retain)
 	}
 }
 
@@ -234,5 +232,14 @@ func applyManagerOptions(m *Manager, opts []ManagerOption) {
 
 // tombstoneBodySetter is implemented by the backends that write tombstones.
 type tombstoneBodySetter interface {
-	setTombstoneBody(tombstoneBodyPolicy)
+	setTombstoneBody(retain bool)
+}
+
+// SetTombstoneBody updates a running manager, so the setting takes effect on a
+// config reload rather than only at startup. Without this the control saved,
+// reported success, and changed nothing until someone restarted the server.
+func (m *Manager) SetTombstoneBody(retain bool) {
+	if setter, ok := m.storageBackend.(tombstoneBodySetter); ok {
+		setter.setTombstoneBody(retain)
+	}
 }

@@ -618,6 +618,6 @@ func (p *PostgresStorageBackend) StorageStats() (PostgresStorageStats, error) {
 	return stats, nil
 }
 
-func (p *PostgresStorageBackend) setTombstoneBody(policy tombstoneBodyPolicy) {
-	p.tombstoneBody = policy
+func (p *PostgresStorageBackend) setTombstoneBody(retain bool) {
+	p.tombstoneBody.setRetain(retain)
 }

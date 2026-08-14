@@ -654,6 +654,6 @@ func normalizeSQLiteSynchronous(mode string) string {
 	}
 }
 
-func (s *SQLiteStorageBackend) setTombstoneBody(policy tombstoneBodyPolicy) {
-	s.tombstoneBody = policy
+func (s *SQLiteStorageBackend) setTombstoneBody(retain bool) {
+	s.tombstoneBody.setRetain(retain)
 }
