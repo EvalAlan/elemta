@@ -40,11 +40,17 @@ mkdir -p "$RUNTIME_DIR" 2>/dev/null || true
 # survives until the next restart is worse than one that never saved at all,
 # because it looks like it worked.
 #
-# The marker lives in the container's own filesystem rather than on the config
-# volume, which is what makes it mean "this container instance". A recreate —
-# what install-dev actually does — gets a fresh filesystem and reseeds. A plain
-# restart finds the marker and leaves the operator's config alone.
-RESEED_MARKER="/tmp/.elemta-config-reseeded"
+# The marker lives in the container's own writable layer, which is what makes it
+# mean "this container instance". A recreate — what install-dev actually does —
+# gets a fresh layer and reseeds. A plain restart finds the marker and leaves
+# the operator's config alone.
+#
+# Not /tmp: that is mounted tmpfs in the shipped compose, so it is memory-backed
+# and empty on every start, restart included. A marker there is always absent
+# and the reseed fires every time — which is the bug this is fixing, reproduced
+# by the fix for it. /app is writable by the service user and only its
+# subdirectories are mounts.
+RESEED_MARKER="/app/.config-reseeded"
 if [ "${ELEMTA_CONFIG_RESEED:-}" = "true" ] && [ ! -f "$RESEED_MARKER" ]; then
     rm -f "$RUNTIME_CONFIG"
     : > "$RESEED_MARKER" 2>/dev/null || true
