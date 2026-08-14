@@ -484,6 +484,21 @@ func listAt(dir *os.File, q QueueType) ([]Message, error) {
 		// verify the opened descriptor is a regular file.
 		data, err := readFileAt(dir, name)
 		if err != nil {
+			// The directory listing is a snapshot, and walking a large queue
+			// takes a while. A message delivered and removed between the
+			// readdir and this open is simply gone — a benign race, and the
+			// normal case on a busy queue rather than an exceptional one.
+			//
+			// Failing the whole listing for it meant one delivery completing
+			// mid-scan lost every other message in the result. With 26,000
+			// queued and deliveries running, that is close to certain: the web
+			// UI reported "Failed to load queue data" and the stats refresher
+			// logged "failed to list messages ... no such file or directory".
+			// The queue processor already treats this race as benign; the
+			// listing has to as well.
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return nil, fmt.Errorf("failed to read queue entry %q: %w", name, err)
 		}
 		msg, err := decodeMessage(data, id, q)
