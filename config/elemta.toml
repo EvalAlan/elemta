@@ -69,7 +69,6 @@ dir = "/app/queue"
 # created before that fix still carries it, and the fix has not been measured
 # under load yet. Switch back with QUEUE_BACKEND=sqlite, on a fresh queue.
 backend = "file"
-
 # Keep a copy of each delivered message so a rolled-back binary can still
 # recognise a duplicate enqueue.
 #
