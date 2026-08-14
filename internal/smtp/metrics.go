@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"sync"
@@ -232,10 +233,31 @@ func newMetrics() *Metrics {
 	return m
 }
 
-// StartMetricsServer starts the Prometheus metrics HTTP server
+// StartMetricsServer starts the Prometheus metrics HTTP server.
+//
+// Setting ELEMTA_PPROF=1 also registers net/http/pprof on this listener. It is
+// off by default and opt-in per process rather than a config key, because this
+// port binds 0.0.0.0 in the shipped compose: pprof exposes goroutine stacks,
+// heap contents and a CPU profiler to anyone who can reach it, and that is not
+// something to leave switched on by accident on a mail server.
+//
+// It exists because the delivery path had a bottleneck that four rounds of
+// black-box measurement could not name — turning ClamAV off changed nothing,
+// a destination fifty times faster changed nothing, and the queue still
+// drained at a fraction of what twenty workers should manage. Inferring from
+// logs got close; a profile says it outright.
 func StartMetricsServer(addr string) *http.Server {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
+
+	if os.Getenv("ELEMTA_PPROF") == "1" {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		fmt.Fprintf(os.Stderr, "pprof enabled on %s/debug/pprof/ (ELEMTA_PPROF=1)\n", addr)
+	}
 
 	server := &http.Server{
 		Addr:              addr,

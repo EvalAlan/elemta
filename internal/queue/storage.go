@@ -201,8 +201,21 @@ func (fs *FileStorageBackend) RecordEnqueueTombstone(msg Message, content []byte
 }
 
 func (fs *FileStorageBackend) recordEnqueueTombstoneLocked(msg Message, content []byte) error {
-	// Content is still written alongside the hash so a rollback to a build
-	// that predates ContentHash can still settle identity. See enqueueTombstone.
+	// The body is still written alongside the hash, and it is expensive: it
+	// makes every successful delivery write a full-size copy of the message it
+	// just delivered. Measured on a drain with no inbound traffic, 19
+	// goroutines were runnable inside atomicWriteReaderAt and 73% of CPU was in
+	// syscalls, with 418,462 tombstones totalling 793MB on disk.
+	//
+	// It stays because TestNewTombstoneRemainsReadableByOldBinaries protects a
+	// real failure: a binary rolled back to a build that predates ContentHash
+	// reads only this field, and an empty body would make it treat every retry
+	// as a conflict and start refusing mail. Dropping it is a deployment
+	// decision about how far back a rollback can go, not a performance tweak.
+	//
+	// Pruning (see pruneTombstones) bounds the disk cost and, incidentally, the
+	// rollback window: nothing older than the retention period survives to be
+	// misread anyway.
 	payload, err := json.Marshal(enqueueTombstone{
 		Message:     msg,
 		Content:     content,
@@ -794,6 +807,55 @@ func (fs *FileStorageBackend) DeleteMessageWithTombstone(msg Message, content []
 	return fs.DeleteContent(msg.ID)
 }
 
+// pruneTombstones removes consumed-enqueue markers older than the retention
+// bound. Nothing removed them before, so they accumulated for the life of the
+// queue — the same unbounded growth the sqlite and postgres backends had.
+func (fs *FileStorageBackend) pruneTombstones(cutoff time.Time) (int, error) {
+	root, err := openRoot(fs.queueDir, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer root.Close()
+	dir, err := openChildDir(root, "tmp", false)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer dir.Close()
+
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, ".consumed-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		mtime, err := modTimeAt(dir, name)
+		if err != nil || mtime.After(cutoff) {
+			continue
+		}
+		if err := unlinkFileAt(dir, name); err != nil {
+			// Not fatal — another process may have removed it — but a
+			// persistent failure here means the queue is filling up, so it
+			// must not be swallowed.
+			if !errors.Is(err, os.ErrNotExist) {
+				return removed, fmt.Errorf("unlink tombstone %q: %w", name, err)
+			}
+			continue
+		}
+		removed++
+	}
+	return removed, nil
+}
+
 func (fs *FileStorageBackend) Cleanup(hours int) (int, error) {
 	if hours <= 0 {
 		return 0, fmt.Errorf("retention hours must be positive")
@@ -807,6 +869,18 @@ func (fs *FileStorageBackend) Cleanup(hours int) (int, error) {
 	}
 	defer root.Close()
 	cutoff, deleted := time.Now().Add(-time.Duration(hours)*time.Hour), 0
+
+	// Tombstones age out on their own bound, independently of whether any
+	// message expired. They outnumber live messages by orders of magnitude —
+	// 418,462 of them against a few thousand messages on a development queue —
+	// so tying them to message expiry would leave the growth running.
+	tombCutoff := time.Now().Add(-time.Duration(tombstoneRetentionHours) * time.Hour)
+	if pruned, err := fs.pruneTombstones(tombCutoff); err != nil {
+		return 0, fmt.Errorf("failed to prune enqueue tombstones: %w", err)
+	} else if pruned > 0 {
+		deleted += pruned
+	}
+
 	for _, q := range []QueueType{Active, Deferred, Hold, Failed} {
 		dir, err := openChildDir(root, string(q), false)
 		if errors.Is(err, os.ErrNotExist) {
