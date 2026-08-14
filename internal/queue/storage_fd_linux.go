@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -146,4 +147,18 @@ func atomicWriteReaderAt(dir *os.File, name string, r io.Reader, perm os.FileMod
 	}
 	ok = true
 	return nil
+}
+
+// modTimeAt stats a name relative to an open directory.
+//
+// os.DirEntry.Info() cannot be used for this: these directories are opened with
+// openat and wrapped by os.NewFile, so the DirEntry resolves its lstat against
+// the process working directory rather than the descriptor, fails, and the
+// caller silently skips every entry.
+func modTimeAt(dir *os.File, name string) (time.Time, error) {
+	var st unix.Stat_t
+	if err := unix.Fstatat(int(dir.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return time.Time{}, err
+	}
+	return time.Unix(st.Mtim.Sec, st.Mtim.Nsec), nil
 }
