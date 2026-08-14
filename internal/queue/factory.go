@@ -52,7 +52,25 @@ type StorageInfo struct {
 }
 
 // NewManagerFromBackend creates a queue manager based on configured backend.
-func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, postgresCfg PostgresConfig, indexedFSCfg IndexedFSConfig, failedQueueRetentionHours int) (*Manager, error) {
+// ManagerOption adjusts a manager after its backend is built.
+//
+// Variadic rather than another positional parameter: this constructor already
+// takes six, and a seventh — a bool, at that — is the shape of argument that
+// gets passed in the wrong position and silently changes durability behaviour.
+type ManagerOption func(*Manager)
+
+// WithTombstoneBody controls whether a consumed-enqueue tombstone keeps a copy
+// of the message. Retaining it is the safe default; see tombstoneBodyPolicy for
+// what dropping it buys and costs.
+func WithTombstoneBody(retain bool) ManagerOption {
+	return func(m *Manager) {
+		if setter, ok := m.storageBackend.(tombstoneBodySetter); ok {
+			setter.setTombstoneBody(tombstoneBodyPolicy{dropBody: !retain})
+		}
+	}
+}
+
+func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, postgresCfg PostgresConfig, indexedFSCfg IndexedFSConfig, failedQueueRetentionHours int, opts ...ManagerOption) (*Manager, error) {
 	backend = strings.TrimSpace(strings.ToLower(backend))
 	if backend == "" {
 		backend = "file"
@@ -60,7 +78,9 @@ func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, pos
 
 	switch backend {
 	case "file":
-		return NewManager(queueDir, failedQueueRetentionHours), nil
+		m := NewManager(queueDir, failedQueueRetentionHours)
+		applyManagerOptions(m, opts)
+		return m, nil
 	case "sqlite":
 		sqlitePath := strings.TrimSpace(sqliteCfg.Path)
 		if sqlitePath == "" {
@@ -73,6 +93,7 @@ func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, pos
 		}
 
 		m := NewManagerWithStorage(sqliteBackend, failedQueueRetentionHours)
+		applyManagerOptions(m, opts)
 		if m.queueDir == "" {
 			m.queueDir = queueDir
 		}
@@ -84,6 +105,7 @@ func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, pos
 		}
 
 		m := NewManagerWithStorage(postgresBackend, failedQueueRetentionHours)
+		applyManagerOptions(m, opts)
 		if m.queueDir == "" {
 			m.queueDir = queueDir
 		}
@@ -95,6 +117,7 @@ func NewManagerFromBackend(queueDir, backend string, sqliteCfg SQLiteConfig, pos
 		}
 
 		m := NewManagerWithStorage(indexedBackend, failedQueueRetentionHours)
+		applyManagerOptions(m, opts)
 		if m.queueDir == "" {
 			m.queueDir = queueDir
 		}
@@ -199,4 +222,17 @@ func (m *Manager) GetStorageInfo() (StorageInfo, error) {
 	default:
 		return info, nil
 	}
+}
+
+func applyManagerOptions(m *Manager, opts []ManagerOption) {
+	for _, opt := range opts {
+		if opt != nil {
+			opt(m)
+		}
+	}
+}
+
+// tombstoneBodySetter is implemented by the backends that write tombstones.
+type tombstoneBodySetter interface {
+	setTombstoneBody(tombstoneBodyPolicy)
 }

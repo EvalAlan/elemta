@@ -50,3 +50,32 @@ func sameTombstoneContent(storedDigest string, storedContent, content []byte) bo
 	}
 	return bytes.Equal(storedContent, content)
 }
+
+// Retaining the message body in a tombstone is a rollback guarantee, and it is
+// expensive.
+//
+// A binary rolled back to a build that predates ContentHash reads only the
+// body. If it finds an empty one it decides every retry conflicts and starts
+// refusing mail, which is why TestNewTombstoneRemainsReadableByOldBinaries
+// exists. The cost is a full-size copy of every message written on every
+// successful delivery: measured at 2,243 bytes per tombstone and 885MB across
+// 452,502 of them on a development queue.
+//
+// Which trade is right depends on how far back a deployment can roll, so it is
+// configurable. The flag is phrased negatively — drop rather than retain — so
+// that the Go zero value keeps the body. A backend built as a struct literal,
+// which the tests do, must not silently opt into the unsafe side.
+//
+// Pruning bounds the disk cost either way, and incidentally bounds the rollback
+// window: nothing older than the retention period survives to be misread.
+type tombstoneBodyPolicy struct {
+	dropBody bool
+}
+
+// bodyFor returns what should be stored as the tombstone body.
+func (p tombstoneBodyPolicy) bodyFor(content []byte) []byte {
+	if p.dropBody {
+		return []byte{}
+	}
+	return content
+}

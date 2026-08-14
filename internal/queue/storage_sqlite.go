@@ -15,8 +15,10 @@ import (
 
 // SQLiteStorageBackend implements StorageBackend using SQLite.
 type SQLiteStorageBackend struct {
-	dbPath string
-	db     *sql.DB
+	// Zero value keeps the tombstone body. See tombstoneBodyPolicy.
+	tombstoneBody tombstoneBodyPolicy
+	dbPath        string
+	db            *sql.DB
 }
 
 // SQLiteStorageStats holds sqlite-backed storage usage metrics.
@@ -272,7 +274,7 @@ func (s *SQLiteStorageBackend) DeleteMessageWithTombstone(msg Message, content [
 	// appear valid after restart.
 	// The body is deliberately not stored; the digest is what the conflict
 	// check needs. See internal/queue/tombstone.go.
-	if _, err = tx.Exec(`INSERT OR IGNORE INTO queue_enqueue_tombstones(id, metadata, content, consumed_at, content_digest) VALUES (?, ?, ?, ?, ?)`, msg.ID, string(metadata), []byte{}, time.Now().UTC().Format(time.RFC3339Nano), tombstoneDigest(content)); err != nil {
+	if _, err = tx.Exec(`INSERT OR IGNORE INTO queue_enqueue_tombstones(id, metadata, content, consumed_at, content_digest) VALUES (?, ?, ?, ?, ?)`, msg.ID, string(metadata), s.tombstoneBody.bodyFor(content), time.Now().UTC().Format(time.RFC3339Nano), tombstoneDigest(content)); err != nil {
 		return err
 	}
 	var tombMetadata string
@@ -650,4 +652,8 @@ func normalizeSQLiteSynchronous(mode string) string {
 	default:
 		return "NORMAL"
 	}
+}
+
+func (s *SQLiteStorageBackend) setTombstoneBody(policy tombstoneBodyPolicy) {
+	s.tombstoneBody = policy
 }

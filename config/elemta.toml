@@ -69,6 +69,20 @@ dir = "/app/queue"
 # created before that fix still carries it, and the fix has not been measured
 # under load yet. Switch back with QUEUE_BACKEND=sqlite, on a fresh queue.
 backend = "file"
+
+# Keep a copy of each delivered message so a rolled-back binary can still
+# recognise a duplicate enqueue.
+#
+# Costs a full-size write on every successful delivery — measured at 2,243
+# bytes per delivered message — and it is the single largest remaining cost on
+# the delivery path. Setting it false roughly halves that write.
+#
+# The risk it covers: a binary rolled back to a build that predates the content
+# digest reads only this copy. Finding it empty, it decides every retry
+# conflicts and starts refusing mail. If your deployment cannot roll back that
+# far, false is safe and faster. Tombstones are pruned after 24 hours either
+# way, which bounds both the disk cost and how long a rollback could see them.
+retain_tombstone_body = true
 [queue.indexedfs]
 index_path = "/app/queue/index"
 content_dir = "/app/queue/data"

@@ -244,6 +244,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			RecoveryOnStartup: config.QueueIndexedFS.RecoveryOnStartup,
 		},
 		config.FailedQueueRetentionHours,
+		queue.WithTombstoneBody(config.QueueRetainTombstoneBody == nil || *config.QueueRetainTombstoneBody),
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize queue backend: %w", err)

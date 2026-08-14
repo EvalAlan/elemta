@@ -14,18 +14,23 @@ import (
 
 // Config represents the main configuration for the SMTP server
 type Config struct {
-	ListenAddr    string   `toml:"listen_addr" json:"listen_addr"`
-	QueueDir      string   `toml:"queue_dir" json:"queue_dir"`
-	QueueBackend  string   `toml:"queue_backend" json:"queue_backend"` // file|sqlite|postgres|indexedfs
-	MaxSize       int64    `toml:"max_size" json:"max_size"`
-	DevMode       bool     `toml:"dev_mode" json:"dev_mode"`
-	AllowedRelays []string `toml:"allowed_relays" json:"allowed_relays"`
-	LocalDomains  []string `toml:"local_domains" json:"local_domains"`
-	Hostname      string   `toml:"hostname" json:"hostname"`
-	MaxWorkers    int      `toml:"max_workers" json:"max_workers"`
-	MaxRetries    int      `toml:"max_retries" json:"max_retries"`
-	MaxQueueTime  int      `toml:"max_queue_time" json:"max_queue_time"`
-	RetrySchedule []int    `toml:"retry_schedule" json:"retry_schedule"`
+	ListenAddr   string `toml:"listen_addr" json:"listen_addr"`
+	QueueDir     string `toml:"queue_dir" json:"queue_dir"`
+	QueueBackend string `toml:"queue_backend" json:"queue_backend"` // file|sqlite|postgres|indexedfs
+
+	// QueueRetainTombstoneBody keeps a copy of each delivered message so a
+	// binary rolled back past the content digest can still settle duplicate
+	// enqueues. nil means the safe default (keep it).
+	QueueRetainTombstoneBody *bool    `toml:"queue_retain_tombstone_body" json:"queue_retain_tombstone_body"`
+	MaxSize                  int64    `toml:"max_size" json:"max_size"`
+	DevMode                  bool     `toml:"dev_mode" json:"dev_mode"`
+	AllowedRelays            []string `toml:"allowed_relays" json:"allowed_relays"`
+	LocalDomains             []string `toml:"local_domains" json:"local_domains"`
+	Hostname                 string   `toml:"hostname" json:"hostname"`
+	MaxWorkers               int      `toml:"max_workers" json:"max_workers"`
+	MaxRetries               int      `toml:"max_retries" json:"max_retries"`
+	MaxQueueTime             int      `toml:"max_queue_time" json:"max_queue_time"`
+	RetrySchedule            []int    `toml:"retry_schedule" json:"retry_schedule"`
 
 	// SQLite queue backend configuration (used when QueueBackend=sqlite)
 	QueueSQLite QueueSQLiteConfig `toml:"queue_sqlite" json:"queue_sqlite"`

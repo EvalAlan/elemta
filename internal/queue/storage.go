@@ -33,7 +33,11 @@ func validateQueueType(q QueueType) error {
 	return fmt.Errorf("invalid queue type %q", q)
 }
 
-type FileStorageBackend struct{ queueDir string }
+type FileStorageBackend struct {
+	queueDir string
+	// Zero value keeps the body. See tombstoneBodyPolicy.
+	tombstoneBody tombstoneBodyPolicy
+}
 
 // enqueueTombstone records the identity of an enqueue that has been consumed,
 // so a retry of the same message can be recognised after the message itself is
@@ -218,7 +222,7 @@ func (fs *FileStorageBackend) recordEnqueueTombstoneLocked(msg Message, content 
 	// misread anyway.
 	payload, err := json.Marshal(enqueueTombstone{
 		Message:     msg,
-		Content:     content,
+		Content:     fs.tombstoneBody.bodyFor(content),
 		ContentHash: ContentHash(content),
 	})
 	if err != nil {
@@ -938,4 +942,8 @@ func (fs *FileStorageBackend) EnsureDirectories() error {
 //nolint:unused
 func (fs *FileStorageBackend) writeFileAtomic(_ string, _ []byte, _ os.FileMode) error {
 	return fmt.Errorf("path-based atomic writes are disabled")
+}
+
+func (fs *FileStorageBackend) setTombstoneBody(policy tombstoneBodyPolicy) {
+	fs.tombstoneBody = policy
 }
