@@ -1086,6 +1086,24 @@
                                         <label for="config-failed-retention">Failed Queue Retention (hours)</label>
                                         <input type="number" id="config-failed-retention" min="0" title="0 deletes failed messages immediately">
                                     </div>
+                                    <div class="config-item">
+                                        <label for="config-queue-backend">Queue Storage</label>
+                                        <input type="text" id="config-queue-backend" readonly>
+                                        <div class="field-hint">Read-only. Switching storage does not move queued mail, so it is set in the config file and applied on restart.</div>
+                                    </div>
+                                    <div class="config-item config-item-wide">
+                                        <label for="config-retain-tombstone-body">
+                                            <input type="checkbox" id="config-retain-tombstone-body">
+                                            Keep a copy of each delivered message for rollback safety
+                                        </label>
+                                        <div class="field-hint">
+                                            On, every delivery writes an extra copy of the message — about 2.2&nbsp;KB each, and the
+                                            largest single cost on the delivery path. Off roughly halves that write. Turn it off only if
+                                            you will not roll this server back to a build older than the content-digest change: an older
+                                            build reads that copy, and without it would treat retried mail as a conflict and start
+                                            refusing it. Copies are discarded after 24 hours either way.
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="settings-form-actions">
                                     <button class="btn btn-primary" onclick="saveServerConfig()">Save Configuration</button>
