@@ -21,6 +21,10 @@ services:
       # Disable plugins mount for now due to Docker file sharing issues
       # - ./plugins:/app/plugins:ro
     environment:
+      # Opt-in profiling on the metrics port. Off unless explicitly set:
+      # pprof exposes goroutine stacks and a CPU profiler, and this port binds
+      # 0.0.0.0. ELEMTA_PPROF=1 make ... to turn it on for a debugging session.
+      - ELEMTA_PPROF=${ELEMTA_PPROF:-0}
       - TZ=UTC
       # Set by `make install-dev` so a dev install re-applies config/elemta.toml.
       # Unset for ordinary up/restart, which must not discard what the UI saved.

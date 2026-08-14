@@ -2,6 +2,7 @@ package queue
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -120,4 +121,41 @@ func newTestSQLiteBackend(t *testing.T) *SQLiteStorageBackend {
 		t.Fatalf("creating sqlite backend: %v", err)
 	}
 	return backend
+}
+
+// The file backend accumulated 418,462 tombstones totalling 793MB on a
+// development queue because nothing removed them — the same unbounded growth
+// the sqlite and postgres backends had, on the backend that was missed.
+func TestFileBackendPrunesOldTombstones(t *testing.T) {
+	dir := t.TempDir()
+	fs := NewFileStorageBackend(dir)
+	if err := fs.EnsureDirectories(); err != nil {
+		t.Fatalf("ensure dirs: %v", err)
+	}
+
+	stale := testMessage("stale-tomb")
+	if err := fs.RecordEnqueueTombstone(stale, []byte("body")); err != nil {
+		t.Fatalf("record stale: %v", err)
+	}
+	stalePath := filepath.Join(dir, "tmp", ".consumed-"+stale.ID+".json")
+	old := time.Now().Add(-(tombstoneRetentionHours + 1) * time.Hour)
+	if err := os.Chtimes(stalePath, old, old); err != nil {
+		t.Fatalf("ageing the tombstone: %v", err)
+	}
+
+	fresh := testMessage("fresh-tomb")
+	if err := fs.RecordEnqueueTombstone(fresh, []byte("body")); err != nil {
+		t.Fatalf("record fresh: %v", err)
+	}
+
+	if _, err := fs.Cleanup(24); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Error("a tombstone past the retention bound survived cleanup; they grow without limit")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tmp", ".consumed-"+fresh.ID+".json")); err != nil {
+		t.Errorf("a fresh tombstone was pruned: %v", err)
+	}
 }
