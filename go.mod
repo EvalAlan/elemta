@@ -1,6 +1,6 @@
 module github.com/busybox42/elemta
 
-go 1.25.12
+go 1.25.13
 
 require (
 	blitiri.com.ar/go/spf v1.5.1
