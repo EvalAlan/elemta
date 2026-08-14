@@ -394,6 +394,24 @@ spec has not changed, so `ELEMTA_CONFIG_RESEED=true` does nothing without
 `--force-recreate` and the server keeps delivering to the old destination. Both
 were live bugs in the first version of `install-dev-bench`.
 
+**The delivery path used to serialize on one mutex held across disk I/O.**
+`Manager.DeleteMessage` took the manager's single write lock and held it while
+reading the message metadata, reading the *entire message body*, and writing a
+tombstone plus unlinking two files. Every completed delivery in the server
+queued behind that. Measured on a 52,000-message queue with 20 workers
+configured: LMTP itself took 33ms at the median, yet only **0.9 workers** were
+ever busy, the queue drained at 11/s, and every container sat under 7% CPU.
+Nineteen workers were blocked on a lock, not on work.
+
+It now takes a read lock plus a per-message-id lock (`internal/queue/
+message_locks.go`), so deletes of different messages run together while the
+same message is still handled once. `FlushQueue` and `Stop` keep the write lock
+and still exclude deletes entirely, and the storage backend's own per-id lock
+and durable tombstone are unchanged beneath it.
+
+This is why thread-pool tuning was the wrong first move: no worker count helps
+when the path downstream of every worker is serialized.
+
 **Dovecot is not the delivery bottleneck; Elemta is.** `make sink-up` repoints
 `[delivery]` at an LMTP sink that accepts and discards, measured at ~4,500/s for
 10KB messages against Dovecot's ~70/s. Draining the same backlog to each:
