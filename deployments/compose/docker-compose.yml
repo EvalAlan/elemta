@@ -264,39 +264,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-
-  # Post-startup configuration
-  # elemta-setup:
-  #   image: curlimages/curl:latest
-  #   container_name: elemta-setup
-  #   restart: "no"
-  #   volumes:
-  #     - ./scripts:/app/scripts:ro
-  #   environment:
-  #     - KIBANA_URL=http://elemta-kibana:5601
-  #     - ELASTICSEARCH_URL=http://elemta-elasticsearch:9200
-  #   networks:
-  #     - elemta_network
-  #     - monitoring_network
-  #   depends_on:
-  #     elemta-kibana:
-  #       condition: service_healthy
-  #     elemta-elasticsearch:
-  #       condition: service_healthy
-  #     elemta:
-  #       condition: service_healthy
-  #   command: >
-  #     sh -c "
-  #       echo '🚀 Elemta Post-Startup Configuration';
-  #       echo '====================================';
-  #       apk add --no-cache jq bash;
-  #       sleep 15;
-  #       echo '📊 Setting up Kibana Data Views...';
-  #       /app/scripts/setup-kibana-data-views.sh;
-  #       echo '🎉 Setup complete!';
-  #       echo '🔗 Access Kibana: http://localhost:5601';
-  #     "
-
   # Monitoring services
 
   # prometheus:

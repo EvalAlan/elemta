@@ -1,9 +1,9 @@
-.PHONY: all help build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
+.PHONY: all help gotchas build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
 	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
 	install-dev-bench uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
-	rebuild rebuild-dev docker docker-build docker-run docker-stop docker-setup docker-down update lint lint-fix fmt
+	rebuild rebuild-dev docker docker-build docker-setup docker-down update lint lint-fix fmt
 
 # Core paths/config
 COMPOSE_FILE ?= deployments/compose/docker-compose.yml
@@ -63,82 +63,10 @@ POSTGRES_VOLUME ?= elemta_pg
 # Default target
 all: build
 
-# Help target
-help:
-	@echo "Elemta - High Performance SMTP Server"
-	@echo ""
-	@echo "⚡ Quick Start:"
-	@echo "  make install-dev              # Minimal dev stack, plugins on, prints a dashboard login"
-	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
-	@echo "  make install-dev-bench        # Scanners on, delivery DISCARDED — for throughput work"
-	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
-	@echo "  make install-dev-mailauth     # Dev stack for SPF/DKIM/DMARC/ARC: fixed DNS, mail lands at :8027"
-	@echo "  make install                  # Interactive production setup"
-	@echo ""
-	@echo "🔑 Accounts & Access:"
-	@echo "  Web UI            http://localhost:8025  (login required — there is no guest access)"
-	@echo "  bootstrap-admin       - Create the dashboard account; prints the password once"
-	@echo "  reset-admin-password  - Generate and print a new password for it"
-	@echo "                          ADMIN_USER=name ADMIN_PASSWORD=secret to choose your own"
-	@echo "  The dashboard login is NOT the mailbox login. Mailbox users live in LDAP;"
-	@echo "  the dashboard account lives in the users file and is managed with:"
-	@echo "    docker exec -it elemta-web /app/elemta --config /app/runtime-config/elemta.toml \\"
-	@echo "      user list|add|passwd|remove --file /app/runtime-config/users.json"
-	@echo "  A running server reads that file at startup, so restart elemta-web after changing it."
-	@echo ""
-	@echo "🐳 Services:"
-	@echo "  up             - Start services (requires .env)"
-	@echo "  down           - Stop services, keep volumes"
-	@echo "  down-volumes   - Stop services and DELETE volumes (queue, config and login all go)"
-	@echo "  restart        - Restart all services"
-	@echo "  rebuild        - Rebuild images and restart"
-	@echo "  rebuild-dev    - Quick rebuild (dev only, skips cert check)"
-	@echo "  status         - Show service status"
-	@echo "  logs           - Follow all logs        logs-elemta - Elemta SMTP logs only"
-	@echo ""
-	@echo "⚙️  Configuration:"
-	@echo "  configure-plugins        - Apply the PLUGIN_* settings below to config/elemta.toml"
-	@echo "  configure-queue-backend  - Set the queue backend (QUEUE_BACKEND=file|sqlite|postgres)"
-	@echo "  refresh-dev-env          - Refresh backend/compose keys in .env"
-	@echo "  certs / clean-certs      - Generate or remove the dev TLS certificate"
-	@echo ""
-	@echo "📊 Logs & Observability:"
-	@echo "  elk-up         - Elasticsearch + Kibana + Filebeat, reading the log volume"
-	@echo "  elk-dashboard  - Import the Elemta overview dashboard into Kibana"
-	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
-	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
-	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
-	@echo "  sink-up        - Discard delivered mail (~4500/s) so benchmarks measure Elemta"
-	@echo "  sink-down      - Delivery to real mailboxes + Roundcube at :8026"
-	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
-	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
-	@echo "                   Untrained, the dev scanner scores real ham ABOVE real spam."
-	@echo "  elk-status     - Cluster health and how many events are indexed"
-	@echo "  elk-down       - Stop them (indexed logs are kept in their volume)"
-	@echo "  Kibana http://localhost:5601 > Discover > elemta-*   Elasticsearch :9200"
-	@echo "  Adds to whatever dev stack is running; it changes nothing about Elemta."
-	@echo ""
-	@echo "🔧 Build & Test:"
-	@echo "  build          - Build all binaries (server, queue, cli)   clean - Remove artifacts"
-	@echo "  test           - Go unit tests            test-docker    - Integration suite"
-	@echo "  test-load      - SMTP load tests          test-race-smoke - Session race checks"
-	@echo "  test-auth      - Authentication tests     test-security  - Security tests"
-	@echo "  lint / lint-fix / fmt   - Code quality"
-	@echo "  On an install-dev-mailauth stack:"
-	@echo "    mailauth-check       - Send a message that should pass SPF, DKIM and DMARC"
-	@echo "    mailauth-check-fail  - Send one that fails SPF and DMARC; it is still accepted"
-	@echo "                           because enforcement is off. Read both at :8027"
-	@echo ""
-	@echo "🎛️  Variables (override on the command line):"
-	@echo "  ADMIN_USER=admin              Dashboard account name"
-	@echo "  ADMIN_PASSWORD=               Dashboard password (generated when empty)"
-	@echo "  CERT_DAYS=$(CERT_DAYS)                  Dev certificate lifetime, in days"
-	@echo "  QUEUE_BACKEND=$(QUEUE_BACKEND)           file | sqlite | postgres"
-	@echo "  PLUGIN_RATE_LIMITER=$(PLUGIN_RATE_LIMITER)      PLUGIN_CLAMAV=$(PLUGIN_CLAMAV)   PLUGIN_RSPAMD=$(PLUGIN_RSPAMD)"
-	@echo "  PLUGIN_ACCESS_CONTROL=$(PLUGIN_ACCESS_CONTROL)    PLUGIN_RBL=$(PLUGIN_RBL)      PLUGIN_MASS_MAILER=$(PLUGIN_MASS_MAILER)"
-	@echo "  PLUGIN_SPF=$(PLUGIN_SPF)  PLUGIN_DKIM=$(PLUGIN_DKIM)  PLUGIN_DMARC=$(PLUGIN_DMARC)  PLUGIN_ARC=$(PLUGIN_ARC)"
-	@echo "    e.g. make install-dev PLUGIN_RBL=off CERT_DAYS=90"
-	@echo ""
+# The knowledge that is not derivable from reading the targets. Split out of
+# help because 26 lines of prose under 65 lines of target list means neither
+# gets read.
+gotchas:
 	@echo "💡 Things that surprise people:"
 	@echo "  • Benchmarks against Dovecot measure Dovecot (~70/s: maildir writes, indexing)."
 	@echo "    'make sink-up' points delivery at a sink that absorbs ~4500/s, so the number"
@@ -312,14 +240,6 @@ cli-install: build
 	@cp bin/elemta-cli $(GOPATH)/bin/ 2>/dev/null || echo "⚠️  GOPATH not set, skipping install"
 
 # Legacy docker targets (use 'up'/'down' instead)
-docker-run: up
-docker-stop: down
-
-# Kibana setup targets
-setup-kibana:
-	@echo "🔧 Setting up Kibana data views..."
-	./scripts/setup-kibana-data-views.sh
-
 configure-queue-backend:
 	@echo "⚙️  Configuring queue backend: $(QUEUE_BACKEND)"
 	@if [ "$(QUEUE_BACKEND)" != "file" ] && [ "$(QUEUE_BACKEND)" != "sqlite" ] && [ "$(QUEUE_BACKEND)" != "postgres" ]; then \
@@ -496,6 +416,85 @@ print-dev-summary:
 	@echo "   make logs        # View logs"
 	@echo "   make test-load   # Run load tests"
 	@echo "   make help        # Variables, plugin toggles, and the gotchas"
+
+# Help target
+help:
+	@echo "Elemta - High Performance SMTP Server"
+	@echo ""
+	@echo "⚡ Quick Start:"
+	@echo "  make install-dev              # Minimal dev stack, plugins on, prints a dashboard login"
+	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
+	@echo "  make install-dev-bench        # Scanners on, delivery DISCARDED — for throughput work"
+	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
+	@echo "  make install-dev-mailauth     # Dev stack for SPF/DKIM/DMARC/ARC: fixed DNS, mail lands at :8027"
+	@echo "  make install                  # Interactive production setup"
+	@echo ""
+	@echo "🔑 Accounts & Access:"
+	@echo "  Web UI            http://localhost:8025  (login required — there is no guest access)"
+	@echo "  bootstrap-admin       - Create the dashboard account; prints the password once"
+	@echo "  reset-admin-password  - Generate and print a new password for it"
+	@echo "                          ADMIN_USER=name ADMIN_PASSWORD=secret to choose your own"
+	@echo "  The dashboard login is NOT the mailbox login. Mailbox users live in LDAP;"
+	@echo "  the dashboard account lives in the users file and is managed with:"
+	@echo "    docker exec -it elemta-web /app/elemta --config /app/runtime-config/elemta.toml \\"
+	@echo "      user list|add|passwd|remove --file /app/runtime-config/users.json"
+	@echo "  A running server reads that file at startup, so restart elemta-web after changing it."
+	@echo ""
+	@echo "🐳 Services:"
+	@echo "  up             - Start services (requires .env)"
+	@echo "  down           - Stop services, keep volumes"
+	@echo "  down-volumes   - Stop services and DELETE volumes (queue, config and login all go)"
+	@echo "  restart        - Restart all services"
+	@echo "  rebuild        - Rebuild images and restart"
+	@echo "  rebuild-dev    - Quick rebuild (dev only, skips cert check)"
+	@echo "  status         - Show service status"
+	@echo "  logs           - Follow all logs        logs-elemta - Elemta SMTP logs only"
+	@echo ""
+	@echo "⚙️  Configuration:"
+	@echo "  configure-plugins        - Apply the PLUGIN_* settings below to config/elemta.toml"
+	@echo "  configure-queue-backend  - Set the queue backend (QUEUE_BACKEND=file|sqlite|postgres)"
+	@echo "  refresh-dev-env          - Refresh backend/compose keys in .env"
+	@echo "  certs / clean-certs      - Generate or remove the dev TLS certificate"
+	@echo ""
+	@echo "📊 Logs & Observability:"
+	@echo "  elk-up         - Elasticsearch + Kibana + Filebeat, reading the log volume"
+	@echo "  elk-dashboard  - Import the Elemta overview dashboard into Kibana"
+	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
+	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
+	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
+	@echo "  sink-up        - Discard delivered mail (~4500/s) so benchmarks measure Elemta"
+	@echo "  sink-down      - Delivery to real mailboxes + Roundcube at :8026"
+	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
+	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
+	@echo "  elk-status     - Cluster health and how many events are indexed"
+	@echo "  elk-down       - Stop them (indexed logs are kept in their volume)"
+	@echo "  Kibana http://localhost:5601 > Discover > elemta-*   Elasticsearch :9200"
+	@echo "  Adds to whatever dev stack is running; it changes nothing about Elemta."
+	@echo ""
+	@echo "🔧 Build & Test:"
+	@echo "  build          - Build all binaries (server, queue, cli)   clean - Remove artifacts"
+	@echo "  test           - Go unit tests            test-docker    - Integration suite"
+	@echo "  test-load      - SMTP load tests          test-race-smoke - Session race checks"
+	@echo "  test-auth      - Authentication tests     test-security  - Security tests"
+	@echo "  lint / lint-fix / fmt   - Code quality"
+	@echo "  On an install-dev-mailauth stack:"
+	@echo "    mailauth-check       - Send a message that should pass SPF, DKIM and DMARC"
+	@echo "    mailauth-check-fail  - Send one that fails SPF and DMARC; it is still accepted"
+	@echo "                           because enforcement is off. Read both at :8027"
+	@echo ""
+	@echo "🎛️  Variables (override on the command line):"
+	@echo "  ADMIN_USER=admin              Dashboard account name"
+	@echo "  ADMIN_PASSWORD=               Dashboard password (generated when empty)"
+	@echo "  CERT_DAYS=$(CERT_DAYS)                  Dev certificate lifetime, in days"
+	@echo "  QUEUE_BACKEND=$(QUEUE_BACKEND)           file | sqlite | postgres"
+	@echo "  PLUGIN_RATE_LIMITER=$(PLUGIN_RATE_LIMITER)      PLUGIN_CLAMAV=$(PLUGIN_CLAMAV)   PLUGIN_RSPAMD=$(PLUGIN_RSPAMD)"
+	@echo "  PLUGIN_ACCESS_CONTROL=$(PLUGIN_ACCESS_CONTROL)    PLUGIN_RBL=$(PLUGIN_RBL)      PLUGIN_MASS_MAILER=$(PLUGIN_MASS_MAILER)"
+	@echo "  PLUGIN_SPF=$(PLUGIN_SPF)  PLUGIN_DKIM=$(PLUGIN_DKIM)  PLUGIN_DMARC=$(PLUGIN_DMARC)  PLUGIN_ARC=$(PLUGIN_ARC)"
+	@echo "    e.g. make install-dev PLUGIN_RBL=off CERT_DAYS=90"
+	@echo ""
+	@echo "💡 make gotchas   - The things that surprise people (config reload, discarded"
+	@echo "                    delivery, cert expiry, what [logging] ignores). Worth reading"
+	@echo "                    once; HANDOFF.md has the same traps in depth."
 
 install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Minimal)"
@@ -921,6 +920,6 @@ uninstall:
 	./install/uninstall.sh
 
 # Legacy update targets (use 'make rebuild' instead)
+# Kept because install/README.md and deployments/compose/README.md name them.
 update: rebuild
-update-backup: rebuild
 update-restart: restart
