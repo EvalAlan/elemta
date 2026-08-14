@@ -58,11 +58,3 @@ func (ml *messageLocks) acquire(id string) func() {
 		ml.mu.Unlock()
 	}
 }
-
-// held reports how many ids currently have a lock entry. For tests: the count
-// returning to zero is what shows the map is not leaking.
-func (ml *messageLocks) held() int {
-	ml.mu.Lock()
-	defer ml.mu.Unlock()
-	return len(ml.locks)
-}

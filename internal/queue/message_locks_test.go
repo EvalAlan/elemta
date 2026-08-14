@@ -76,7 +76,12 @@ func TestLockEntriesAreReleased(t *testing.T) {
 	}
 	wg.Wait()
 
-	if held := locks.held(); held != 0 {
+	// Read the map directly rather than through a helper: a helper used only
+	// by tests reads as dead code to the linter, and this test is in-package.
+	locks.mu.Lock()
+	held := len(locks.locks)
+	locks.mu.Unlock()
+	if held != 0 {
 		t.Errorf("%d lock entries remain after every holder released; the map grows without bound", held)
 	}
 }
