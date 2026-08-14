@@ -19,12 +19,15 @@ type Manager struct {
 	queueDir                  string
 	failedQueueRetentionHours int
 	mutex                     sync.RWMutex
-	logger                    *slog.Logger
-	queueStats                QueueStats
-	statsLock                 sync.RWMutex
-	stopCh                    chan struct{}
-	storageBackend            StorageBackend
-	retrySchedule             []int // per-attempt backoff in seconds; last entry repeats
+	// Value, not a pointer: a Manager built as a struct literal — the tests do
+	// this — must not nil-panic on the delivery path. The zero value works.
+	msgLocks       messageLocks
+	logger         *slog.Logger
+	queueStats     QueueStats
+	statsLock      sync.RWMutex
+	stopCh         chan struct{}
+	storageBackend StorageBackend
+	retrySchedule  []int // per-attempt backoff in seconds; last entry repeats
 }
 
 // defaultRetrySchedule backs off from 1 minute to 6 hours and, with the default
@@ -493,8 +496,19 @@ func (m *Manager) GetMessageContent(id string) ([]byte, error) {
 
 // DeleteMessage removes a message from the queue
 func (m *Manager) DeleteMessage(id string) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	// A read lock, not a write lock. Deletes of different messages touch
+	// different files and exclude each other for no reason; holding the write
+	// lock across three file operations serialized every delivery in the
+	// server. FlushQueue and Stop still take the write lock, so they still
+	// exclude deletes entirely.
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	// Same message, one at a time. This is the exclusion that was actually
+	// needed, and the storage backend adds a durable tombstone under its own
+	// per-id lock beneath it.
+	release := m.msgLocks.acquire(id)
+	defer release()
 
 	// Get message first to determine queue type for stats
 	msg, err := m.storageBackend.Retrieve(id)
@@ -546,8 +560,13 @@ func (m *Manager) DeleteMessage(id string) error {
 
 // MoveMessage moves a message to a different queue
 func (m *Manager) MoveMessage(id string, targetQueue QueueType, reason string) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	// See DeleteMessage: read lock plus per-id exclusion. A deferral moving one
+	// message has no reason to block a delivery completing on another.
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	release := m.msgLocks.acquire(id)
+	defer release()
 
 	// Get current message
 	msg, err := m.storageBackend.Retrieve(id)
