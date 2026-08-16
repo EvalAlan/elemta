@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -90,5 +91,46 @@ func TestQueueTombstoneBodySettingRoundTrips(t *testing.T) {
 
 	if got := get()["queue_retain_tombstone_body"]; got != false {
 		t.Errorf("after turning it off, GET reports %v; the setting did not stick", got)
+	}
+}
+
+// API responses describe mutable server state and must not be cached.
+//
+// Without a Cache-Control header a browser applies its own heuristics and may
+// serve a stored copy. The symptom was a settings checkbox that came back with
+// its old value after saving and restarting: the file on disk was correct, the
+// server reported the right thing, and the browser never asked.
+func TestConfigResponseIsNotCacheable(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "elemta.toml")
+	if err := os.WriteFile(configPath, []byte("hostname = \"t.example.com\"\n\n[queue]\nbackend = \"file\"\n"), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	server, err := NewServer(&Config{
+		Enabled: true, ListenAddr: "127.0.0.1:0", WebRoot: dir, AuthEnabled: false,
+	}, &MainConfig{Hostname: "t.example.com", QueueDir: dir, QueueBackend: "file"},
+		dir, 0, configPath)
+	if err != nil {
+		t.Fatalf("building server: %v", err)
+	}
+	if err := server.Start(); err != nil {
+		t.Fatalf("starting server: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = server.Stop()
+		server.queueMgr.Stop()
+	})
+
+	resp, err := http.Get("http://" + server.listener.Addr().String() + "/api/config")
+	if err != nil {
+		t.Fatalf("GET /config: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if got := resp.Header.Get("Cache-Control"); got == "" {
+		t.Error("/api/config sets no Cache-Control; a browser may serve a stale copy " +
+			"and the dashboard will show settings that are no longer true")
+	} else if !strings.Contains(got, "no-store") && !strings.Contains(got, "no-cache") {
+		t.Errorf("Cache-Control = %q, which still permits reuse without revalidating", got)
 	}
 }

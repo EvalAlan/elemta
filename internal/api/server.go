@@ -2808,6 +2808,19 @@ func (s *Server) handleServerRestart(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 
+	// Every one of these describes mutable server state, and none of it is
+	// valid a second time. Without a Cache-Control header a browser applies its
+	// own heuristics and may serve a stored copy: saving a setting, restarting
+	// the server and reloading showed the *old* value, because the reload never
+	// reached the server. It looked like the setting had not saved — the file
+	// on disk was correct the whole time.
+	//
+	// Set rather than overwrite: one endpoint deliberately asks for
+	// must-revalidate instead, and that choice is documented where it is made.
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		http.Error(w, fmt.Sprintf("Error encoding JSON: %v", err), http.StatusInternalServerError)
 	}
