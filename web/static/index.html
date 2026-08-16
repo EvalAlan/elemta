@@ -1097,11 +1097,13 @@
                                             Keep a copy of each delivered message for rollback safety
                                         </label>
                                         <div class="field-hint">
-                                            On, every delivery writes an extra copy of the message — about 2.2&nbsp;KB each, and the
-                                            largest single cost on the delivery path. Off roughly halves that write. Turn it off only if
-                                            you will not roll this server back to a build older than the content-digest change: an older
-                                            build reads that copy, and without it would treat retried mail as a conflict and start
-                                            refusing it. Copies are discarded after 24 hours either way.
+                                            Off by default, and measured: draining the same 12,000-message queue gave
+                                            137/s with this off and 87/s with it on. Keeping the copy costs roughly a
+                                            third of delivery throughput, on every delivery.
+                                            Turn it on only if you may roll this server back to a build older than the
+                                            content-digest change (2026-08-08): an older build reads that copy, and
+                                            without it would treat a re-sent message as a conflict and refuse it.
+                                            Copies are discarded after 24 hours either way.
                                         </div>
                                     </div>
                                 </div>
