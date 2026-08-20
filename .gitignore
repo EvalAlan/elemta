@@ -170,3 +170,11 @@ examples/**/*.so
 .env
 bin/
 CLAUDE.md
+
+# Local agent-tool configuration, which is per-machine and never belongs in the
+# repo. .codex/config.toml is the one that matters: it stores MCP server
+# credentials — a GitHub PAT — as plaintext. Gitleaks only runs in CI, so
+# without this it flags the token one push after it has already leaked.
+.codex/
+.claude/settings.local.json
+.claude/worktrees/
