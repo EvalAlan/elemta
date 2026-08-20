@@ -69,6 +69,28 @@ dir = "/app/queue"
 # created before that fix still carries it, and the fix has not been measured
 # under load yet. Switch back with QUEUE_BACKEND=sqlite, on a fresh queue.
 backend = "file"
+# Keep a copy of each delivered message so a rolled-back binary can still
+# recognise a duplicate enqueue.
+#
+# Off, because the measurement does not justify it. Draining the same
+# 12,000-message queue on the same stack: false gave 137.2/s average and 200/s
+# peak, true gave 86.7/s and 106/s. Keeping the copy costs roughly a third of
+# delivery throughput, on every delivery, forever.
+#
+# What it protects: a binary rolled back to before the content digest — added
+# 2026-08-08, 104 commits ago — reads only this copy. Finding it empty it treats
+# a re-enqueued message as a conflict and refuses it. That is real, but it is
+# narrow: it needs a rollback past that commit, it only affects re-enqueues of
+# the same message id, and tombstones are pruned after 24 hours, so only mail
+# consumed in the day before the rollback is even in scope.
+#
+# Rolling the queue's on-disk state back across that boundary is not supported.
+# If your deployment needs it to be, set this true and accept the throughput.
+#
+# Note for existing installs: leaving this key out entirely still keeps the copy.
+# An upgrade does not change durability behaviour under you; only a new config,
+# or setting it yourself, does.
+retain_tombstone_body = false
 [queue.indexedfs]
 index_path = "/app/queue/index"
 content_dir = "/app/queue/data"

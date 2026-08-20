@@ -67,6 +67,15 @@ func (s *Server) Reload(ctx context.Context, newConfig *Config) error {
 	s.authVerifier = next.authVerifier
 	s.pluginMu.Unlock()
 
+	// The queue manager is not rebuilt on reload — it owns the queue and
+	// replacing it would strand in-flight work — but settings that only change
+	// how it writes can be applied to the live one. Without this the tombstone
+	// setting saved, reported success, and did nothing until a restart.
+	if m, ok := s.queueManager.(interface{ SetTombstoneBody(bool) }); ok {
+		m.SetTombstoneBody(newConfig.QueueRetainTombstoneBody == nil ||
+			*newConfig.QueueRetainTombstoneBody)
+	}
+
 	s.slogger.Info("Configuration reloaded",
 		"event_type", "system",
 		"antivirus", next.scanners.HasAntivirusScanners(),
@@ -74,6 +83,7 @@ func (s *Server) Reload(ctx context.Context, newConfig *Config) error {
 		"access_control", next.accessControl.Enabled(),
 		"rbl", next.rbl.Enabled(),
 		"mail_auth", next.authVerifier.Enabled(),
+		"retain_tombstone_body", newConfig.QueueRetainTombstoneBody == nil || *newConfig.QueueRetainTombstoneBody,
 		"note", "listen address, size limits, timeouts and the queue backend still need a restart",
 	)
 	return nil

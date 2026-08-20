@@ -189,6 +189,10 @@ func fullyPopulatedConfig() *Config {
 
 	cfg.Server.DevMode = true
 	cfg.Queue.Backend = "sqlite"
+	// Non-zero so the guard rail can see it mapped. The shipped default when the
+	// key is absent is true — keep the body — which is the safe side.
+	retainTombstoneBody := false
+	cfg.Queue.RetainTombstoneBody = &retainTombstoneBody
 	cfg.Queue.Dir = "/var/spool/elemta"
 	cfg.Queue.SQLite.Path = "/var/spool/elemta/queue.db"
 	cfg.Queue.SQLite.BusyTimeoutMS = 5000

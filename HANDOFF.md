@@ -436,6 +436,24 @@ every restart re-seeds and discards edits to the runtime config.** Change
 `config/elemta.toml` and restart instead; editing `/app/runtime-config` silently
 reverts. This cost a benchmark run that reported the old worker count.
 
+**The tombstone body copy is off by default, and that is a supported-rollback
+decision.** Every delivery used to write a copy of the message it had just
+delivered into its consumed-enqueue tombstone. Measured on the same stack
+draining the same 12,000-message queue: `retain_tombstone_body = false` gave
+137.2/s average and 200/s peak, `true` gave 86.7/s and 106/s — keeping the copy
+costs about a third of delivery throughput, permanently.
+
+What it protects is narrow. A binary rolled back to before the content digest
+(added 2026-08-08, 104 commits ago) reads only that copy, and finding it empty
+treats a re-enqueued message as a conflict and refuses it. It needs a rollback
+past that commit, it only affects re-enqueues of the same message id, and
+tombstones are pruned after 24 hours, so only mail consumed in the day before
+the rollback is in scope. **Rolling the queue's on-disk state back across that
+boundary is not supported.** Set the key true if a deployment needs it to be.
+
+Leaving the key out entirely still keeps the copy, so an upgrade does not change
+durability behaviour under an existing install; only a new config does.
+
 **Querying Spamhaus through a public resolver returns `127.255.255.254`** — a
 status code about *you*, not about the sender. Treating any `127.0.0.0/8` answer
 as a listing refuses all mail. `internal/smtp/rbl.go` only accepts
