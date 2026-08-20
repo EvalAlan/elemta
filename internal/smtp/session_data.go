@@ -1587,6 +1587,32 @@ func newScanContentFromSpool(spool *MessageSpool, head []byte) *scanContent {
 	return view
 }
 
+// winningScore picks the score to report and the threshold it was judged
+// against, from however many engines replied.
+//
+// The two are returned together on purpose. Choosing the highest score and the
+// highest threshold independently pairs one engine's score with another
+// engine's scale, producing an X-Spam-Status line describing a verdict that no
+// engine reached — "12.0/15.0" when the engine scoring 12.0 rejects at 5.0.
+//
+// Whether anything has been seen yet is tracked separately rather than inferred
+// from a zero score or a zero threshold: 0 is the ordinary score for clean mail
+// and a legitimate threshold for an engine to report, so neither can stand in
+// for "unset" without mis-ranking a real reply.
+func winningScore(results []*antispam.ScanResult) (score, threshold float64) {
+	seen := false
+	for _, r := range results {
+		if r == nil {
+			continue
+		}
+		if !seen || r.Score > score {
+			score, threshold = r.Score, r.Threshold
+			seen = true
+		}
+	}
+	return score, threshold
+}
+
 // mergeScanResult folds one scan's findings into the combined result.
 //
 // A failure in either scan fails the message, and threats accumulate, so the
@@ -1822,7 +1848,7 @@ func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, m
 
 	// Several engines may report; the highest score decides, and any engine
 	// calling the message spam is enough to mark it.
-	var highest, highestThreshold float64
+	highest, highestThreshold := winningScore(results)
 	spam := false
 	// The strongest thing any engine asked for. Tagging is not a reason to
 	// refuse a message; only a reject is, and a defer must stay temporary.
@@ -1830,10 +1856,6 @@ func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, m
 	for _, r := range results {
 		if r == nil {
 			continue
-		}
-		if r.Score > highest || highestThreshold == 0 {
-			highest = r.Score
-			highestThreshold = r.Threshold
 		}
 		if r.Disposition > strongest {
 			strongest = r.Disposition
