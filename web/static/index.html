@@ -1086,6 +1086,26 @@
                                         <label for="config-failed-retention">Failed Queue Retention (hours)</label>
                                         <input type="number" id="config-failed-retention" min="0" title="0 deletes failed messages immediately">
                                     </div>
+                                    <div class="config-item">
+                                        <label for="config-queue-backend">Queue Storage</label>
+                                        <input type="text" id="config-queue-backend" readonly>
+                                        <div class="field-hint">Read-only. Switching storage does not move queued mail, so it is set in the config file and applied on restart.</div>
+                                    </div>
+                                    <div class="config-item config-item-wide">
+                                        <label for="config-retain-tombstone-body">
+                                            <input type="checkbox" id="config-retain-tombstone-body">
+                                            Keep a copy of each delivered message for rollback safety
+                                        </label>
+                                        <div class="field-hint">
+                                            Off by default, and measured: draining the same 12,000-message queue gave
+                                            137/s with this off and 87/s with it on. Keeping the copy costs roughly a
+                                            third of delivery throughput, on every delivery.
+                                            Turn it on only if you may roll this server back to a build older than the
+                                            content-digest change (2026-08-08): an older build reads that copy, and
+                                            without it would treat a re-sent message as a conflict and refuse it.
+                                            Copies are discarded after 24 hours either way.
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="settings-form-actions">
                                     <button class="btn btn-primary" onclick="saveServerConfig()">Save Configuration</button>

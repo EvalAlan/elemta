@@ -1771,6 +1771,10 @@ async function refreshServerConfig() {
         document.getElementById('config-listen-addr').value = config.listen_addr || '';
         document.getElementById('config-queue-dir').value = config.queue_dir || '';
         document.getElementById('config-max-size').value = config.max_size || '';
+        document.getElementById('config-queue-backend').value = config.queue_backend || 'file';
+        // Absent means the shipped default, which keeps the copy.
+        document.getElementById('config-retain-tombstone-body').checked =
+            config.queue_retain_tombstone_body !== false;
         // ?? instead of ||: zero is a real value here (retention 0 means
         // failed messages are deleted immediately), not an absence.
         document.getElementById('config-failed-retention').value = config.failed_queue_retention_hours ?? '';
@@ -1795,7 +1799,9 @@ async function saveServerConfig() {
             listen_addr: document.getElementById('config-listen-addr').value,
             queue_dir: document.getElementById('config-queue-dir').value,
             max_size: document.getElementById('config-max-size').value,
-            failed_queue_retention_hours: parseInt(document.getElementById('config-failed-retention').value)
+            failed_queue_retention_hours: parseInt(document.getElementById('config-failed-retention').value),
+            // queue_backend is not sent: it is read-only here on purpose.
+            queue_retain_tombstone_body: document.getElementById('config-retain-tombstone-body').checked
         };
         
         const response = await fetch('/api/config', {

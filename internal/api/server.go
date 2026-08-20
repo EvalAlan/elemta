@@ -34,10 +34,13 @@ import (
 
 // MainConfig represents the configuration data needed by the API
 type MainConfig struct {
-	Hostname                  string      `json:"hostname"`
-	ListenAddr                string      `json:"listen_addr"`
-	QueueDir                  string      `json:"queue_dir"`
-	QueueBackend              string      `json:"queue_backend"`
+	Hostname     string `json:"hostname"`
+	ListenAddr   string `json:"listen_addr"`
+	QueueDir     string `json:"queue_dir"`
+	QueueBackend string `json:"queue_backend"`
+	// nil means the shipped default, which keeps the body. A plain bool would
+	// make "absent" and "explicitly off" indistinguishable.
+	QueueRetainTombstoneBody  *bool       `json:"queue_retain_tombstone_body"`
 	QueueSQLitePath           string      `json:"queue_sqlite_path"`
 	QueueSQLiteBusyTimeoutMS  int         `json:"queue_sqlite_busy_timeout_ms"`
 	QueueSQLiteJournalMode    string      `json:"queue_sqlite_journal_mode"`
@@ -1916,9 +1919,17 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		"session_timeout":              s.mainConfig.SessionTimeout,
 		"local_domains":                s.mainConfig.LocalDomains,
 		"failed_queue_retention_hours": s.mainConfig.FailedQueueRetentionHours,
-		"rate_limiter":                 s.mainConfig.RateLimiterPluginConfig,
-		"tls":                          s.mainConfig.TLS,
-		"api":                          s.mainConfig.API,
+		// Read-only. Changing the backend does not migrate queued mail — it
+		// points the server at a different store and orphans what is in the old
+		// one, which this codebase has already done by accident once. It is
+		// shown so an operator knows what they are looking at, not so they can
+		// switch it from a browser.
+		"queue_backend": s.mainConfig.QueueBackend,
+		"queue_retain_tombstone_body": s.mainConfig.QueueRetainTombstoneBody == nil ||
+			*s.mainConfig.QueueRetainTombstoneBody,
+		"rate_limiter": s.mainConfig.RateLimiterPluginConfig,
+		"tls":          s.mainConfig.TLS,
+		"api":          s.mainConfig.API,
 	}
 
 	writeJSON(w, configResponse)
@@ -2220,6 +2231,11 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if v, ok := configUpdate["failed_queue_retention_hours"].(float64); ok {
 		s.mainConfig.FailedQueueRetentionHours = int(v)
 	}
+	// Only tombstones written after this takes effect are affected, so it needs
+	// no restart. queue_backend is deliberately not accepted here.
+	if v, ok := configUpdate["queue_retain_tombstone_body"].(bool); ok {
+		s.mainConfig.QueueRetainTombstoneBody = &v
+	}
 
 	// Apply rate limiter config if present
 	if rl, ok := configUpdate["rate_limiter"].(map[string]interface{}); ok {
@@ -2325,6 +2341,11 @@ func (s *Server) persistConfig() error {
 	}
 	if len(s.mainConfig.LocalDomains) > 0 {
 		edits = append(edits, edit{"", "local_domains", s.mainConfig.LocalDomains})
+	}
+	// Written only when the operator has expressed a preference, so an untouched
+	// config file does not gain a key nobody asked for.
+	if v := s.mainConfig.QueueRetainTombstoneBody; v != nil {
+		edits = append(edits, edit{"queue", "retain_tombstone_body", *v})
 	}
 
 	// Rate limiter, if the API is holding one.
@@ -2786,6 +2807,19 @@ func (s *Server) handleServerRestart(w http.ResponseWriter, r *http.Request) {
 // writeJSON writes a JSON response
 func writeJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+
+	// Every one of these describes mutable server state, and none of it is
+	// valid a second time. Without a Cache-Control header a browser applies its
+	// own heuristics and may serve a stored copy: saving a setting, restarting
+	// the server and reloading showed the *old* value, because the reload never
+	// reached the server. It looked like the setting had not saved — the file
+	// on disk was correct the whole time.
+	//
+	// Set rather than overwrite: one endpoint deliberately asks for
+	// must-revalidate instead, and that choice is documented where it is made.
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		http.Error(w, fmt.Sprintf("Error encoding JSON: %v", err), http.StatusInternalServerError)

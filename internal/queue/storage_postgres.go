@@ -13,7 +13,9 @@ import (
 
 // PostgresStorageBackend implements StorageBackend with PostgreSQL.
 type PostgresStorageBackend struct {
-	db *sql.DB
+	// Zero value keeps the tombstone body. See tombstoneBodyPolicy.
+	tombstoneBody tombstoneBodyPolicy
+	db            *sql.DB
 }
 
 // PostgresStorageStats holds postgres-backed storage usage metrics.
@@ -278,7 +280,7 @@ WHERE m.id=$1 FOR UPDATE OF m, c`, msg.ID).Scan(&liveMetadata, &liveContent); er
 	}
 	// Preserve the first consumed identity rather than allowing a later caller
 	// to replace it. Everything remains in this transaction with the live delete.
-	if _, err = tx.Exec(postgresInsertTombstoneSQL, msg.ID, string(metadata), []byte{}, tombstoneDigest(content)); err != nil {
+	if _, err = tx.Exec(postgresInsertTombstoneSQL, msg.ID, string(metadata), p.tombstoneBody.bodyFor(content), tombstoneDigest(content)); err != nil {
 		return err
 	}
 	var tombMetadata, tombContent []byte
@@ -614,4 +616,8 @@ func (p *PostgresStorageBackend) StorageStats() (PostgresStorageStats, error) {
 	}
 
 	return stats, nil
+}
+
+func (p *PostgresStorageBackend) setTombstoneBody(retain bool) {
+	p.tombstoneBody.setRetain(retain)
 }

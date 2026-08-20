@@ -30,8 +30,30 @@ RUNTIME_CONFIG="$RUNTIME_DIR/elemta.toml"
 
 mkdir -p "$RUNTIME_DIR" 2>/dev/null || true
 
-if [ "${ELEMTA_CONFIG_RESEED:-}" = "true" ]; then
+# Reseed once per container, not once per start.
+#
+# ELEMTA_CONFIG_RESEED is set by `make install-dev*` to mean "this deploy is
+# authoritative, take the template again". Compose bakes it into the container's
+# environment, so it was still true on every subsequent `docker restart` — and
+# each restart deleted the runtime config and re-copied the template, silently
+# discarding everything the operator had saved in the web UI. A setting that
+# survives until the next restart is worse than one that never saved at all,
+# because it looks like it worked.
+#
+# The marker lives in the container's own writable layer, which is what makes it
+# mean "this container instance". A recreate — what install-dev actually does —
+# gets a fresh layer and reseeds. A plain restart finds the marker and leaves
+# the operator's config alone.
+#
+# Not /tmp: that is mounted tmpfs in the shipped compose, so it is memory-backed
+# and empty on every start, restart included. A marker there is always absent
+# and the reseed fires every time — which is the bug this is fixing, reproduced
+# by the fix for it. /app is writable by the service user and only its
+# subdirectories are mounts.
+RESEED_MARKER="/app/.config-reseeded"
+if [ "${ELEMTA_CONFIG_RESEED:-}" = "true" ] && [ ! -f "$RESEED_MARKER" ]; then
     rm -f "$RUNTIME_CONFIG"
+    : > "$RESEED_MARKER" 2>/dev/null || true
 fi
 
 if [ ! -f "$RUNTIME_CONFIG" ]; then

@@ -34,15 +34,16 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 	}
 
 	out := &smtp.Config{
-		ListenAddr:    c.EffectiveListenAddr(),
-		QueueDir:      c.EffectiveQueueDir(),
-		QueueBackend:  c.Queue.Backend,
-		MaxSize:       c.EffectiveMaxSize(),
-		DevMode:       c.Server.DevMode,
-		AllowedRelays: c.AllowedRelays,
-		LocalDomains:  c.EffectiveLocalDomains(),
-		Hostname:      c.EffectiveHostname(),
-		MaxWorkers:    c.MaxWorkers,
+		ListenAddr:               c.EffectiveListenAddr(),
+		QueueDir:                 c.EffectiveQueueDir(),
+		QueueBackend:             c.Queue.Backend,
+		QueueRetainTombstoneBody: c.Queue.RetainTombstoneBody,
+		MaxSize:                  c.EffectiveMaxSize(),
+		DevMode:                  c.Server.DevMode,
+		AllowedRelays:            c.AllowedRelays,
+		LocalDomains:             c.EffectiveLocalDomains(),
+		Hostname:                 c.EffectiveHostname(),
+		MaxWorkers:               c.MaxWorkers,
 		// Reaches the delivery handler's traffic shaper. Unmapped until now,
 		// which is why the setting did nothing.
 		MaxConnectionsPerDomain: c.MaxConnectionsPerDomain,

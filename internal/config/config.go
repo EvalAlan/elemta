@@ -174,7 +174,11 @@ type Config struct {
 	Queue struct {
 		Dir     string `toml:"dir"`
 		Backend string `toml:"backend"` // file|sqlite|postgres|indexedfs
-		SQLite  struct {
+		// RetainTombstoneBody keeps a copy of each delivered message so a
+		// rolled-back binary can still settle duplicate enqueues. Defaults to
+		// true; see queue.tombstoneBodyPolicy for the cost.
+		RetainTombstoneBody *bool `toml:"retain_tombstone_body"`
+		SQLite              struct {
 			Path          string `toml:"path"`
 			BusyTimeoutMS int    `toml:"busy_timeout_ms"`
 			JournalMode   string `toml:"journal_mode"`

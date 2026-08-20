@@ -177,6 +177,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		ListenAddr:                listenAddr,
 		QueueDir:                  queueDir,
 		QueueBackend:              cfg.Queue.Backend,
+		QueueRetainTombstoneBody:  cfg.Queue.RetainTombstoneBody,
 		QueueSQLitePath:           cfg.Queue.SQLite.Path,
 		QueueSQLiteBusyTimeoutMS:  cfg.Queue.SQLite.BusyTimeoutMS,
 		QueueSQLiteJournalMode:    cfg.Queue.SQLite.JournalMode,
