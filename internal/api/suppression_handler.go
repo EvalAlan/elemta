@@ -8,7 +8,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/busybox42/elemta/internal/suppression"
+	"github.com/EvalAlan/elemta/internal/suppression"
 )
 
 // The suppression list in the dashboard.

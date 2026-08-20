@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/busybox42/elemta/internal/smtp"
+	"github.com/EvalAlan/elemta/internal/smtp"
 )
 
 // ToSMTPConfig converts the top-level elemta configuration into the SMTP

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/busybox42/elemta/internal/authresult"
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/authresult"
+	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/google/uuid"
 )
 

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/dkim"
 )
 
 const dkimTestMessage = "From: Alice <alice@example.com>\r\n" +

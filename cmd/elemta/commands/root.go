@@ -5,7 +5,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/busybox42/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/config"
 	"github.com/spf13/cobra"
 )
 

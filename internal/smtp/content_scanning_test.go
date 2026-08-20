@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/busybox42/elemta/internal/antispam"
-	"github.com/busybox42/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/antispam"
+	"github.com/EvalAlan/elemta/internal/logging"
 )
 
 // Content scanning used to be a list of substrings matched against the message

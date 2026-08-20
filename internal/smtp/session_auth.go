@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/busybox42/elemta/internal/auth"
-	"github.com/busybox42/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/auth"
+	"github.com/EvalAlan/elemta/internal/logging"
 )
 
 // Note: AuthMethod and constants are defined in auth.go

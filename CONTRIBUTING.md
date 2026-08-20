@@ -5,7 +5,7 @@ Thanks for contributing.
 ## Development setup
 
 ```bash
-git clone https://github.com/busybox42/elemta.git
+git clone https://github.com/EvalAlan/elemta.git
 cd elemta
 make install-dev
 ```

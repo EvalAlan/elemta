@@ -71,7 +71,7 @@ package main
 
 import (
 	"net"
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // PluginInfo is exported and contains information about the plugin

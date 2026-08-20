@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/busybox42/elemta/internal/campaign"
-	"github.com/busybox42/elemta/internal/datasource"
+	"github.com/EvalAlan/elemta/internal/campaign"
+	"github.com/EvalAlan/elemta/internal/datasource"
 )
 
 // DirectoryLister lists accounts from the configured authentication directory.

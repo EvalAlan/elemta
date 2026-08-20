@@ -1,6 +1,6 @@
 [Unit]
 Description=Elemta SMTP Server
-Documentation=https://github.com/busybox42/elemta
+Documentation=https://github.com/EvalAlan/elemta
 After=network-online.target
 Wants=network-online.target
 

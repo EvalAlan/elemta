@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/busybox42/elemta/internal/authresult"
+	"github.com/EvalAlan/elemta/internal/authresult"
 )
 
 // Reloading configuration without a restart.

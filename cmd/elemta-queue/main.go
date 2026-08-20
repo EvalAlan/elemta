@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/busybox42/elemta/internal/config"
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/queue"
 )
 
 func main() {

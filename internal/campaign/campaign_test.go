@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/queue"
 )
 
 func quiet() *slog.Logger {

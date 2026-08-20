@@ -13,8 +13,8 @@ import (
 
 	"strings"
 
-	"github.com/busybox42/elemta/internal/datasource"
-	"github.com/busybox42/elemta/internal/runtimepaths"
+	"github.com/EvalAlan/elemta/internal/datasource"
+	"github.com/EvalAlan/elemta/internal/runtimepaths"
 	"golang.org/x/crypto/bcrypt"
 )
 

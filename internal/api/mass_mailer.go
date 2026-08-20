@@ -4,9 +4,9 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/busybox42/elemta/internal/campaign"
-	"github.com/busybox42/elemta/internal/config"
-	"github.com/busybox42/elemta/internal/suppression"
+	"github.com/EvalAlan/elemta/internal/campaign"
+	"github.com/EvalAlan/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/suppression"
 )
 
 // Turning the mass mailer on and off at runtime.

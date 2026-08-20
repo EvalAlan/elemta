@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/busybox42/elemta/internal/runtimepaths"
+	"github.com/EvalAlan/elemta/internal/runtimepaths"
 	"sync"
 	"unicode"
 )

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/config"
 )
 
 // Fields of api.MainConfig that convertToAPIMainConfig deliberately leaves

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/busybox42/elemta/internal/version"
+	"github.com/EvalAlan/elemta/internal/version"
 	"github.com/valkey-io/valkey-go"
 )
 

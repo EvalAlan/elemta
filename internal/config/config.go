@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/busybox42/elemta/internal/dkim"
-	"github.com/busybox42/elemta/internal/runtimepaths"
-	"github.com/busybox42/elemta/internal/smtp"
+	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/runtimepaths"
+	"github.com/EvalAlan/elemta/internal/smtp"
 
 	toml "github.com/pelletier/go-toml/v2"
 )

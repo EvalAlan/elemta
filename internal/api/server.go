@@ -21,14 +21,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/busybox42/elemta/internal/auth"
-	"github.com/busybox42/elemta/internal/campaign"
-	"github.com/busybox42/elemta/internal/config"
-	"github.com/busybox42/elemta/internal/dkim"
-	"github.com/busybox42/elemta/internal/metrics"
-	"github.com/busybox42/elemta/internal/queue"
-	"github.com/busybox42/elemta/internal/runtimepaths"
-	"github.com/busybox42/elemta/internal/suppression"
+	"github.com/EvalAlan/elemta/internal/auth"
+	"github.com/EvalAlan/elemta/internal/campaign"
+	"github.com/EvalAlan/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/metrics"
+	"github.com/EvalAlan/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/runtimepaths"
+	"github.com/EvalAlan/elemta/internal/suppression"
 	"github.com/gorilla/mux"
 )
 
