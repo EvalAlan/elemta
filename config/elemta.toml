@@ -143,7 +143,7 @@ datasource_db = "dc=example,dc=com"
 # switching costs a restart and nothing else.
 mode = "lmtp"
 max_messages_per_minute_per_domain = 0  # 0 = no limit
-host = "elemta-sink"
+host = "elemta-dovecot"
 port = 2424
 timeout = 30
 retry_delay = 60
