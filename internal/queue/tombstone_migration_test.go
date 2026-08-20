@@ -214,3 +214,40 @@ func TestContentHashIsStableAndDistinct(t *testing.T) {
 		t.Error("empty content should still produce a hash")
 	}
 }
+
+// The rollback case for SQLite, which had no such test until it was needed.
+//
+// The file backend has been protected by TestNewTombstoneRemainsReadableByOldBinaries
+// for a while. SQLite and Postgres were not, and when the body was dropped from
+// them the same hazard was introduced silently: a binary rolled back to a build
+// that predates content_digest selects only `content`, finds it empty, decides
+// every retry conflicts, and starts refusing mail. Nothing failed, because
+// nothing checked.
+func TestSQLiteTombstoneRemainsReadableByOldBinaries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queue.db")
+	backend, err := NewSQLiteStorageBackend(path, 5000, "WAL", "NORMAL")
+	if err != nil {
+		t.Fatalf("creating backend: %v", err)
+	}
+
+	msg := testMessage("sqlite-rollback-safe")
+	content := []byte("Subject: rollback\r\n\r\nbody text\r\n")
+	if _, err := backend.CreateMessageIfAbsent(msg, content); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if err := backend.DeleteMessageWithTombstone(msg, content); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+
+	// Read it the way a binary that knows nothing about content_digest would.
+	var legacyContent []byte
+	if err := backend.db.QueryRow(
+		`SELECT content FROM queue_enqueue_tombstones WHERE id = ?`, msg.ID).
+		Scan(&legacyContent); err != nil {
+		t.Fatalf("reading tombstone: %v", err)
+	}
+	if !bytes.Equal(legacyContent, content) {
+		t.Errorf("a tombstone written now must still carry the body for a "+
+			"rolled-back binary\n  want %d bytes\n  got  %d", len(content), len(legacyContent))
+	}
+}

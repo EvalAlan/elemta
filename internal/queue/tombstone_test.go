@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,32 +9,62 @@ import (
 	"time"
 )
 
-// A tombstone must not keep the message body. Storing it leaked 1.9GB across
-// 296,707 rows on a development queue in two days — 93% of the database — for
-// a check a 32-byte digest answers.
-func TestTombstonesDoNotStoreMessageBodies(t *testing.T) {
+// By default a tombstone keeps the message body, because a binary rolled back
+// to a build predating ContentHash reads only that field and an empty one makes
+// it treat every retry as a conflict — it starts refusing mail.
+//
+// An earlier revision of this file asserted the opposite. Dropping the body
+// halves the write on every delivery, which is worth having, but it is a
+// decision about how far back a deployment can roll rather than a free win, so
+// it is opt-in now and the safe side is the default.
+func TestTombstoneKeepsTheBodyByDefault(t *testing.T) {
 	backend := newTestSQLiteBackend(t)
 
 	body := make([]byte, 8192)
 	for i := range body {
 		body[i] = byte('a' + i%26)
 	}
-	msg := Message{ID: "keeps-no-body", QueueType: Active, From: "a@example.com",
+	msg := Message{ID: "keeps-body", QueueType: Active, From: "a@example.com",
 		To: []string{"b@example.com"}, CreatedAt: time.Now()}
-
 	consume(t, backend, msg, body)
 
 	var stored []byte
 	var digest string
-	err := backend.db.QueryRow(
+	if err := backend.db.QueryRow(
 		`SELECT content, content_digest FROM queue_enqueue_tombstones WHERE id = ?`,
-		msg.ID).Scan(&stored, &digest)
-	if err != nil {
+		msg.ID).Scan(&stored, &digest); err != nil {
+		t.Fatalf("reading tombstone: %v", err)
+	}
+	if !bytes.Equal(stored, body) {
+		t.Errorf("tombstone kept %d bytes of the body, want the whole %d — a "+
+			"rolled-back binary reads this field and would refuse mail", len(stored), len(body))
+	}
+	if digest != tombstoneDigest(body) {
+		t.Errorf("digest = %q, want the digest of the body", digest)
+	}
+}
+
+// And with the body switched off, it is not written.
+func TestTombstoneDropsTheBodyWhenConfigured(t *testing.T) {
+	backend := newTestSQLiteBackend(t)
+	backend.tombstoneBody.setRetain(false)
+
+	body := []byte("a message body that should not be stored")
+	msg := Message{ID: "drops-body", QueueType: Active, From: "a@example.com",
+		To: []string{"b@example.com"}, CreatedAt: time.Now()}
+	consume(t, backend, msg, body)
+
+	var stored []byte
+	var digest string
+	if err := backend.db.QueryRow(
+		`SELECT content, content_digest FROM queue_enqueue_tombstones WHERE id = ?`,
+		msg.ID).Scan(&stored, &digest); err != nil {
 		t.Fatalf("reading tombstone: %v", err)
 	}
 	if len(stored) != 0 {
-		t.Errorf("tombstone kept %d bytes of the message body; it should keep none", len(stored))
+		t.Errorf("tombstone kept %d bytes with the body switched off", len(stored))
 	}
+	// The digest still has to be there, or nothing can settle identity at all.
 	if digest != tombstoneDigest(body) {
 		t.Errorf("digest = %q, want the digest of the body", digest)
 	}
