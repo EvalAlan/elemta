@@ -96,19 +96,30 @@ func (c *Client) GetMessageRaw(id string) (string, error) {
 
 // DeleteMessage deletes a specific message
 func (c *Client) DeleteMessage(id string) error {
-	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/queue/message/%s", id), nil)
-	return err
+	return c.do("DELETE", fmt.Sprintf("/api/queue/message/%s", id))
 }
 
-// FlushQueue flushes a specific queue
+// FlushQueue deletes every message in a queue.
+//
+// This discards mail. It is not the way to make a deferred queue drain — see
+// RetryQueue for that. The two are named as the API names them, and the
+// difference has been costly before: the dashboard's "Retry Deferred" button
+// was once wired to flush, so it silently destroyed the queue it claimed to be
+// retrying.
 func (c *Client) FlushQueue(queueType string) error {
-	_, err := c.doRequest("POST", fmt.Sprintf("/api/queue/%s/flush", queueType), nil)
-	return err
+	return c.do("POST", fmt.Sprintf("/api/queue/%s/flush", queueType))
 }
 
-// FlushAllQueues flushes all queues
+// FlushAllQueues deletes every message in every queue.
 func (c *Client) FlushAllQueues() error {
 	return c.FlushQueue("all")
+}
+
+// RetryQueue requeues every message in a queue for immediate delivery,
+// leaving the messages in place. This is the non-destructive counterpart to
+// FlushQueue and is almost always what "process the queue" means.
+func (c *Client) RetryQueue(queueType string) error {
+	return c.do("POST", fmt.Sprintf("/api/queue/%s/retry", queueType))
 }
 
 // GetQueueStats returns statistics about the queues
@@ -129,6 +140,18 @@ func (c *Client) get(path string, result interface{}) error {
 	defer func() { _ = resp.Body.Close() }() // Ignore error in defer cleanup
 
 	return json.NewDecoder(resp.Body).Decode(result)
+}
+
+// do performs a request whose response body carries nothing the caller needs,
+// and closes it. doRequest hands back an open body; discarding it without
+// closing leaks the connection, which these callers all used to do.
+func (c *Client) do(method, path string) error {
+	resp, err := c.doRequest(method, path, nil)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	return nil
 }
 
 // doRequest performs an HTTP request
