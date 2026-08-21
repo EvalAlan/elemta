@@ -124,25 +124,73 @@ Valid queue types: active, deferred, hold, failed`,
 	// Flush command
 	var flushQueueCmd = &cobra.Command{
 		Use:   "flush [queue_type]",
-		Short: "Flush messages from the queue",
-		Long: `Flush all messages from the specified queue.
-If no queue type is specified, flushes all queues.
+		Short: "Delete all messages from a queue (destructive)",
+		Long: `Delete every message in the specified queue. The messages are gone;
+this is not a way to make a queue drain.
+
+To make a stuck queue deliver, use "queue retry" instead, which requeues the
+same messages for immediate delivery and deletes nothing.
+
+If no queue type is given, every queue is deleted.
 Valid queue types: active, deferred, hold, failed, all`,
 		Args: cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			apiClient := client.NewClient(apiURL, apiKey)
-
 			queueType := "all"
 			if len(args) > 0 {
 				queueType = args[0]
 			}
 
+			// Confirmation is required because the failure is silent and total:
+			// flush answers exactly like retry does, so someone who reached for
+			// the wrong verb gets "Queue deferred flushed" and discovers the mail
+			// is gone later. A destructive default with no prompt is how the
+			// dashboard lost a queue to a button labelled "Retry Deferred".
+			if !yes {
+				target := fmt.Sprintf("the %s queue", queueType)
+				if queueType == "all" {
+					target = "every queue"
+				}
+				fmt.Fprintf(os.Stderr, "This deletes all messages in %s. The mail cannot be recovered.\n", target)
+				fmt.Fprintf(os.Stderr, "Re-run with --yes to confirm, or use \"queue retry %s\" to redeliver instead.\n", queueType)
+				os.Exit(1)
+			}
+
+			apiClient := client.NewClient(apiURL, apiKey)
 			if err := apiClient.FlushQueue(queueType); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 
-			fmt.Printf("Queue %s flushed\n", queueType)
+			fmt.Printf("Deleted all messages in queue %s\n", queueType)
+		},
+	}
+	flushQueueCmd.Flags().BoolVar(&yes, "yes", false, "Confirm deleting the messages")
+
+	// Retry command
+	var retryQueueCmd = &cobra.Command{
+		Use:   "retry [queue_type]",
+		Short: "Requeue messages for immediate delivery",
+		Long: `Requeue every message in the specified queue for immediate delivery.
+
+Nothing is deleted; the messages stay in the queue until they are delivered or
+fail on their own terms. This is what "process the queue" usually means.
+
+If no queue type is given, every queue is retried.
+Valid queue types: active, deferred, hold, failed, all`,
+		Args: cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			queueType := "all"
+			if len(args) > 0 {
+				queueType = args[0]
+			}
+
+			apiClient := client.NewClient(apiURL, apiKey)
+			if err := apiClient.RetryQueue(queueType); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Queued %s for immediate delivery\n", queueType)
 		},
 	}
 
@@ -181,6 +229,7 @@ Valid queue types: active, deferred, hold, failed, all`,
 	queueCmd.AddCommand(showQueueCmd)
 	queueCmd.AddCommand(deleteQueueCmd)
 	queueCmd.AddCommand(flushQueueCmd)
+	queueCmd.AddCommand(retryQueueCmd)
 	queueCmd.AddCommand(statsQueueCmd)
 }
 
