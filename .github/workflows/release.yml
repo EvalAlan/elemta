@@ -47,20 +47,20 @@ jobs:
           go build -trimpath -ldflags "$LDFLAGS" -o dist/elemta ./cmd/elemta
           go build -trimpath -ldflags "$LDFLAGS" -o dist/elemta-cli ./cmd/elemta-cli
 
-          # Prove the stamp actually landed. Neither binary has a `version`
-          # subcommand to ask, and -s -w strips the symbol table, so inspect the
-          # embedded string directly — which works on a cross-compiled binary
-          # too, unlike running it.
+          # Prove the stamp actually landed. -s -w strips the symbol table, and
+          # the release matrix cross-compiles, so inspect the embedded string
+          # rather than running the binary or reading its symbols.
           #
-          # elemta only. cmd/elemta-cli/main.go is a stub that never imports
-          # internal/version, so -X has always been a no-op there and asserting
-          # on it would fail every release. Worth revisiting when that stub is
-          # replaced by the cobra tree already sitting in cmd/elemta-cli/commands.
-          if ! strings dist/elemta | grep -qF -- "${VERSION}"; then
-            echo "::error::dist/elemta was not stamped with ${VERSION}; the -X target does not match the module path, and this build would ship the default version"
-            exit 1
-          fi
-          echo "version stamp verified: ${VERSION}"
+          # Both binaries are checked. elemta-cli only became checkable when its
+          # main was wired to the cobra tree; before that it never imported
+          # internal/version, so -X on it was a silent no-op.
+          for bin in dist/elemta dist/elemta-cli; do
+            if ! strings "$bin" | grep -qF -- "${VERSION}"; then
+              echo "::error::${bin} was not stamped with ${VERSION}; the -X target does not match the module path, and this build would ship the default version"
+              exit 1
+            fi
+          done
+          echo "version stamp verified in both binaries: ${VERSION}"
 
       - name: Package artifacts
         env:

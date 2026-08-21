@@ -14,6 +14,11 @@ var (
 	verbose   bool
 	formatter string
 
+	// yes confirms a destructive action. Not a persistent flag: it should have
+	// to be spelled next to the command that destroys something, not inherited
+	// by everything from the root.
+	yes bool
+
 	// Root command
 	rootCmd = &cobra.Command{
 		Use:   "elemta-cli",
