@@ -17,7 +17,7 @@ The cache system provides a distributed cache that can be shared across multiple
 ### Usage
 
 ```go
-import "github.com/busybox42/elemta/internal/cache"
+import "github.com/EvalAlan/elemta/internal/cache"
 
 // Create a cache instance
 redisCache, err := cache.Factory(cache.Config{
@@ -80,7 +80,7 @@ The logging system provides a flexible and pluggable logging framework with supp
 ### Usage
 
 ```go
-import "github.com/busybox42/elemta/internal/logging"
+import "github.com/EvalAlan/elemta/internal/logging"
 
 // Create a logger
 consoleLogger, err := logging.Factory(logging.Config{

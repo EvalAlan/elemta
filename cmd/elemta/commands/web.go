@@ -8,10 +8,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/busybox42/elemta/internal/api"
-	"github.com/busybox42/elemta/internal/config"
-	"github.com/busybox42/elemta/internal/datasource"
-	"github.com/busybox42/elemta/internal/smtp"
+	"github.com/EvalAlan/elemta/internal/api"
+	"github.com/EvalAlan/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/datasource"
+	"github.com/EvalAlan/elemta/internal/smtp"
 	"github.com/spf13/cobra"
 )
 

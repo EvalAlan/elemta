@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/dkim"
-	"github.com/busybox42/elemta/internal/smtp"
+	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/smtp"
 	toml "github.com/pelletier/go-toml/v2"
 )
 

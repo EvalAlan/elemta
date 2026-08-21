@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/queue"
 )
 
 // Queue listings used to return every message in the queue as a bare JSON

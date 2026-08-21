@@ -7,7 +7,7 @@ package version
 // It defaults to a development value but is intended to be overridden at
 // build time via linker flags, e.g.:
 //
-//	go build -ldflags "-X github.com/busybox42/elemta/internal/version.Version=v1.2.3"
+//	go build -ldflags "-X github.com/EvalAlan/elemta/internal/version.Version=v1.2.3"
 //
 // The release workflow (.github/workflows/release.yml) stamps this with the
 // pushed git tag.

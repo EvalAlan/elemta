@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/busybox42/elemta/internal/datasource"
+	"github.com/EvalAlan/elemta/internal/datasource"
 )
 
 func main() {

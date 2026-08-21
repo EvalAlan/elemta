@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/dkim"
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/stretchr/testify/require"
 )
 

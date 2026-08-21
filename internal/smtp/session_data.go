@@ -7,8 +7,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"github.com/busybox42/elemta/internal/antispam"
-	"github.com/busybox42/elemta/internal/antivirus"
+	"github.com/EvalAlan/elemta/internal/antispam"
+	"github.com/EvalAlan/elemta/internal/antivirus"
 	"io"
 	"net"
 	"path/filepath"
@@ -19,8 +19,8 @@ import (
 
 	"log/slog"
 
-	"github.com/busybox42/elemta/internal/logging"
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/google/uuid"
 )
 

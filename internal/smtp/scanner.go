@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/busybox42/elemta/internal/antispam"
-	"github.com/busybox42/elemta/internal/antivirus"
+	"github.com/EvalAlan/elemta/internal/antispam"
+	"github.com/EvalAlan/elemta/internal/antivirus"
 )
 
 // ScannerManager manages both antivirus and antispam scanners

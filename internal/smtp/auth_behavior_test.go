@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/datasource"
+	"github.com/EvalAlan/elemta/internal/datasource"
 	"github.com/stretchr/testify/require"
 )
 

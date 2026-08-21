@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/busybox42/elemta/cmd/elemta/commands"
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/cmd/elemta/commands"
+	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )

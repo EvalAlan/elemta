@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/smtp"
+	"github.com/EvalAlan/elemta/internal/smtp"
 	"github.com/stretchr/testify/require"
 )
 

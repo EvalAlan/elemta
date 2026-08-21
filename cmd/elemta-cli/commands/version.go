@@ -3,7 +3,7 @@ package commands
 import (
 	"fmt"
 
-	"github.com/busybox42/elemta/internal/version"
+	"github.com/EvalAlan/elemta/internal/version"
 	"github.com/spf13/cobra"
 )
 

@@ -1,7 +1,7 @@
 package plugin
 
 import (
-	"github.com/busybox42/elemta/internal/antivirus"
+	"github.com/EvalAlan/elemta/internal/antivirus"
 )
 
 // AntivirusPlugin defines the interface for antivirus plugins
@@ -57,8 +57,8 @@ func (p *AntivirusPluginBase) Close() error {
 package main
 
 import (
-	"github.com/busybox42/elemta/internal/antivirus"
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/antivirus"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // PluginInfo is exported and contains information about the plugin

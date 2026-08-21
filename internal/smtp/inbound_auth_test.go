@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/busybox42/elemta/internal/authresult"
+	"github.com/EvalAlan/elemta/internal/authresult"
 )
 
 func TestMailAuthPluginsAreIndependentlySelected(t *testing.T) {

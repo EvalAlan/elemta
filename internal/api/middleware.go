@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/busybox42/elemta/internal/auth"
+	"github.com/EvalAlan/elemta/internal/auth"
 	"golang.org/x/time/rate"
 )
 

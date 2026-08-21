@@ -6,9 +6,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/busybox42/elemta/internal/antivirus"
-	"github.com/busybox42/elemta/internal/message"
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/antivirus"
+	"github.com/EvalAlan/elemta/internal/message"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // PluginInfo provides information about this plugin

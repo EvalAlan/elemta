@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/queue"
 )
 
 // The listing endpoint used to return the whole queue as a bare array — 21 MB

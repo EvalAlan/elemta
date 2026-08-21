@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/busybox42/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/dkim"
 )
 
 // Config controls ARC verification and sealing.

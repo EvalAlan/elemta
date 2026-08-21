@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // GreylistPlugin implements a simple greylisting plugin

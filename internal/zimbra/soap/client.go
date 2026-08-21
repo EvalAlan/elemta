@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/busybox42/elemta/internal/zimbra"
+	"github.com/EvalAlan/elemta/internal/zimbra"
 )
 
 // Client handles SOAP API calls to Zimbra

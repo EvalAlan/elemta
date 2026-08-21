@@ -6,7 +6,7 @@ import (
 	burnt "github.com/BurntSushi/toml"
 	pell "github.com/pelletier/go-toml/v2"
 
-	"github.com/busybox42/elemta/internal/smtp"
+	"github.com/EvalAlan/elemta/internal/smtp"
 )
 
 // The scanner sections are decoded by two different TOML libraries depending on

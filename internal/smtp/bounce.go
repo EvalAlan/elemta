@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/busybox42/elemta/internal/logging"
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/queue"
 )
 
 // BounceEngine generates RFC 3462 DSN bounce messages from failed queue entries.
