@@ -3,7 +3,7 @@ package main
 import (
 	"net"
 
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // SPFPlugin is the main plugin struct

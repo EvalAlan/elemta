@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"blitiri.com.ar/go/spf"
-	arcplugin "github.com/busybox42/elemta/internal/arc"
+	arcplugin "github.com/EvalAlan/elemta/internal/arc"
 	"github.com/emersion/go-msgauth/dkim"
 	"github.com/emersion/go-msgauth/dmarc"
 )

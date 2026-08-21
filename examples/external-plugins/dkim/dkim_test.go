@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // Test private key for testing

@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 
-	"github.com/busybox42/elemta/internal/campaign"
+	"github.com/EvalAlan/elemta/internal/campaign"
 )
 
 // Campaign endpoints.

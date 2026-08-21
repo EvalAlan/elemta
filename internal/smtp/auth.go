@@ -7,7 +7,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/busybox42/elemta/internal/datasource"
+	"github.com/EvalAlan/elemta/internal/datasource"
 )
 
 // AuthMethod represents the SMTP authentication method

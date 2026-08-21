@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/busybox42/elemta/internal/delivery"
-	"github.com/busybox42/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/delivery"
+	"github.com/EvalAlan/elemta/internal/dkim"
 )
 
 // messageSigner signs outbound message content for a given signing domain.

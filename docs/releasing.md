@@ -38,7 +38,7 @@ else in CI creates GitHub Releases.
    Both binaries are built with:
 
    ```
-   go build -trimpath -ldflags "-s -w -X github.com/busybox42/elemta/internal/version.Version=${VERSION}"
+   go build -trimpath -ldflags "-s -w -X github.com/EvalAlan/elemta/internal/version.Version=${VERSION}"
    ```
 
    `VERSION` is the pushed tag (e.g. `v0.1.0`), taken from `GITHUB_REF`. This

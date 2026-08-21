@@ -7,7 +7,7 @@ Date: 2026-05-27T21:00:44+00:00
 - Host: `Linux docker01 5.14.0-611.55.1.el9_7.aarch64`
 - Arch: `linux/arm64`
 - Go: `go version go1.25.9 (Red Hat 1.25.9-1.el9_7) linux/arm64`
-- Package: `github.com/busybox42/elemta/internal/queue`
+- Package: `github.com/EvalAlan/elemta/internal/queue`
 
 ## Command
 

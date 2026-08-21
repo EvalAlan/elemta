@@ -1,4 +1,4 @@
-module github.com/busybox42/elemta
+module github.com/EvalAlan/elemta
 
 go 1.25.13
 

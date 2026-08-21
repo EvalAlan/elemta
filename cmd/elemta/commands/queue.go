@@ -5,8 +5,8 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/busybox42/elemta/internal/queue"
-	"github.com/busybox42/elemta/internal/runtimepaths"
+	"github.com/EvalAlan/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/runtimepaths"
 	"github.com/spf13/cobra"
 )
 

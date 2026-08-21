@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // AllowDenyPlugin implements comprehensive access control

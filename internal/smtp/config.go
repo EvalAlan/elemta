@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/busybox42/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/dkim"
 )
 
 // Config represents the main configuration for the SMTP server

@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/busybox42/elemta/cmd/elemta/commands"
-	"github.com/busybox42/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/cmd/elemta/commands"
+	"github.com/EvalAlan/elemta/internal/logging"
 )
 
 func main() {

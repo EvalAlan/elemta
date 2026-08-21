@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/busybox42/elemta/internal/antispam"
-	"github.com/busybox42/elemta/internal/antivirus"
-	"github.com/busybox42/elemta/internal/message"
+	"github.com/EvalAlan/elemta/internal/antispam"
+	"github.com/EvalAlan/elemta/internal/antivirus"
+	"github.com/EvalAlan/elemta/internal/message"
 )
 
 // ResultType is an alias for PluginAction to maintain compatibility

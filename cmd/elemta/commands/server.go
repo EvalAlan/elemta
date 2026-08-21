@@ -11,11 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/busybox42/elemta/internal/config"
-	"github.com/busybox42/elemta/internal/logging"
-	"github.com/busybox42/elemta/internal/runtimepaths"
-	"github.com/busybox42/elemta/internal/server"
-	"github.com/busybox42/elemta/internal/smtp"
+	"github.com/EvalAlan/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/runtimepaths"
+	"github.com/EvalAlan/elemta/internal/server"
+	"github.com/EvalAlan/elemta/internal/smtp"
 	"github.com/spf13/cobra"
 )
 

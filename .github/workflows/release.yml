@@ -38,10 +38,29 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags "-s -w -X github.com/busybox42/elemta/internal/version.Version=${VERSION}" \
-            -o dist/elemta ./cmd/elemta
-          go build -trimpath -ldflags "-s -w -X github.com/busybox42/elemta/internal/version.Version=${VERSION}" \
-            -o dist/elemta-cli ./cmd/elemta-cli
+          # Read the module path rather than repeating it. `-X` silently does
+          # nothing when the symbol does not exist, so a stale path here does not
+          # fail the build — it ships binaries reporting the default 0.1.0-dev.
+          # Deriving it from go.mod means renaming the module cannot desync this.
+          MODULE="$(go list -m)"
+          LDFLAGS="-s -w -X ${MODULE}/internal/version.Version=${VERSION}"
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/elemta ./cmd/elemta
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/elemta-cli ./cmd/elemta-cli
+
+          # Prove the stamp actually landed. Neither binary has a `version`
+          # subcommand to ask, and -s -w strips the symbol table, so inspect the
+          # embedded string directly — which works on a cross-compiled binary
+          # too, unlike running it.
+          #
+          # elemta only. cmd/elemta-cli/main.go is a stub that never imports
+          # internal/version, so -X has always been a no-op there and asserting
+          # on it would fail every release. Worth revisiting when that stub is
+          # replaced by the cobra tree already sitting in cmd/elemta-cli/commands.
+          if ! strings dist/elemta | grep -qF -- "${VERSION}"; then
+            echo "::error::dist/elemta was not stamped with ${VERSION}; the -X target does not match the module path, and this build would ship the default version"
+            exit 1
+          fi
+          echo "version stamp verified: ${VERSION}"
 
       - name: Package artifacts
         env:

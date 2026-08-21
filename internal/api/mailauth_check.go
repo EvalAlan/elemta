@@ -13,7 +13,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 
-	"github.com/busybox42/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/gorilla/mux"
 )
 

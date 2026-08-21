@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/queue"
 )
 
 func main() {

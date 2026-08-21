@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 func TestDMARCPlugin(t *testing.T) {

@@ -1,7 +1,7 @@
 package plugin
 
 import (
-	"github.com/busybox42/elemta/internal/antispam"
+	"github.com/EvalAlan/elemta/internal/antispam"
 )
 
 // AntispamPlugin defines the interface for antispam plugins
@@ -54,8 +54,8 @@ func (p *AntispamPluginBase) Close() error {
 package main
 
 import (
-	"github.com/busybox42/elemta/internal/antispam"
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/antispam"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // PluginInfo is exported and contains information about the plugin

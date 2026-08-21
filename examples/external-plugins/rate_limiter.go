@@ -4,7 +4,7 @@
 package main
 
 import (
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // Plugin is the exported plugin instance
