@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/busybox42/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/logging"
 )
 
 // LogLevelRequest represents a log level change request

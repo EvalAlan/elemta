@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/logging"
 )
 
 // buildScanMessage returns a message of roughly sizeKB with no threat matches,

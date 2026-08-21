@@ -18,7 +18,7 @@ Elemta is a high-performance SMTP server written in Go with a modular pipeline, 
 ### 1) Local development (recommended)
 
 ```bash
-git clone https://github.com/busybox42/elemta.git
+git clone https://github.com/EvalAlan/elemta.git
 cd elemta
 
 # Minimal stack (fast)

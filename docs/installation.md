@@ -15,7 +15,7 @@ This guide reflects the **current** install and run paths in this repository.
 Clone and enter the repo:
 
 ```bash
-git clone https://github.com/busybox42/elemta.git
+git clone https://github.com/EvalAlan/elemta.git
 cd elemta
 ```
 

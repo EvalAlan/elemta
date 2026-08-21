@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/busybox42/elemta/cmd/elemta-cli/client"
+	"github.com/EvalAlan/elemta/cmd/elemta-cli/client"
 	"github.com/spf13/cobra"
 )
 

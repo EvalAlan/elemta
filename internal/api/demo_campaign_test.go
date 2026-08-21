@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/campaign"
+	"github.com/EvalAlan/elemta/internal/campaign"
 )
 
 // Seeded content is a liability unless it cannot act on its own and cannot get

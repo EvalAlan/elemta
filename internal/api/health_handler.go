@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/busybox42/elemta/internal/queue"
-	"github.com/busybox42/elemta/internal/version"
+	"github.com/EvalAlan/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/version"
 )
 
 // HealthStats represents server health statistics

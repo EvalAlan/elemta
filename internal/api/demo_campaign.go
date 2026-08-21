@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/busybox42/elemta/internal/campaign"
+	"github.com/EvalAlan/elemta/internal/campaign"
 )
 
 // A worked example in the mass mailer.

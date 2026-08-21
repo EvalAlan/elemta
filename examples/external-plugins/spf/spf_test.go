@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 func TestSPFPlugin(t *testing.T) {

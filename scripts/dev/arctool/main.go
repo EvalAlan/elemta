@@ -18,7 +18,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/busybox42/elemta/internal/arc"
+	"github.com/EvalAlan/elemta/internal/arc"
 )
 
 func main() {

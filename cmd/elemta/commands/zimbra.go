@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/busybox42/elemta/internal/zimbra"
-	"github.com/busybox42/elemta/internal/zimbra/ldap"
-	"github.com/busybox42/elemta/internal/zimbra/soap"
+	"github.com/EvalAlan/elemta/internal/zimbra"
+	"github.com/EvalAlan/elemta/internal/zimbra/ldap"
+	"github.com/EvalAlan/elemta/internal/zimbra/soap"
 	"github.com/spf13/cobra"
 )
 

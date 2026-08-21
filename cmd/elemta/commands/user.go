@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/busybox42/elemta/internal/auth"
+	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

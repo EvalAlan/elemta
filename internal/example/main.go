@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/busybox42/elemta/internal/cache"
-	"github.com/busybox42/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/cache"
+	"github.com/EvalAlan/elemta/internal/logging"
 )
 
 func main() {

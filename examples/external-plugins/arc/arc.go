@@ -3,7 +3,7 @@ package main
 import (
 	"io"
 
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // ARCPlugin is the main plugin struct

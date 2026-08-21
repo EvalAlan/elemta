@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/busybox42/elemta/internal/smtp"
+	"github.com/EvalAlan/elemta/internal/smtp"
 	"github.com/spf13/cobra"
 )
 

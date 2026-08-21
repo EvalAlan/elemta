@@ -13,10 +13,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/busybox42/elemta/internal/metrics"
+	"github.com/EvalAlan/elemta/internal/metrics"
 	"time"
 
-	"github.com/busybox42/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/logging"
 	"github.com/google/uuid"
 )
 

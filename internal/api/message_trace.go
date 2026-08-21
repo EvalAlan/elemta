@@ -10,7 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/busybox42/elemta/internal/runtimepaths"
+	"github.com/EvalAlan/elemta/internal/runtimepaths"
 )
 
 // Message tracing: what happened to one message.

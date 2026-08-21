@@ -32,7 +32,7 @@ nfpms:
   - id: native-packages
     package_name: elemta
     file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
-    homepage: https://github.com/busybox42/elemta
+    homepage: https://github.com/EvalAlan/elemta
     maintainer: EvalAlan
     description: Elemta SMTP server
     license: MIT

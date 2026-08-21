@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/busybox42/elemta/internal/plugin"
+	"github.com/EvalAlan/elemta/internal/plugin"
 )
 
 // DMARCPlugin is the main plugin struct

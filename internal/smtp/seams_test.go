@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/busybox42/elemta/internal/datasource"
-	"github.com/busybox42/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/datasource"
+	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

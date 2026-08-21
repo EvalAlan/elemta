@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/busybox42/elemta/internal/metrics"
+	"github.com/EvalAlan/elemta/internal/metrics"
 )
 
 type stubDomainStats struct {
