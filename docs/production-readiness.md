@@ -5,8 +5,8 @@ your deployment rather than discovering the boundaries in production.
 
 Elemta is a capable, security-focused SMTP server with solid RFC fundamentals
 and real operational tooling. It is not a drop-in replacement for a
-purpose-built high-volume outbound platform such as KumoMTA or Momentum, and
-this page is specific about which is which.
+purpose-built high-volume outbound platform, and this page is specific about
+which use cases it does and does not cover.
 
 ## What is solid
 
@@ -61,7 +61,7 @@ intake path.
 ## What is not here
 
 These are the things a high-volume **outbound** platform provides that Elemta
-does not, and where KumoMTA/Momentum are the right tool:
+does not, and where a purpose-built platform is the right tool:
 
 - **Sending IP pools / virtual MTAs.** No per-pool source-IP binding, no
   per-destination shaping and warmup policy, no automatic traffic shaping to
