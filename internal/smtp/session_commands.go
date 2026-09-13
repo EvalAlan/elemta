@@ -1288,7 +1288,7 @@ func (ch *CommandHandler) logCommandResult(ctx context.Context, command string, 
 
 // XDEBUG subcommand handlers
 
-// handleXDEBUGContext shows complete connection context (like Momentum's XDUMPCONTEXT)
+// handleXDEBUGContext shows the complete SMTP connection context.
 func (ch *CommandHandler) handleXDEBUGContext(ctx context.Context) error {
 	responses := []string{
 		"214-=== XDEBUG CONTEXT DUMP ===",
