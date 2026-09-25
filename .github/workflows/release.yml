@@ -27,8 +27,6 @@ jobs:
             arch: amd64
           - os: darwin
             arch: arm64
-          - os: windows
-            arch: amd64
 
     steps:
       - name: Checkout code
@@ -57,11 +55,7 @@ jobs:
           make build
           
           # Package binary
-          if [ "${{ matrix.os }}" = "windows" ]; then
-            zip elemta-${{ steps.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.zip bin/elemta.exe
-          else
-            tar czf elemta-${{ steps.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz -C bin elemta
-          fi
+          tar czf elemta-${{ steps.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz -C bin elemta
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
