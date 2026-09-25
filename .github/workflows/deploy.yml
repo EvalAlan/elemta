@@ -1,3 +1,8 @@
+# Placeholder only: no target environment is provisioned (0 GitHub Environments
+# configured for this repo as of 2026-09-25). This does not deploy anything.
+# Real deployment today is manual — see docs/production-deployment.md.
+# Wire this up for real once an operator names and provisions a target
+# environment (see EVI-11).
 name: Deploy
 
 on:
