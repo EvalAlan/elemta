@@ -2,6 +2,12 @@
 
 This is the maintained production-oriented deployment guide for the current codebase.
 
+**Deployment is manual-only.** No target environment (staging or production
+infrastructure, cloud account, or cluster) is provisioned for this repo, and
+`.github/workflows/deploy.yml` is a placeholder that does not deploy anywhere —
+it only echoes what it would do. Follow the steps below by hand until an
+operator names and provisions a real target environment.
+
 ## Deployment models
 
 1. **Containerized** (recommended operationally for this repo)
