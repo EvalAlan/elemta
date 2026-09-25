@@ -80,6 +80,7 @@ jobs:
         with:
           name: binaries
           path: dist/
+          merge-multiple: true
 
       - name: Generate changelog
         id: changelog
