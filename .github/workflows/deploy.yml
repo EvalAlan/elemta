@@ -1,8 +1,23 @@
-# Placeholder only: no target environment is provisioned (0 GitHub Environments
-# configured for this repo as of 2026-09-25). This does not deploy anything.
-# Real deployment today is manual — see docs/production-deployment.md.
-# Wire this up for real once an operator names and provisions a target
-# environment (see EVI-11).
+# Deploy the production compose stack to one host over SSH.
+#
+# Run by hand (Actions > Deploy > Run workflow). It deploys an image that
+# Docker Build has already pushed to ghcr.io: by default the commit the
+# workflow is run from, which must be on main for that image to exist.
+# Nothing is built here, so what is deployed is exactly what CI tested.
+#
+# Each target is a GitHub Environment ("staging", "production") holding:
+#   vars.DEPLOY_HOST          host name or address
+#   vars.DEPLOY_USER          SSH user, in the docker group
+#   vars.DEPLOY_PATH          directory on the host (default /opt/elemta)
+#   vars.DEPLOY_PORT          SSH port (default 22)
+#   secrets.DEPLOY_SSH_KEY    private key for that user
+#   secrets.DEPLOY_KNOWN_HOSTS  the host's key line(s), from `ssh-keyscan -H host`
+#                             run once by a person who checked the fingerprint.
+#                             Required: no trust-on-first-use from CI.
+# Add required reviewers to the production environment to gate it.
+#
+# On the host, scripts/deploy/remote-deploy.sh waits for health and rolls
+# back to the previous tag if the new one does not come up.
 name: Deploy
 
 on:
@@ -16,17 +31,126 @@ on:
         options:
           - staging
           - production
+      tag:
+        description: "Image tag (commit SHA built on main). Empty = the commit this run is on."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: read
+
+# One deploy per environment at a time; never cancel one half way.
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/elemta' }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      INPUT_TAG: ${{ inputs.tag }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Echo deploy target
+      - name: Check environment configuration
+        env:
+          HAS_KEY: ${{ secrets.DEPLOY_SSH_KEY != '' }}
+          HAS_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS != '' }}
         run: |
-          echo "Would deploy elemta to ${{ github.event.inputs.environment }} here."
-          echo "Wire this to your real deploy (e.g. helm, terraform, ssh, etc.)."
+          missing=()
+          [ -n "$DEPLOY_HOST" ] || missing+=("vars.DEPLOY_HOST")
+          [ -n "$DEPLOY_USER" ] || missing+=("vars.DEPLOY_USER")
+          [ "$HAS_KEY" = "true" ] || missing+=("secrets.DEPLOY_SSH_KEY")
+          [ "$HAS_KNOWN_HOSTS" = "true" ] || missing+=("secrets.DEPLOY_KNOWN_HOSTS")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::The ${{ inputs.environment }} environment is missing: ${missing[*]}. See the header of .github/workflows/deploy.yml."
+            exit 1
+          fi
+
+      - name: Resolve image
+        id: image
+        run: |
+          tag="${INPUT_TAG:-$GITHUB_SHA}"
+          if ! [[ "$tag" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]; then
+            echo "::error::Invalid tag: $tag"
+            exit 1
+          fi
+          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check the image exists
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+        run: |
+          if ! docker manifest inspect "$IMAGE" > /dev/null; then
+            echo "::error::$IMAGE is not in the registry. Docker Build pushes an image for each commit on main; deploy one of those, or wait for its build."
+            exit 1
+          fi
+
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host deploy-target
+            HostName $DEPLOY_HOST
+            User $DEPLOY_USER
+            Port $DEPLOY_PORT
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 30
+          EOF
+
+      - name: Copy stack to host
+        run: |
+          # Expanded here on purpose, quoted for the remote shell.
+          # shellcheck disable=SC2029
+          ssh deploy-target "mkdir -p $(printf %q "$DEPLOY_PATH")"
+          scp deployments/compose/docker-compose.prod.yml scripts/deploy/remote-deploy.sh "deploy-target:$DEPLOY_PATH/"
+
+      - name: Deploy
+        env:
+          TAG: ${{ steps.image.outputs.tag }}
+          IMAGE: ${{ steps.image.outputs.name }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          # The host pulls with this job's short-lived token, so no registry
+          # credential is stored there between deploys.
+          # Values are expanded here on purpose, quoted for the remote shell.
+          # shellcheck disable=SC2029
+          printf '%s' "$REGISTRY_TOKEN" | ssh deploy-target "docker login ghcr.io -u $(printf %q "$REGISTRY_USER") --password-stdin"
+          # shellcheck disable=SC2029
+          ssh deploy-target "cd $(printf %q "$DEPLOY_PATH") && ELEMTA_IMAGE=$(printf %q "$IMAGE") bash remote-deploy.sh $(printf %q "$TAG")"
+
+      - name: Log out of the registry on the host
+        if: always()
+        run: ssh deploy-target "docker logout ghcr.io" || true
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "Deployed \`${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}\` to **${{ inputs.environment }}** ($DEPLOY_HOST)." >> "$GITHUB_STEP_SUMMARY"

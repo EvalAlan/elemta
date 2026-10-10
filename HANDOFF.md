@@ -547,8 +547,10 @@ raw sockets, which cannot carry EHLO/STARTTLS state, so it was not revived.
 `internal/tlsrpt` (off by default, `[tls_reporting]`); DANE/TLSA validation
 is not. It needs DNSSEC-validated answers, which Go's resolver cannot give.
 
-**A real deploy workflow.** `deploy.yml` is a placeholder and deployment is
-manual by decision (EVI-11); it needs a target chosen first.
+**Deploys go over SSH to a compose host** (`.github/workflows/deploy.yml`,
+`scripts/deploy/remote-deploy.sh`, `deployments/compose/docker-compose.prod.yml`),
+which replaces EVI-11's manual-only stance. No GitHub Environment is
+configured yet, so the workflow stops at its first step until one is.
 
 **Nobody has driven every dashboard page in a browser.** Settings > Users
 was driven end to end in the built-in browser; most other pages have only
