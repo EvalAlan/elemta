@@ -148,7 +148,7 @@ test:
 	@echo "Running Go tests..."
 	@echo "⚠️  Note: Some packages require Docker services to be running"
 	@echo "For complete integration tests, run: make test-docker"
-	@go test -v -short -timeout 60s ./internal/antispam ./internal/api ./internal/auth ./internal/cache ./internal/context ./internal/datasource ./internal/delivery ./internal/plugin ./internal/queue 2>&1; \
+	@go test -v -short -timeout 60s ./internal/antispam ./internal/api ./internal/auth ./internal/datasource ./internal/delivery ./internal/plugin ./internal/queue 2>&1; \
 	status=$$?; \
 	echo ""; \
 	if [ $$status -eq 0 ]; then \

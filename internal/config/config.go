@@ -344,7 +344,10 @@ func DefaultConfig() *Config {
 	cfg.API.Enabled = true
 	cfg.API.ListenAddr = "127.0.0.1:8025"
 	cfg.API.WebRoot = "./web/static"
-	cfg.API.AuthEnabled = false
+	// Fail closed: a config that never mentions auth_enabled must not serve an
+	// admin API that can flush queues and rewrite config to anyone who reaches
+	// it. Turning auth off has to be written down (config/dev.toml does).
+	cfg.API.AuthEnabled = true
 	cfg.API.AuthFile = ""
 	cfg.API.ValkeyAddr = ""
 	cfg.API.RateLimit.Enabled = true

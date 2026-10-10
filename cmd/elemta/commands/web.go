@@ -246,7 +246,7 @@ func init() {
 	webCmd.Flags().StringVarP(&webListenAddr, "listen", "l", "127.0.0.1:8025", "Address to listen on")
 	webCmd.Flags().StringVar(&webRoot, "web-root", "", "Path to web static files")
 	webCmd.Flags().StringVar(&webQueueDir, "queue-dir", "", "Path to queue directory")
-	webCmd.Flags().BoolVar(&authEnabled, "auth-enabled", false, "Enable authentication and authorization")
+	webCmd.Flags().BoolVar(&authEnabled, "auth-enabled", true, "Enable authentication and authorization")
 	webCmd.Flags().StringVar(&authFile, "auth-file", "", "Path to users file for authentication")
 }
 
