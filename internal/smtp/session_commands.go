@@ -258,6 +258,15 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 	}
 	mailFrom, declaredSize := parsed.addr, parsed.size
 
+	if err := ch.checkSenderBinding(mailFrom); err != nil {
+		ch.logger.WarnContext(ctx, "Sender refused: not owned by authenticated user",
+			"event_type", "rejection",
+			"mail_from", mailFrom,
+			"username", ch.state.GetUsername(),
+		)
+		return err
+	}
+
 	// Sender domain policy. Checked after parsing so the rule matches a real
 	// address rather than whatever text arrived, and before the transaction is
 	// committed so a refused sender leaves no state behind.

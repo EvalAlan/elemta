@@ -238,6 +238,18 @@ restart.
 - `[auth].allow_plaintext_auth` (default false). AUTH PLAIN/LOGIN is only
   offered and accepted after STARTTLS, or from loopback; set true to allow it
   in the clear from anywhere, which exposes passwords to anyone on the path.
+- `[auth].allow_any_sender` (default false). An authenticated client may
+  only use a MAIL FROM it owns, or gets `553 5.7.1`. A login that is an
+  address owns that address; a bare login (`alice`) owns `alice@` at every
+  `local_domains` entry; the null sender `<>` is always allowed. Clients on
+  `allowed_relays` that did not authenticate are not checked.
+- `[auth.sender_aliases]` grants a login extra senders, as addresses or whole
+  domains:
+
+  ```toml
+  [auth.sender_aliases]
+  "alice@example.com" = ["sales@example.com", "@example.org"]
+  ```
 - Failed AUTH attempts are counted per client address across connections
   (10 per 15 minutes, then `421`), so reconnecting does not reset the limit.
 - datasource fields (`datasource_type`, `datasource_path`, `datasource_host`, etc.)
