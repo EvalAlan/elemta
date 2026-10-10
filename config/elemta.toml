@@ -254,6 +254,10 @@ cache_size = 10000
 # Inconclusive checks resolve towards accepting: a DNS timeout is a temporary
 # error, not a forgery, and refusing mail whenever a resolver hiccups would cost
 # far more than it catches.
+#
+# The checks run together while the client waits at end-of-DATA, under one
+# deadline: [inbound_auth] timeout, 10s when unset. Each plugin's timeout below
+# caps that one check and cannot extend past the shared deadline.
 [plugins.spf]
 enabled = true
 timeout = 10

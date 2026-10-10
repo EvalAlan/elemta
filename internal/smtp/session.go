@@ -342,12 +342,7 @@ func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, mes
 	}
 	clientIP := net.ParseIP(host)
 
-	var dkimResults []authresult.Result
-	if verifier.DKIMEnabled() {
-		dkimResults = authresult.VerifyDKIM(ctx, message)
-	}
-	results := verifier.Verify(ctx, clientIP, s.state.HeloName(), mailFrom, dkimResults)
-	results.ARC = verifier.VerifyARC(ctx, message)
+	results := verifier.Check(ctx, clientIP, s.state.HeloName(), mailFrom, message)
 	metrics := GetMetrics()
 	metrics.MailAuthResults.WithLabelValues("spf", orMetricNone(results.SPF.Value)).Inc()
 	if len(results.DKIM) == 0 {
