@@ -57,6 +57,8 @@ type Config struct {
 	// FeedbackAddresses receive ARF spam-complaint reports; complaints to them
 	// suppress the complaining recipient.
 	FeedbackAddresses []string `toml:"feedback_addresses" json:"feedback_addresses"`
+	// TLSReporting sends RFC 8460 TLS reports to domains that ask for them.
+	TLSReporting *TLSReportingConfig `toml:"tls_reporting" json:"tls_reporting,omitempty"`
 
 	// Queue processor options
 	QueueProcessorEnabled bool `toml:"queue_processor_enabled" json:"queue_processor_enabled"` // Whether queue processing is enabled
@@ -208,6 +210,26 @@ type DeliveryConfig struct {
 	// EHLO and TLS handshake. Unset means on.
 	ReuseConnections *bool `toml:"reuse_connections" json:"reuse_connections,omitempty"`
 	Debug            bool  `toml:"debug" json:"debug"` // Enable debug logging for delivery
+}
+
+// TLSReportingConfig configures SMTP TLS Reporting (RFC 8460): daily
+// aggregate reports, to recipient domains that publish a _smtp._tls record,
+// of how TLS negotiation with their MX hosts went.
+type TLSReportingConfig struct {
+	// Enabled turns reporting on. Off by default: reports are mail sent to
+	// third parties, and an operator should choose to send them.
+	Enabled bool `toml:"enabled" json:"enabled"`
+	// OrganizationName identifies the sender in reports. Defaults to hostname.
+	OrganizationName string `toml:"organization_name" json:"organization_name"`
+	// ContactInfo is an address or URL receivers can use to reach the
+	// operator. Defaults to report_from.
+	ContactInfo string `toml:"contact_info" json:"contact_info"`
+	// ReportFrom is the sender of emailed reports. Required. Use an address in
+	// a domain this server DKIM-signs: receivers discard unsigned reports.
+	ReportFrom string `toml:"report_from" json:"report_from"`
+	// StateFile keeps counts across restarts. Defaults to tlsrpt-state.json
+	// in the queue directory.
+	StateFile string `toml:"state_file" json:"state_file"`
 }
 
 // MetricsConfig represents the configuration for metrics collection

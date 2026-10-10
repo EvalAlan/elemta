@@ -49,9 +49,13 @@ type outboundSession struct {
 	conn       net.Conn
 	tls        outboundTLS
 	requireTLS bool // next hop advertised REQUIRETLS
-	created    time.Time
-	idleSince  time.Time
-	uses       int
+	// starttlsOffered and verifyErr describe the TLS negotiation, for TLS
+	// reporting: verifyErr is why a verified handshake failed, if it did.
+	starttlsOffered bool
+	verifyErr       error
+	created         time.Time
+	idleSince       time.Time
+	uses            int
 }
 
 // sessionCache holds idle outbound sessions keyed by MX address.
