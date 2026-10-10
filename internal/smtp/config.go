@@ -229,6 +229,15 @@ type AuthConfig struct {
 	// from non-loopback clients. Off by default: the password crosses the
 	// network readable by anyone on the path.
 	AllowPlaintextAuth bool `json:"allow_plaintext_auth" toml:"allow_plaintext_auth"`
+	// AllowAnySender turns off the check that an authenticated user's MAIL
+	// FROM is an address they own. Off by default: without it, one leaked
+	// password lets the holder send as the CEO, and the message leaves with
+	// our DKIM signature on it.
+	AllowAnySender bool `json:"allow_any_sender" toml:"allow_any_sender"`
+	// SenderAliases grants a login extra sender addresses beyond its own.
+	// Keys are logins; values are addresses ("sales@example.com") or whole
+	// domains ("@example.org").
+	SenderAliases map[string][]string `json:"sender_aliases,omitempty" toml:"sender_aliases"`
 }
 
 // TLSConfig represents TLS configuration
