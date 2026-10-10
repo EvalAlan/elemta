@@ -342,6 +342,10 @@ func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, mes
 	}
 	clientIP := net.ParseIP(host)
 
+	// One deadline for every lookup below; see Verifier.Budget.
+	ctx, cancel := context.WithTimeout(ctx, verifier.Budget())
+	defer cancel()
+
 	var dkimResults []authresult.Result
 	if verifier.DKIMEnabled() {
 		dkimResults = authresult.VerifyDKIM(ctx, message)

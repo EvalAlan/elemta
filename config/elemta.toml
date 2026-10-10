@@ -254,6 +254,10 @@ cache_size = 10000
 # Inconclusive checks resolve towards accepting: a DNS timeout is a temporary
 # error, not a forgery, and refusing mail whenever a resolver hiccups would cost
 # far more than it catches.
+#
+# Each timeout below caps that one check. All of them together, DKIM included,
+# share one deadline: the largest of these timeouts, measured from end-of-DATA.
+# The client is waiting for its reply the whole time.
 [plugins.spf]
 enabled = true
 timeout = 10

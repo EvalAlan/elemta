@@ -121,6 +121,24 @@ func (v *Verifier) Enabled() bool {
 
 func (v *Verifier) DKIMEnabled() bool { return v != nil && v.config.DKIMEnabled }
 
+// Budget is the most time all checks for one message may take together.
+//
+// The per-check timeouts alone do not bound that: SPF, DMARC and ARC each got
+// their own, run one after another, so a resolver that stopped answering held
+// a client at end-of-DATA for the sum (20s+ seen in a stress run, where the
+// client gave up at 10s). The budget is the largest single timeout, so no
+// check is cut shorter than it is configured to run on its own, and the
+// message as a whole never waits longer than that.
+func (v *Verifier) Budget() time.Duration {
+	budget := v.config.Timeout
+	for _, t := range []time.Duration{v.config.SPFTimeout, v.config.DMARCTimeout, v.config.ARCTimeout} {
+		if t > budget {
+			budget = t
+		}
+	}
+	return budget
+}
+
 // Verify checks one message.
 //
 // Every failure mode here resolves towards accepting. A DNS timeout is
@@ -353,6 +371,12 @@ func (r Results) String() string {
 // state rather than a failure — most mail is unsigned.
 func VerifyDKIM(ctx context.Context, message []byte) []Result {
 	verifications, err := dkim.VerifyWithOptions(bytes.NewReader(message), &dkim.VerifyOptions{
+		// Without this the library uses net.LookupTXT, which has no deadline:
+		// a resolver that stops answering held the client at end-of-DATA for
+		// as long as the OS resolver kept retrying (36s seen under load).
+		LookupTXT: func(name string) ([]string, error) {
+			return net.DefaultResolver.LookupTXT(ctx, name)
+		},
 		// One bad signature must not stop the others being checked: a message
 		// can carry several, and a forwarder's broken one says nothing about
 		// the original sender's.

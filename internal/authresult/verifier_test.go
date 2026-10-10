@@ -1,8 +1,16 @@
 package authresult
 
 import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"net"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/emersion/go-msgauth/dkim"
 )
 
 // The libraries do SPF, DKIM and DMARC record parsing. What is ours is the
@@ -142,5 +150,88 @@ func TestUnsignedMessageIsNotAFailure(t *testing.T) {
 	results := VerifyDKIM(t.Context(), []byte("Subject: hello\r\nFrom: a@example.com\r\n\r\nbody\r\n"))
 	if len(results) != 0 {
 		t.Errorf("an unsigned message produced %d results, want none", len(results))
+	}
+}
+
+// blackholeDNS points net.DefaultResolver at a server that reads queries and
+// never answers, which is what an overloaded upstream looks like from here.
+func blackholeDNS(t *testing.T) {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		buf := make([]byte, 512)
+		for {
+			if _, _, err := pc.ReadFrom(buf); err != nil {
+				return
+			}
+		}
+	}()
+	savedPreferGo, savedDial := net.DefaultResolver.PreferGo, net.DefaultResolver.Dial
+	net.DefaultResolver.PreferGo = true
+	net.DefaultResolver.Dial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "udp", pc.LocalAddr().String())
+	}
+	t.Cleanup(func() {
+		net.DefaultResolver.PreferGo, net.DefaultResolver.Dial = savedPreferGo, savedDial
+		_ = pc.Close()
+	})
+}
+
+func signedMessage(t *testing.T) []byte {
+	t.Helper()
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := "From: a@stalled.example\r\nTo: b@example.com\r\nSubject: hi\r\n\r\nbody\r\n"
+	var out bytes.Buffer
+	if err := dkim.Sign(&out, strings.NewReader(msg), &dkim.SignOptions{
+		Domain: "stalled.example", Selector: "s", Signer: key,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+// TestVerificationStaysWithinBudget: with DNS not answering, every check runs
+// until its deadline. Each check used to get its own and DKIM had none, so a
+// message waited for the sum; under one budget it waits for the budget.
+func TestVerificationStaysWithinBudget(t *testing.T) {
+	blackholeDNS(t)
+	const each = 400 * time.Millisecond
+	v := New(Config{
+		Enabled: true, SPFEnabled: true, DKIMEnabled: true, DMARCEnabled: true, ARCEnabled: true,
+		Timeout: each, SPFTimeout: each, DMARCTimeout: each, ARCTimeout: each,
+	})
+	if got := v.Budget(); got != each {
+		t.Fatalf("Budget() = %v, want %v", got, each)
+	}
+	message := signedMessage(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), v.Budget())
+	defer cancel()
+	start := time.Now()
+	dkimResults := VerifyDKIM(ctx, message)
+	results := v.Verify(ctx, net.ParseIP("192.0.2.1"), "client.example", "a@stalled.example", dkimResults)
+	results.ARC = v.VerifyARC(ctx, message)
+	elapsed := time.Since(start)
+
+	// Four checks at 400ms each would be 1.6s; allow scheduling slack only.
+	if elapsed > each+500*time.Millisecond {
+		t.Errorf("verification took %v, want about %v", elapsed, each)
+	}
+	if len(dkimResults) != 1 || dkimResults[0].Value != "temperror" {
+		t.Errorf("DKIM results = %+v, want one temperror", dkimResults)
+	}
+}
+
+func TestBudgetIsLargestTimeout(t *testing.T) {
+	v := New(Config{Enabled: true, Timeout: 2 * time.Second, DMARCTimeout: 5 * time.Second})
+	if got := v.Budget(); got != 5*time.Second {
+		t.Errorf("Budget() = %v, want 5s", got)
 	}
 }
