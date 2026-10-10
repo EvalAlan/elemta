@@ -1,0 +1,173 @@
+# Production stack. Deployed by .github/workflows/deploy.yml through
+# scripts/deploy/remote-deploy.sh, or by hand with the same script.
+#
+# This is not the dev stack (docker-compose.yml) with the dev bits switched
+# off. It is a separate file so nothing development-only can leak in by
+# default: no image build (it runs the image CI built and pushed), no
+# self-issued certificates, no demo data, no LDAP/Dovecot/Roundcube/sink,
+# and the dashboard and metrics bound to loopback for a reverse proxy.
+#
+# Settings come from .env next to this file. The deploy script owns
+# ELEMTA_TAG; everything else in .env is the operator's.
+#
+#   ELEMTA_TAG         image tag to run (a commit SHA from Docker Build)
+#   ELEMTA_IMAGE       default ghcr.io/evalalan/elemta
+#   ELEMTA_CONFIG_DIR  host directory holding elemta.toml, TLS cert and key,
+#                      DKIM keys, users file; default /etc/elemta
+#   SMTP_PORT          host port for MX traffic, default 25
+#   SUBMISSION_PORT    host port for submission, default 587
+#   WEB_BIND           host address:port for the dashboard, default
+#                      127.0.0.1:8025 (put a TLS reverse proxy in front)
+#
+# elemta.toml must listen on 2525 (MX) and 2587 (submission) inside the
+# container; the service runs as an unprivileged user and cannot bind 25.
+#
+# Config edits: the services read a copy on the elemta_config volume, seeded
+# from ELEMTA_CONFIG_DIR once, because the dashboard saves to it. Editing the
+# host file does not change a running stack. Deploy with
+# ELEMTA_CONFIG_RESEED=true in .env to take the host file again, which
+# discards what was saved in the dashboard.
+
+name: elemta
+
+x-elemta-service: &elemta-service
+  image: ${ELEMTA_IMAGE:-ghcr.io/evalalan/elemta}:${ELEMTA_TAG:?ELEMTA_TAG must be set}
+  restart: unless-stopped
+  init: true
+  user: "1001:1001"
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp
+    - /var/tmp
+  networks:
+    - elemta
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+
+services:
+  elemta:
+    <<: *elemta-service
+    container_name: elemta
+    ports:
+      - "${SMTP_PORT:-25}:2525"
+      - "${SUBMISSION_PORT:-587}:2587"
+      - "127.0.0.1:9080:8080" # metrics; loopback only
+    volumes:
+      - elemta_queue:/app/queue
+      - elemta_logs:/app/logs
+      - ${ELEMTA_CONFIG_DIR:-/etc/elemta}:/app/config:ro
+      - elemta_config:/app/runtime-config:rw
+    environment:
+      - TZ=UTC
+      - NODE_ID=0
+      - VALKEY_ADDR=elemta-valkey:6379
+      - ELEMTA_CONFIG_RESEED=${ELEMTA_CONFIG_RESEED:-}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2525"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      # Scanners must be up first: with none reachable the server delivers
+      # mail unscanned (logged), and a deploy should not open that window.
+      elemta-clamav:
+        condition: service_healthy
+      elemta-rspamd:
+        condition: service_healthy
+      elemta-valkey:
+        condition: service_healthy
+
+  elemta-web:
+    <<: *elemta-service
+    container_name: elemta-web
+    ports:
+      - "${WEB_BIND:-127.0.0.1:8025}:8025"
+    volumes:
+      - elemta_queue:/app/queue:rw
+      - elemta_logs:/app/logs:rw
+      - ${ELEMTA_CONFIG_DIR:-/etc/elemta}:/app/config:ro
+      - elemta_config:/app/runtime-config:rw
+    entrypoint: []
+    command: ["/bin/sh", "-lc", "exec /app/elemta --config \"$(/app/prepare-config.sh)\" web --listen 0.0.0.0:8025 --web-root /app/web/static"]
+    environment:
+      - TZ=UTC
+      - NODE_ID=web
+      - VALKEY_ADDR=elemta-valkey:6379
+      - ELEMTA_CONFIG_RESEED=${ELEMTA_CONFIG_RESEED:-}
+    healthcheck:
+      # /api/health is public so probes have something to ask; / is behind login.
+      test: ["CMD", "curl", "-f", "http://localhost:8025/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      elemta:
+        condition: service_healthy
+
+  elemta-clamav:
+    image: clamav/clamav:${CLAMAV_TAG:-stable}
+    container_name: elemta-clamav
+    restart: unless-stopped
+    networks:
+      - elemta
+    volumes:
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "3310"]
+      interval: 45s
+      timeout: 15s
+      retries: 5
+      # First start downloads the signature database.
+      start_period: 300s
+
+  elemta-rspamd:
+    image: rspamd/rspamd:${RSPAMD_TAG:-latest}
+    container_name: elemta-rspamd
+    restart: unless-stopped
+    networks:
+      - elemta
+    volumes:
+      - rspamd_data:/var/lib/rspamd
+    healthcheck:
+      test: ["CMD-SHELL", "pidof rspamd || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  elemta-valkey:
+    image: valkey/valkey:8.0-alpine
+    container_name: elemta-valkey
+    restart: unless-stopped
+    networks:
+      - elemta
+    volumes:
+      - valkey_data:/data
+    # noeviction, unlike the dev stack: in production an LRU silently drops
+    # rate-limit state and per-domain counters exactly when memory is tight.
+    command: valkey-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  elemta:
+    driver: bridge
+
+volumes:
+  elemta_queue:
+  elemta_config:
+  elemta_logs:
+  clamav_data:
+  rspamd_data:
+  valkey_data:

@@ -2,11 +2,15 @@
 
 This is the maintained production-oriented deployment guide for the current codebase.
 
-**Deployment is manual-only.** No target environment (staging or production
-infrastructure, cloud account, or cluster) is provisioned for this repo, and
-`.github/workflows/deploy.yml` is a placeholder that does not deploy anywhere —
-it only echoes what it would do. Follow the steps below by hand until an
-operator names and provisions a real target environment.
+**Deployment target: one Docker host per environment, over SSH.** The
+`Deploy` workflow (`.github/workflows/deploy.yml`, run by hand from the
+Actions tab) copies `deployments/compose/docker-compose.prod.yml` and
+`scripts/deploy/remote-deploy.sh` to the host and runs the script, which
+pulls the image CI already built for that commit, brings the stack up, waits
+for it to be healthy, and rolls back to the previous tag if it is not. No
+environment is provisioned yet: until one is, the workflow stops at its
+first step and says which settings are missing. See
+[Setting up an environment](#setting-up-an-environment).
 
 ## Deployment models
 
@@ -17,21 +21,58 @@ operator names and provisions a real target environment.
 
 ## 1) Containerized production baseline
 
-Use the compose assets in:
+Production uses `deployments/compose/docker-compose.prod.yml`, not the dev
+stack in `docker-compose.yml`. It runs the image from ghcr.io rather than
+building one, and leaves out everything development-only: self-issued
+certificates, demo data, LDAP, Dovecot, Roundcube and the sink. The
+dashboard and metrics bind to loopback, so put a TLS reverse proxy in front
+of the dashboard. Valkey runs with `noeviction`. The file's header lists the
+`.env` settings it reads.
 
-- `deployments/compose/docker-compose.yml`
+### Preparing a host
 
-### Steps
+1. Install Docker Engine with the compose plugin, and create a deploy user
+   in the `docker` group.
+2. Put `elemta.toml`, the TLS certificate and key, DKIM keys and the users
+   file in `/etc/elemta`, or set `ELEMTA_CONFIG_DIR` in `.env`. Inside the
+   container the server must listen on `:2525` (MX) and `:2587`
+   (submission); the host maps 25 and 587 onto those.
+3. Create the deploy directory (default `/opt/elemta`) owned by the deploy
+   user, with an `.env` holding any settings you want to change. The deploy
+   script only ever rewrites the `ELEMTA_TAG` line.
 
-1. Prepare host paths for persistent data (queue/logs/config).
-2. Provide a production TOML config file.
-3. Bring stack up with docker compose.
-4. Validate SMTP, API health, and queue/storage endpoints.
+### Setting up an environment
 
-Example:
+In the repository go to Settings > Environments, create `staging` and/or
+`production`, and add:
+
+| Kind | Name | Value |
+|---|---|---|
+| variable | `DEPLOY_HOST` | host name or address |
+| variable | `DEPLOY_USER` | the deploy user |
+| variable | `DEPLOY_PATH` | optional, default `/opt/elemta` |
+| variable | `DEPLOY_PORT` | optional, default `22` |
+| secret | `DEPLOY_SSH_KEY` | private key for the deploy user |
+| secret | `DEPLOY_KNOWN_HOSTS` | output of `ssh-keyscan -H <host>`, after checking the fingerprint |
+
+The host key is pinned, so CI never trusts a host it hasn't seen before. Add
+required reviewers to `production` to gate deploys. The host pulls from
+ghcr.io with the job's own short-lived token and logs out afterwards, so no
+registry credential stays on it.
+
+### Deploying
+
+Go to Actions > Deploy > Run workflow, pick the environment, and leave the
+tag empty to deploy the commit you are running from (it must be on `main`,
+where Docker Build pushes an image per commit). You can also give any
+earlier commit SHA. The workflow checks that the image exists before it
+touches the host.
+
+By hand on the host, the same thing is:
 
 ```bash
-docker compose -f deployments/compose/docker-compose.yml up -d
+cd /opt/elemta
+bash remote-deploy.sh <commit-sha>
 ```
 
 ---
@@ -339,16 +380,26 @@ production.
 
 ### Upgrade
 
-1. Pull new code/image.
-2. Run baseline checks (`make test`, smoke tests).
-3. Roll deployment.
-4. Validate queue backend + health endpoints.
+1. Merge to `main` and let Docker Build push the image.
+2. Run Deploy for `staging`, then check it.
+3. Run Deploy for `production` with the same tag.
+
+The deploy script treats an upgrade as healthy only when the `elemta` and
+`elemta-web` containers both report healthy and the MX port on the host
+answers with a `220` banner, within 6 minutes (`HEALTH_TIMEOUT`).
 
 ### Rollback
 
-1. Re-deploy previous image/build.
-2. Keep queue backend setting unchanged unless rollback explicitly requires backend switch.
-3. Re-validate `/api/queue/storage` and `/api/health`.
+This happens automatically: if the new tag does not start, or is not healthy
+in time, the script puts the previous tag back in `.env`, brings it up, and
+the workflow fails with both containers' recent logs in its output. There is
+nothing to roll back to on the first deploy, so a failed first deploy is
+left running for inspection.
+
+To roll back by hand later, run Deploy with the earlier commit SHA as the
+tag. Keep the queue backend setting unchanged unless the rollback
+specifically requires switching backend, and re-check `/api/queue/storage`
+and `/api/health` afterwards.
 
 ---
 
