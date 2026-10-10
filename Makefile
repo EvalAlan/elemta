@@ -14,7 +14,7 @@ DEV_ENV_FILE ?= .env
 # elemta-sink runs in every dev stack but is not the delivery target: keeping it
 # up means 'make sink-up' is a restart rather than a deploy, and mail still goes
 # to a real mailbox until someone asks otherwise.
-DEV_MIN_SERVICES ?= elemta elemta-web elemta-dovecot elemta-ldap valkey elemta-sink
+DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-dovecot elemta-ldap valkey elemta-sink
 DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-roundcube
 # The benchmarking stack: everything that scans, nothing that stores. Roundcube
 # is pointless here because delivery is discarded.

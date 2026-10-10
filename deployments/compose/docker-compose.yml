@@ -62,9 +62,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    # Lookups go to elemta-dns, a caching resolver, not the host's. See
+    # deployments/dns/unbound.conf for why.
+    dns:
+      - ${ELEMTA_DEV_DNS_IP:-10.253.53.53}
     networks:
       - elemta_network
     depends_on:
+      elemta-dns:
+        condition: service_healthy
       elemta-clamav:
         condition: service_healthy
       elemta-rspamd:
@@ -174,10 +180,45 @@ services:
       retries: 5
       start_period: 180s
 
+  # Caching resolver for the stack. Built from Alpine's unbound package
+  # rather than a third-party image; the config is deployments/dns/unbound.conf.
+  # It needs a fixed address because a container's `dns:` takes an IP, not a
+  # name. Override ELEMTA_DEV_DNS_SUBNET / ELEMTA_DEV_DNS_IP if the default
+  # range collides with a network on the host.
+  elemta-dns:
+    image: elemta-dns:dev
+    build:
+      context: ../dns
+      dockerfile_inline: |
+        FROM alpine:3.22
+        RUN apk add --no-cache unbound dnssec-root \
+         && cp /usr/share/dnssec-root/trusted-key.key /etc/unbound/root.key
+        CMD ["unbound", "-d", "-c", "/etc/unbound/unbound.conf"]
+    container_name: elemta-dns
+    restart: unless-stopped
+    volumes:
+      - ../dns/unbound.conf:/etc/unbound/unbound.conf:ro
+    networks:
+      elemta_network:
+        ipv4_address: ${ELEMTA_DEV_DNS_IP:-10.253.53.53}
+    healthcheck:
+      test: [ "CMD-SHELL", "nslookup -type=NS . 127.0.0.1 >/dev/null" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   elemta-rspamd:
     image: rspamd/rspamd:latest
     container_name: elemta-rspamd
     restart: unless-stopped
+    # Lookups go to elemta-dns, a caching resolver, not the host's. See
+    # deployments/dns/unbound.conf for why.
+    dns:
+      - ${ELEMTA_DEV_DNS_IP:-10.253.53.53}
+    depends_on:
+      elemta-dns:
+        condition: service_healthy
     networks:
       - elemta_network
     volumes:
@@ -438,6 +479,11 @@ services:
 networks:
   elemta_network:
     driver: bridge
+    # Fixed so elemta-dns can have a fixed address. An existing stack needs one
+    # `make down` to recreate the network with it.
+    ipam:
+      config:
+        - subnet: ${ELEMTA_DEV_DNS_SUBNET:-10.253.53.0/24}
   monitoring_network:
     driver: bridge
 
