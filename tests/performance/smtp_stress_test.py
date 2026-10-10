@@ -6,6 +6,7 @@ Features configurable intensity levels, real-time monitoring, and detailed perfo
 """
 
 import smtplib
+import socket
 import threading
 import time
 import statistics
@@ -40,6 +41,7 @@ class StressTestConfig:
     ramp_up_time: int = 30  # seconds to reach max connections
     message_size_bytes: int = 1024
     target_host: str = 'localhost'
+    target_addr: str = ''  # target_host resolved once at start; see resolve_target
     target_port: int = 2525
     use_authentication: bool = False
     username: str = ''
@@ -114,6 +116,39 @@ class StressTestResults:
     other_sent: int = 0
     other_accepted: int = 0
 
+# Name sent in EHLO. Without it smtplib calls socket.getfqdn() on every
+# connection, which is a reverse lookup per message.
+EHLO_NAME = 'stress-test.local'
+
+
+def resolve_target(host: str, port: int) -> str:
+    """Resolve the target once, before any load is generated.
+
+    smtplib resolves the host on every connection. At a few hundred
+    connections a second that is a few hundred lookups a second, and when the
+    local resolver (systemd-resolved, nscd, a VPN's DNS) falls behind,
+    getaddrinfo fails with "[Errno -2] Name or service not known" even for
+    localhost. Those failures are instant, so the worker threads loop on them
+    and they swamp the results: one run reported 121,622 of 127,322 sends
+    failed, none of which reached the server.
+    """
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    # Prefer IPv4: "localhost" often lists ::1 first, and a Docker port
+    # published on 0.0.0.0 may not answer there. smtplib used to fall through
+    # to the next address on its own; one fixed address cannot.
+    for family, _, _, _, addr in infos:
+        if family == socket.AF_INET:
+            return addr[0]
+    return infos[0][4][0]
+
+
+def open_smtp(config: 'StressTestConfig', timeout: float, ssl: bool = False) -> smtplib.SMTP:
+    """Connect to the already-resolved target address."""
+    cls = smtplib.SMTP_SSL if ssl else smtplib.SMTP
+    return cls(config.target_addr or config.target_host, config.target_port,
+               timeout=timeout, local_hostname=EHLO_NAME)
+
+
 class ConnectionPool:
     """Manages SMTP connection reuse and TLS"""
     
@@ -144,9 +179,9 @@ class ConnectionPool:
             # Create new connection
             try:
                 if self.config.use_tls:
-                    server = smtplib.SMTP_SSL(self.config.target_host, self.config.target_port, timeout=10)
+                    server = open_smtp(self.config, timeout=10, ssl=True)
                 else:
-                    server = smtplib.SMTP(self.config.target_host, self.config.target_port, timeout=10)
+                    server = open_smtp(self.config, timeout=10)
                     if self.config.use_tls:
                         server.starttls()
                 
@@ -211,6 +246,12 @@ class SMTPStressTester:
     
     def __init__(self, config: StressTestConfig):
         self.config = config
+        if not config.target_addr:
+            try:
+                config.target_addr = resolve_target(config.target_host, config.target_port)
+            except socket.gaierror as e:
+                print(f"❌ Cannot resolve {config.target_host}: {e}")
+                sys.exit(1)
         self.results: List[Tuple[float, bool, str]] = []
         self.system_metrics: List[SystemMetrics] = []
         self.lock = threading.Lock()
@@ -488,7 +529,7 @@ class SMTPStressTester:
         """Verify SMTP server is reachable before starting stress test"""
         try:
             print(f"🔍 Verifying SMTP connection to {self.config.target_host}:{self.config.target_port}")
-            server = smtplib.SMTP(self.config.target_host, self.config.target_port, timeout=10)
+            server = open_smtp(self.config, timeout=10)
             
             if self.config.use_tls:
                 server.starttls()
@@ -523,7 +564,7 @@ class SMTPStressTester:
             test_user = self.auth_users[0]
             print(f"🔍 Verifying authentication with user: {test_user['username']}")
             
-            server = smtplib.SMTP(self.config.target_host, self.config.target_port, timeout=10)
+            server = open_smtp(self.config, timeout=10)
             
             if self.config.use_tls:
                 server.starttls()
@@ -709,7 +750,7 @@ class SMTPStressTester:
             email_content, email_type = self._get_email_content(thread_id, email_id, auth_user)
             
             # Always use fresh connections when using user rotation (disable pooling)
-            server = smtplib.SMTP(self.config.target_host, self.config.target_port, timeout=10)
+            server = open_smtp(self.config, timeout=10)
             
             if self.config.use_tls:
                 server.starttls()
@@ -763,7 +804,7 @@ class SMTPStressTester:
             # Connect with delays
             time.sleep(self.config.slow_read_delay)  # Delay before connection
             
-            server = smtplib.SMTP(self.config.target_host, self.config.target_port, timeout=30)
+            server = open_smtp(self.config, timeout=30)
             
             # Add delays between SMTP operations
             time.sleep(self.config.slow_read_delay)
@@ -816,7 +857,7 @@ class SMTPStressTester:
                 self.current_connections += 1
             
             # Connect and send malformed commands
-            server = smtplib.SMTP(self.config.target_host, self.config.target_port, timeout=10)
+            server = open_smtp(self.config, timeout=10)
             
             # Send various malformed commands.
             #
@@ -890,7 +931,7 @@ class SMTPStressTester:
                 email_types.append(email_type)
             
             # Connect and pipeline
-            server = smtplib.SMTP(self.config.target_host, self.config.target_port, timeout=10)
+            server = open_smtp(self.config, timeout=10)
             
             if self.config.use_authentication:
                 server.login(auth_user['username'], auth_user['password'])
@@ -1002,7 +1043,7 @@ class SMTPStressTester:
         print(f"🔗 Max Connections: {self.config.max_concurrent_connections}")
         print(f"📈 Ramp-up Time: {self.config.ramp_up_time}s")
         print(f"📧 Message Size: {self.config.message_size_bytes} bytes")
-        print(f"🎯 Target: {self.config.target_host}:{self.config.target_port}")
+        print(f"🎯 Target: {self.config.target_host}:{self.config.target_port} ({self.config.target_addr})")
         
         if self.config.burst_mode:
             print(f"💥 Burst Mode: {self.config.burst_interval}s intervals, {self.config.burst_duration}s duration")
@@ -1134,7 +1175,12 @@ class SMTPStressTester:
         for _, success, message in self.results:
             # Extract email type from message using regex
             type_match = re.search(r'type:\s*(\w+)', message.lower())
-            email_type = type_match.group(1) if type_match else 'other'
+            if not type_match:
+                # Failed before a message was handed over (connect, resolve,
+                # login). Counting these as "other" mail made a run of
+                # connection errors read as 0% delivery of one corpus bucket.
+                continue
+            email_type = type_match.group(1)
             
             # Increment sent counter
             sent_key = f'{email_type}_sent'
