@@ -543,10 +543,9 @@ probed before reuse; a reused session that turns out to be gone is retried
 once on a new connection. The pool deleted from `internal/delivery` pooled
 raw sockets, which cannot carry EHLO/STARTTLS state, so it was not revived.
 
-**TLS-RPT and DANE.** MTA-STS is enforced; TLS-RPT (RFC 8460) reporting and
-DANE/TLSA validation are not implemented. TLS-RPT is the cheaper of the two:
-count verified/unverified/failed sessions per policy domain (the delivery
-handler now knows which of the three it got) and send the daily JSON report.
+**DANE.** MTA-STS is enforced and TLS-RPT (RFC 8460) is implemented in
+`internal/tlsrpt` (off by default, `[tls_reporting]`); DANE/TLSA validation
+is not. It needs DNSSEC-validated answers, which Go's resolver cannot give.
 
 **A real deploy workflow.** `deploy.yml` is a placeholder and deployment is
 manual by decision (EVI-11); it needs a target chosen first.

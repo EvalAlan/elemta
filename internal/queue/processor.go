@@ -198,6 +198,7 @@ type Processor struct {
 	manager      *Manager
 	config       ProcessorConfig
 	handler      DeliveryHandler
+	onStop       []func()
 	logger       *slog.Logger
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -352,6 +353,12 @@ func (p *Processor) Start() error {
 }
 
 // Stop stops the queue processor
+// OnStop registers fn to run when the processor stops, after its workers
+// have finished. For components whose lifetime is the processor's.
+func (p *Processor) OnStop(fn func()) {
+	p.onStop = append(p.onStop, fn)
+}
+
 func (p *Processor) Stop() error {
 	p.logger.Info("Stopping queue processor")
 	p.cancel()
@@ -360,6 +367,9 @@ func (p *Processor) Stop() error {
 	// to carry. QUIT them so receivers see a clean close, not a dropped socket.
 	if h, ok := p.handler.(interface{ CloseIdleSessions() }); ok {
 		h.CloseIdleSessions()
+	}
+	for _, fn := range p.onStop {
+		fn()
 	}
 	p.logger.Info("Queue processor stopped")
 	return nil
