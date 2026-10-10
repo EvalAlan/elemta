@@ -16,6 +16,7 @@ import (
 
 	arcplugin "github.com/EvalAlan/elemta/internal/arc"
 	"github.com/EvalAlan/elemta/internal/authresult"
+	"github.com/EvalAlan/elemta/internal/dane"
 	"github.com/EvalAlan/elemta/internal/dkim"
 	deliverymetrics "github.com/EvalAlan/elemta/internal/metrics"
 	"github.com/EvalAlan/elemta/internal/plugin"
@@ -369,6 +370,22 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		}
 
 		tlsReportHandler = remoteSMTPHandler
+
+		if remoteSMTPHandler != nil && config.Delivery != nil && config.Delivery.DANE {
+			resolverAddr := config.Delivery.DANEResolver
+			if resolverAddr == "" {
+				resolverAddr = "127.0.0.1:53"
+			}
+			daneResolver := dane.NewDNSResolver(resolverAddr)
+			remoteSMTPHandler.SetDANEResolver(daneResolver)
+			slogger.Info("DANE (RFC 7672) enabled for outbound SMTP", "resolver", daneResolver.Server)
+			if host, _, err := net.SplitHostPort(daneResolver.Server); err == nil {
+				if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+					slogger.Warn("SECURITY: dane_resolver is not on loopback; DANE trusts its DNSSEC verdict, so anyone on the path to it can disable or forge DANE",
+						"resolver", resolverAddr)
+				}
+			}
+		}
 
 		// Outbound session reuse is on unless [delivery] reuse_connections = false.
 		if remoteSMTPHandler != nil && config.Delivery != nil &&

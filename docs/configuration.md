@@ -270,6 +270,17 @@ restart.
   handshake. A session carries at most 100 messages and lives at most 5
   minutes; at most 4 are parked per MX address and 256 in total. Set false
   to open a new connection for every message.
+- `[delivery].dane` (default false) and `[delivery].dane_resolver` (default
+  `127.0.0.1:53`). DANE for SMTP (RFC 7672): when a recipient domain's MX
+  records are DNSSEC-signed and the MX host publishes signed TLSA records at
+  `_25._tcp.<mx>`, the host's certificate must match one of them (DANE-EE or
+  DANE-TA; PKIX usages are ignored, as the RFC says). A mismatch, or a host
+  that stops offering STARTTLS, is refused with no fallback, and the next MX
+  is tried. DANE takes precedence over MTA-STS where both apply. Needs a
+  DNSSEC-validating resolver (unbound, systemd-resolved, BIND) whose AD bit
+  is trusted, so keep it on loopback; the server warns at startup otherwise.
+  A DNSSEC lookup that fails defers the message rather than sending without
+  DANE, so a resolver outage holds outbound mail.
 - retry/timeouts
 
 ### TLS reporting
