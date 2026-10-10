@@ -1,8 +1,10 @@
 package authresult
 
 import (
+	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The libraries do SPF, DKIM and DMARC record parsing. What is ours is the
@@ -142,5 +144,72 @@ func TestUnsignedMessageIsNotAFailure(t *testing.T) {
 	results := VerifyDKIM(t.Context(), []byte("Subject: hello\r\nFrom: a@example.com\r\n\r\nbody\r\n"))
 	if len(results) != 0 {
 		t.Errorf("an unsigned message produced %d results, want none", len(results))
+	}
+}
+
+// TestCheckIsBoundedByOneTimeout is the stress-run failure: with every plugin
+// allowed ten seconds and run one after another, a resolver that stopped
+// answering held the client at end-of-DATA for twenty to thirty-six seconds,
+// and it hung up. The whole check must fit in one Timeout however many
+// lookups hang.
+func TestCheckIsBoundedByOneTimeout(t *testing.T) {
+	v := New(Config{
+		Enabled: true, SPFEnabled: true, DKIMEnabled: true, DMARCEnabled: true, ARCEnabled: true,
+		Timeout:    200 * time.Millisecond,
+		SPFTimeout: 10 * time.Second, DMARCTimeout: 10 * time.Second, ARCTimeout: 10 * time.Second,
+	})
+	v.resolver = newCachingResolver(&fakeResolver{hang: true})
+	v.arc.SetResolver(v.resolver.LookupTXT)
+
+	message := []byte("DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=sel; c=relaxed/relaxed;\r\n" +
+		" h=from; bh=frcCV1k9oG9oKj3dpUqdJg1PxRT2RSN/XKdLCPjaYaY=; b=AAAA\r\n" +
+		"From: a@example.com\r\nSubject: hello\r\n\r\nbody\r\n")
+
+	start := time.Now()
+	results := v.Check(t.Context(), net.ParseIP("192.0.2.1"), "helo.example", "a@example.com", message)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Check took %v with a 200ms budget", elapsed)
+	}
+	if results.SPF.Value != "temperror" {
+		t.Errorf("SPF = %q, want temperror", results.SPF.Value)
+	}
+	if results.DMARC.Value != "temperror" {
+		t.Errorf("DMARC = %q, want temperror", results.DMARC.Value)
+	}
+	if results.Disposition != "accept" {
+		t.Errorf("disposition = %q: an unanswered lookup must not refuse mail", results.Disposition)
+	}
+}
+
+// TestCheckAgreesWithVerify: running the checks together must not change
+// what they conclude.
+func TestCheckAgreesWithVerify(t *testing.T) {
+	zone := &fakeResolver{zone: map[string][]string{
+		"example.com":          {"v=spf1 ip4:192.0.2.1 -all"},
+		"_dmarc.example.com":   {"v=DMARC1; p=reject"},
+		"other.example":        {"v=spf1 -all"},
+		"_dmarc.other.example": {"v=DMARC1; p=quarantine"},
+	}}
+	v := New(Config{Enabled: true, SPFEnabled: true, DKIMEnabled: true, DMARCEnabled: true, EnforceDMARC: true})
+	v.resolver = newCachingResolver(zone)
+	message := []byte("From: a@example.com\r\nSubject: hello\r\n\r\nbody\r\n")
+
+	for _, tc := range []struct {
+		from             string
+		spf, dmarc, disp string
+	}{
+		{"a@example.com", "pass", "pass", "accept"},
+		{"a@other.example", "fail", "fail", "quarantine"},
+	} {
+		got := v.Check(t.Context(), net.ParseIP("192.0.2.1"), "helo.example", tc.from, message)
+		if got.SPF.Value != tc.spf || got.DMARC.Value != tc.dmarc || got.Disposition != tc.disp {
+			t.Errorf("%s: Check = spf %q dmarc %q disposition %q, want %q %q %q",
+				tc.from, got.SPF.Value, got.DMARC.Value, got.Disposition, tc.spf, tc.dmarc, tc.disp)
+		}
+		want := v.Verify(t.Context(), net.ParseIP("192.0.2.1"), "helo.example", tc.from, nil)
+		if got.SPF.Value != want.SPF.Value || got.DMARC.Value != want.DMARC.Value ||
+			got.Policy != want.Policy || got.Disposition != want.Disposition {
+			t.Errorf("%s: Check %+v disagrees with Verify %+v", tc.from, got, want)
+		}
 	}
 }

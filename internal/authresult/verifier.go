@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"blitiri.com.ar/go/spf"
@@ -78,8 +79,10 @@ type Config struct {
 
 // Verifier performs the checks.
 type Verifier struct {
-	config   Config
-	resolver *net.Resolver
+	config Config
+	// resolver caches TXT answers for every check, and is shared by all
+	// sessions so a burst of mail from one domain costs one lookup.
+	resolver *cachingResolver
 	// arc is the RFC 8617 chain verifier. It is held here so that a reload
 	// swaps one object and every check moves together, rather than leaving a
 	// session verifying SPF under a new policy and ARC under the old one.
@@ -111,7 +114,76 @@ func New(config Config) *Verifier {
 		Verify:  config.ARCEnabled,
 		Timeout: config.ARCTimeout,
 	})
-	return &Verifier{config: config, resolver: net.DefaultResolver, arc: arcVerifier}
+	resolver := newCachingResolver(net.DefaultResolver)
+	arcVerifier.SetResolver(resolver.LookupTXT)
+	return &Verifier{config: config, resolver: resolver, arc: arcVerifier}
+}
+
+// Check runs every enabled check on one message within a single time budget.
+//
+// The client is waiting at end-of-DATA for all of this, so what matters is
+// how long the whole takes, not each part. SPF, DKIM, ARC and the DMARC record
+// lookup do not depend on each other and run together; only the DMARC verdict
+// waits, because it needs the SPF and DKIM outcomes. Each check still honours
+// its own plugin timeout, but none can run past Timeout, so a resolver that
+// stops answering costs one Timeout rather than one per check in turn.
+func (v *Verifier) Check(ctx context.Context, clientIP net.IP, heloName, mailFrom string, message []byte) Results {
+	results := Results{Disposition: "accept"}
+	if !v.Enabled() {
+		return results
+	}
+	ctx, cancel := context.WithTimeout(ctx, v.config.Timeout)
+	defer cancel()
+
+	fromDomain := domainOf(mailFrom)
+	var (
+		wg          sync.WaitGroup
+		dmarcRecord *dmarc.Record
+		dmarcErr    error
+	)
+	run := func(timeout time.Duration, check func(context.Context)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			checkCtx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			check(checkCtx)
+		}()
+	}
+
+	if v.config.SPFEnabled {
+		run(v.config.SPFTimeout, func(ctx context.Context) {
+			results.SPF = v.checkSPF(ctx, clientIP, heloName, mailFrom)
+		})
+	} else {
+		results.SPF = Result{Method: "spf", Value: "none", Reason: "SPF plugin disabled"}
+	}
+	if v.config.DKIMEnabled {
+		run(v.config.Timeout, func(ctx context.Context) {
+			results.DKIM = verifyDKIM(ctx, message, v.resolver.LookupTXT)
+		})
+	}
+	if v.config.DMARCEnabled && fromDomain != "" {
+		run(v.config.DMARCTimeout, func(ctx context.Context) {
+			dmarcRecord, dmarcErr = v.lookupDMARC(ctx, fromDomain)
+		})
+	}
+	if v.config.ARCEnabled {
+		run(v.config.ARCTimeout, func(ctx context.Context) {
+			results.ARC = v.VerifyARC(ctx, message)
+		})
+	} else {
+		results.ARC = v.VerifyARC(ctx, message)
+	}
+	wg.Wait()
+
+	if v.config.DMARCEnabled {
+		results.DMARC, results.Policy = evaluateDMARC(fromDomain, dmarcRecord, dmarcErr, results)
+	} else {
+		results.DMARC = Result{Method: "dmarc", Value: "none", Reason: "DMARC plugin disabled"}
+	}
+	v.applyPolicy(&results)
+	return results
 }
 
 func (v *Verifier) Enabled() bool {
@@ -152,7 +224,13 @@ func (v *Verifier) Verify(ctx context.Context, clientIP net.IP, heloName, mailFr
 		results.DMARC = Result{Method: "dmarc", Value: "none", Reason: "DMARC plugin disabled"}
 	}
 
-	// A policy is only acted on when the operator has asked for it.
+	v.applyPolicy(&results)
+	return results
+}
+
+// applyPolicy acts on a published policy only when the operator has asked for
+// it.
+func (v *Verifier) applyPolicy(results *Results) {
 	if v.config.EnforceDMARC && results.DMARC.Value == "fail" {
 		switch results.Policy {
 		case "reject":
@@ -161,7 +239,6 @@ func (v *Verifier) Verify(ctx context.Context, clientIP net.IP, heloName, mailFr
 			results.Disposition = "quarantine"
 		}
 	}
-	return results
 }
 
 // VerifyARC evaluates the ARC chain over the message as received.
@@ -192,7 +269,8 @@ func (v *Verifier) checkSPF(ctx context.Context, clientIP net.IP, heloName, mail
 		sender = "postmaster@" + strings.TrimSpace(heloName)
 	}
 
-	result, err := spf.CheckHostWithSender(clientIP, heloName, sender, spf.WithContext(ctx))
+	result, err := spf.CheckHostWithSender(clientIP, heloName, sender,
+		spf.WithContext(ctx), spf.WithResolver(v.resolver))
 	out := Result{Method: "spf", Domain: domainOf(sender), Value: string(result)}
 	if err != nil {
 		out.Reason = err.Error()
@@ -207,17 +285,30 @@ func (v *Verifier) checkSPF(ctx context.Context, clientIP net.IP, heloName, mail
 // recipient never sees says nothing about whether the visible From is genuine,
 // which is exactly how a forgery gets through a naive check.
 func (v *Verifier) checkDMARC(ctx context.Context, fromDomain string, results Results) (Result, string) {
+	if fromDomain == "" {
+		return evaluateDMARC(fromDomain, nil, nil, results)
+	}
+	record, err := v.lookupDMARC(ctx, fromDomain)
+	return evaluateDMARC(fromDomain, record, err, results)
+}
+
+// lookupDMARC fetches the From domain's policy. It is separate from the
+// verdict so the lookup can run alongside SPF and DKIM.
+func (v *Verifier) lookupDMARC(ctx context.Context, fromDomain string) (*dmarc.Record, error) {
+	return dmarc.LookupWithOptions(fromDomain, &dmarc.LookupOptions{
+		LookupTXT: func(name string) ([]string, error) {
+			return v.resolver.LookupTXT(ctx, name)
+		},
+	})
+}
+
+// evaluateDMARC decides alignment from a looked-up record.
+func evaluateDMARC(fromDomain string, record *dmarc.Record, err error, results Results) (Result, string) {
 	out := Result{Method: "dmarc", Domain: fromDomain}
 	if fromDomain == "" {
 		out.Value = "none"
 		return out, ""
 	}
-
-	record, err := dmarc.LookupWithOptions(fromDomain, &dmarc.LookupOptions{
-		LookupTXT: func(name string) ([]string, error) {
-			return v.resolver.LookupTXT(ctx, name)
-		},
-	})
 	if err != nil {
 		// No record is "none": the domain has not asked for anything, which is
 		// not a failure. A lookup that broke is "temperror" for the same reason
@@ -352,7 +443,18 @@ func (r Results) String() string {
 // only the envelope, and because a message with no signature is an ordinary
 // state rather than a failure — most mail is unsigned.
 func VerifyDKIM(ctx context.Context, message []byte) []Result {
+	return verifyDKIM(ctx, message, net.DefaultResolver.LookupTXT)
+}
+
+// verifyDKIM does the work of VerifyDKIM with key lookups bound to ctx. The
+// library's own default lookup takes no context, so a key server that never
+// answers would hold the client at end-of-DATA for as long as the system
+// resolver keeps retrying.
+func verifyDKIM(ctx context.Context, message []byte, lookupTXT func(context.Context, string) ([]string, error)) []Result {
 	verifications, err := dkim.VerifyWithOptions(bytes.NewReader(message), &dkim.VerifyOptions{
+		LookupTXT: func(name string) ([]string, error) {
+			return lookupTXT(ctx, name)
+		},
 		// One bad signature must not stop the others being checked: a message
 		// can carry several, and a forwarder's broken one says nothing about
 		// the original sender's.
