@@ -365,6 +365,13 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			remoteSMTPHandler.SetHeloHostname(config.Hostname)
 		}
 
+		// Outbound session reuse is on unless [delivery] reuse_connections = false.
+		if remoteSMTPHandler != nil && config.Delivery != nil &&
+			config.Delivery.ReuseConnections != nil && !*config.Delivery.ReuseConnections {
+			remoteSMTPHandler.SetConnectionReuse(false)
+			slogger.Info("Outbound SMTP connection reuse disabled")
+		}
+
 		// Per-destination traffic shaping. max_connections_per_domain was
 		// configured, surfaced and unused until now; it finally reaches the
 		// thing that opens the connections. Remote SMTP only: LMTP goes to one

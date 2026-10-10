@@ -264,6 +264,12 @@ restart.
   accepting and bouncing (backscatter). Default on in `lmtp`/`split` mode when
   `[delivery].host` is set. If the mailbox server cannot answer, recipients
   are accepted unverified and probing pauses for 30 seconds.
+- `[delivery].reuse_connections` (default true). After an outbound delivery
+  the SMTP session is kept open for up to 5 seconds and the next message to
+  the same MX address goes over it, skipping connect, EHLO and the TLS
+  handshake. A session carries at most 100 messages and lives at most 5
+  minutes; at most 4 are parked per MX address and 256 in total. Set false
+  to open a new connection for every message.
 - retry/timeouts
 
 ### Metrics

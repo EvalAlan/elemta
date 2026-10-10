@@ -197,3 +197,10 @@ func (h *SplitDeliveryHandler) SetDKIMSigner(s *dkim.Signer) {
 		remote.SetDKIMSigner(s)
 	}
 }
+
+// CloseIdleSessions closes the remote handler's parked outbound sessions.
+func (h *SplitDeliveryHandler) CloseIdleSessions() {
+	if remote, ok := h.remote.(interface{ CloseIdleSessions() }); ok {
+		remote.CloseIdleSessions()
+	}
+}

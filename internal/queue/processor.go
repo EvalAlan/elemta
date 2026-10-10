@@ -356,6 +356,11 @@ func (p *Processor) Stop() error {
 	p.logger.Info("Stopping queue processor")
 	p.cancel()
 	p.wg.Wait()
+	// With every worker finished, parked outbound sessions have nothing left
+	// to carry. QUIT them so receivers see a clean close, not a dropped socket.
+	if h, ok := p.handler.(interface{ CloseIdleSessions() }); ok {
+		h.CloseIdleSessions()
+	}
 	p.logger.Info("Queue processor stopped")
 	return nil
 }

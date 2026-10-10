@@ -537,13 +537,11 @@ write refusal, TLS certificate reload from disk, ARF complaint processing
 SQLite, bounces for every post-acceptance failure, and outbound EHLO /
 port / STARTTLS-fallback fixes. Their reasoning is in the commit messages.
 
-**Outbound connection reuse.** `internal/delivery/pool.go` was a tested but
-unwired connection pool; it was deleted with the rest of the unused delivery
-manager (MX caching, its other salvageable part, already exists as
-`newCachingMXResolver` in `internal/queue`). If connection reuse to large
-receivers becomes worth having, recover `pool.go` from git history (it was
-removed in the "remove packages nothing imports" commit) and compose it with
-the shaper's per-domain cap.
+**Outbound connection reuse** is in (`internal/queue/session_cache.go`):
+sessions are keyed by MX address, parked after a clean transaction, and not
+probed before reuse; a reused session that turns out to be gone is retried
+once on a new connection. The pool deleted from `internal/delivery` pooled
+raw sockets, which cannot carry EHLO/STARTTLS state, so it was not revived.
 
 **TLS-RPT and DANE.** MTA-STS is enforced; TLS-RPT (RFC 8460) reporting and
 DANE/TLSA validation are not implemented. TLS-RPT is the cheaper of the two:
