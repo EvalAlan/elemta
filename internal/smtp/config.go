@@ -203,6 +203,10 @@ type DeliveryConfig struct {
 	// instead of bounced later (backscatter). Unset means on in lmtp and
 	// split modes when [delivery] host is set.
 	VerifyRecipients *bool `toml:"verify_recipients" json:"verify_recipients,omitempty"`
+	// ReuseConnections keeps finished outbound SMTP sessions open briefly and
+	// sends the next message to the same MX over them, skipping the connect,
+	// EHLO and TLS handshake. Unset means on.
+	ReuseConnections *bool `toml:"reuse_connections" json:"reuse_connections,omitempty"`
 	Debug            bool  `toml:"debug" json:"debug"` // Enable debug logging for delivery
 }
 

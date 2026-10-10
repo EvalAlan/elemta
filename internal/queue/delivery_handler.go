@@ -135,6 +135,9 @@ type SMTPDeliveryHandler struct {
 	// mxPort is the port MX hosts are contacted on. Always 25 in production
 	// (RFC 5321 §4.5.4.2 has no fallback); tests point it elsewhere.
 	mxPort string
+	// sessions parks finished outbound sessions for the next message to the
+	// same MX address; see session_cache.go. Nil disables reuse.
+	sessions *sessionCache
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -149,6 +152,7 @@ func NewSMTPDeliveryHandler(failedQueueRetentionHours int) *SMTPDeliveryHandler 
 		// MX lookups go through a short-lived cache. Draining a queue to one
 		// domain used to re-resolve for every message.
 		resolver: newCachingMXResolver(net.DefaultResolver, defaultMXCacheTTL, defaultMXCacheSize),
+		sessions: newSessionCache(),
 	}
 }
 
@@ -624,53 +628,74 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 		"recipients", recipients,
 		"require_tls", requireTLS)
 
-	client, conn, tlsState, nextHopRequireTLS, err := h.connectSMTP(ctx, address, requireTLS)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to connect to %s: %w", address, err)
-	}
-	defer func() { _ = client.Close() }()
-
-	// REQUIRETLS is stricter than MTA-STS: it already mandates verified TLS and
-	// next-hop support, so do not apply the overlapping policy a second time.
-	// MTA-STS requires a certificate that validates for the MX host, so only
-	// verified TLS counts; an encrypted-but-unverified session does not.
-	if !requireTLS {
-		if err := h.mtastsManager.EnforcePolicy(ctx, domain, mxHost, tlsState == tlsVerified); err != nil {
-			return "", "", nil, fmt.Errorf("MTA-STS policy check failed for %s: %w", domain, err)
+	// The session goes back to the cache only if every command in the
+	// transaction got a reply. A network error or timeout part way through
+	// leaves the protocol state unknown, and the next message must not inherit it.
+	var sess *outboundSession
+	reusable, clean := false, false
+	defer func() {
+		if sess == nil {
+			return
 		}
-	}
+		if reusable && h.sessions != nil {
+			h.sessions.put(address, sess, clean)
+			return
+		}
+		closeSession(sess)
+	}()
 
 	sender := strings.Trim(msg.From, "<>")
-	text := client.Text
-	if text == nil {
-		if requireTLS {
-			return "", "", nil, newRequireTLSError("cannot send MAIL FROM with REQUIRETLS parameter: no text connection available")
-		}
-		if err := client.Mail(sender); err != nil {
-			return "", "", nil, fmt.Errorf("MAIL FROM failed: %w", err)
-		}
-	} else {
-		mailFromCmd := "MAIL FROM:<%s>"
-		if requireTLS && nextHopRequireTLS {
-			mailFromCmd += " REQUIRETLS"
-		}
-		id, err := text.Cmd(mailFromCmd, sender)
+	// A parked session is not probed before use; probing costs a round trip
+	// on every reuse to catch the rare session the receiver dropped. Instead,
+	// if MAIL FROM on a reused session gets no reply or a 421 (the receiver
+	// closing on us), that session is discarded and the message is tried
+	// once more on a new connection.
+	for attempt := 0; ; attempt++ {
+		var reused bool
+		var err error
+		sess, reused, err = h.acquireSession(ctx, address, requireTLS, attempt == 0)
 		if err != nil {
-			return "", "", nil, fmt.Errorf("MAIL FROM command failed: %w", err)
+			return "", "", nil, fmt.Errorf("failed to connect to %s: %w", address, err)
 		}
-		text.StartResponse(id)
-		_, _, err = text.ReadResponse(250)
-		text.EndResponse(id)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("MAIL FROM failed: %w", err)
+
+		// REQUIRETLS is stricter than MTA-STS: it already mandates verified TLS and
+		// next-hop support, so do not apply the overlapping policy a second time.
+		// MTA-STS requires a certificate that validates for the MX host, so only
+		// verified TLS counts; an encrypted-but-unverified session does not.
+		if !requireTLS {
+			if err := h.mtastsManager.EnforcePolicy(ctx, domain, mxHost, sess.tls == tlsVerified); err != nil {
+				return "", "", nil, fmt.Errorf("MTA-STS policy check failed for %s: %w", domain, err)
+			}
 		}
+
+		err = sendMailFrom(sess, sender, requireTLS)
+		if err == nil {
+			break
+		}
+		if reused && sessionGone(err) {
+			h.logger.Debug("Parked SMTP session was closed by the receiver; reconnecting",
+				"address", address, "error", err)
+			closeSession(sess)
+			sess = nil
+			continue
+		}
+		var permErr *PermanentError
+		if errors.As(err, &permErr) {
+			return "", "", nil, err
+		}
+		return "", "", nil, fmt.Errorf("MAIL FROM failed: %w", err)
 	}
+	client, conn := sess.client, sess.conn
 
 	outcomes := make([]RecipientOutcome, 0, len(recipients))
 	accepted := make([]int, 0, len(recipients))
+	broken := false // a command got no reply; the session cannot be reused
 	for _, recipient := range recipients {
 		outcome := RecipientOutcome{Recipient: recipient, Route: mxHost}
 		if err := client.Rcpt(recipient); err != nil {
+			if !isSMTPReply(err) {
+				broken = true
+			}
 			outcome.Status, outcome.EnhancedStatusCode, outcome.Diagnostic = smtpFailureOutcome(err)
 		} else {
 			outcome.Status = RecipientDelivered // provisional until DATA completes
@@ -699,7 +724,11 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 		}
 	}
 
-	_ = client.Quit()
+	reusable = !broken && (dataErr == nil || isSMTPReply(dataErr))
+	// After a 250 to the end of data the transaction is over and the session
+	// is ready for the next MAIL FROM (RFC 5321 §4.1.1.4). Anything else (no
+	// recipient accepted, DATA refused) may leave it open, so it needs RSET.
+	clean = len(accepted) > 0 && dataErr == nil
 	deliveryIP, deliveryHost := "", ""
 	if conn != nil {
 		remoteAddr := conn.RemoteAddr().String()
@@ -728,6 +757,96 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 		return deliveryIP, deliveryHost, outcomes, err
 	}
 	return deliveryIP, deliveryHost, outcomes, nil
+}
+
+// acquireSession returns a parked session to address when one is available
+// and allowCached is set, otherwise a newly connected one. reused says which.
+func (h *SMTPDeliveryHandler) acquireSession(ctx context.Context, address string, requireTLS, allowCached bool) (*outboundSession, bool, error) {
+	if allowCached && h.sessions != nil {
+		if s := h.sessions.get(address, requireTLS); s != nil {
+			h.logger.Debug("Reusing outbound SMTP session", "address", address, "uses", s.uses)
+			return s, true, nil
+		}
+	}
+	client, conn, tlsState, nextHopRequireTLS, err := h.connectSMTP(ctx, address, requireTLS)
+	if err != nil {
+		return nil, false, err
+	}
+	now := time.Now()
+	return &outboundSession{client: client, conn: conn, tls: tlsState, requireTLS: nextHopRequireTLS, created: now, idleSince: now}, false, nil
+}
+
+// sendMailFrom opens a transaction, adding the REQUIRETLS parameter when the
+// message requires it and the next hop supports it.
+func sendMailFrom(sess *outboundSession, sender string, requireTLS bool) error {
+	text := sess.client.Text
+	if text == nil {
+		if requireTLS {
+			return newRequireTLSError("cannot send MAIL FROM with REQUIRETLS parameter: no text connection available")
+		}
+		return sess.client.Mail(sender)
+	}
+	mailFromCmd := "MAIL FROM:<%s>"
+	if requireTLS && sess.requireTLS {
+		mailFromCmd += " REQUIRETLS"
+	}
+	id, err := text.Cmd(mailFromCmd, sender)
+	if err != nil {
+		return err
+	}
+	text.StartResponse(id)
+	defer text.EndResponse(id)
+	_, _, err = text.ReadResponse(250)
+	return err
+}
+
+// sessionGone reports whether err means the receiver has closed the session:
+// no reply at all, or 421 (RFC 5321 §3.8, service closing).
+func sessionGone(err error) bool {
+	var tpErr *textproto.Error
+	if errors.As(err, &tpErr) {
+		return tpErr.Code == 421
+	}
+	return true
+}
+
+// isSMTPReply reports whether err is the server's reply to a command, as
+// opposed to a failure to get one. After a reply, the session is still in
+// step and can carry another transaction.
+func isSMTPReply(err error) bool {
+	var tpErr *textproto.Error
+	return errors.As(err, &tpErr)
+}
+
+// SetConnectionReuse turns outbound session reuse on or off. It is on by
+// default; turning it off closes any parked sessions.
+func (h *SMTPDeliveryHandler) SetConnectionReuse(enabled bool) {
+	if enabled {
+		if h.sessions == nil {
+			h.sessions = newSessionCache()
+		}
+		return
+	}
+	if h.sessions != nil {
+		h.sessions.closeAll()
+		h.sessions = nil
+	}
+}
+
+// CloseIdleSessions closes every parked outbound session. Call at shutdown so
+// receivers see a QUIT rather than a dropped connection.
+func (h *SMTPDeliveryHandler) CloseIdleSessions() {
+	if h.sessions != nil {
+		h.sessions.closeAll()
+	}
+}
+
+// SessionCacheStats reports outbound session reuse; ok is false when reuse is off.
+func (h *SMTPDeliveryHandler) SessionCacheStats() (stats SessionCacheStats, ok bool) {
+	if h.sessions == nil {
+		return SessionCacheStats{}, false
+	}
+	return h.sessions.stats(), true
 }
 
 // outboundTLS records what protection a delivery connection ended up with.

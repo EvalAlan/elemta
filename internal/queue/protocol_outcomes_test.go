@@ -91,6 +91,10 @@ func TestSMTPHandlerActiveMixedSuccessAndFailureOutcomes(t *testing.T) {
 			h.resolver = staticMXResolver{}
 			h.mtastsManager = allowMTASTS{}
 			h.maxMXLookups = 1
+			// Both domains resolve to the same MX name and the dialer picks the
+			// receiver by call count, so a reused session would send the second
+			// domain to the first receiver. Reuse has its own tests.
+			h.SetConnectionReuse(false)
 			h.dialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 				target := failAddr
 				if strings.Contains(address, "mx.local") { /* domain selected below through counter */
