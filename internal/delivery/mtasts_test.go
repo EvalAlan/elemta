@@ -305,29 +305,6 @@ func TestMTASTSManagerCache(t *testing.T) {
 		}
 	})
 
-	t.Run("CacheExpiration", func(t *testing.T) {
-		// Add an expired entry
-		mgr.mu.Lock()
-		mgr.cache["expired.example.com"] = &MTASTSPolicy{
-			Version:   "STSv1",
-			Mode:      "enforce",
-			MaxAge:    3600,
-			fetchedAt: time.Now().Add(-2 * time.Hour),
-			expiresAt: time.Now().Add(-1 * time.Hour), // expired
-		}
-		mgr.mu.Unlock()
-
-		// performCleanup should remove it
-		mgr.performCleanup()
-
-		mgr.mu.RLock()
-		_, exists := mgr.cache["expired.example.com"]
-		mgr.mu.RUnlock()
-		if exists {
-			t.Error("Expected expired entry to be cleaned up")
-		}
-	})
-
 	t.Run("ClearCache", func(t *testing.T) {
 		mgr.mu.Lock()
 		mgr.cache["test.com"] = &MTASTSPolicy{Mode: "enforce"}

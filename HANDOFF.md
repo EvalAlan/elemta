@@ -338,26 +338,22 @@ Filebeat adds or transforms rather than the raw content. It is worth chasing
 before trusting an exact event count; it is not worth blocking on for rates and
 ratios.
 
-**Only the Postgres backend claims work in bounded batches; file and SQLite
-rescan the whole queue every tick.** `Processor.processQueue` uses
-`ClaimMessages` when the backend offers it — and `PostgresStorageBackend` is the
-only one that does. Everything else falls to `ListMessages`, which reads *and
-sorts every message in the queue* on each `interval` (10s by default).
+**Every backend except indexedfs now claims work in bounded batches.**
+`Processor.processQueue` uses `ClaimMessages` when the backend offers it, and
+falls back to `ListMessages` otherwise, which reads *and sorts every message in
+the queue* on each `interval` (10s by default). That fallback is O(queue
+depth), so the server slows down exactly when it is furthest behind, and raising
+`workers` barely helps because the scan happens before any worker is
+dispatched. Measured draining a 20k backlog on the file backend before it
+claimed, 5 workers gave 21.0/s and 20 gave 23.4/s.
 
-That cost is O(queue depth), so the server slows down exactly when it is
-furthest behind, which is the wrong shape for a queue. It also explains why
-raising `workers` barely helps: the scan happens before any worker is
-dispatched. Measured draining a 20k backlog on the file backend, 5 workers gave
-21.0/s and 20 gave 23.4/s — +11% for 4x the concurrency — with per-minute rates
-swinging between 0.9/s and 40/s, which is the signature of a tick plus an
-expensive listing rather than of saturated delivery.
-
-So the file-vs-SQLite choice is a wash for throughput; both take the same path.
-The tombstone leak was the only real difference and it is fixed. If you want
-the queue to actually scale with workers, the work is implementing
-`ClaimingStorageBackend` for the file and SQLite backends — claiming
-`availableWorkers` rows instead of listing everything. Until then, a large
-backlog drains at tens per second regardless of configuration.
+Postgres claims with `SKIP LOCKED`. The file backend claims from directory
+names with an in-process lease (`storage_file_claim.go`, which explains why
+that is honest for a directory of files). SQLite claims with one
+`UPDATE ... RETURNING` over the oldest unleased rows (`storage_sqlite_claim.go`);
+on a 20k-row queue that takes ~0.25ms against ~98ms for a full `List`
+(`BenchmarkSQLiteFindWork_*`). An existing SQLite queue gains the claim
+columns on its next start. The indexedfs backend still takes the listing path.
 
 **Two settings cap delivery, and they fight each other if they disagree.**
 `[queue_processor] workers` caps concurrent deliveries; `max_connections_per_domain`

@@ -147,6 +147,22 @@ CREATE INDEX IF NOT EXISTS idx_queue_tombstones_consumed_at ON queue_enqueue_tom
 		return fmt.Errorf("failed to add tombstone digest column: %w", err)
 	}
 
+	// Claim columns for ClaimMessages, added the same way so an existing queue
+	// picks them up on its next start. claim_until is Unix nanoseconds: an
+	// integer compares correctly, where RFC3339Nano text does not (it trims
+	// trailing zeros, so it does not sort by time).
+	for _, stmt := range []string{
+		`ALTER TABLE queue_messages ADD COLUMN claimed_by TEXT`,
+		`ALTER TABLE queue_messages ADD COLUMN claim_until INTEGER`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("failed to add claim column: %w", err)
+		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_queue_messages_queue_created ON queue_messages(queue_type, created_at)`); err != nil {
+		return fmt.Errorf("failed to create claim index: %w", err)
+	}
+
 	return nil
 }
 
@@ -174,8 +190,15 @@ func (s *SQLiteStorageBackend) Store(msg Message) error {
 	}
 
 	_, err = s.db.Exec(
-		`INSERT OR REPLACE INTO queue_messages (id, queue_type, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)`,
+		// An upsert rather than INSERT OR REPLACE: REPLACE deletes the row and
+		// inserts a new one, which would drop a delivery worker's claim on it.
+		`INSERT INTO queue_messages (id, queue_type, metadata, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   queue_type = excluded.queue_type,
+		   metadata = excluded.metadata,
+		   created_at = excluded.created_at,
+		   updated_at = excluded.updated_at`,
 		msg.ID,
 		string(msg.QueueType),
 		string(metadata),
@@ -462,7 +485,7 @@ func (s *SQLiteStorageBackend) DeleteAll(queueType QueueType) error {
 // Move transfers a message between queues.
 func (s *SQLiteStorageBackend) Move(id string, fromQueue, toQueue QueueType) error {
 	res, err := s.db.Exec(
-		`UPDATE queue_messages SET queue_type = ?, updated_at = ? WHERE id = ? AND queue_type = ?`,
+		`UPDATE queue_messages SET queue_type = ?, updated_at = ?, claimed_by = NULL, claim_until = NULL WHERE id = ? AND queue_type = ?`,
 		string(toQueue),
 		time.Now().UTC().Format(time.RFC3339Nano),
 		id,

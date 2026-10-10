@@ -456,43 +456,6 @@ func (m *MTASTSManager) GetStats() map[string]interface{} {
 	}
 }
 
-// cleanup runs periodic cleanup of expired policy entries.
-func (m *MTASTSManager) cleanup(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			m.performCleanup()
-		}
-	}
-}
-
-// performCleanup removes expired entries from the policy cache.
-func (m *MTASTSManager) performCleanup() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	now := time.Now()
-	expired := 0
-	for domain, policy := range m.cache {
-		if now.After(policy.expiresAt) {
-			delete(m.cache, domain)
-			expired++
-		}
-	}
-
-	if expired > 0 {
-		m.metrics.mu.Lock()
-		m.metrics.CacheSize = len(m.cache)
-		m.metrics.mu.Unlock()
-		m.logger.Debug("MTA-STS policy cache cleanup", "expired", expired)
-	}
-}
-
 // MarshalJSON for MTASTSPolicy (excludes internal fields).
 func (p *MTASTSPolicy) MarshalJSON() ([]byte, error) {
 	type Alias MTASTSPolicy

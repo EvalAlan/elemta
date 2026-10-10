@@ -41,7 +41,7 @@ hostname = "localhost"
 dev_mode = true
 
 [queue]
-queue_dir = "` + queueDir + `"
+dir = "` + queueDir + `"
 max_workers = 10
 max_retries = 5
 retry_schedule = [300, 600, 1800, 3600]
