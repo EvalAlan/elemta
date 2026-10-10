@@ -543,9 +543,12 @@ probed before reuse; a reused session that turns out to be gone is retried
 once on a new connection. The pool deleted from `internal/delivery` pooled
 raw sockets, which cannot carry EHLO/STARTTLS state, so it was not revived.
 
-**DANE.** MTA-STS is enforced and TLS-RPT (RFC 8460) is implemented in
-`internal/tlsrpt` (off by default, `[tls_reporting]`); DANE/TLSA validation
-is not. It needs DNSSEC-validated answers, which Go's resolver cannot give.
+**MTA-STS, TLS-RPT and DANE are all in.** TLS-RPT (RFC 8460) lives in
+`internal/tlsrpt`, DANE (RFC 7672) in `internal/dane`; both are off by
+default. DANE trusts the AD bit from `[delivery] dane_resolver`, so it is
+only as good as that resolver and the path to it. The TLSA base domain is
+always the MX host name; CNAME-expanded TLSA bases (RFC 7672 §2.2.3) are not
+followed.
 
 **Deploys go over SSH to a compose host** (`.github/workflows/deploy.yml`,
 `scripts/deploy/remote-deploy.sh`, `deployments/compose/docker-compose.prod.yml`),

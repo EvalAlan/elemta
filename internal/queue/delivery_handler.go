@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/dane"
 	"github.com/EvalAlan/elemta/internal/delivery"
 	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/tlsrpt"
@@ -142,6 +143,9 @@ type SMTPDeliveryHandler struct {
 	// tlsReports counts TLS outcomes per recipient domain for TLS-RPT
 	// (RFC 8460). Nil disables counting.
 	tlsReports TLSReportRecorder
+	// dane validates MX certificates against TLSA records (RFC 7672). Nil
+	// disables DANE.
+	dane dane.Resolver
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -648,6 +652,15 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 		closeSession(sess)
 	}()
 
+	// DANE, when the domain's MX records and this host's TLSA records are
+	// both DNSSEC-signed. A lookup that fails defers the message rather than
+	// delivering without DANE: a failed lookup is what an attacker would cause.
+	dp, err := h.danePolicyFor(ctx, domain, mxHost, address)
+	if err != nil {
+		h.reportDANEFailure(domain, mxHost, nil, err)
+		return "", "", nil, &TemporaryError{msg: fmt.Sprintf("DANE lookup for %s: %v", mxHost, err)}
+	}
+
 	sender := strings.Trim(msg.From, "<>")
 	// A parked session is not probed before use; probing costs a round trip
 	// on every reuse to catch the rare session the receiver dropped. Instead,
@@ -657,19 +670,24 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 	for attempt := 0; ; attempt++ {
 		var reused bool
 		var err error
-		sess, reused, err = h.acquireSession(ctx, address, requireTLS, attempt == 0)
+		sess, reused, err = h.acquireSession(ctx, address, requireTLS, attempt == 0, dp)
 		if err != nil {
+			var de *daneError
+			if errors.As(err, &de) {
+				h.reportDANEFailure(domain, mxHost, dp, err)
+			}
 			return "", "", nil, fmt.Errorf("failed to connect to %s: %w", address, err)
 		}
 
+		if !reused {
+			h.reportTLS(ctx, domain, mxHost, sess, dp)
+		}
 		// REQUIRETLS is stricter than MTA-STS: it already mandates verified TLS and
 		// next-hop support, so do not apply the overlapping policy a second time.
 		// MTA-STS requires a certificate that validates for the MX host, so only
 		// verified TLS counts; an encrypted-but-unverified session does not.
-		if !reused {
-			h.reportTLS(ctx, domain, mxHost, sess)
-		}
-		if !requireTLS {
+		// DANE takes precedence over MTA-STS where both apply (RFC 8461 §2).
+		if !requireTLS && dp == nil {
 			if err := h.mtastsManager.EnforcePolicy(ctx, domain, mxHost, sess.tls == tlsVerified); err != nil {
 				return "", "", nil, fmt.Errorf("MTA-STS policy check failed for %s: %w", domain, err)
 			}
@@ -768,21 +786,22 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 
 // acquireSession returns a parked session to address when one is available
 // and allowCached is set, otherwise a newly connected one. reused says which.
-func (h *SMTPDeliveryHandler) acquireSession(ctx context.Context, address string, requireTLS, allowCached bool) (*outboundSession, bool, error) {
+func (h *SMTPDeliveryHandler) acquireSession(ctx context.Context, address string, requireTLS, allowCached bool, dp *danePolicy) (*outboundSession, bool, error) {
 	if allowCached && h.sessions != nil {
-		if s := h.sessions.get(address, requireTLS); s != nil {
+		if s := h.sessions.get(address, requireTLS, dp != nil); s != nil {
 			h.logger.Debug("Reusing outbound SMTP session", "address", address, "uses", s.uses)
 			return s, true, nil
 		}
 	}
-	var info tlsAttemptInfo
+	info := tlsAttemptInfo{dane: dp}
 	client, conn, tlsState, nextHopRequireTLS, err := h.connectSMTP(ctx, address, requireTLS, &info)
 	if err != nil {
 		return nil, false, err
 	}
 	now := time.Now()
 	return &outboundSession{client: client, conn: conn, tls: tlsState, requireTLS: nextHopRequireTLS,
-		starttlsOffered: info.starttlsOffered, verifyErr: info.verifyErr, created: now, idleSince: now}, false, nil
+		starttlsOffered: info.starttlsOffered, verifyErr: info.verifyErr, dane: info.daneVerified,
+		created: now, idleSince: now}, false, nil
 }
 
 // sendMailFrom opens a transaction, adding the REQUIRETLS parameter when the
@@ -877,8 +896,21 @@ type stsPolicySource interface {
 // reportTLS records a newly negotiated session against the recipient
 // domain's policy. Sessions are counted once, when they are set up: a reused
 // session carries the same TLS as when it was counted.
-func (h *SMTPDeliveryHandler) reportTLS(ctx context.Context, domain, mxHost string, sess *outboundSession) {
+func (h *SMTPDeliveryHandler) reportTLS(ctx context.Context, domain, mxHost string, sess *outboundSession, dp *danePolicy) {
 	if h.tlsReports == nil {
+		return
+	}
+	if dp != nil {
+		// Only a DANE-authenticated session gets this far when DANE applies;
+		// failures are reported where the connection is refused.
+		h.tlsReports.Record(tlsrpt.Session{
+			Policy:      dp.reportPolicy(domain),
+			Success:     sess.dane,
+			ResultType:  tlsrpt.ResultTLSAInvalid,
+			SendingIP:   addrIP(connLocal(sess.conn)),
+			ReceivingMX: strings.TrimSuffix(mxHost, "."),
+			ReceivingIP: addrIP(connRemote(sess.conn)),
+		})
 		return
 	}
 	rec := tlsrpt.Session{
@@ -956,9 +988,14 @@ const (
 
 // tlsAttemptInfo records how TLS negotiation went, for TLS reporting: whether
 // the receiver offered STARTTLS, and why a verified handshake failed.
+//
+// dane is the one input: when set, the host must be authenticated by those
+// TLSA records and nothing weaker is accepted.
 type tlsAttemptInfo struct {
+	dane            *danePolicy
 	starttlsOffered bool
 	verifyErr       error
+	daneVerified    bool
 }
 
 // connectSMTP connects to address and negotiates the best TLS it can.
@@ -989,7 +1026,25 @@ func (h *SMTPDeliveryHandler) connectSMTP(ctx context.Context, address string, r
 	}
 
 	state := tlsNone
-	if ok, _ := client.Extension("STARTTLS"); ok {
+	if info.dane != nil {
+		// DANE applies: TLS authenticated by TLSA, or nothing. No fallback to
+		// unverified TLS or plaintext; that fallback is the downgrade DANE
+		// exists to prevent.
+		ok, _ := client.Extension("STARTTLS")
+		if !ok {
+			_ = client.Close()
+			return nil, nil, tlsNone, false, &daneError{result: tlsrpt.ResultDANERequired,
+				err: fmt.Errorf("%s publishes TLSA records but does not offer STARTTLS", address)}
+		}
+		info.starttlsOffered = true
+		if err := client.StartTLS(h.daneTLSConfig(host, info.dane)); err != nil {
+			_ = client.Close()
+			return nil, nil, tlsNone, false, &daneError{result: tlsrpt.ResultTLSAInvalid,
+				err: fmt.Errorf("DANE authentication of %s failed: %w", address, err)}
+		}
+		info.daneVerified = true
+		state = tlsVerified
+	} else if ok, _ := client.Extension("STARTTLS"); ok {
 		info.starttlsOffered = true
 		if err := client.StartTLS(h.outboundTLSConfig(host)); err == nil {
 			state = tlsVerified

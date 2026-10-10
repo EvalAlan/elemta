@@ -3,6 +3,7 @@ package queue
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"strings"
@@ -25,8 +26,10 @@ type reuseServer struct {
 	// data, the way a crashing or timed-out receiver does.
 	dropAfterDATA atomic.Bool
 	refuseRcpt    atomic.Bool
-	mu            sync.Mutex
-	live          []net.Conn
+	// cert, when set, makes the server offer STARTTLS with it.
+	cert *tls.Certificate
+	mu   sync.Mutex
+	live []net.Conn
 }
 
 func startReuseServer(t testing.TB, delay time.Duration) *reuseServer {
@@ -82,7 +85,7 @@ func (s *reuseServer) serve(c net.Conn) {
 		_ = w.Flush()
 	}
 	reply("220 fake ESMTP")
-	inData := false
+	inData, secure := false, false
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
@@ -101,6 +104,16 @@ func (s *reuseServer) serve(c net.Conn) {
 		}
 		u := strings.ToUpper(strings.TrimSpace(line))
 		switch {
+		case strings.HasPrefix(u, "EHLO") && s.cert != nil && !secure:
+			reply("250-fake")
+			reply("250 STARTTLS")
+		case u == "STARTTLS" && s.cert != nil && !secure:
+			reply("220 go ahead")
+			tc := tls.Server(c, &tls.Config{Certificates: []tls.Certificate{*s.cert}})
+			if err := tc.Handshake(); err != nil {
+				return
+			}
+			r, w, secure = bufio.NewReader(tc), bufio.NewWriter(tc), true
 		case strings.HasPrefix(u, "EHLO"), strings.HasPrefix(u, "HELO"):
 			reply("250 fake")
 		case strings.HasPrefix(u, "RCPT") && s.refuseRcpt.Load():
@@ -252,7 +265,7 @@ func TestSessionCachePolicy(t *testing.T) {
 	dial := func(tls outboundTLS, requireTLS bool) *outboundSession {
 		h := reuseHandler(srv)
 		h.SetConnectionReuse(false)
-		s, _, err := h.acquireSession(context.Background(), srv.addr, false, false)
+		s, _, err := h.acquireSession(context.Background(), srv.addr, false, false, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -269,7 +282,7 @@ func TestSessionCachePolicy(t *testing.T) {
 		s.created = now
 		c.put("mx:25", s, false)
 		now = now.Add(c.idleTimeout + time.Second)
-		if got := c.get("mx:25", false); got != nil {
+		if got := c.get("mx:25", false, false); got != nil {
 			t.Error("expired session handed out")
 		}
 	})
@@ -279,7 +292,7 @@ func TestSessionCachePolicy(t *testing.T) {
 		s.created = now
 		s.uses = c.maxUses - 1
 		c.put("mx:25", s, false) // this use reaches the limit
-		if got := c.get("mx:25", false); got != nil {
+		if got := c.get("mx:25", false, false); got != nil {
 			t.Error("session past its use limit handed out")
 		}
 	})
@@ -288,10 +301,10 @@ func TestSessionCachePolicy(t *testing.T) {
 		weak := dial(tlsUnverified, true)
 		weak.created = now
 		c.put("mx:25", weak, false)
-		if got := c.get("mx:25", true); got != nil {
+		if got := c.get("mx:25", true, false); got != nil {
 			t.Error("unverified session handed to a REQUIRETLS message")
 		}
-		if got := c.get("mx:25", false); got != weak {
+		if got := c.get("mx:25", false, false); got != weak {
 			t.Error("unverified session not available to an ordinary message")
 		} else {
 			closeSession(got)
@@ -299,7 +312,7 @@ func TestSessionCachePolicy(t *testing.T) {
 		strong := dial(tlsVerified, true)
 		strong.created = now
 		c.put("mx:25", strong, false)
-		if got := c.get("mx:25", true); got != strong {
+		if got := c.get("mx:25", true, false); got != strong {
 			t.Error("verified REQUIRETLS session not reused")
 		} else {
 			closeSession(got)

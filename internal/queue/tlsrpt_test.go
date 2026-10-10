@@ -66,7 +66,7 @@ func TestReportTLSClassification(t *testing.T) {
 			h.mtastsManager = stsSource{policy: c.policy}
 			h.SetTLSReportRecorder(rec)
 			sess := c.sess
-			h.reportTLS(context.Background(), "example.com", c.mx, &sess)
+			h.reportTLS(context.Background(), "example.com", c.mx, &sess, nil)
 			if len(rec.sessions) != 1 {
 				t.Fatalf("recorded %d sessions", len(rec.sessions))
 			}

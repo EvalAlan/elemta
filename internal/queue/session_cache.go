@@ -53,9 +53,12 @@ type outboundSession struct {
 	// reporting: verifyErr is why a verified handshake failed, if it did.
 	starttlsOffered bool
 	verifyErr       error
-	created         time.Time
-	idleSince       time.Time
-	uses            int
+	// dane is set when the certificate was authenticated by DNSSEC-signed
+	// TLSA records.
+	dane      bool
+	created   time.Time
+	idleSince time.Time
+	uses      int
 }
 
 // sessionCache holds idle outbound sessions keyed by MX address.
@@ -96,9 +99,11 @@ func (c *sessionCache) expired(s *outboundSession, now time.Time) bool {
 // get returns a live idle session for address, or nil. needRequireTLS limits
 // the choice to sessions that satisfy REQUIRETLS (verified TLS and a next hop
 // that advertised it), so a REQUIRETLS message never rides a session that was
-// set up with weaker guarantees.
-func (c *sessionCache) get(address string, needRequireTLS bool) *outboundSession {
-	s, stale := c.take(address, needRequireTLS)
+// set up with weaker guarantees. needDANE does the same for hosts whose TLSA
+// records apply to this message: a session to the same host may have been set
+// up for a domain whose MX records are unsigned, where DANE did not apply.
+func (c *sessionCache) get(address string, needRequireTLS, needDANE bool) *outboundSession {
+	s, stale := c.take(address, needRequireTLS, needDANE)
 	for _, old := range stale {
 		closeSession(old)
 	}
@@ -115,7 +120,7 @@ func (c *sessionCache) get(address string, needRequireTLS bool) *outboundSession
 // take removes and returns the most recently parked usable session (the one
 // least likely to have been timed out by the receiver), along with any
 // expired sessions found on the way, which the caller closes outside the lock.
-func (c *sessionCache) take(address string, needRequireTLS bool) (*outboundSession, []*outboundSession) {
+func (c *sessionCache) take(address string, needRequireTLS, needDANE bool) (*outboundSession, []*outboundSession) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
@@ -128,7 +133,7 @@ func (c *sessionCache) take(address string, needRequireTLS bool) (*outboundSessi
 		switch {
 		case c.expired(s, now):
 			stale = append(stale, s)
-		case found == nil && (!needRequireTLS || (s.tls == tlsVerified && s.requireTLS)):
+		case found == nil && (!needRequireTLS || (s.tls == tlsVerified && s.requireTLS)) && (!needDANE || s.dane):
 			found = s
 		default:
 			kept = append(kept, s)

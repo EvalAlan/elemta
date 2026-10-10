@@ -209,7 +209,15 @@ type DeliveryConfig struct {
 	// sends the next message to the same MX over them, skipping the connect,
 	// EHLO and TLS handshake. Unset means on.
 	ReuseConnections *bool `toml:"reuse_connections" json:"reuse_connections,omitempty"`
-	Debug            bool  `toml:"debug" json:"debug"` // Enable debug logging for delivery
+	// DANE authenticates MX hosts against DNSSEC-signed TLSA records
+	// (RFC 7672). Off by default because it needs a validating resolver
+	// (DANEResolver), and because a DNSSEC lookup that fails defers mail.
+	DANE bool `toml:"dane" json:"dane"`
+	// DANEResolver is host:port of a DNSSEC-validating resolver whose AD bit
+	// is trusted. Keep it on loopback: an AD bit is only as trustworthy as the
+	// path it travelled. Default 127.0.0.1:53.
+	DANEResolver string `toml:"dane_resolver" json:"dane_resolver"`
+	Debug        bool   `toml:"debug" json:"debug"` // Enable debug logging for delivery
 }
 
 // TLSReportingConfig configures SMTP TLS Reporting (RFC 8460): daily
