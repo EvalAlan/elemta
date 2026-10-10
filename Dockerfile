@@ -15,14 +15,21 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Clean up dependencies
-RUN go mod tidy
-
 # Build the elemta binaries (statically linked)
-# All plugins are built-in to the main binary - no external .so files needed
-RUN CGO_ENABLED=0 go build -o elemta ./cmd/elemta
-RUN CGO_ENABLED=0 go build -o elemta-queue ./cmd/elemta-queue
-RUN CGO_ENABLED=0 go build -o elemta-cli ./cmd/elemta-cli
+# All plugins are built-in to the main binary - no external .so files needed.
+#
+# No `go mod tidy` here: it could rewrite go.mod/go.sum during the build, so
+# the image might not contain the dependency versions that were reviewed and
+# tested. go.sum is verified as committed.
+#
+# VERSION is stamped into the binary so `elemta version` and the health
+# endpoint report what is running, not the 0.1.0-dev default.
+ARG VERSION=dev
+RUN go mod verify && \
+    LDFLAGS="-s -w -X $(go list -m)/internal/version.Version=${VERSION}" && \
+    CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o elemta ./cmd/elemta && \
+    CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o elemta-queue ./cmd/elemta-queue && \
+    CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o elemta-cli ./cmd/elemta-cli
 
 # Security-hardened final image
 FROM debian:bookworm-slim

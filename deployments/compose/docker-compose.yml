@@ -7,7 +7,8 @@ services:
     container_name: elemta-node0
     restart: unless-stopped
     ports:
-      - "2525:2525" # SMTP server port
+      - "2525:2525" # SMTP server port (inbound / MX)
+      - "2587:2587" # Submission port (outbound, login or allowed_relays)
       - "9080:8080" # Metrics endpoint
     volumes:
       - elemta_queue:/app/queue
@@ -406,7 +407,7 @@ services:
       - ROUNDCUBEMAIL_SKIN=elastic
       - ROUNDCUBEMAIL_DEFAULT_HOST=elemta-dovecot
       - ROUNDCUBEMAIL_DEFAULT_PORT=14143
-      - ROUNDCUBEMAIL_SMTP_SERVER=elemta
+      - ROUNDCUBEMAIL_SMTP_SERVER=tls://elemta
       - ROUNDCUBEMAIL_SMTP_PORT=2525
       - ROUNDCUBEMAIL_SMTP_AUTH_TYPE=PLAIN
       - ROUNDCUBEMAIL_SMTP_USER=%u
@@ -415,6 +416,8 @@ services:
       - ROUNDCUBEMAIL_ASPELL_ENABLE=true
     volumes:
       - roundcube_data:/var/roundcube
+      # STARTTLS options for submitting to Elemta; see the file for why.
+      - ../../docker/roundcube/config/elemta-smtp.inc.php:/var/roundcube/config/elemta-smtp.inc.php:ro
       # Disable custom config for now due to Docker file sharing issues
       # - ./docker/roundcube/config/config.inc.php:/var/roundcube/config/config.inc.php:ro
     networks:

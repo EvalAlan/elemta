@@ -62,7 +62,11 @@ consumed" while being shown in the UI as a working setting.
 
 **Scanner/policy changes apply without a restart; most other things do not.**
 The SMTP server watches the config file and reloads the scanners, allow/deny
-lists and blocklists within ~5s (also on `SIGHUP`). Listen address, size limits,
+lists and blocklists within ~5s (also on `SIGHUP`). DKIM signing keys apply on reload too
+(a key that will not load refuses the reload). A TLS certificate and key
+replaced on disk (certbot, cert-manager) are picked up within ~30s of the next
+handshake, with no restart; a pair that fails to load is logged and the old one
+stays in use. Listen address, size limits,
 timeouts and the queue backend still need a restart, and the reload log says so
 every time. The API reports this as `applies_on_reload` vs `requires_restart`.
 
@@ -75,9 +79,15 @@ over IPv6 loopback. Tests that pin an IPv4-derived string (an RBL query name,
 for instance) will fail confusingly. `internal/smtp/rbl_test.go` shows the way
 round it.
 
-**The dashboard users file is read at startup only.** `elemta user add` succeeds
-and the new account cannot log in until `elemta-web` restarts. The CLI says so
-now; the bootstrap target restarts for you.
+**The dashboard users file is shared by the CLI and Settings > Users.** Lines are
+`username:bcrypt-hash:role`. The server re-reads the file when it changes (it
+compares inode, size and mtime, because a password change keeps the size), so
+`elemta user` edits apply on the next request without a restart, and a removed
+account's sessions stop working. A line with no role is from an older release
+and gets the old name-based rule: names containing "admin" are admins. The API
+refuses to remove or demote the last admin, and only accepts
+`application/json` bodies so a form on another site cannot use an admin's cookie
+to create accounts.
 
 **ARC is implemented in-tree, and that was deliberate.** `internal/arc` is a
 first-party RFC 8617 implementation. The only Go ARC libraries in existence had
@@ -105,6 +115,26 @@ per-domain transport map beyond that. The valid modes are `smtp.DeliveryModes`
 and the config validator reads it; they used to be two lists that disagreed in
 both directions, so `local` passed validation then failed at startup and `split`
 was rejected before the runtime that implemented it ever saw it.
+
+**Private addresses are not trusted to relay, and dev_mode does not bypass
+relay checks.** Both used to be true, and the shipped config had dev_mode on,
+so a server started from it relayed for anyone; behind SNAT every client is
+"private" anyway. Relay needs AUTH, loopback, or `allowed_relays`. The
+mail-auth lab adds the private ranges to `allowed_relays` itself because its
+test sends come through the Docker bridge.
+
+**SMTP AUTH needs STARTTLS (except from loopback), and its limits are shared.**
+PLAIN and LOGIN were accepted in the clear, and the failed-attempt limits lived
+in a per-connection object, so reconnecting reset them. Roundcube in the dev
+stack submits over STARTTLS with `docker/roundcube/config/elemta-smtp.inc.php`
+turning off peer verification for the self-signed dev certificate.
+`[auth] allow_plaintext_auth = true` restores the old behaviour.
+
+**Unknown local mailboxes are refused at RCPT time.** Every post-acceptance
+failure now bounces (RFC 5321 requires it), so accepting mail for mailboxes that
+do not exist would turn forged spam into backscatter. `recipient_verify.go`
+asks the LMTP server with a probe that stops after RCPT, caches answers, and
+fails open if the mailbox server is unreachable.
 
 **Routing is not authorization.** The session decides at RCPT time whether a
 recipient may be accepted at all. Split delivery only decides where already
@@ -338,7 +368,7 @@ Filebeat adds or transforms rather than the raw content. It is worth chasing
 before trusting an exact event count; it is not worth blocking on for rates and
 ratios.
 
-**Every backend except indexedfs now claims work in bounded batches.**
+**Every backend claims work in bounded batches.**
 `Processor.processQueue` uses `ClaimMessages` when the backend offers it, and
 falls back to `ListMessages` otherwise, which reads *and sorts every message in
 the queue* on each `interval` (10s by default). That fallback is O(queue
@@ -353,7 +383,8 @@ that is honest for a directory of files). SQLite claims with one
 `UPDATE ... RETURNING` over the oldest unleased rows (`storage_sqlite_claim.go`);
 on a 20k-row queue that takes ~0.25ms against ~98ms for a full `List`
 (`BenchmarkSQLiteFindWork_*`). An existing SQLite queue gains the claim
-columns on its next start. The indexedfs backend still takes the listing path.
+columns on its next start. The indexedfs backend embeds the file backend and
+claims through it.
 
 **Two settings cap delivery, and they fight each other if they disagree.**
 `[queue_processor] workers` caps concurrent deliveries; `max_connections_per_domain`
@@ -499,42 +530,32 @@ you see it again, check before assuming.
 
 ## What is actually left
 
-**Salvage two things out of `internal/delivery`, then delete the rest.** That
-package holds a complete, tested delivery subsystem that nothing constructs —
-`delivery.NewManager` has no caller outside the package. Only `mtasts.go` is
-live, used by the SMTP delivery handler. Do not read "unused" as "worthless";
-the verdict differs per file:
+Done since the last version of this list: dashboard user management with
+roles, live re-reading of the users file, failed-login lockout, cross-site
+write refusal, TLS certificate reload from disk, ARF complaint processing
+(`feedback_addresses`), `elemta dkim keygen|record|check`, batch claiming on
+SQLite, bounces for every post-acceptance failure, and outbound EHLO /
+port / STARTTLS-fallback fixes. Their reasoning is in the commit messages.
 
-| | |
-|---|---|
-| `dns_cache.go` | **Adopt.** Nothing caches MX today: the SMTP handler falls back to `net.DefaultResolver`, so every delivery attempt re-resolves. `internal/queue` already defines an `mxResolver` interface and `DNSCache.LookupMX` has exactly that signature, so it is close to a drop-in. |
-| `pool.go` | **Adopt.** The queue dials fresh for every delivery. Connection reuse to large receivers is standard in the MTAs this competes with, and it composes with the shaper's per-domain cap. |
-| `tracker.go` | **Drop.** Duplicates the queue's attempts, states and the tracing feature built on them. |
-| `router.go`, `manager.go` | **Drop.** The local-versus-relay decision is the split delivery handler's job now. |
+**Outbound connection reuse.** `internal/delivery/pool.go` was a tested but
+unwired connection pool; it was deleted with the rest of the unused delivery
+manager (MX caching, its other salvageable part, already exists as
+`newCachingMXResolver` in `internal/queue`). If connection reuse to large
+receivers becomes worth having, recover `pool.go` from git history (it was
+removed in the "remove packages nothing imports" commit) and compose it with
+the shaper's per-domain cap.
 
-Beware of measuring this with `grep -v internal/delivery/` — that hides
-intra-package use and makes the router look like orphaned code with no tests. It
-has both.
+**TLS-RPT and DANE.** MTA-STS is enforced; TLS-RPT (RFC 8460) reporting and
+DANE/TLSA validation are not implemented. TLS-RPT is the cheaper of the two:
+count verified/unverified/failed sessions per policy domain (the delivery
+handler now knows which of the three it got) and send the daily JSON report.
 
-**Feedback loops (ARF).** The suppression list is fed by SMTP-time bounces only.
-Yahoo and Microsoft send ARF complaint reports and nothing consumes them, so a
-recipient who marks a message as spam keeps receiving mail. This is the real
-deliverability gap now that shaping, suppression and per-destination reporting
-exist.
+**A real deploy workflow.** `deploy.yml` is a placeholder and deployment is
+manual by decision (EVI-11); it needs a target chosen first.
 
-**User management in the UI.** `elemta user add` is shell-only. API keys already
-have a UI; users do not. Note the read-at-startup wart above — fixing that
-properly (re-read on change, like the config reload) would be part of this.
-
-**DKIM key and TLS certificate management.** Certificate *expiry* is reported on
-the Health page (#122); nothing manages renewal, and DKIM keys are
-config/CLI-only.
-
-**Nobody has driven the dashboard in a browser.** The UI work has been verified
-with jsdom harnesses against the shipped `app.js`, by checking the files the
-container actually serves, and by reading the API responses. That is real
-evidence and it caught real bugs — but the settings-tabs failure was the kind a
-person finds in ten seconds and a harness does not.
+**Nobody has driven every dashboard page in a browser.** Settings > Users
+was driven end to end in the built-in browser; most other pages have only
+been verified with jsdom harnesses and API responses.
 
 ---
 

@@ -25,12 +25,15 @@ type Config struct {
 	MaxSize                  int64    `toml:"max_size" json:"max_size"`
 	DevMode                  bool     `toml:"dev_mode" json:"dev_mode"`
 	AllowedRelays            []string `toml:"allowed_relays" json:"allowed_relays"`
-	LocalDomains             []string `toml:"local_domains" json:"local_domains"`
-	Hostname                 string   `toml:"hostname" json:"hostname"`
-	MaxWorkers               int      `toml:"max_workers" json:"max_workers"`
-	MaxRetries               int      `toml:"max_retries" json:"max_retries"`
-	MaxQueueTime             int      `toml:"max_queue_time" json:"max_queue_time"`
-	RetrySchedule            []int    `toml:"retry_schedule" json:"retry_schedule"`
+	// SubmissionAddr is the optional submission listener (RFC 6409, usually
+	// :587), where a client must authenticate or be in allowed_relays.
+	SubmissionAddr string   `toml:"submission_addr" json:"submission_addr"`
+	LocalDomains   []string `toml:"local_domains" json:"local_domains"`
+	Hostname       string   `toml:"hostname" json:"hostname"`
+	MaxWorkers     int      `toml:"max_workers" json:"max_workers"`
+	MaxRetries     int      `toml:"max_retries" json:"max_retries"`
+	MaxQueueTime   int      `toml:"max_queue_time" json:"max_queue_time"`
+	RetrySchedule  []int    `toml:"retry_schedule" json:"retry_schedule"`
 
 	// SQLite queue backend configuration (used when QueueBackend=sqlite)
 	QueueSQLite QueueSQLiteConfig `toml:"queue_sqlite" json:"queue_sqlite"`
@@ -51,6 +54,9 @@ type Config struct {
 	ConnectTimeout            int  `toml:"connect_timeout" json:"connect_timeout"`                           // Timeout for connecting to remote servers
 	SMTPTimeout               int  `toml:"smtp_timeout" json:"smtp_timeout"`                                 // Timeout for SMTP operations
 	MaxConnectionsPerDomain   int  `toml:"max_connections_per_domain" json:"max_connections_per_domain"`     // Maximum concurrent connections per domain
+	// FeedbackAddresses receive ARF spam-complaint reports; complaints to them
+	// suppress the complaining recipient.
+	FeedbackAddresses []string `toml:"feedback_addresses" json:"feedback_addresses"`
 
 	// Queue processor options
 	QueueProcessorEnabled bool `toml:"queue_processor_enabled" json:"queue_processor_enabled"` // Whether queue processing is enabled
@@ -192,7 +198,12 @@ type DeliveryConfig struct {
 	RetryDelay    int    `toml:"retry_delay" json:"retry_delay"`       // Delay between retries in seconds
 	TestMode      bool   `toml:"test_mode" json:"test_mode"`           // Whether to use test mode delivery
 	DefaultDomain string `toml:"default_domain" json:"default_domain"` // Default domain for local delivery
-	Debug         bool   `toml:"debug" json:"debug"`                   // Enable debug logging for delivery
+	// VerifyRecipients asks the LMTP server at RCPT time whether a local
+	// mailbox exists, so unknown users are refused in the SMTP conversation
+	// instead of bounced later (backscatter). Unset means on in lmtp and
+	// split modes when [delivery] host is set.
+	VerifyRecipients *bool `toml:"verify_recipients" json:"verify_recipients,omitempty"`
+	Debug            bool  `toml:"debug" json:"debug"` // Enable debug logging for delivery
 }
 
 // MetricsConfig represents the configuration for metrics collection
@@ -214,6 +225,10 @@ type AuthConfig struct {
 	DataSourceUser      string `json:"datasource_user" toml:"datasource_user"`
 	DataSourcePass      string `json:"datasource_pass" toml:"datasource_pass"`
 	DataSourceDB        string `json:"datasource_db" toml:"datasource_db"`
+	// AllowPlaintextAuth permits AUTH PLAIN/LOGIN on connections without TLS
+	// from non-loopback clients. Off by default: the password crosses the
+	// network readable by anyone on the path.
+	AllowPlaintextAuth bool `json:"allow_plaintext_auth" toml:"allow_plaintext_auth"`
 }
 
 // TLSConfig represents TLS configuration

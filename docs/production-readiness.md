@@ -30,7 +30,16 @@ spool.
 filesystem backend. Postgres enables multi-node workers with message claims.
 
 **Outbound authentication of your mail.** DKIM signing (fail-closed on signing
-errors).
+errors), with `elemta dkim` commands to generate keys and confirm DNS before a
+rotation.
+
+**Admin access.** Login is required by default, with roles (admin, operator,
+user, readonly) managed in the dashboard or with `elemta user`, failed-login
+lockout, and refusal of cross-site requests that ride the session cookie.
+
+**List hygiene.** Permanent bounces and spam complaints from feedback loops
+(ARF reports sent to `feedback_addresses`) suppress the recipient, and
+campaigns skip suppressed addresses.
 
 **Outbound transport security.** MTA-STS policy is fetched and enforced on
 delivery, and REQUIRETLS is honoured (stricter than MTA-STS: it mandates
@@ -68,16 +77,17 @@ does not, and where a purpose-built platform is the right tool:
   mailbox-provider feedback.
 - **Provider-aware throttling.** No built-in per-destination concurrency and
   rate policy keyed to Gmail/Yahoo/Microsoft guidance.
-- **Advanced deliverability telemetry.** No native FBL processing, seedlist
-  integration, or engagement-based routing.
+- **Advanced deliverability telemetry.** Feedback-loop complaints suppress
+  recipients, but there is no seedlist integration or engagement-based routing.
 - **Some transport-security extras.** MTA-STS is implemented; DANE/TLSA record
   validation and TLS-RPT reporting are not.
 
 ## Before you go to production
 
 1. Read [Production Deployment](production-deployment.md) end to end,
-   especially the hardening section — the admin API is **unauthenticated by
-   default** and the dev compose binds it to all interfaces.
+   especially the hardening section. Create the first admin account before
+   starting the web service (login is required by default), and do not copy
+   `config/dev.toml`, which turns it off.
 2. Point the content scanners at reachable addresses and decide your
    reject-on-failure posture.
 3. Choose a queue backend deliberately and know its migration story

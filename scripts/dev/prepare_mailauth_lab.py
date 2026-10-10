@@ -54,6 +54,12 @@ def main() -> int:
     }
     for (section, key), value in changes.items():
         text = set_key(text, section, key, value)
+    # The lab's test sends come from the host through the Docker bridge and go
+    # to a non-local domain, which is relaying. Private ranges are no longer
+    # trusted to relay by default, so the lab says so explicitly. Top-level, so
+    # it goes before the first [section] header.
+    if not re.search(r"^allowed_relays\s*=", text, re.MULTILINE):
+        text = 'allowed_relays = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]\n' + text
     (out / "elemta-generated.toml").write_text(text, encoding="utf-8")
 
     (out / "Corefile").write_text(

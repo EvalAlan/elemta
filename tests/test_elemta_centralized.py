@@ -78,7 +78,8 @@ class TestConfig:
     imap_port: int = 14143
     webmail_port: int = 8026
     api_port: int = 8081
-    metrics_port: int = 8080
+    # The dev compose file publishes the container's :8080 metrics on 9080.
+    metrics_port: int = 9080
     timeout: int = 30
     verbose: bool = False
     parallel: bool = False
@@ -200,6 +201,19 @@ class SMTPTestClient:
         """Send EHLO command"""
         return self._send_command(f"EHLO {hostname}")
 
+    def starttls(self, hostname: str = "test.example.com") -> str:
+        """Upgrade to TLS and greet again. Password AUTH is only offered
+        after STARTTLS. The dev certificate is self-signed, so it is not
+        verified here."""
+        response = self._send_command("STARTTLS")
+        if not response.startswith("220"):
+            raise Exception(f"STARTTLS failed: {response}")
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        self.sock = ctx.wrap_socket(self.sock, server_hostname=self.host)
+        return self.ehlo(hostname)
+
     def helo(self, hostname: str = "test.example.com") -> str:
         """Send HELO command"""
         return self._send_command(f"HELO {hostname}")
@@ -217,11 +231,13 @@ class SMTPTestClient:
         return self._send_command("DATA")
 
     def send_data(self, data: str) -> str:
-        """Send email data"""
+        """Send email data. Line endings are normalised to CRLF: the server
+        enforces RFC 5321 strict line endings and refuses a bare LF."""
         if not self.connected or not self.sock:
             raise Exception("Not connected to server")
         
         try:
+            data = data.replace("\r\n", "\n").replace("\n", "\r\n")
             self.sock.send(data.encode())
             return self._read_response()
         except Exception as e:
@@ -744,6 +760,7 @@ This is a test email.
         try:
             client.connect()
             client.ehlo()
+            client.starttls()
             response = client.auth_plain("user@example.com", "password")
             if not response.startswith("235"):
                 # If auth fails, check if it's because LDAP users aren't initialized
@@ -761,6 +778,7 @@ This is a test email.
         try:
             client.connect()
             client.ehlo()
+            client.starttls()
             response = client.auth_login("user@example.com", "password")
             if not response.startswith("235"):
                 # If auth fails, check if it's because LDAP users aren't initialized
@@ -778,6 +796,7 @@ This is a test email.
         try:
             client.connect()
             client.ehlo()
+            client.starttls()
             response = client.auth_plain("invalid", "invalid")
             if response.startswith("235"):
                 raise Exception("Invalid authentication should have failed")
@@ -869,9 +888,10 @@ This is a test email.
             client.ehlo()
             client.mail_from("test@example.com")
             
-            # Send multiple RCPT TO commands rapidly (this is allowed)
+            # Send multiple RCPT TO commands rapidly (this is allowed). The
+            # addresses must exist: unknown local mailboxes are refused at RCPT.
             for i in range(10):
-                response = client.rcpt_to(f"test{i}@example.com")
+                response = client.rcpt_to(f"stressuser{i + 1:02d}@example.com")
                 if not response.startswith("250"):
                     raise Exception(f"Rate limiting test failed at iteration {i}: {response}")
             

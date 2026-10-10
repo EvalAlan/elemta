@@ -188,6 +188,7 @@ type Server struct {
 	rbac           *auth.RBAC
 	apiKeyManager  *auth.APIKeyManager
 	sessionManager *auth.SessionManager
+	loginThrottle  *loginThrottle
 	authMiddleware *AuthMiddleware
 	rateLimiter    *RateLimitMiddleware
 	corsMiddleware *CORSMiddleware
@@ -526,6 +527,11 @@ func (s *Server) initializeAuth() error {
 
 	// Create authentication middleware
 	authMiddleware := NewAuthMiddleware(rbac, apiKeyManager, sessionManager)
+	if s.loginThrottle == nil {
+		s.loginThrottle = newLoginThrottle()
+	}
+	authMiddleware.throttle = s.loginThrottle
+	authMiddleware.clientAddr = s.loginAddr
 
 	s.authSystem = authSystem
 	s.rbac = rbac
@@ -557,6 +563,17 @@ func (s *Server) Start() error {
 	if s.corsMiddleware != nil {
 		r.Use(s.corsMiddleware.Handler)
 	}
+
+	// Refuse cookie-authenticated writes from other sites. After CORS, so a
+	// preflight is answered first; before everything else, so a refused
+	// request does no work.
+	var trustedOrigin func(string) bool
+	if s.corsMiddleware != nil && s.corsMiddleware.config.Enabled {
+		trustedOrigin = func(origin string) bool {
+			return origin != "" && s.corsMiddleware.allowedOrigin(origin) == origin
+		}
+	}
+	r.Use(sameOriginWrites(trustedOrigin))
 
 	// Apply other middleware
 	r.Use(LoggingMiddleware)
@@ -634,6 +651,19 @@ func (s *Server) Start() error {
 
 	// API routes
 	api := r.PathPrefix("/api").Subrouter()
+
+	// User management. Only meaningful with authentication on: without it
+	// there are no accounts to manage.
+	if s.authMiddleware != nil {
+		perm := s.authMiddleware.RequirePermission
+		api.Handle("/users", perm(auth.PermissionUserView)(http.HandlerFunc(s.handleListUsers))).Methods("GET")
+		api.Handle("/users", perm(auth.PermissionUserCreate)(http.HandlerFunc(s.handleCreateUser))).Methods("POST")
+		api.Handle("/users/{username}/role", perm(auth.PermissionUserUpdate)(http.HandlerFunc(s.handleSetUserRole))).Methods("PUT")
+		api.Handle("/users/{username}/password", perm(auth.PermissionUserUpdate)(http.HandlerFunc(s.handleResetUserPassword))).Methods("PUT")
+		api.Handle("/users/{username}", perm(auth.PermissionUserDelete)(http.HandlerFunc(s.handleDeleteUser))).Methods("DELETE")
+		api.Handle("/roles", perm(auth.PermissionUserView)(http.HandlerFunc(s.handleListRoles))).Methods("GET")
+		api.Handle("/account/password", s.authMiddleware.RequireAuth(http.HandlerFunc(s.handleChangeOwnPassword))).Methods("POST")
+	}
 
 	// Logging management endpoints (no auth required for GET, auth required for SET)
 	api.HandleFunc("/logging/level", s.HandleGetLogLevel).Methods("GET")
@@ -1281,12 +1311,27 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authenticate user
+	// Authenticate user, unless this address has failed too often.
+	addr := s.loginAddr(r)
+	if wait := s.loginThrottle.retryAfter(addr, loginReq.Username); wait > 0 {
+		slog.Warn("Login refused: too many failed attempts", "username", sanitizeForLog(loginReq.Username), "remote", addr)
+		writeThrottled(w, wait)
+		return
+	}
 	ctx := context.Background()
 	authenticated, err := s.authSystem.Authenticate(ctx, loginReq.Username, loginReq.Password)
 	if err != nil || !authenticated {
+		s.loginThrottle.recordFailure(addr, loginReq.Username)
+		slog.Warn("Failed login", "username", sanitizeForLog(loginReq.Username), "remote", addr)
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
+	}
+	s.loginThrottle.recordSuccess(addr, loginReq.Username)
+
+	// A session cookie the browser already holds is replaced, not kept
+	// alongside: an attacker who planted one must not end up signed in.
+	if oldID := s.sessionManager.GetSessionFromRequest(r); oldID != "" {
+		_ = s.sessionManager.RevokeSession(oldID)
 	}
 
 	// Create session
@@ -2095,10 +2140,10 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"name": "dkim", "title": "DKIM", "enabled": dkimEnabled,
 			"description": "Verify inbound signatures and sign outbound remote-SMTP mail",
 			"config":      dkimConfig, "configurable": true,
-			// Verification reloads; changing signing keys still rebuilds the
-			// outbound delivery component at restart.
-			"requires_restart":  s.mainConfig.DKIM != nil && s.mainConfig.DKIM.Sign,
-			"applies_on_reload": s.mainConfig.DKIM == nil || !s.mainConfig.DKIM.Sign,
+			// Verification and signing keys both apply on reload: the delivery
+			// handler reads the signer per message.
+			"requires_restart":  false,
+			"applies_on_reload": true,
 			"needs_config":      dkimNeedsConfig,
 			"status":            map[string]interface{}{"keys": dkimInventory},
 			"metrics":           []string{"elemta_mail_auth_results_total{method=\"dkim\"}"},

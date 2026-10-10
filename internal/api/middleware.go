@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -33,6 +34,11 @@ type AuthMiddleware struct {
 	rbac           *auth.RBAC
 	apiKeyManager  *auth.APIKeyManager
 	sessionManager *auth.SessionManager
+
+	// Basic auth is a password login on every request, so it is throttled
+	// the same way as the login form. Both are optional.
+	throttle   *loginThrottle
+	clientAddr func(*http.Request) string
 }
 
 // NewAuthMiddleware creates a new authentication middleware
@@ -143,7 +149,7 @@ func (am *AuthMiddleware) authenticate(r *http.Request) (*AuthContext, error) {
 
 		// Try HTTP Basic Authentication
 		if username, password, ok := r.BasicAuth(); ok {
-			return am.authenticateBasicAuth(username, password)
+			return am.authenticateBasicAuthThrottled(r, username, password)
 		}
 	}
 
@@ -176,6 +182,27 @@ func (am *AuthMiddleware) authenticateAPIKey(keyString string) (*AuthContext, er
 }
 
 // authenticateBasicAuth authenticates using HTTP Basic Auth
+// errLoginThrottled is returned for Basic auth from an address that has failed
+// too often; it surfaces as a 401 like any other refused credential.
+var errLoginThrottled = errors.New("too many failed logins; try again later")
+
+func (am *AuthMiddleware) authenticateBasicAuthThrottled(r *http.Request, username, password string) (*AuthContext, error) {
+	if am.throttle == nil || am.clientAddr == nil {
+		return am.authenticateBasicAuth(username, password)
+	}
+	addr := am.clientAddr(r)
+	if am.throttle.retryAfter(addr, username) > 0 {
+		return nil, errLoginThrottled
+	}
+	ctx, err := am.authenticateBasicAuth(username, password)
+	if err != nil {
+		am.throttle.recordFailure(addr, username)
+		return nil, err
+	}
+	am.throttle.recordSuccess(addr, username)
+	return ctx, nil
+}
+
 func (am *AuthMiddleware) authenticateBasicAuth(username, password string) (*AuthContext, error) {
 	if am.rbac == nil {
 		return nil, auth.ErrInvalidCredentials
@@ -209,11 +236,17 @@ func (am *AuthMiddleware) authenticateSession(sessionID string) (*AuthContext, e
 		return nil, err
 	}
 
-	// Get user permissions from RBAC
+	// Get user permissions from RBAC. An account that no longer exists has no
+	// business keeping a live session: it may have been removed with the CLI,
+	// which cannot reach this process's session table.
 	var permissions []auth.Permission
 	if am.rbac != nil {
 		ctx := context.Background()
-		permissions, _ = am.rbac.GetUserPermissions(ctx, session.Username)
+		permissions, err = am.rbac.GetUserPermissions(ctx, session.Username)
+		if err != nil {
+			_ = am.sessionManager.RevokeSession(sessionID)
+			return nil, auth.ErrInvalidSession
+		}
 	}
 
 	return &AuthContext{

@@ -2991,6 +2991,15 @@ input:checked + .plugin-slider:before {
     flex-wrap: wrap;
 }
 
+.send-row select,
+.users-role-select {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    padding: 0.5rem 0.65rem;
+}
+
 .send-row input {
     flex: 0 1 22rem;
     background: var(--bg-tertiary);

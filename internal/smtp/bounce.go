@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -38,8 +39,10 @@ func NewBounceEngine(queueManager queue.QueueManager, hostname string, logger *s
 type BounceDSNStatus string
 
 const (
-	// DSNStatusPermanentFailure is the DSN status for permanent failures (X.1.7 / 5.x.x)
-	DSNStatusPermanentFailure BounceDSNStatus = "5.1.7"
+	// DSNStatusPermanentFailure is the DSN status for a permanent failure the
+	// remote server gave no detail for. It was 5.1.7, which means "bad sender
+	// mailbox syntax" and told every sender their own address was malformed.
+	DSNStatusPermanentFailure BounceDSNStatus = "5.0.0"
 	// DSNStatusGeneralFailure is a general delivery failure (X.1.0 / 5.0.0)
 	DSNStatusGeneralFailure BounceDSNStatus = "5.0.0"
 	// DSNStatusMailboxUnavailable is for mailbox unavailable (X.1.2 / 5.2.0)
@@ -70,27 +73,33 @@ func (be *BounceEngine) GenerateBounceIdempotent(ctx context.Context, msg queue.
 }
 
 func (be *BounceEngine) generateBounce(ctx context.Context, msg queue.Message, failureReason, handoffID string) *BounceResult {
-	// Check if DSN annotations exist on the message
-	if len(msg.Annotations) == 0 {
+	// RFC 5321 §6.1: once a message is accepted, a delivery failure MUST be
+	// reported to the sender. This used to happen only when the sender had
+	// asked for DSNs with RET=, which almost no client does, so a message that
+	// failed after acceptance usually vanished without anyone being told.
+	//
+	// Never to a null sender: that is a bounce already, and answering it is
+	// how bounce loops start.
+	from := strings.TrimSpace(msg.From)
+	if from == "" || from == "<>" {
 		return &BounceResult{BounceGenerated: false}
 	}
-
-	// Check if DSN return was requested
-	dsnReturn, hasDSN := msg.Annotations["dsn_return"]
-	if !hasDSN || dsnReturn == "" {
-		return &BounceResult{BounceGenerated: false}
-	}
-
-	// Check for NOTIFY=NEVER on the recipient
-	// If NOTIFY=NEVER is set, no DSN should be sent even if RET was requested
-	if be.hasNotifyNever(msg) {
-		be.logger.DebugContext(ctx, "Skipping bounce: NOTIFY=NEVER set",
+	// Per recipient, NOTIFY decides (RFC 3461 §4.1): absent means the default,
+	// which includes FAILURE; NEVER or a list without FAILURE means the
+	// sender asked not to hear about this one.
+	reported := be.recipientsToNotify(msg)
+	if len(reported) == 0 {
+		be.logger.DebugContext(ctx, "Skipping bounce: NOTIFY excludes FAILURE for every failed recipient",
 			"message_id", msg.ID,
 		)
 		return &BounceResult{BounceGenerated: false}
 	}
+	msg.To = reported
+	dsnReturn := strings.ToUpper(msg.Annotations["dsn_return"])
+	if dsnReturn == "" {
+		dsnReturn = "HDRS"
+	}
 
-	// Generate the bounce message
 	bounceTime := time.Now()
 	if handoffID != "" {
 		bounceTime = msg.UpdatedAt
@@ -118,13 +127,15 @@ func (be *BounceEngine) generateBounce(ctx context.Context, msg queue.Message, f
 			if handoffID != "" {
 				receivedAt = bounceTime
 			}
-			bounceID, err = manager.EnqueueMessageWithID(handoffID, "postmaster@"+be.hostname, []string{msg.From}, "Delivery Status Notification (Failure)", bounceContent, queue.PriorityHigh, receivedAt)
+			bounceID, err = manager.EnqueueMessageWithID(handoffID, "", []string{msg.From}, "Delivery Status Notification (Failure)", bounceContent, queue.PriorityHigh, receivedAt)
 		} else {
 			err = fmt.Errorf("queue manager does not support idempotent enqueue")
 		}
 	} else {
+		// Null envelope sender (RFC 5321 §4.5.5): a bounce that itself fails
+		// must not generate another one.
 		bounceID, err = be.queueManager.EnqueueMessage(
-			"postmaster@"+be.hostname,
+			"",
 			[]string{msg.From},
 			"Delivery Status Notification (Failure)",
 			bounceContent,
@@ -152,7 +163,7 @@ func (be *BounceEngine) generateBounce(ctx context.Context, msg queue.Message, f
 	be.msgLogger.LogBounce(logging.MessageContext{
 		MessageID:      bounceID,
 		QueueID:        bounceID,
-		From:           "postmaster@" + be.hostname,
+		From:           "<>",
 		To:             []string{msg.From},
 		Subject:        "Delivery Status Notification (Failure)",
 		Size:           int64(len(bounceContent)),
@@ -166,16 +177,43 @@ func (be *BounceEngine) generateBounce(ctx context.Context, msg queue.Message, f
 	return &BounceResult{BounceGenerated: true, BounceID: bounceID}
 }
 
-// hasNotifyNever checks if NOTIFY=NEVER is set for any recipient
-func (be *BounceEngine) hasNotifyNever(msg queue.Message) bool {
-	for key, value := range msg.Annotations {
-		if strings.HasPrefix(key, "dsn_notify:") {
-			if strings.Contains(strings.ToUpper(value), "NEVER") {
-				return true
-			}
+// enhancedStatusPattern finds a permanent RFC 3463 status such as 5.1.1 in a
+// server's reply text.
+var enhancedStatusPattern = regexp.MustCompile(`\b5\.[0-7]\.[0-9]{1,3}\b`)
+
+// maxReturnedMessage caps how much of an original message a RET=FULL bounce
+// carries back. Past it the bounce returns headers only, rather than sending a
+// large attachment back to a sender who already has it.
+const maxReturnedMessage = 1 << 20
+
+// originalContent fetches the failed message for the bounce, best effort: a
+// bounce without the original is still a bounce.
+func (be *BounceEngine) originalContent(id string) []byte {
+	if be.queueManager == nil || id == "" {
+		return nil
+	}
+	content, err := be.queueManager.GetMessageContent(id)
+	if err != nil {
+		return nil
+	}
+	return content
+}
+
+// recipientsToNotify returns the failed recipients the sender wants to hear
+// about.
+func (be *BounceEngine) recipientsToNotify(msg queue.Message) []string {
+	out := make([]string, 0, len(msg.To))
+	for _, rcpt := range msg.To {
+		notify, ok := msg.Annotations["dsn_notify:"+rcpt]
+		if !ok || strings.TrimSpace(notify) == "" {
+			out = append(out, rcpt)
+			continue
+		}
+		if strings.Contains(strings.ToUpper(notify), "FAILURE") {
+			out = append(out, rcpt)
 		}
 	}
-	return false
+	return out
 }
 
 //nolint:unused // retained for package tests and compatibility
@@ -201,6 +239,9 @@ func (be *BounceEngine) buildDSNBounceAt(msg queue.Message, failureReason string
 	buf.WriteString("From: <postmaster@" + be.hostname + ">\r\n")
 	fmt.Fprintf(&buf, "To: <%s>\r\n", sanitizeEmailForHeader(msg.From))
 	buf.WriteString("Subject: Delivery Status Notification (Failure)\r\n")
+	// RFC 3834: marks this as machine-generated, so vacation responders and
+	// other automatic replies do not answer it.
+	buf.WriteString("Auto-Submitted: auto-replied\r\n")
 	buf.WriteString("\r\n")
 
 	// Part 1: Human-readable text explanation (RFC 3462 Section 3.1)
@@ -230,6 +271,16 @@ func (be *BounceEngine) buildDSNBounceAt(msg queue.Message, failureReason string
 	buf.WriteString("Content-Type: message/delivery-status\r\n")
 	buf.WriteString("\r\n")
 
+	// Per-message fields, once (RFC 3464 §2.2), then one block per recipient,
+	// each preceded by a blank line. Repeating the per-message fields for
+	// every recipient made each repeat look like a recipient block with no
+	// Final-Recipient, which parsers reject.
+	buf.WriteString("Reporting-MTA: dns; " + be.hostname + "\r\n")
+	if envid := msg.Annotations["dsn_envid"]; envid != "" {
+		fmt.Fprintf(&buf, "Original-Envelope-Id: %s\r\n", sanitizeEmailForHeader(envid))
+	}
+	fmt.Fprintf(&buf, "Arrival-Date: %s\r\n", msg.ReceivedAt.Format(time.RFC1123Z))
+
 	// Per-recipient DSN fields
 	for _, recipient := range msg.To {
 		// Get per-recipient DSN params if available
@@ -243,8 +294,6 @@ func (be *BounceEngine) buildDSNBounceAt(msg queue.Message, failureReason string
 			finalRecipient = sanitizeEmailForHeader(orcpt)
 		}
 
-		buf.WriteString("Reporting-MTA: dns; " + be.hostname + "\r\n")
-		fmt.Fprintf(&buf, "Arrival-Date: %s\r\n", msg.ReceivedAt.Format(time.RFC1123Z))
 		buf.WriteString("\r\n")
 
 		// Per-recipient fields
@@ -258,38 +307,30 @@ func (be *BounceEngine) buildDSNBounceAt(msg queue.Message, failureReason string
 		if len(notifyValues) > 0 {
 			fmt.Fprintf(&buf, "Original-Notify: %s\r\n", strings.Join(notifyValues, ","))
 		}
-		buf.WriteString("\r\n")
 	}
+	buf.WriteString("\r\n")
 
-	// Part 3: Original message (if RET=FULL was requested)
-	if strings.ToUpper(msg.Annotations["dsn_return"]) == "FULL" {
-		fmt.Fprintf(&buf, "--%s\r\n", boundary)
-		buf.WriteString("Content-Type: message/rfc822\r\n")
-		buf.WriteString("\r\n")
-
-		// Include original message headers (and body if available)
-		buf.WriteString("Received: from unknown (unknown)\r\n")
-		fmt.Fprintf(&buf, "\tby %s with ESMTP id %s\r\n", be.hostname, msg.ID+"-original")
-		sanitizedTo := make([]string, len(msg.To))
-		for i, addr := range msg.To {
-			sanitizedTo[i] = sanitizeEmailForHeader(addr)
+	// Part 3: the original message. RET=FULL returns all of it; otherwise,
+	// and when the full message is too large to send back, its header block
+	// (RFC 3462 §3.3, text/rfc822-headers). The text used to be a made-up
+	// header block and a note that retrieval was not implemented.
+	if original := be.originalContent(msg.ID); len(original) > 0 {
+		headers := original
+		if i := bytes.Index(original, []byte("\r\n\r\n")); i >= 0 {
+			headers = original[:i+2]
+		} else if i := bytes.Index(original, []byte("\n\n")); i >= 0 {
+			headers = original[:i+1]
 		}
-		fmt.Fprintf(&buf, "\tfor <%s>; %s\r\n", strings.Join(sanitizedTo, ", "), msg.ReceivedAt.Format(time.RFC1123Z))
-		fmt.Fprintf(&buf, "From: <%s>\r\n", sanitizeEmailForHeader(msg.From))
-		fmt.Fprintf(&buf, "To: %s\r\n", strings.Join(sanitizedTo, ", "))
-		fmt.Fprintf(&buf, "Subject: %s\r\n", msg.Subject)
-		fmt.Fprintf(&buf, "Date: %s\r\n", msg.ReceivedAt.Format(time.RFC1123Z))
-		fmt.Fprintf(&buf, "Message-ID: %s\r\n", msg.ID)
-		buf.WriteString("\r\n")
-		// Note: We don't include the original message body here because
-		// the queue manager stores content separately and we'd need to
-		// fetch it. For HDRS mode, we only include headers.
-		// For FULL mode, the original message content should be included
-		// but we leave that as a TODO for content retrieval integration.
-		if strings.ToUpper(msg.Annotations["dsn_return"]) == "HDRS" {
-			buf.WriteString("[Headers only - original message headers not available in DSN bounce]\r\n")
+		fmt.Fprintf(&buf, "--%s\r\n", boundary)
+		if strings.ToUpper(msg.Annotations["dsn_return"]) == "FULL" && len(original) <= maxReturnedMessage {
+			buf.WriteString("Content-Type: message/rfc822\r\n\r\n")
+			buf.Write(original)
 		} else {
-			buf.WriteString("[Original message content not available in DSN bounce - content retrieval not implemented]\r\n")
+			buf.WriteString("Content-Type: text/rfc822-headers\r\n\r\n")
+			buf.Write(headers)
+		}
+		if !bytes.HasSuffix(buf.Bytes(), []byte("\r\n")) {
+			buf.WriteString("\r\n")
 		}
 	}
 
@@ -315,6 +356,12 @@ func (be *BounceEngine) getRecipientDSNParams(msg queue.Message, recipient strin
 
 // mapFailureToDSNStatus maps a failure reason string to a DSN status code
 func (be *BounceEngine) mapFailureToDSNStatus(reason string) BounceDSNStatus {
+	// The receiving server's own enhanced status code (RFC 3463) is the most
+	// precise answer there is; the keyword matching below is for failures
+	// that never reached a server, or a server that gave no code.
+	if code := enhancedStatusPattern.FindString(reason); code != "" {
+		return BounceDSNStatus(code)
+	}
 	reasonLower := strings.ToLower(reason)
 
 	switch {

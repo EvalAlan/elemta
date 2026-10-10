@@ -45,6 +45,10 @@ type TLSManager struct {
 	monitor     *TLSMonitor
 	certMonitor *CertificateMonitor
 	slogger     *slog.Logger
+
+	// certReloader serves manually configured certificate files; nil when
+	// certificates come from Let's Encrypt.
+	certReloader *certReloader
 }
 
 // CertificateInfo holds information about the current certificate
@@ -166,11 +170,10 @@ func (m *TLSManager) configureCertificates(tlsConfig *tls.Config) (*tls.Config, 
 
 	// Use provided certificate files
 	if m.config.TLS.CertFile != "" && m.config.TLS.KeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(m.config.TLS.CertFile, m.config.TLS.KeyFile)
+		cert, err := m.useCertificateFiles(tlsConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load TLS certificate: %w", err)
+			return nil, err
 		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
 
 		// Validate certificate with security module
 		if len(cert.Certificate) > 0 {
@@ -276,11 +279,10 @@ func (m *TLSManager) setupTLSConfig() (*tls.Config, error) {
 
 	// Use provided certificate files
 	if m.config.TLS.CertFile != "" && m.config.TLS.KeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(m.config.TLS.CertFile, m.config.TLS.KeyFile)
+		cert, err := m.useCertificateFiles(tlsConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load TLS certificate: %w", err)
+			return nil, err
 		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
 
 		// Update certificate info
 		if err := m.updateCertificateInfo(cert); err != nil {
@@ -713,6 +715,28 @@ func (m *TLSManager) updateCertificateInfo(cert tls.Certificate) error {
 	}
 
 	return nil
+}
+
+// useCertificateFiles serves the configured certificate files through a
+// reloader, so a certificate renewed on disk is picked up without a restart.
+func (m *TLSManager) useCertificateFiles(tlsConfig *tls.Config) (tls.Certificate, error) {
+	reloader, err := newCertReloader(m.config.TLS.CertFile, m.config.TLS.KeyFile, m.logger.Printf)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	reloader.onReload = func(cert tls.Certificate) {
+		m.renewMutex.Lock()
+		defer m.renewMutex.Unlock()
+		if err := m.updateCertificateInfo(cert); err != nil {
+			m.logger.Printf("Warning: Failed to update certificate info after reload: %v", err)
+			return
+		}
+		m.certInfo.Renewed = time.Now()
+	}
+	m.certReloader = reloader
+	tlsConfig.Certificates = nil
+	tlsConfig.GetCertificate = reloader.GetCertificate
+	return reloader.Current(), nil
 }
 
 // GetTLSConfig returns the TLS configuration

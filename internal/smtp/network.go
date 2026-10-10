@@ -223,6 +223,34 @@ func GetClientIP(conn net.Conn) net.IP {
 	}
 }
 
+// relayNetworkSets are the names allowed_relays accepts in place of CIDRs.
+//
+// "private" is every address range that is not routable on the internet:
+// RFC 1918, carrier-grade NAT (RFC 6598), IPv6 unique-local, and link-local.
+// It is the right answer for "the apps on our own network may send mail" and
+// the wrong one whenever clients reach the server through anything that
+// rewrites their source address (SNAT, a load balancer without the PROXY
+// protocol, Docker's userland proxy), because then everyone looks private.
+var relayNetworkSets = map[string][]*net.IPNet{
+	"private": mustParseNetworks(
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
+		"169.254.0.0/16", "fc00::/7", "fe80::/10",
+	),
+	"loopback": mustParseNetworks("127.0.0.0/8", "::1/128"),
+}
+
+func mustParseNetworks(cidrs ...string) []*net.IPNet {
+	out := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			panic(err)
+		}
+		out = append(out, network)
+	}
+	return out
+}
+
 // IsAllowedRelay checks if an IP is allowed to relay messages
 // This includes both explicit allowed relays and internal networks
 func IsAllowedRelay(ip net.IP, allowedRelays []string) bool {
@@ -234,6 +262,16 @@ func IsAllowedRelay(ip net.IP, allowedRelays []string) bool {
 
 	// Check explicit allowed relays first
 	for _, relay := range allowedRelays {
+		// A named set stands for its ranges, so "private" does not have to be
+		// spelled out as five CIDRs (see relayNetworkSets).
+		if set, ok := relayNetworkSets[strings.ToLower(strings.TrimSpace(relay))]; ok {
+			for _, network := range set {
+				if network.Contains(ip) {
+					return true
+				}
+			}
+			continue
+		}
 		// Support both IP addresses and CIDR notation
 		if strings.Contains(relay, "/") {
 			// CIDR notation
@@ -253,8 +291,15 @@ func IsAllowedRelay(ip net.IP, allowedRelays []string) bool {
 		}
 	}
 
-	// Always allow internal/private networks
-	return IsPrivateNetwork(ip)
+	// Loopback is the host itself. Private ranges are not implied any more:
+	// they used to be, and that made the server an open relay whenever the
+	// real client address was hidden. A Kubernetes Service with the default
+	// externalTrafficPolicy SNATs every client to a node IP, Docker's
+	// userland proxy presents IPv6 clients as the bridge gateway, and a TCP
+	// load balancer without the PROXY protocol does the same; in each case
+	// the whole internet arrives from a private address. Networks that may
+	// relay without authenticating are listed in allowed_relays.
+	return ip.IsLoopback()
 }
 
 // IsAllowedRelayAddr checks if an address string is allowed to relay

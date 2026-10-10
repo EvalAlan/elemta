@@ -214,6 +214,7 @@ function switchView(viewName) {
             const activeTab = document.querySelector('.settings-tab.active')?.dataset.tab;
             if (activeTab === 'server') refreshServerConfig();
             else if (activeTab === 'rate-limiting') refreshRateLimiting();
+            else if (activeTab === 'users') refreshUsers();
             break;
         }
     }
@@ -1610,6 +1611,7 @@ async function checkAuthStatus() {
             // Username is nested in user object with capital U
             authState.username = data.user?.Username || data.user?.username || data.username;
             authState.permissions = data.permissions || [];
+            authState.roles = data.user?.Groups || [];
             updateUserUI();
         } else {
             // Not authenticated, keep default state
@@ -1698,11 +1700,16 @@ function updateUserUI() {
     const btnLogin = document.getElementById('btn-login');
     const btnLogout = document.getElementById('btn-logout');
     const btnApikeys = document.getElementById('btn-apikeys');
+    // There are no accounts to manage when the dashboard runs without login.
+    const usersTab = document.getElementById('settings-tab-users');
+    if (usersTab) usersTab.style.display = authState.isLoggedIn ? '' : 'none';
 
     if (authState.isLoggedIn) {
         userDisplay.textContent = authState.username || 'User';
         userName.textContent = authState.username || 'User';
-        userRole.textContent = 'Administrator'; // Set role instead of leaving as "-"
+        userRole.textContent = (authState.roles && authState.roles.length)
+            ? authState.roles.join(', ')
+            : '-';
         userInfoPanel.style.display = 'block';
         btnLogin.style.display = 'none';
         btnLogout.style.display = 'flex';
@@ -1748,6 +1755,7 @@ function switchSettingsTab(tabName) {
     if (tabName === 'server') refreshServerConfig();
     else if (tabName === 'plugins') refreshPlugins();
     else if (tabName === 'rate-limiting') refreshRateLimiting();
+    else if (tabName === 'users') refreshUsers();
 }
 
 // ============================================================================

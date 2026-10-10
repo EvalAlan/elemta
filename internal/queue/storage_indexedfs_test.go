@@ -559,3 +559,7 @@ func TestIndexedFSRecoveryContinuesOnPartialFailure(t *testing.T) {
 
 	_ = backend
 }
+
+// The indexed backend claims through the file backend it wraps; without this
+// the processor would fall back to listing the whole queue every tick.
+var _ ClaimingStorageBackend = (*IndexedFSStorageBackend)(nil)

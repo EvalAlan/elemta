@@ -76,7 +76,7 @@ gotchas:
 	@echo "    'make install-dev' re-seeds from the file; 'up' and 'restart' do not."
 	@echo "  • Scanner, allow/deny, blocklist and inbound mail-auth verification changes apply"
 	@echo "    on their own within ~5 seconds. Listen address, size limits, timeouts, queue"
-	@echo "    backend, DKIM signing and ARC sealing need a restart; the UI and logs say so."
+	@echo "    backend and ARC sealing need a restart; the UI and logs say so."
 	@echo "  • 'install-dev-mailauth' is a different stack, not an add-on. Delivery mode is a"
 	@echo "    single global setting, so it sends over remote SMTP to a sink at :8027 instead"
 	@echo "    of over LMTP to Roundcube. That is what makes DKIM signing and ARC sealing"

@@ -163,6 +163,7 @@ func fullyPopulatedConfig() *Config {
 		MaxSize:                   50 * 1024 * 1024,
 		MaxWorkers:                8,
 		MaxConnectionsPerDomain:   5,
+		FeedbackAddresses:         []string{"fbl@example.com"},
 		MaxRetries:                7,
 		MaxQueueTime:              3600,
 		RetrySchedule:             []int{60, 300},
@@ -188,6 +189,7 @@ func fullyPopulatedConfig() *Config {
 	}
 
 	cfg.Server.DevMode = true
+	cfg.Server.ListenSubmission = ":2587"
 	cfg.Queue.Backend = "sqlite"
 	// Non-zero so the guard rail can see it mapped. The shipped default when the
 	// key is absent is true — keep the body — which is the safe side.

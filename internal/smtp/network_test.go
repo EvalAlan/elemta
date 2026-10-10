@@ -139,10 +139,10 @@ func TestIsAllowedRelay(t *testing.T) {
 			expected:      true,
 		},
 		{
-			name:          "invalid CIDR skipped, private network allowed",
+			name:          "invalid CIDR skipped",
 			ip:            "10.0.0.1",
 			allowedRelays: []string{"invalid-cidr"},
-			expected:      true, // Private network still allowed
+			expected:      false,
 		},
 		{
 			name:          "public IP not in allowed list",
@@ -151,9 +151,47 @@ func TestIsAllowedRelay(t *testing.T) {
 			expected:      false,
 		},
 		{
-			name:          "private network always allowed",
+			// Behind SNAT or a proxy, every client looks private. Relaying
+			// for them by default made the server an open relay.
+			name:          "private network not implied",
 			ip:            "192.168.1.1",
 			allowedRelays: []string{},
+			expected:      false,
+		},
+		{
+			name:          "private network when listed",
+			ip:            "192.168.1.1",
+			allowedRelays: []string{"192.168.0.0/16"},
+			expected:      true,
+		},
+		{
+			name:          "named set private",
+			ip:            "172.20.3.4",
+			allowedRelays: []string{"private"},
+			expected:      true,
+		},
+		{
+			name:          "named set private covers IPv6 ULA",
+			ip:            "fd00::5",
+			allowedRelays: []string{"Private"},
+			expected:      true,
+		},
+		{
+			name:          "named set private does not cover public",
+			ip:            "8.8.8.8",
+			allowedRelays: []string{"private"},
+			expected:      false,
+		},
+		{
+			name:          "loopback always allowed",
+			ip:            "127.0.0.1",
+			allowedRelays: nil,
+			expected:      true,
+		},
+		{
+			name:          "IPv6 loopback always allowed",
+			ip:            "::1",
+			allowedRelays: nil,
 			expected:      true,
 		},
 		{
@@ -188,8 +226,8 @@ func TestIsAllowedRelayAddr(t *testing.T) {
 		{
 			name:          "IP with port",
 			addr:          "10.0.0.1:25",
-			allowedRelays: []string{},
-			expected:      true, // Private network
+			allowedRelays: []string{"10.0.0.0/8"},
+			expected:      true,
 		},
 		{
 			name:          "IP without port",

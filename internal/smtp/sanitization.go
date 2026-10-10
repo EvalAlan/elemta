@@ -15,3 +15,22 @@ func sanitizeEmailForHeader(email string) string {
 	email = strings.ReplaceAll(email, "\n", "")
 	return email
 }
+
+// sanitizeHeloForHeader makes a client's HELO/EHLO argument safe to write into
+// a Received header. The value is entirely client-controlled, so anything
+// outside the characters a hostname or address literal uses is dropped, and
+// the length is capped at a DNS name's maximum.
+func sanitizeHeloForHeader(helo string) string {
+	var b strings.Builder
+	for _, r := range helo {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_', r == ':', r == '[', r == ']':
+			b.WriteRune(r)
+		}
+		if b.Len() >= 255 {
+			break
+		}
+	}
+	return b.String()
+}

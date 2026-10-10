@@ -99,10 +99,19 @@ func NewAuthHandler(session *Session, state *SessionState, authenticator Authent
 		MaxAuthAttemptsPerIP:   10,
 		AuthRateInterval:       15 * time.Minute,
 		AccountLockoutDuration: 30 * time.Minute,
-		RequireTLSForPlain:     false, // Allow PLAIN auth without TLS for testing/internal use
-		EnabledMethods:         []AuthMethod{AuthMethodPlain, AuthMethodLogin},
+		// PLAIN and LOGIN send the password in the clear; without TLS anyone
+		// on the path reads it. Loopback is exempt (see plaintextAuthAllowed),
+		// and [auth] allow_plaintext_auth opts out entirely.
+		RequireTLSForPlain: true,
+		EnabledMethods:     []AuthMethod{AuthMethodPlain, AuthMethodLogin},
+	}
+	if session != nil && session.config != nil && session.config.Auth != nil && session.config.Auth.AllowPlaintextAuth {
+		securityConfig.RequireTLSForPlain = false
 	}
 
+	// Replaced by the server's shared manager (see Session.useAuthSecurity);
+	// a per-session one only bounds a single connection, and an attacker
+	// reconnects.
 	securityManager := NewAuthenticationSecurityManager(securityConfig, logger)
 
 	// Create secure session state machine
@@ -201,7 +210,7 @@ func (ah *AuthHandler) handleAuthPlain(ctx context.Context, cmd string) error {
 	ah.logger.DebugContext(ctx, "Processing PLAIN authentication")
 
 	// Check TLS requirement for PLAIN auth
-	if ah.securityManager.config.RequireTLSForPlain && !ah.state.IsTLSActive() {
+	if !ah.plaintextAuthAllowed() {
 		ah.logger.WarnContext(ctx, "PLAIN authentication requires TLS")
 		return fmt.Errorf("538 5.7.11 Encryption required for requested authentication mechanism")
 	}
@@ -533,9 +542,9 @@ func (ah *AuthHandler) checkSecurityConstraints(ctx context.Context, method Auth
 		return fmt.Errorf("504 5.7.4 Authentication mechanism not supported")
 	}
 
-	// Check TLS requirement for PLAIN
-	if method == AuthMethodPlain && ah.securityManager.config.RequireTLSForPlain && !ah.state.IsTLSActive() {
-		ah.logger.WarnContext(ctx, "PLAIN authentication requires TLS")
+	// PLAIN and LOGIN both carry the password in base64, i.e. in the clear.
+	if (method == AuthMethodPlain || method == AuthMethodLogin) && !ah.plaintextAuthAllowed() {
+		ah.logger.WarnContext(ctx, "Password authentication requires TLS", "method", string(method))
 		return fmt.Errorf("538 5.7.11 Encryption required for requested authentication mechanism")
 	}
 
@@ -549,6 +558,46 @@ func (ah *AuthHandler) checkSecurityConstraints(ctx context.Context, method Auth
 	}
 
 	return nil
+}
+
+// plaintextAuthAllowed reports whether a password may be sent on this
+// connection: over TLS, from loopback, or when the operator opted out.
+func (ah *AuthHandler) plaintextAuthAllowed() bool {
+	if !ah.securityManager.config.RequireTLSForPlain || ah.state.IsTLSActive() {
+		return true
+	}
+	if ip := GetClientIP(ah.conn); ip != nil && ip.IsLoopback() {
+		return true
+	}
+	return false
+}
+
+// lockKey scopes an account lockout to the address that earned it. With the
+// manager shared across connections, a lock on the username alone would let
+// anyone lock any user out by failing to log in as them.
+func (ah *AuthHandler) lockKey(username string) string {
+	host := ""
+	if ah.conn != nil {
+		if h, _, err := net.SplitHostPort(ah.conn.RemoteAddr().String()); err == nil {
+			host = h
+		}
+	}
+	return username + "\x00" + host
+}
+
+// pruneLocked drops expired failure records and lockouts so the shared maps
+// do not grow for every address that ever failed. Caller holds mu.
+func (m *AuthenticationSecurityManager) pruneLocked(now time.Time) {
+	for ip, f := range m.ipFailures {
+		if now.Sub(f.LastTime) > m.config.AuthRateInterval {
+			delete(m.ipFailures, ip)
+		}
+	}
+	for key, l := range m.accountLockouts {
+		if now.After(l.LockedUntil) {
+			delete(m.accountLockouts, key)
+		}
+	}
 }
 
 // isMethodEnabled checks if an authentication method is enabled
@@ -584,7 +633,7 @@ func (ah *AuthHandler) isAccountLocked(username string) bool {
 	ah.securityManager.mu.RLock()
 	defer ah.securityManager.mu.RUnlock()
 
-	lockInfo, exists := ah.securityManager.accountLockouts[username]
+	lockInfo, exists := ah.securityManager.accountLockouts[ah.lockKey(username)]
 	if !exists {
 		return false
 	}
@@ -596,6 +645,9 @@ func (ah *AuthHandler) isAccountLocked(username string) bool {
 func (ah *AuthHandler) recordAuthFailure(ctx context.Context, username string, method AuthMethod, err error, duration time.Duration) {
 	ah.securityManager.mu.Lock()
 	defer ah.securityManager.mu.Unlock()
+	if len(ah.securityManager.ipFailures) > 10000 {
+		ah.securityManager.pruneLocked(time.Now())
+	}
 
 	// Record IP failure
 	remoteAddr := ah.conn.RemoteAddr().String()
@@ -626,7 +678,7 @@ func (ah *AuthHandler) recordAuthFailure(ctx context.Context, username string, m
 	// Check if account should be locked
 	attempts := ah.state.GetAuthAttempts()
 	if attempts >= ah.securityManager.config.MaxAuthAttempts {
-		ah.securityManager.accountLockouts[username] = &AccountLockInfo{
+		ah.securityManager.accountLockouts[ah.lockKey(username)] = &AccountLockInfo{
 			LockedUntil: time.Now().Add(ah.securityManager.config.AccountLockoutDuration),
 			Reason:      "Too many failed authentication attempts",
 		}

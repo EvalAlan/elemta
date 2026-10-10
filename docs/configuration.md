@@ -77,8 +77,8 @@ listen_addr = ":8080"
 enabled = true
 listen_addr = "127.0.0.1:8025"
 web_root = "./web/static"
-auth_enabled = false
-auth_file = ""
+auth_enabled = true
+auth_file = "/etc/elemta/users.txt"
 
 [queue_processor]
 enabled = true
@@ -101,9 +101,14 @@ file = "/var/log/elemta/elemta.log"
 
 - `hostname`
 - `listen_addr`
+- `[server].listen_submission` — optional submission port (RFC 6409, usually
+  `:587`); `MAIL FROM` there needs a login or an `allowed_relays` network
 - `max_size`
 - `local_domains`
-- `allowed_relays`
+- `allowed_relays` — IPs, CIDRs, or the names `"private"` / `"loopback"`,
+  that may relay to non-local domains without authenticating. Loopback always may; nothing else is implied (private ranges
+  were before v0.3, which made the server an open relay behind SNAT, a load
+  balancer or Docker's userland proxy). `dev_mode` no longer bypasses this.
 - `failed_queue_retention_hours`
 - `max_workers`, `max_retries`, `max_queue_time`, `retry_schedule`
 - `session_timeout` (duration string, e.g. `5m`)
@@ -218,11 +223,11 @@ restart.
 > Use `elemta user add --file <path>` to create the users file; see the
 > hardening section of [Production Deployment](production-deployment.md).
 >
-> **Security:** `auth_enabled` defaults to `false`. The admin API can read
-> queued mail, flush queues, and rewrite configuration, so an unauthenticated
-> API is only safe on loopback. The dev `docker-compose` binds it to
-> `0.0.0.0`; the server logs a `SECURITY:` warning at startup in that state.
-> See the hardening section of
+> **Security:** `auth_enabled` defaults to `true` (since v0.2.0): a config
+> that does not mention it requires a login. The admin API can read queued
+> mail, flush queues, and rewrite configuration, so turning auth off is only
+> safe on loopback; the server logs a `SECURITY:` warning at startup if it is
+> off on any other address. See the hardening section of
 > [Production Deployment](production-deployment.md).
 
 ### Auth
@@ -230,6 +235,11 @@ restart.
 - `[auth].enabled`
 - `[auth].required`
 - `[auth].allow_deprecated_sha1` (default true; set false to block legacy `{SHA}`/`{SSHA}` password verification)
+- `[auth].allow_plaintext_auth` (default false). AUTH PLAIN/LOGIN is only
+  offered and accepted after STARTTLS, or from loopback; set true to allow it
+  in the clear from anywhere, which exposes passwords to anyone on the path.
+- Failed AUTH attempts are counted per client address across connections
+  (10 per 15 minutes, then `421`), so reconnecting does not reset the limit.
 - datasource fields (`datasource_type`, `datasource_path`, `datasource_host`, etc.)
 
 ### Delivery
@@ -237,6 +247,11 @@ restart.
 - `[delivery].mode`
 - `[delivery].host`
 - `[delivery].port`
+- `[delivery].verify_recipients` — ask the LMTP server at RCPT time whether a
+  local mailbox exists and refuse unknown users with `550 5.1.1`, instead of
+  accepting and bouncing (backscatter). Default on in `lmtp`/`split` mode when
+  `[delivery].host` is set. If the mailbox server cannot answer, recipients
+  are accepted unverified and probing pauses for 30 seconds.
 - retry/timeouts
 
 ### Metrics

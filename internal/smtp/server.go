@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,12 +28,21 @@ import (
 
 // Server represents an SMTP server
 type Server struct {
-	config          *Config
-	listenerMu      sync.RWMutex
-	listener        net.Listener
-	running         atomic.Bool
-	pluginManager   *plugin.Manager
-	authenticator   Authenticator
+	config     *Config
+	listenerMu sync.RWMutex
+	listener   net.Listener
+	// submissionListener is the optional submission port; nil when
+	// submission_addr is not set. Guarded by listenerMu.
+	submissionListener net.Listener
+	running            atomic.Bool
+	pluginManager      *plugin.Manager
+	authenticator      Authenticator
+	// authSecurity counts failed SMTP AUTH attempts across every session, so
+	// reconnecting does not reset the limits.
+	authSecurity *AuthenticationSecurityManager
+	// rcptVerifier refuses unknown local mailboxes at RCPT time; nil when
+	// local delivery is not LMTP or verification is off.
+	rcptVerifier    *recipientVerifier
 	metricsManager  *MetricsManager    // Extracted metrics management
 	queueManager    queue.QueueManager // Unified queue system
 	queueProcessor  *queue.Processor   // Queue processor for message delivery
@@ -206,6 +216,52 @@ func initAuthenticator(config *Config, slogger *slog.Logger) (Authenticator, err
 	}, nil
 }
 
+// lmtpTarget is the mailbox server local mail is delivered to.
+func lmtpTarget(config *Config) (string, int) {
+	host, port := "elemta-dovecot", 2424
+	if config.Delivery != nil {
+		if config.Delivery.Host != "" {
+			host = config.Delivery.Host
+		}
+		if config.Delivery.Port != 0 {
+			port = config.Delivery.Port
+		}
+	}
+	return host, port
+}
+
+// deliveryModeOf returns the configured delivery mode, lmtp by default.
+func deliveryModeOf(config *Config) string {
+	if config.Delivery != nil && strings.TrimSpace(config.Delivery.Mode) != "" {
+		return strings.ToLower(strings.TrimSpace(config.Delivery.Mode))
+	}
+	return "lmtp"
+}
+
+// newRecipientVerifierFor builds the RCPT-time verifier when local mail goes
+// to an LMTP server and the operator has not turned verification off.
+func newRecipientVerifierFor(config *Config, logger *slog.Logger) *recipientVerifier {
+	mode := deliveryModeOf(config)
+	if mode != "lmtp" && mode != "split" {
+		return nil
+	}
+	if config.Delivery == nil {
+		return nil
+	}
+	if v := config.Delivery.VerifyRecipients; v != nil && !*v {
+		return nil
+	}
+	// On by default only when a mailbox server is actually configured. The
+	// built-in fallback host is a container name that exists in the dev
+	// stack and nowhere else, and probing a name that does not resolve costs
+	// a DNS timeout.
+	if config.Delivery.VerifyRecipients == nil && config.Delivery.Host == "" {
+		return nil
+	}
+	host, port := lmtpTarget(config)
+	return newRecipientVerifier(net.JoinHostPort(host, strconv.Itoa(port)), config.Hostname, logger)
+}
+
 // initQueueSystem initializes the queue manager and optional queue processor.
 func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *queue.Processor, error) {
 	// Validate and load DKIM before starting queue resources. This applies even
@@ -256,26 +312,14 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 	if config.QueueProcessorEnabled {
 		slogger.Info("Queue processor enabled, initializing")
 
-		deliveryHost := "elemta-dovecot"
-		deliveryPort := 2424
-		if config.Delivery != nil {
-			if config.Delivery.Host != "" {
-				deliveryHost = config.Delivery.Host
-			}
-			if config.Delivery.Port != 0 {
-				deliveryPort = config.Delivery.Port
-			}
-		}
+		deliveryHost, deliveryPort := lmtpTarget(config)
 
 		maxPerDomain := config.MaxConnectionsPerDomain
 		if maxPerDomain <= 0 {
 			maxPerDomain = 10
 		}
 
-		deliveryMode := "lmtp"
-		if config.Delivery != nil && strings.TrimSpace(config.Delivery.Mode) != "" {
-			deliveryMode = strings.ToLower(strings.TrimSpace(config.Delivery.Mode))
-		}
+		deliveryMode := deliveryModeOf(config)
 
 		// remoteSMTPHandler is the outbound handler, whether it is the delivery
 		// handler itself or wrapped inside the split router. Everything that
@@ -314,6 +358,11 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			remoteSMTPHandler = smtpHandler
 		default:
 			return nil, nil, fmt.Errorf("unsupported delivery mode %q (want one of: %s)", deliveryMode, strings.Join(DeliveryModes, ", "))
+		}
+
+		// Outbound EHLO announces this server's hostname, not "localhost".
+		if remoteSMTPHandler != nil {
+			remoteSMTPHandler.SetHeloHostname(config.Hostname)
 		}
 
 		// Per-destination traffic shaping. max_connections_per_domain was
@@ -406,7 +455,9 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 				"path", suppressionPath, "error", err)
 		} else {
 			queueProcessor.SetSuppressionRecorder(suppression.NewRecorder(store, slogger))
-			slogger.Info("Suppression list ready", "path", suppressionPath)
+			queueProcessor.SetFeedbackAddresses(config.FeedbackAddresses)
+			slogger.Info("Suppression list ready", "path", suppressionPath,
+				"feedback_addresses", config.FeedbackAddresses)
 		}
 	}
 
@@ -630,6 +681,16 @@ func logServerConfigSummary(config *Config, slogger *slog.Logger) {
 			"enabled", config.TLS.Enabled,
 			"starttls", config.TLS.EnableStartTLS)
 	}
+	if config.DevMode {
+		slogger.Warn("SECURITY: dev_mode is on. XDEBUG shows any client this server's session internals; turn it off on anything reachable from outside.",
+			"event_type", "system")
+	}
+	// Who may relay without authenticating. Logged at startup because the
+	// answer used to include every private address implicitly, and an
+	// operator upgrading needs to see what it is now.
+	slogger.Info("Relay without authentication allowed from",
+		"loopback", true,
+		"allowed_relays", config.AllowedRelays)
 }
 
 // NewServer creates a new SMTP server
@@ -666,7 +727,18 @@ func NewServer(config *Config) (*Server, error) {
 	resourceManager, resourceLimits := initResourceManager(config, slogger)
 	rootCtx, rootCancel, _, cancel, errGroup, gctx, workerPool := initConcurrency(config, slogger, resourceLimits)
 
+	authSecurityConfig := &AuthSecurityConfig{
+		MaxAuthAttempts:        5,
+		MaxAuthAttemptsPerIP:   10,
+		AuthRateInterval:       15 * time.Minute,
+		AccountLockoutDuration: 30 * time.Minute,
+		RequireTLSForPlain:     config.Auth == nil || !config.Auth.AllowPlaintextAuth,
+		EnabledMethods:         []AuthMethod{AuthMethodPlain, AuthMethodLogin},
+	}
+
 	server := &Server{
+		authSecurity:    NewAuthenticationSecurityManager(authSecurityConfig, slogger),
+		rcptVerifier:    newRecipientVerifierFor(config, slogger),
 		config:          config,
 		pluginManager:   pluginManager,
 		authenticator:   authenticator,
@@ -812,6 +884,22 @@ func (s *Server) Start() error {
 	}
 
 	s.setListener(listener)
+
+	// The submission port (RFC 6409): where your own users and apps send
+	// outbound mail. Same server, same queue; the difference is that a
+	// session here must authenticate (or come from allowed_relays) before
+	// MAIL FROM, and nothing is accepted anonymously.
+	if s.config.SubmissionAddr != "" {
+		sub, err := net.Listen("tcp", s.config.SubmissionAddr)
+		if err != nil {
+			_ = listener.Close()
+			return fmt.Errorf("failed to create submission listener: %w", err)
+		}
+		s.listenerMu.Lock()
+		s.submissionListener = sub
+		s.listenerMu.Unlock()
+		s.slogger.Info("Submission listener running", "event_type", "system", "listen_addr", s.config.SubmissionAddr)
+	}
 	s.running.Store(true)
 	s.slogger.Info("SMTP server running",
 		"event_type", "system",
@@ -852,6 +940,9 @@ func (s *Server) Start() error {
 
 	// Handle connections with coordinated goroutine management
 	s.errGroup.Go(s.acceptConnections)
+	if s.getSubmissionListener() != nil {
+		s.errGroup.Go(s.acceptSubmission)
+	}
 
 	return nil
 }
@@ -927,6 +1018,25 @@ func (s *Server) updateQueueMetricsWithRetry() {
 
 // acceptConnections accepts and handles incoming connections with standardized worker pool
 func (s *Server) acceptConnections() error {
+	return s.acceptLoop(s.getListener, nil)
+}
+
+// acceptSubmission runs the same loop for the submission port, marking each
+// connection so its session applies submission rules.
+func (s *Server) acceptSubmission() error {
+	return s.acceptLoop(s.getSubmissionListener, func(c net.Conn) net.Conn { return submissionConn{c} })
+}
+
+// submissionConn marks a connection that arrived on the submission port.
+type submissionConn struct{ net.Conn }
+
+func (s *Server) getSubmissionListener() net.Listener {
+	s.listenerMu.RLock()
+	defer s.listenerMu.RUnlock()
+	return s.submissionListener
+}
+
+func (s *Server) acceptLoop(current func() net.Listener, wrap func(net.Conn) net.Conn) error {
 	s.slogger.Info("Starting connection acceptance loop")
 	s.slogger.Debug("acceptConnections goroutine started")
 
@@ -938,7 +1048,7 @@ func (s *Server) acceptConnections() error {
 		default:
 		}
 
-		listener := s.getListener()
+		listener := current()
 		if listener == nil {
 			if s.isRunning() {
 				s.slogger.Warn("Listener is nil while server is marked running")
@@ -967,6 +1077,9 @@ func (s *Server) acceptConnections() error {
 		}
 
 		s.slogger.Debug("Connection accepted", "remote_addr", conn.RemoteAddr().String())
+		if wrap != nil {
+			conn = wrap(conn)
+		}
 
 		// Reset deadline after successful accept
 		if tcpListener, ok := listener.(*net.TCPListener); ok {
@@ -1123,6 +1236,11 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	// Use context.Background() to avoid inheriting the short-lived worker pool job context
 	s.slogger.Debug("Creating new SMTP session", "client_ip", clientIP)
 	session := NewSession(context.Background(), conn, s.config, s.authenticator)
+	session.useAuthSecurity(s.authSecurity)
+	session.rcptVerifier = s.rcptVerifier
+	if _, ok := conn.(submissionConn); ok {
+		session.submission = true
+	}
 	s.slogger.Debug("SMTP session created successfully")
 
 	// Set the TLS manager from the server
@@ -1189,6 +1307,17 @@ func (s *Server) cancelRootContext() {
 
 // closeListener stops accepting new connections.
 func (s *Server) closeListener(shutdownErr *error) {
+	s.listenerMu.Lock()
+	sub := s.submissionListener
+	s.submissionListener = nil
+	s.listenerMu.Unlock()
+	if sub != nil {
+		if err := sub.Close(); err != nil {
+			s.slogger.Error("Error closing submission listener", "error", err)
+			*shutdownErr = err
+		}
+	}
+
 	listener := s.getListener()
 	if listener == nil {
 		return

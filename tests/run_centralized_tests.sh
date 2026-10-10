@@ -170,7 +170,9 @@ fi
 if [[ "$DEPLOYMENT" == "docker-desktop" || "$DEPLOYMENT" == "docker-dev" ]]; then
     print_status $BLUE "🔍 Checking if SMTP service is ready..."
     for i in {1..30}; do
-        if timeout 5 bash -c "echo 'QUIT' | nc $HOST $SMTP_PORT" >/dev/null 2>&1; then
+        # bash's /dev/tcp rather than nc, which many hosts do not have; a
+        # missing nc looked exactly like the server being down.
+        if timeout 5 bash -c "exec 3<>/dev/tcp/$HOST/$SMTP_PORT && head -c 3 <&3 | grep -q 220" >/dev/null 2>&1; then
             print_status $GREEN "✅ SMTP service is ready"
             break
         fi

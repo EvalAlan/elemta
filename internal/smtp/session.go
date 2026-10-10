@@ -18,6 +18,12 @@ import (
 
 // Session represents a refactored SMTP session with modular components
 type Session struct {
+	// rcptVerifier, when set, refuses unknown local mailboxes at RCPT time.
+	rcptVerifier *recipientVerifier
+	// submission marks a session on the submission port: it must
+	// authenticate (or come from allowed_relays) before MAIL FROM.
+	submission bool
+
 	// Context for session lifecycle and cancellation
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -119,6 +125,14 @@ func NewSession(ctx context.Context, conn net.Conn, config *Config, authenticato
 	)
 
 	return session
+}
+
+// useAuthSecurity makes the session count failed logins against the server's
+// shared manager rather than its own, so limits hold across reconnects.
+func (s *Session) useAuthSecurity(m *AuthenticationSecurityManager) {
+	if m != nil && s.authHandler != nil {
+		s.authHandler.securityManager = m
+	}
 }
 
 // initializeComponents initializes all modular components

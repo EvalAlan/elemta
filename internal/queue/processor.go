@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/dkim"
 	"log/slog"
 	"net"
 	"net/textproto"
@@ -208,6 +209,8 @@ type Processor struct {
 	// does not mail them again. Optional: a nil recorder simply records nothing,
 	// because delivery must not depend on it.
 	suppressor SuppressionRecorder
+	// feedbackAddresses receive ARF complaint reports (lower-cased).
+	feedbackAddresses map[string]bool
 
 	// Metrics
 	metricsLock      sync.RWMutex
@@ -577,6 +580,10 @@ func (p *Processor) processMessage(msg Message) {
 		return
 	}
 
+	// A report from a provider's feedback loop: suppress the complainers, then
+	// deliver it like any other message so a person can still read it.
+	p.offerFeedbackReport(msg, content)
+
 	// Attempt delivery
 	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Minute)
 	defer cancel()
@@ -606,6 +613,54 @@ func (p *Processor) processMessage(msg Message) {
 // Narrowed to one method so the queue does not depend on the store's storage.
 type SuppressionRecorder interface {
 	RecordFailure(address, code, diagnostic string)
+}
+
+// FeedbackRecorder is implemented by a suppression recorder that can act on
+// ARF spam-complaint reports.
+type FeedbackRecorder interface {
+	RecordFeedbackReport(raw []byte)
+}
+
+// SetFeedbackAddresses names the addresses that receive feedback-loop
+// reports. Only mail to these is read as a complaint report: anyone can send
+// a message shaped like one.
+func (p *Processor) SetFeedbackAddresses(addresses []string) {
+	set := make(map[string]bool, len(addresses))
+	for _, a := range addresses {
+		if a = strings.ToLower(strings.Trim(strings.TrimSpace(a), "<>")); a != "" {
+			set[a] = true
+		}
+	}
+	p.feedbackAddresses = set
+}
+
+// offerFeedbackReport hands a message addressed to a feedback address to the
+// suppression list. Only the first delivery attempt reads it, so a retried
+// report is not counted again.
+func (p *Processor) offerFeedbackReport(msg Message, content []byte) {
+	if len(p.feedbackAddresses) == 0 || msg.RetryCount > 0 {
+		return
+	}
+	recorder, ok := p.suppressor.(FeedbackRecorder)
+	if !ok {
+		return
+	}
+	for _, rcpt := range msg.To {
+		if p.feedbackAddresses[strings.ToLower(strings.Trim(strings.TrimSpace(rcpt), "<>"))] {
+			recorder.RecordFeedbackReport(content)
+			return
+		}
+	}
+}
+
+// SetDKIMSigner replaces the signer on the delivery handler, for config
+// reload. It reports whether the handler signs at all: LMTP delivery does not.
+func (p *Processor) SetDKIMSigner(s *dkim.Signer) bool {
+	h, ok := p.handler.(interface{ SetDKIMSigner(*dkim.Signer) })
+	if ok {
+		h.SetDKIMSigner(s)
+	}
+	return ok
 }
 
 // SetSuppressionRecorder attaches the suppression list.

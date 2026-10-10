@@ -705,6 +705,14 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 	// concatenated with it, so the body is never copied a second time.
 	headerPrefix := dh.buildServerHeaders(ctx, head, metadata, scanResult)
 
+	// A submitted Authentication-Results header claiming to be from this
+	// server is a forgery; rename it before anything downstream trusts it.
+	if patched, changed := neutralizeForgedAuthResults(head, dh.config.Hostname); changed {
+		dh.logger.WarnContext(ctx, "Renamed a forged Authentication-Results header claiming this server",
+			"event_type", "security", "message_id", metadata.MessageID)
+		body = withPatchedHead(body, head, patched)
+	}
+
 	if err := dh.saveMessage(ctx, headerPrefix, body, metadata); err != nil {
 		dh.logger.ErrorContext(ctx, "Failed to save message", "error", err)
 		return fmt.Errorf("451 4.3.0 Message processing failed")
@@ -1069,10 +1077,31 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 	for i, addr := range metadata.To {
 		sanitizedTo[i] = sanitizeEmailForHeader(addr)
 	}
-	receivedHeader := fmt.Sprintf("Received: from %s (%s)\r\n\tby %s with ESMTP id %s\r\n\t(envelope-from <%s>)\r\n\tfor <%s>; %s",
+	// "from" is what the client called itself, followed by where it really
+	// connected from, as RFC 5321 §4.4 lays out. It used to repeat our own
+	// hostname, which made every trace claim the mail came from this server.
+	// The protocol keyword says how it arrived (RFC 3848).
+	clientHelo, protocol := "unknown", "ESMTP"
+	if dh.state != nil {
+		if name := sanitizeHeloForHeader(dh.state.HeloName()); name != "" {
+			clientHelo = name
+		}
+		if dh.state.IsTLSActive() {
+			protocol += "S"
+		}
+		if dh.state.IsAuthenticated() {
+			protocol += "A"
+		}
+	}
+	clientAddr := dh.conn.RemoteAddr().String()
+	if host, _, err := net.SplitHostPort(clientAddr); err == nil {
+		clientAddr = host
+	}
+	receivedHeader := fmt.Sprintf("Received: from %s ([%s])\r\n\tby %s with %s id %s\r\n\t(envelope-from <%s>)\r\n\tfor <%s>; %s",
+		clientHelo,
+		clientAddr,
 		dh.config.Hostname,
-		dh.conn.RemoteAddr().String(),
-		dh.config.Hostname,
+		protocol,
 		metadata.MessageID,
 		sanitizedFrom,
 		strings.Join(sanitizedTo, ", "),

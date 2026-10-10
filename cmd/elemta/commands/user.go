@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/EvalAlan/elemta/internal/auth"
+	"github.com/EvalAlan/elemta/internal/datasource"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -29,6 +29,10 @@ func init() {
 	for _, c := range []*cobra.Command{userAddCmd, userListCmd, userPasswdCmd, userRemoveCmd} {
 		c.Flags().StringVar(&userFile, "file", "", "Path to the users file (defaults to [api].auth_file)")
 	}
+	userAddCmd.Flags().StringVar(&userRole, "role", "",
+		"Role: admin, operator, user or readonly (default: admin for names containing \"admin\", otherwise user)")
+	userCmd.AddCommand(userRoleCmd)
+	userRoleCmd.Flags().StringVar(&userFile, "file", "", "Path to the users file (defaults to [api].auth_file)")
 	for _, c := range []*cobra.Command{userAddCmd, userPasswdCmd} {
 		c.Flags().StringVar(&userPassword, "password", "",
 			"Password (prompts on the terminal if omitted; passing it here exposes it to the process list)")
@@ -38,15 +42,32 @@ func init() {
 var (
 	userFile     string
 	userPassword string
+	userRole     string
 )
+
+// userRoles are the built-in roles; see internal/auth/rbac.go.
+var userRoles = []string{"admin", "operator", "user", "readonly"}
+
+func checkRole(role string) error {
+	for _, r := range userRoles {
+		if r == role {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown role %q: use one of %s", role, strings.Join(userRoles, ", "))
+}
+
+// A running server re-reads the users file when it changes, so none of these
+// commands needs a restart to take effect.
 
 var userCmd = &cobra.Command{
 	Use:   "user",
 	Short: "Manage API and web interface users",
 	Long: `Manage the users file used to authenticate the admin API and web interface.
 
-The file holds one "username:bcrypt-hash" entry per line. Point [api].auth_file
-at it and set [api].auth_enabled = true.`,
+The file holds one "username:bcrypt-hash:role" entry per line. Point
+[api].auth_file at it and set [api].auth_enabled = true. A running server picks
+up changes on its next request; the dashboard's Users page edits the same file.`,
 	Run: func(cmd *cobra.Command, args []string) { _ = cmd.Help() },
 }
 
@@ -66,23 +87,29 @@ var userAddCmd = &cobra.Command{
 		if _, exists := users[args[0]]; exists {
 			return fmt.Errorf("user %q already exists; use `user passwd` to change the password", args[0])
 		}
+		roles := datasource.LegacyRolesFor(args[0])
+		if userRole != "" {
+			if err := checkRole(userRole); err != nil {
+				return err
+			}
+			roles = []string{userRole}
+		}
 		password, err := readPassword(cmd, true)
 		if err != nil {
+			return err
+		}
+		if err := auth.ValidatePassword(password); err != nil {
 			return err
 		}
 		hash, err := auth.HashPassword(password)
 		if err != nil {
 			return fmt.Errorf("hash password: %w", err)
 		}
-		users[args[0]] = hash
+		users[args[0]] = datasource.FileUser{Hash: hash, Roles: roles}
 		if err := writeUsers(path, users); err != nil {
 			return err
 		}
-		fmt.Printf("Added %q to %s\n", args[0], path)
-		// A running server read this file at startup and will not see the new
-		// account until it reads it again. Without saying so, `user add`
-		// succeeds and the account then fails to log in for no visible reason.
-		fmt.Println("Restart the web service for a running server to pick this up.")
+		fmt.Printf("Added %q (%s) to %s\n", args[0], strings.Join(roles, ","), path)
 		return nil
 	},
 }
@@ -100,23 +127,27 @@ var userPasswdCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if _, exists := users[args[0]]; !exists {
+		existing, exists := users[args[0]]
+		if !exists {
 			return fmt.Errorf("user %q does not exist in %s", args[0], path)
 		}
 		password, err := readPassword(cmd, true)
 		if err != nil {
 			return err
 		}
+		if err := auth.ValidatePassword(password); err != nil {
+			return err
+		}
 		hash, err := auth.HashPassword(password)
 		if err != nil {
 			return fmt.Errorf("hash password: %w", err)
 		}
-		users[args[0]] = hash
+		existing.Hash = hash
+		users[args[0]] = existing
 		if err := writeUsers(path, users); err != nil {
 			return err
 		}
 		fmt.Printf("Changed the password for %q\n", args[0])
-		fmt.Println("Restart the web service for a running server to pick this up.")
 		return nil
 	},
 }
@@ -143,9 +174,6 @@ var userRemoveCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Removed %q\n", args[0])
-		// Especially worth saying here: a removed account keeps working until
-		// the server reads the file again.
-		fmt.Println("Restart the web service for a running server to pick this up.")
 		return nil
 	},
 }
@@ -173,8 +201,38 @@ var userListCmd = &cobra.Command{
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			fmt.Println(name)
+			fmt.Printf("%s\t%s\n", name, strings.Join(users[name].EffectiveRoles(name), ","))
 		}
+		return nil
+	},
+}
+
+var userRoleCmd = &cobra.Command{
+	Use:   "role <username> <role>",
+	Short: "Set a user's role (admin, operator, user or readonly)",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := checkRole(args[1]); err != nil {
+			return err
+		}
+		path, err := resolveUserFile()
+		if err != nil {
+			return err
+		}
+		users, err := readUsers(path)
+		if err != nil {
+			return err
+		}
+		u, exists := users[args[0]]
+		if !exists {
+			return fmt.Errorf("user %q does not exist in %s", args[0], path)
+		}
+		u.Roles = []string{args[1]}
+		users[args[0]] = u
+		if err := writeUsers(path, users); err != nil {
+			return err
+		}
+		fmt.Printf("%q is now %s\n", args[0], args[1])
 		return nil
 	},
 }
@@ -240,65 +298,12 @@ func readPassword(cmd *cobra.Command, confirm bool) (string, error) {
 
 // readUsers loads the users file. A missing file is an empty set, so `user add`
 // can create it.
-func readUsers(path string) (map[string]string, error) {
-	users := make(map[string]string)
-
-	f, err := os.Open(path) // #nosec G304 -- operator-supplied path, this is a CLI
-	if err != nil {
-		if os.IsNotExist(err) {
-			return users, nil
-		}
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		users[parts[0]] = parts[1]
-	}
-	return users, scanner.Err()
+func readUsers(path string) (map[string]datasource.FileUser, error) {
+	return datasource.ReadUsersFile(path)
 }
 
 // writeUsers rewrites the users file atomically and readable only by its owner:
 // it holds password hashes.
-func writeUsers(path string, users map[string]string) error {
-	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("create %s: %w", dir, err)
-		}
-	}
-
-	names := make([]string, 0, len(users))
-	for name := range users {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	var sb strings.Builder
-	sb.WriteString("# Elemta API/web users. One username:bcrypt-hash per line.\n")
-	sb.WriteString("# Managed by `elemta user`.\n")
-	for _, name := range names {
-		sb.WriteString(name)
-		sb.WriteString(":")
-		sb.WriteString(users[name])
-		sb.WriteString("\n")
-	}
-
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(sb.String()), 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", tmp, err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("replace %s: %w", path, err)
-	}
-	return nil
+func writeUsers(path string, users map[string]datasource.FileUser) error {
+	return datasource.WriteUsersFile(path, users)
 }

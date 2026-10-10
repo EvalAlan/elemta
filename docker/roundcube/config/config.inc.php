@@ -25,13 +25,18 @@ $config['imap_force_ns'] = false;
 $config['imap_conn_options'] = null;
 
 // Connect to Elemta with user authentication
-$config['smtp_server'] = 'elemta';
+// STARTTLS: Elemta refuses AUTH PLAIN/LOGIN in the clear from anything but
+// loopback. The dev certificate is self-signed, hence no peer verification;
+// a production webmail must verify the server's certificate.
+$config['smtp_server'] = 'tls://elemta';
 $config['smtp_port'] = 2525;
 $config['smtp_user'] = '%u';  // Use IMAP username
 $config['smtp_pass'] = '%p';  // Use IMAP password
 $config['smtp_auth_type'] = 'PLAIN';
 $config['smtp_timeout'] = 120;
-$config['smtp_conn_options'] = null;
+$config['smtp_conn_options'] = [
+    'ssl' => ['verify_peer' => false, 'verify_peer_name' => false],
+];
 $config['smtp_debug'] = false;
 
 // Interface Configuration

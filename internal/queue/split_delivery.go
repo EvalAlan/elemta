@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"github.com/EvalAlan/elemta/internal/dkim"
 	"log/slog"
 	"strings"
 )
@@ -187,4 +188,12 @@ func (h *SplitDeliveryHandler) GetFailedQueueRetentionHours() int {
 		return h.remote.GetFailedQueueRetentionHours()
 	}
 	return 0
+}
+
+// SetDKIMSigner passes a signer to the remote handler; local delivery is never
+// signed.
+func (h *SplitDeliveryHandler) SetDKIMSigner(s *dkim.Signer) {
+	if remote, ok := h.remote.(interface{ SetDKIMSigner(*dkim.Signer) }); ok {
+		remote.SetDKIMSigner(s)
+	}
 }

@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260812-domain-stats">
+    <link rel="stylesheet" href="/static/styles.css?v=20261010-users">
 </head>
 
 <body>
@@ -1013,6 +1013,7 @@
                     <button class="settings-tab" data-tab="plugins">Plugins</button>
                     <!-- Tabs for configurable plugins are inserted here at runtime,
                          and removed again when the plugin is disabled. -->
+                    <button class="settings-tab" data-tab="users" id="settings-tab-users">Users</button>
                     <button class="settings-tab" data-tab="system">System</button>
                 </div>
 
@@ -1191,6 +1192,46 @@
                     </div>
                 </div>
 
+                <!-- Users Panel. The account list needs user:view; changing your
+                     own password needs only a login, so that card always shows. -->
+                <div class="settings-panel" id="settings-users">
+                    <div class="card" id="users-card" style="margin-bottom: 1.5rem;">
+                        <div class="card-header">
+                            <h3>Dashboard users</h3>
+                            <button class="btn btn-secondary btn-sm" onclick="refreshUsers()">Refresh</button>
+                        </div>
+                        <div class="card-body">
+                            <p class="panel-intro">
+                                Accounts that can sign in to this dashboard and the admin API.
+                                <strong>admin</strong> can do everything, <strong>operator</strong> can manage
+                                queues, and <strong>user</strong> and <strong>readonly</strong> can only view.
+                                Changes apply immediately.
+                            </p>
+                            <div class="send-row">
+                                <input type="text" id="new-user-name" placeholder="Username" autocomplete="off">
+                                <input type="password" id="new-user-password" placeholder="Password (12+ characters)" autocomplete="new-password">
+                                <select id="new-user-role">
+                                    <option value="user">user</option>
+                                    <option value="operator">operator</option>
+                                    <option value="admin">admin</option>
+                                </select>
+                                <button class="btn btn-primary" onclick="createUser()">Add user</button>
+                            </div>
+                            <div id="users-list"></div>
+                        </div>
+                    </div>
+                    <div class="card" style="margin-bottom: 1.5rem;">
+                        <div class="card-header"><h3>Change my password</h3></div>
+                        <div class="card-body">
+                            <div class="send-row">
+                                <input type="password" id="own-current-password" placeholder="Current password" autocomplete="current-password">
+                                <input type="password" id="own-new-password" placeholder="New password (12+ characters)" autocomplete="new-password">
+                                <button class="btn btn-secondary" onclick="changeOwnPassword()">Change password</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- System Panel -->
                 <div class="settings-panel" id="settings-system">
                     <div class="card" style="margin-bottom: 1.5rem;">
@@ -1353,8 +1394,9 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20260812-domain-stats"></script>
+    <script src="/static/app.js?v=20261010-users"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
+    <script src="/static/users.js?v=20261010-users2"></script>
 </body>
 
 </html>

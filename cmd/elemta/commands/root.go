@@ -40,6 +40,12 @@ Elemta is a high-performance, carrier-grade MTA with modular architecture and pl
 				}
 			}
 
+			// `dkim` commands work on key files and DNS and take every input as
+			// a flag; a key is often generated on a host with no config at all.
+			if cmd.Parent() != nil && cmd.Parent().Name() == "dkim" {
+				return
+			}
+
 			// Load configuration exactly once in a thread-safe way
 			configOnce.Do(func() {
 				cfg, configErr = config.LoadConfig(configPath)

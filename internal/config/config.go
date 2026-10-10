@@ -140,6 +140,11 @@ type Config struct {
 	AllowedRelays             []string `toml:"allowed_relays"`
 	FailedQueueRetentionHours int      `toml:"failed_queue_retention_hours"` // 0 = immediate deletion
 
+	// FeedbackAddresses receive spam-complaint (ARF) reports from mailbox
+	// providers' feedback loops. A complaint to one of these suppresses the
+	// complaining recipient; the report is still delivered.
+	FeedbackAddresses []string `toml:"feedback_addresses"`
+
 	// StrictLineEndings enforces RFC 5321 CRLF requirements in DATA. Unset
 	// means strict; set it to false only to interoperate with legacy senders.
 	StrictLineEndings *bool `toml:"strict_line_endings"`
