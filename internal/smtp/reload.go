@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/EvalAlan/elemta/internal/authresult"
+	"github.com/EvalAlan/elemta/internal/dkim"
 )
 
 // Reloading configuration without a restart.
@@ -20,7 +21,8 @@ import (
 // implementation:
 //
 //   - Reloadable: the things a session consults through a component object —
-//     the scanners, the allow/deny lists, the blocklists. A session captures
+//     the scanners, the allow/deny lists, the blocklists — and the DKIM
+//     signing keys, which the delivery handler reads per message. A session captures
 //     these when it is created, so replacing the server's copy affects the next
 //     session and leaves sessions already running with the configuration they
 //     started under. A message is never half-scanned by two different policies.
@@ -41,6 +43,9 @@ type reloadableComponents struct {
 	accessControl *AccessControl
 	rbl           *RBLChecker
 	authVerifier  *authresult.Verifier
+	// dkimSigner is nil when signing is off. A delivery picks up the signer
+	// in force when it signs, so a rotated key applies from the next message.
+	dkimSigner *dkim.Signer
 }
 
 // Reload rebuilds the reloadable components from a freshly loaded
@@ -67,6 +72,11 @@ func (s *Server) Reload(ctx context.Context, newConfig *Config) error {
 	s.authVerifier = next.authVerifier
 	s.pluginMu.Unlock()
 
+	dkimReloaded := false
+	if s.queueProcessor != nil {
+		dkimReloaded = s.queueProcessor.SetDKIMSigner(next.dkimSigner)
+	}
+
 	// The queue manager is not rebuilt on reload — it owns the queue and
 	// replacing it would strand in-flight work — but settings that only change
 	// how it writes can be applied to the live one. Without this the tombstone
@@ -83,6 +93,7 @@ func (s *Server) Reload(ctx context.Context, newConfig *Config) error {
 		"access_control", next.accessControl.Enabled(),
 		"rbl", next.rbl.Enabled(),
 		"mail_auth", next.authVerifier.Enabled(),
+		"dkim_signing", dkimReloaded && next.dkimSigner != nil,
 		"retain_tombstone_body", newConfig.QueueRetainTombstoneBody == nil || *newConfig.QueueRetainTombstoneBody,
 		"note", "listen address, size limits, timeouts and the queue backend still need a restart",
 	)
@@ -108,11 +119,20 @@ func (s *Server) buildReloadable(ctx context.Context, config *Config, logger *sl
 		return nil, fmt.Errorf("rbl configuration: %w", err)
 	}
 
+	// A key that does not load refuses the whole reload, like at startup:
+	// signing with no key, or the old one, after the operator asked for a new
+	// one would be a silent failure.
+	dkimSigner, err := dkim.NewSigner(config.DKIM, logger)
+	if err != nil {
+		return nil, fmt.Errorf("dkim configuration: %w", err)
+	}
+
 	return &reloadableComponents{
 		scanners:      scanners,
 		accessControl: accessControl,
 		rbl:           rbl,
 		authVerifier:  authresult.New(authPluginRuntimeConfig(config)),
+		dkimSigner:    dkimSigner,
 	}, nil
 }
 

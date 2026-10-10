@@ -117,13 +117,19 @@ curl -s http://127.0.0.1:8025/api/queue/storage | jq
 `elemta user` manages the users file; nothing else is needed to enable auth.
 
 ```bash
-# Create the first account (prompts for the password twice).
-elemta user add admin --file /etc/elemta/users.txt
+# Create the first account (prompts for the password twice; 12+ characters).
+elemta user add admin --role admin --file /etc/elemta/users.txt
 
 elemta user list   --file /etc/elemta/users.txt
+elemta user role alice operator --file /etc/elemta/users.txt
 elemta user passwd admin --file /etc/elemta/users.txt
-elemta user remove admin --file /etc/elemta/users.txt
+elemta user remove alice --file /etc/elemta/users.txt
 ```
+
+After the first admin exists, accounts can also be managed in the dashboard
+under **Settings > Users**. Both edit the same file, and a running server picks
+up changes on its next request; removing an account or resetting its password
+signs it out.
 
 Then point the server at it:
 
@@ -133,7 +139,7 @@ auth_enabled = true
 auth_file = "/etc/elemta/users.txt"
 ```
 
-The file holds `username:bcrypt-hash` lines and is written `0600`. **It must be
+The file holds `username:bcrypt-hash:role` lines and is written `0600`. **It must be
 readable by the user the server runs as** — in the container that is `elemta`
 (uid 1001), not the account that created the file. Getting this wrong is fatal
 at startup and the process exits; with a restart policy in place that becomes a
@@ -150,6 +156,13 @@ Once `auth_enabled` is on:
 - The session cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` whenever the
   request arrived over TLS — directly, or through a proxy that sets
   `X-Forwarded-Proto: https`.
+- Requests that change state and rely on the cookie are refused (`403`) when
+  their `Origin` or `Referer` names another site. A proxy that changes the
+  host must pass the browser's host in `X-Forwarded-Host`, or list the public
+  origin in `[api.cors].allowed_origins`.
+- Five failed logins for one account from one address, or twenty from one
+  address in total, within 15 minutes lock that address out (`429`) for the
+  rest of the window. This applies to the login form and to HTTP Basic auth.
 
 That last point matters if you terminate TLS at a proxy: **set
 `X-Forwarded-Proto`**, otherwise the cookie is issued without `Secure` and can
@@ -157,11 +170,11 @@ be sent over a plaintext connection.
 
 ---
 
-### The admin API is unauthenticated by default — this matters most
+### Never run the admin API without authentication off-host
 
-`[api].auth_enabled` defaults to **false**, and the shipped `docker-compose`
-runs the web service bound to `0.0.0.0`. In that combination, anyone who can
-reach the port can:
+`[api].auth_enabled` defaults to **true** since v0.2.0. If you turn it off
+while the web service is bound to anything but loopback (the shipped
+`docker-compose` binds `0.0.0.0`), anyone who can reach the port can:
 
 - read any queued message — full content and headers
 - flush queues (delete mail) and requeue
@@ -177,20 +190,71 @@ other than loopback with auth disabled — do not ignore it. Choose one of:
 1. **Bind to loopback.** Set `[api].listen_addr = "127.0.0.1:8025"` (or the
    `--listen` flag) and reach it via SSH tunnel or a co-located proxy. This is
    the right default for most deployments.
-2. **Enable authentication.** Set `[api].auth_enabled = true` and provide an
-   auth file (`[api].auth_file`). Required if the port is reachable by anyone
-   you do not fully trust.
+2. **Keep authentication on** (the default) and provide an auth file
+   (`[api].auth_file`). Required if the port is reachable by anyone you do not
+   fully trust.
 3. **Front it with an authenticating reverse proxy** (mTLS, OIDC, or basic
    auth over TLS) and bind the app to loopback behind it.
 
-The dev stack ships insecure on purpose — it is a single-host demo. A
-production deployment that copies the dev `docker-compose` verbatim inherits an
-open admin API. Do not.
+`config/dev.toml` turns auth off on purpose for a single-host demo. Do not
+copy it into production.
+
+### Inbound and outbound on one server
+
+One Elemta can be both the MX for your domains and the outbound relay for
+your users and apps:
+
+```toml
+hostname = "mail.example.com"
+local_domains = ["example.com"]
+# Apps on your own network may send without logging in. See "Relay" below
+# before using "private".
+allowed_relays = ["private"]
+
+[server]
+listen = ":25"                 # inbound (MX): anyone may deliver to local_domains
+listen_submission = ":587"     # outbound: log in over STARTTLS, or be in allowed_relays
+
+[delivery]
+mode = "split"                 # local_domains -> mailbox server over LMTP, everything else -> the internet
+host = "dovecot.internal"
+port = 24
+```
+
+- **Port 25 (MX)** accepts mail for `local_domains` from anyone, refuses
+  unknown mailboxes at RCPT, and relays for nobody who has not logged in or is
+  not in `allowed_relays`.
+- **Port 587 (submission)** refuses `MAIL FROM` until the client has logged in
+  (over STARTTLS) unless it is in `allowed_relays`. Point mail clients and
+  apps here.
+- **`split` delivery** sends local mail to the mailbox server and everything
+  else out to the recipient's MX, DKIM-signed if configured.
+
+Ports below 1024 need the process to be allowed to bind them (run as root,
+grant `CAP_NET_BIND_SERVICE`, or map 25→2525 and 587→2587 in the container
+runtime, which is what the dev stack does).
+
+### Relay
+
+Only authenticated clients, loopback, and the networks in `allowed_relays` may
+send to domains outside `local_domains`. `allowed_relays` takes IPs, CIDRs,
+and the names `"private"` (RFC 1918, CGNAT, IPv6 ULA, link-local) and
+`"loopback"`. Do not list a network your load
+balancer or Kubernetes Service SNATs public traffic into: every client then
+arrives from it. If you need the real client address behind a proxy, use one
+that preserves it (`externalTrafficPolicy: Local`, host networking, or a
+direct listener), not a broader `allowed_relays`. Check the startup line
+`Relay without authentication allowed from` after every config change, and
+keep `dev_mode = false` (it enables the XDEBUG command).
 
 ### TLS
 
 - Provide real certificate and key paths; do not run STARTTLS-only in
   production without a valid chain.
+- Certificate and key files replaced on disk (certbot, cert-manager) are
+  served within about 30 seconds, with no restart. Replace both files before
+  the old certificate expires; a pair that fails to load is logged and the
+  previous certificate stays in use.
 - Cipher-suite ordering is controlled by the Go runtime (server-side ordering
   preferences are ignored by modern Go); rely on the runtime's secure defaults
   rather than trying to pin an order.

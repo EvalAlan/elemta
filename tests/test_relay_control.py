@@ -109,28 +109,28 @@ def main():
         test_name="Local domain delivery without auth"
     )
     
-    # Test 2: Internal network relay (should work without auth)
-    print(f"\n{Colors.YELLOW}=== Test 2: Internal Network Relay ==={Colors.RESET}")
+    # Test 2: Private-network relay without auth works only because the dev
+    # config lists "private" in allowed_relays. Without that entry it is
+    # refused: behind SNAT or a proxy every client looks private.
+    print(f"\n{Colors.YELLOW}=== Test 2: Private Network Relay ==={Colors.RESET}")
     test_smtp_connection(
         host, port,
         "sender@example.com", 
         "recipient@external.com",  # External domain (relay)
         auth=None,
         expect_success=True,
-        test_name="Internal network relay without auth"
+        test_name="Private network relay without auth (allowed_relays = [\"private\"])"
     )
     
     # Test 3: Simulated external connection relay without auth (should fail)
     print(f"\n{Colors.YELLOW}=== Test 3: External Connection Relay (No Auth) ==={Colors.RESET}")
-    print(f"{Colors.BLUE}Note: This test simulates external behavior but runs from internal network{Colors.RESET}")
-    print(f"{Colors.BLUE}In a real scenario, this would be blocked{Colors.RESET}")
     test_smtp_connection(
         host, port,
         "sender@external.com",
         "recipient@another-external.com",  # External to external (relay)
         auth=None,
-        expect_success=True,  # Will succeed due to internal network
-        test_name="Relay without auth (internal network - would fail if external)"
+        expect_success=True,  # same private source as Test 2
+        test_name="Relay without auth from a trusted network"
     )
     
     # Test 4: Authenticated relay (should work)
@@ -168,11 +168,9 @@ def main():
     
     print(f"\n{Colors.BLUE}=== Test Summary ==={Colors.RESET}")
     print(f"1. Local domain delivery should always work")
-    print(f"2. Internal networks can relay without authentication")
-    print(f"3. External connections require authentication for relay")
-    print(f"4. Authentication is checked for external relay attempts")
-    print(f"\n{Colors.YELLOW}Important: These tests run from internal network, so relay restrictions")
-    print(f"will be relaxed. To test external behavior, run from outside Docker network.{Colors.RESET}")
+    print(f"2. Unauthenticated relay is refused, private network or not,")
+    print(f"   unless the client's network is listed in allowed_relays")
+    print(f"3. Authentication (over STARTTLS) is required to relay")
 
 if __name__ == "__main__":
     main() 

@@ -286,3 +286,19 @@ func (sm *SessionManager) ClearCookie(w http.ResponseWriter, r *http.Request) {
 
 	http.SetCookie(w, cookie)
 }
+
+// RevokeUserSessions ends every session belonging to username, so a removed
+// account or a reset password takes effect immediately rather than when the
+// session expires. It returns how many were ended.
+func (sm *SessionManager) RevokeUserSessions(username string) int {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	revoked := 0
+	for id, session := range sm.sessions {
+		if session.Username == username {
+			delete(sm.sessions, id)
+			revoked++
+		}
+	}
+	return revoked
+}

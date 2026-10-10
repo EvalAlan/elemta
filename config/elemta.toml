@@ -6,6 +6,14 @@ listen_addr = ":2525"
 local_domains = ["example.com", "evil-admin.com", "localhost", "mail.example.com"]
 max_size = 52428800  # 50MB
 
+# Who may send to domains outside local_domains without logging in. Loopback
+# always may. "private" is every non-internet range (RFC 1918, CGNAT, IPv6
+# ULA): right for apps on this Docker network or your LAN, wrong if clients
+# reach the server through SNAT, a load balancer without the PROXY protocol,
+# or Docker's IPv6 userland proxy, because then every client looks private
+# and the server is an open relay. Use explicit CIDRs in those setups.
+allowed_relays = ["private"]
+
 # Outbound traffic shaping: how hard to push at one destination.
 #
 # Large receivers do not publish a rate — they tell you by deferring — so the
@@ -31,13 +39,27 @@ max_connections_per_domain = 20
 # bare LF, and understand that doing so re-opens that vector.
 strict_line_endings = true
 
+# Addresses registered with mailbox providers' feedback loops (Gmail, Yahoo,
+# Microsoft SNDS/JMRP and others). A spam-complaint report (ARF, RFC 5965)
+# sent to one of these suppresses the recipient who complained, so campaigns
+# stop mailing them; the report itself is still delivered. Only mail to these
+# addresses is read as a report, because anyone can forge one.
+# Must stay above the first [section] header, or TOML files it under it.
+# feedback_addresses = ["fbl@example.com"]
+
 [server]
 hostname = "mail.example.com"
 listen = ":2525"  # Internal SMTP port (non-privileged)
-listen_submission = ":587"  # Submission port for authenticated clients
 max_size = 26214400  # 25MB
 local_domains = ["example.com", "mail.example.com", "localhost"]
-dev_mode = true  # Enable development mode for XDEBUG command
+# dev_mode enables the XDEBUG command, which shows any client the session's
+# internal state. Never on a server reachable from outside.
+dev_mode = false
+# Submission port (RFC 6409; 587 in production): where your users and apps send
+# outbound mail. Clients must log in over STARTTLS, or be in allowed_relays.
+# The MX port above (listen_addr / listen) takes inbound mail for local_domains
+# from anyone and relays for nobody else.
+listen_submission = ":2587"
 
 # TLS Configuration - disabled by default in container builds
 # TLS certs/keys should be mounted and enabled via custom config in production.

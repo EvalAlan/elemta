@@ -24,22 +24,74 @@ func newTestBounceEngine(t *testing.T) (*BounceEngine, *queue.Manager) {
 	return engine, mgr
 }
 
-func TestBounceEngine_NoDSNNoBounce(t *testing.T) {
-	engine, _ := newTestBounceEngine(t)
+// RFC 5321 §6.1: a failure after acceptance MUST be reported, whether or not
+// the sender used DSN parameters. Most clients never do.
+func TestBounceEngine_NoDSNStillBounces(t *testing.T) {
+	engine, mgr := newTestBounceEngine(t)
 	ctx := context.Background()
 
-	// Message without DSN annotations - no bounce should be generated
+	original := "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test message\r\n\r\nsecret body\r\n"
+	id, err := mgr.EnqueueMessage("sender@example.com", []string{"recipient@example.com"}, "Test message",
+		[]byte(original), queue.PriorityNormal, time.Now())
+	require.NoError(t, err)
+
 	msg := queue.Message{
-		ID:        "test-no-dsn",
+		ID:        id,
 		From:      "sender@example.com",
 		To:        []string{"recipient@example.com"},
 		Subject:   "Test message",
 		CreatedAt: time.Now(),
 	}
 
-	result := engine.GenerateBounceIfNeeded(ctx, msg, "connection refused")
-	assert.False(t, result.BounceGenerated, "No bounce should be generated without DSN")
-	assert.NoError(t, result.Error)
+	result := engine.GenerateBounceIfNeeded(ctx, msg, "550 5.1.1 User unknown")
+	require.True(t, result.BounceGenerated, "a permanent failure must be reported without DSN")
+	require.NoError(t, result.Error)
+
+	bounce, err := mgr.GetMessage(result.BounceID)
+	require.NoError(t, err)
+	assert.Empty(t, bounce.From, "a bounce must have a null envelope sender, or a failing bounce bounces")
+	assert.Equal(t, []string{"sender@example.com"}, bounce.To)
+
+	content, err := mgr.GetMessageContent(result.BounceID)
+	require.NoError(t, err)
+	text := string(content)
+	assert.Contains(t, text, "Auto-Submitted: auto-replied")
+	assert.Contains(t, text, "Content-Type: text/rfc822-headers", "without RET, the original headers come back")
+	assert.Contains(t, text, "Subject: Test message")
+	assert.NotContains(t, text, "secret body", "headers only, not the body")
+	assert.Equal(t, 1, strings.Count(text, "Reporting-MTA:"), "per-message fields appear once")
+}
+
+// RET=FULL returns the whole original message.
+func TestBounceEngine_RetFullReturnsTheMessage(t *testing.T) {
+	engine, mgr := newTestBounceEngine(t)
+	original := "From: sender@example.com\r\nSubject: hi\r\n\r\nthe body\r\n"
+	id, err := mgr.EnqueueMessage("sender@example.com", []string{"a@example.com", "b@example.com"}, "hi",
+		[]byte(original), queue.PriorityNormal, time.Now())
+	require.NoError(t, err)
+
+	result := engine.GenerateBounceIfNeeded(context.Background(), queue.Message{
+		ID: id, From: "sender@example.com", To: []string{"a@example.com", "b@example.com"},
+		Annotations: map[string]string{"dsn_return": "FULL"},
+	}, "550 5.1.1 User unknown")
+	require.True(t, result.BounceGenerated)
+	content, err := mgr.GetMessageContent(result.BounceID)
+	require.NoError(t, err)
+	text := string(content)
+	assert.Contains(t, text, "Content-Type: message/rfc822")
+	assert.Contains(t, text, "the body")
+	assert.Equal(t, 1, strings.Count(text, "Reporting-MTA:"))
+	assert.Equal(t, 2, strings.Count(text, "Final-Recipient:"))
+}
+
+func TestBounceEngine_NullSenderNeverBounces(t *testing.T) {
+	engine, _ := newTestBounceEngine(t)
+	for _, from := range []string{"", "<>"} {
+		result := engine.GenerateBounceIfNeeded(context.Background(), queue.Message{
+			ID: "x", From: from, To: []string{"r@example.com"},
+		}, "550 5.1.1 User unknown")
+		assert.False(t, result.BounceGenerated, "bouncing a bounce (From=%q) starts a loop", from)
+	}
 }
 
 func TestBounceEngine_NEVERNoBounce(t *testing.T) {
@@ -140,8 +192,7 @@ func TestBounceEngine_NEVERWithOtherNotify(t *testing.T) {
 	engine, _ := newTestBounceEngine(t)
 	ctx := context.Background()
 
-	// If one recipient has NEVER and another has FAILURE, no bounce should be sent
-	// because NEVER takes precedence for that recipient
+	// One recipient has NEVER and the other FAILURE: report only the second.
 	msg := queue.Message{
 		ID:        "test-mixed-notify",
 		From:      "sender@example.com",
@@ -156,8 +207,9 @@ func TestBounceEngine_NEVERWithOtherNotify(t *testing.T) {
 	}
 
 	result := engine.GenerateBounceIfNeeded(ctx, msg, "connection refused")
-	// When any recipient has NEVER, we skip the bounce entirely
-	assert.False(t, result.BounceGenerated)
+	// NOTIFY is per recipient: rcpt1 asked to hear about failure, rcpt2 did not.
+	require.True(t, result.BounceGenerated)
+	assert.Equal(t, []string{"rcpt1@example.com"}, engine.recipientsToNotify(msg))
 }
 
 func TestMapFailureToDSNStatus(t *testing.T) {
@@ -180,7 +232,8 @@ func TestMapFailureToDSNStatus(t *testing.T) {
 		{"name resolution failed", DSNStatusSystemNotAccepting},
 		{"dns lookup failed", DSNStatusSystemNotAccepting},
 		{"no mx records", DSNStatusSystemNotAccepting},
-		{"550 5.1.1 not found", DSNStatusPermanentFailure},
+		{"550 5.1.1 not found", "5.1.1"},
+		{"550 5.7.1 rejected by policy", "5.7.1"},
 		{"551 user not local", DSNStatusPermanentFailure},
 		{"552 message size exceeded", DSNStatusPermanentFailure},
 		{"553 mailbox name not allowed", DSNStatusPermanentFailure},
@@ -338,7 +391,7 @@ func TestBounceEngineEmptyAnnotations(t *testing.T) {
 	engine, _ := newTestBounceEngine(t)
 	ctx := context.Background()
 
-	// Message with empty annotations map - no bounce
+	// Message with empty annotations map - still bounces (RFC 5321 §6.1)
 	msg := queue.Message{
 		ID:          "test-empty-annotations",
 		From:        "sender@example.com",
@@ -349,14 +402,14 @@ func TestBounceEngineEmptyAnnotations(t *testing.T) {
 	}
 
 	result := engine.GenerateBounceIfNeeded(ctx, msg, "connection refused")
-	assert.False(t, result.BounceGenerated)
+	assert.True(t, result.BounceGenerated, "no DSN parameters still means a bounce")
 }
 
 func TestBounceEngineNilAnnotations(t *testing.T) {
 	engine, _ := newTestBounceEngine(t)
 	ctx := context.Background()
 
-	// Message with nil annotations - no bounce
+	// Message with nil annotations - still bounces (RFC 5321 §6.1)
 	msg := queue.Message{
 		ID:        "test-nil-annotations",
 		From:      "sender@example.com",
@@ -366,14 +419,14 @@ func TestBounceEngineNilAnnotations(t *testing.T) {
 	}
 
 	result := engine.GenerateBounceIfNeeded(ctx, msg, "connection refused")
-	assert.False(t, result.BounceGenerated)
+	assert.True(t, result.BounceGenerated, "no DSN parameters still means a bounce")
 }
 
 func TestBounceEngineDSNEmptyReturn(t *testing.T) {
 	engine, _ := newTestBounceEngine(t)
 	ctx := context.Background()
 
-	// Message with empty dsn_return - no bounce
+	// Message with empty dsn_return - still bounces (RFC 5321 §6.1)
 	msg := queue.Message{
 		ID:        "test-empty-return",
 		From:      "sender@example.com",
@@ -386,7 +439,7 @@ func TestBounceEngineDSNEmptyReturn(t *testing.T) {
 	}
 
 	result := engine.GenerateBounceIfNeeded(ctx, msg, "connection refused")
-	assert.False(t, result.BounceGenerated)
+	assert.True(t, result.BounceGenerated, "no DSN parameters still means a bounce")
 }
 
 func TestGetRecipientDSNParams(t *testing.T) {

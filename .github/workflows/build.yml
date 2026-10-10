@@ -51,6 +51,10 @@ jobs:
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:${{ github.sha }}
           platforms: linux/amd64
+          # Stamped into the binary; images from main report the commit they
+          # were built from.
+          build-args: |
+            VERSION=${{ github.sha }}
           # Deliberately avoid type=gha cache: Actions cache SAS tokens are
           # expiring during long/unstable network pulls in this environment.
           # Reliability > speed here.

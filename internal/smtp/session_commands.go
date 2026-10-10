@@ -197,7 +197,10 @@ func (ch *CommandHandler) HandleEHLO(ctx context.Context, args string) error {
 	// Always advertise AUTH if auth is enabled but not required (for webmail clients)
 	// Or if TLS is active or not required for PLAIN auth
 	if ch.config.Auth != nil && ch.config.Auth.Enabled {
-		if !ch.config.Auth.Required || ch.state.IsTLSActive() || !ch.authHandler.securityManager.config.RequireTLSForPlain {
+		// Only offer AUTH where a password may actually be sent: advertising
+		// it in the clear invites clients to send credentials and then get
+		// 538, or worse, to fall back to a weaker path.
+		if ch.authHandler.plaintextAuthAllowed() {
 			authMethods := ch.authHandler.GetAuthMethodsString()
 			if authMethods != "" {
 				responses = append(responses, "250-AUTH "+authMethods)
@@ -224,12 +227,28 @@ func (ch *CommandHandler) HandleEHLO(ctx context.Context, args string) error {
 }
 
 // HandleMAIL processes the MAIL FROM command with RFC 1870 SIZE extension support
+// checkSubmissionSender applies the submission port's rule: mail only from
+// someone who has logged in or is on a trusted network (allowed_relays).
+// Anonymous mail, including mail for local domains, belongs on the MX port.
+func (ch *CommandHandler) checkSubmissionSender() error {
+	if ch.session == nil || !ch.session.submission || ch.state.IsAuthenticated() {
+		return nil
+	}
+	if ip := GetClientIP(ch.conn); ip != nil && IsAllowedRelay(ip, ch.config.AllowedRelays) {
+		return nil
+	}
+	return fmt.Errorf("530 5.7.0 Authentication required")
+}
+
 func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 	ch.logger.DebugContext(ctx, "Processing MAIL command", "args", args)
 
 	// Check if authentication is required and user is not authenticated
 	if ch.config.Auth != nil && ch.config.Auth.Enabled && ch.config.Auth.Required && !ch.state.IsAuthenticated() {
 		return fmt.Errorf("530 5.7.0 Authentication required")
+	}
+	if err := ch.checkSubmissionSender(); err != nil {
+		return err
 	}
 
 	// Parse without mutating session state; extensions are committed only after acceptance.
@@ -330,6 +349,15 @@ func (ch *CommandHandler) HandleRCPT(ctx context.Context, args string) error {
 	// Check relay permissions
 	if err := ch.checkRelayPermissions(ctx, rcptTo); err != nil {
 		return err
+	}
+
+	// A local mailbox that does not exist is refused now, not bounced later.
+	if ch.session != nil && ch.session.rcptVerifier != nil && ch.isLocalDomain(ctx, rcptTo) {
+		if verdict, reply := ch.session.rcptVerifier.Verify(ctx, rcptTo); verdict == rcptRejected {
+			ch.logger.InfoContext(ctx, "Recipient refused: no such mailbox",
+				"event_type", "rejection", "recipient", rcptTo, "mailbox_server_reply", reply)
+			return fmt.Errorf("550 5.1.1 <%s>: Recipient address rejected: User unknown", sanitizeEmailForHeader(rcptTo))
+		}
 	}
 
 	// Add recipient to state
@@ -1174,13 +1202,10 @@ func (ch *CommandHandler) validateEmailAddress(ctx context.Context, addr string)
 
 // checkRelayPermissions checks if relay is allowed for a recipient
 func (ch *CommandHandler) checkRelayPermissions(ctx context.Context, recipient string) error {
-	// DevMode bypasses all relay restrictions for testing
-	if ch.config.DevMode {
-		ch.logger.DebugContext(ctx, "Relay allowed (DevMode enabled)",
-			"recipient", recipient,
-		)
-		return nil
-	}
+	// dev_mode used to bypass every relay check here. The shipped config had
+	// it on, so a server started from that config relayed for anyone. Relay
+	// is now decided the same way in every mode: authenticate, or list the
+	// network in allowed_relays.
 
 	// If authenticated, allow relay
 	if ch.state.IsAuthenticated() {

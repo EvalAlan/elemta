@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/smtp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -106,6 +107,13 @@ func startFakeSMTPServer(t *testing.T, offerSTARTTLS bool, advertiseRequireTLS b
 	}()
 
 	return ln.Addr().String()
+}
+
+// connectSMTPWithRequireTLS adapts connectSMTP to the shape these tests were
+// written against: whether TLS is in use at all, verified or not.
+func (h *SMTPDeliveryHandler) connectSMTPWithRequireTLS(ctx context.Context, address string, requireTLS bool) (*smtp.Client, net.Conn, bool, bool, error) {
+	client, conn, state, nextHopRequireTLS, err := h.connectSMTP(ctx, address, requireTLS)
+	return client, conn, state != tlsNone, nextHopRequireTLS, err
 }
 
 func generateSelfSignedCert(t *testing.T) tls.Certificate {

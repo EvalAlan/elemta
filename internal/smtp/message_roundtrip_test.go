@@ -209,6 +209,10 @@ func TestMessageRoundTrip_HeadersArePrependedNotRewritten(t *testing.T) {
 	if !strings.HasPrefix(stored, "Received: from ") {
 		t.Errorf("Received is not the first header: %q", head(stored, 96))
 	}
+	// "from" carries the address the client actually connected from.
+	if first := head(stored, 200); !strings.Contains(first, "([127.0.0.1])") && !strings.Contains(first, "([::1])") {
+		t.Errorf("Received does not carry the client address: %q", first)
+	}
 
 	// The submission must survive byte-for-byte below the added block, which
 	// is what makes it streamable rather than something to parse and rebuild.

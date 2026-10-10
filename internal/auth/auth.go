@@ -562,3 +562,62 @@ func (a *Auth) SetAllowDeprecatedSHA1(allow bool) {
 func (a *Auth) AllowDeprecatedSHA1() bool {
 	return a.allowDeprecatedSHA1
 }
+
+// ListUsers returns every account, without password hashes.
+func (a *Auth) ListUsers(ctx context.Context) ([]datasource.User, error) {
+	if !a.ds.IsConnected() {
+		return nil, ErrDataSourceNotConnected
+	}
+	users, err := a.ds.ListUsers(ctx, nil, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+	for i := range users {
+		users[i].Password = ""
+	}
+	return users, nil
+}
+
+// SetUserRoles replaces an account's roles. The caller validates the role
+// names; this only stores them.
+func (a *Auth) SetUserRoles(ctx context.Context, username string, roles []string) error {
+	if !a.ds.IsConnected() {
+		return ErrDataSourceNotConnected
+	}
+	user, err := a.ds.GetUser(ctx, username)
+	if err != nil {
+		if errors.Is(err, datasource.ErrNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("failed to get user: %w", err)
+	}
+	user.Groups = append([]string(nil), roles...)
+	user.IsAdmin = false
+	for _, r := range roles {
+		if r == "admin" {
+			user.IsAdmin = true
+		}
+	}
+	user.UpdatedAt = time.Now().Unix()
+	if err := a.ds.UpdateUser(ctx, user); err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+	return nil
+}
+
+// MinPasswordLength is the shortest password accepted for a new or changed
+// dashboard account.
+const MinPasswordLength = 12
+
+// ValidatePassword enforces the password rules for dashboard accounts.
+func ValidatePassword(password string) error {
+	if len(password) < MinPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", MinPasswordLength)
+	}
+	if len(password) > 72 {
+		// bcrypt ignores everything past 72 bytes, so a longer password would
+		// silently be checked only on its prefix.
+		return errors.New("password must be at most 72 bytes")
+	}
+	return nil
+}

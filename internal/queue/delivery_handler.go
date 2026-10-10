@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/smtp"
 	"net/textproto"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -125,8 +126,15 @@ type SMTPDeliveryHandler struct {
 	// backoff a destination asks for by deferring. Nil means unshaped.
 	shaper       *Shaper
 	mxRetrySleep func(context.Context, time.Duration) error
-	signer       messageSigner // optional DKIM signer; nil = signing disabled
+	signerMu     sync.RWMutex
+	signer       messageSigner // optional DKIM signer; nil = signing disabled. Guarded by signerMu: config reload swaps it during deliveries.
 	arcSealer    ARCSealer     // optional ARC sealer; nil = sealing disabled
+
+	// heloName is the name sent in EHLO; see SetHeloHostname.
+	heloName string
+	// mxPort is the port MX hosts are contacted on. Always 25 in production
+	// (RFC 5321 §4.5.4.2 has no fallback); tests point it elsewhere.
+	mxPort string
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -144,17 +152,43 @@ func NewSMTPDeliveryHandler(failedQueueRetentionHours int) *SMTPDeliveryHandler 
 	}
 }
 
+// SetHeloHostname sets the name announced in EHLO. It should be this server's
+// public hostname, with forward and reverse DNS that agree: receivers score
+// "EHLO localhost" as a spam signal (Rspamd's HFILTER_HELO_* and Spamhaus
+// policy both do), and some refuse it outright.
+func (h *SMTPDeliveryHandler) SetHeloHostname(name string) {
+	h.heloName = strings.TrimSpace(name)
+}
+
+func (h *SMTPDeliveryHandler) ehloName() string {
+	if h.heloName != "" {
+		return h.heloName
+	}
+	if name, err := os.Hostname(); err == nil && strings.Contains(name, ".") {
+		return name
+	}
+	return "localhost"
+}
+
 // SetDKIMSigner attaches a DKIM signer to the handler. A nil signer leaves
 // signing disabled. Kept as an explicit setter so signing can be wired in from
 // the server without changing the constructor signature.
 func (h *SMTPDeliveryHandler) SetDKIMSigner(s *dkim.Signer) {
 	// Store as nil interface when the concrete pointer is nil so the interface
 	// comparison `h.signer == nil` in signContent works correctly.
+	h.signerMu.Lock()
+	defer h.signerMu.Unlock()
 	if s == nil {
 		h.signer = nil
 		return
 	}
 	h.signer = s
+}
+
+func (h *SMTPDeliveryHandler) currentSigner() messageSigner {
+	h.signerMu.RLock()
+	defer h.signerMu.RUnlock()
+	return h.signer
 }
 
 // SetARCSealer attaches the built-in ARC plugin to remote SMTP delivery.
@@ -204,7 +238,8 @@ func authenticationResultsValue(content []byte) string {
 // is configured for the message domain, a signing error fails the delivery
 // attempt rather than silently downgrading it to unsigned mail.
 func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) ([]byte, error) {
-	if h.signer == nil {
+	signer := h.currentSigner()
+	if signer == nil {
 		return content, nil
 	}
 
@@ -217,7 +252,7 @@ func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) ([]byte, 
 		return content, nil
 	}
 
-	signed, err := h.signer.Sign(content, signingDomain)
+	signed, err := signer.Sign(content, signingDomain)
 	if err != nil {
 		return nil, fmt.Errorf("dkim signing failed for message %q and domain %q: %w", msg.ID, signingDomain, err)
 	}
@@ -549,8 +584,14 @@ func (h *SMTPDeliveryHandler) attemptDeliveryToHostWithMetadata(ctx context.Cont
 	ctx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
 
-	// Determine port (try 25, fallback ports)
-	ports := []string{"25", "587", "2525"}
+	// MX delivery is port 25 only. Trying 587 or 2525 when 25 fails reached
+	// submission services that require authentication, or something else
+	// entirely, and turned a clear "port 25 blocked" into a misleading error.
+	port := h.mxPort
+	if port == "" {
+		port = "25"
+	}
+	ports := []string{port}
 
 	var lastError error
 	for _, port := range ports {
@@ -583,7 +624,7 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 		"recipients", recipients,
 		"require_tls", requireTLS)
 
-	client, conn, tlsUsed, nextHopRequireTLS, err := h.connectSMTPWithRequireTLS(ctx, address, requireTLS)
+	client, conn, tlsState, nextHopRequireTLS, err := h.connectSMTP(ctx, address, requireTLS)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to connect to %s: %w", address, err)
 	}
@@ -591,8 +632,10 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 
 	// REQUIRETLS is stricter than MTA-STS: it already mandates verified TLS and
 	// next-hop support, so do not apply the overlapping policy a second time.
+	// MTA-STS requires a certificate that validates for the MX host, so only
+	// verified TLS counts; an encrypted-but-unverified session does not.
 	if !requireTLS {
-		if err := h.mtastsManager.EnforcePolicy(ctx, domain, mxHost, tlsUsed); err != nil {
+		if err := h.mtastsManager.EnforcePolicy(ctx, domain, mxHost, tlsState == tlsVerified); err != nil {
 			return "", "", nil, fmt.Errorf("MTA-STS policy check failed for %s: %w", domain, err)
 		}
 	}
@@ -687,9 +730,100 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 	return deliveryIP, deliveryHost, outcomes, nil
 }
 
-// connectSMTPWithRequireTLS establishes an SMTP connection and reports whether
-// the next hop advertised REQUIRETLS after STARTTLS.
-func (h *SMTPDeliveryHandler) connectSMTPWithRequireTLS(ctx context.Context, address string, requireTLS bool) (*smtp.Client, net.Conn, bool, bool, error) {
+// outboundTLS records what protection a delivery connection ended up with.
+type outboundTLS int
+
+const (
+	tlsNone       outboundTLS = iota // plaintext
+	tlsUnverified                    // encrypted, certificate not validated
+	tlsVerified                      // encrypted, certificate valid for the MX host
+)
+
+// connectSMTP connects to address and negotiates the best TLS it can.
+//
+// Opportunistic TLS (RFC 7435) tries, in order: STARTTLS with a certificate
+// that validates for the MX host; STARTTLS without validation; plaintext.
+// Each fallback is a fresh connection. A failed TLS handshake leaves the
+// session unusable, so the old code's "continue in plaintext" on the same
+// connection could never deliver, and since most MX certificates do not
+// validate for the MX name, that turned into deferring mail to a large share
+// of the internet. Unverified encryption still defeats passive interception,
+// which is what opportunistic TLS is for; MTA-STS and REQUIRETLS, which need
+// validation, are told which one was achieved.
+func (h *SMTPDeliveryHandler) connectSMTP(ctx context.Context, address string, requireTLS bool) (*smtp.Client, net.Conn, outboundTLS, bool, error) {
+	host := address
+	if hostOnly, _, err := net.SplitHostPort(address); err == nil {
+		host = hostOnly
+	}
+
+	client, conn, err := h.dialAndGreet(ctx, address)
+	if err != nil {
+		return nil, nil, tlsNone, false, err
+	}
+
+	state := tlsNone
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		if err := client.StartTLS(h.outboundTLSConfig(host)); err == nil {
+			state = tlsVerified
+			h.logger.Debug("STARTTLS negotiated with a verified certificate", "address", address)
+		} else {
+			_ = client.Close()
+			if requireTLS {
+				return nil, nil, tlsNone, false, newRequireTLSError("STARTTLS required but failed against %s: %v", address, err)
+			}
+			h.logger.Info("MX certificate did not validate; retrying with unverified TLS",
+				"address", address, "error", err)
+			client, conn, state, err = h.reconnectOpportunistic(ctx, address, host, !requireTLS)
+			if err != nil {
+				return nil, nil, tlsNone, false, err
+			}
+		}
+	} else if requireTLS {
+		_ = client.Close()
+		return nil, nil, tlsNone, false, newRequireTLSError("STARTTLS required but not supported by server %s", address)
+	}
+
+	nextHopSupportsRequireTLS, _ := client.Extension("REQUIRETLS")
+	if requireTLS && !nextHopSupportsRequireTLS {
+		_ = client.Close()
+		return nil, nil, tlsNone, false, newRequireTLSError("next-hop %s does not advertise REQUIRETLS", address)
+	}
+
+	return client, conn, state, nextHopSupportsRequireTLS, nil
+}
+
+// reconnectOpportunistic is the fallback after a certificate failed to
+// validate: unverified TLS on a new connection, then plaintext on another.
+//
+// allowUnverified is false whenever the message requires TLS (REQUIRETLS);
+// the caller never reaches here in that case, and the guard keeps it so.
+func (h *SMTPDeliveryHandler) reconnectOpportunistic(ctx context.Context, address, host string, allowUnverified bool) (*smtp.Client, net.Conn, outboundTLS, error) {
+	client, conn, err := h.dialAndGreet(ctx, address)
+	if err != nil {
+		return nil, nil, tlsNone, err
+	}
+	if ok, _ := client.Extension("STARTTLS"); ok && allowUnverified {
+		cfg := h.outboundTLSConfig(host)
+		// #nosec G402 -- opportunistic TLS (RFC 7435): encryption without
+		// authentication still defeats passive interception. Callers that need
+		// a validated certificate (MTA-STS, REQUIRETLS) are told it is unverified.
+		cfg.InsecureSkipVerify = allowUnverified
+		if err := client.StartTLS(cfg); err == nil {
+			return client, conn, tlsUnverified, nil
+		}
+		_ = client.Close()
+		h.logger.Warn("STARTTLS failed even without certificate validation; delivering in plaintext",
+			"address", address, "error", err)
+		client, conn, err = h.dialAndGreet(ctx, address)
+		if err != nil {
+			return nil, nil, tlsNone, err
+		}
+	}
+	return client, conn, tlsNone, nil
+}
+
+// dialAndGreet opens a connection and sends EHLO.
+func (h *SMTPDeliveryHandler) dialAndGreet(ctx context.Context, address string) (*smtp.Client, net.Conn, error) {
 	// Use an injected dial function in tests; production uses a bounded net.Dialer.
 	dial := h.dialContext
 	if dial == nil {
@@ -698,57 +832,23 @@ func (h *SMTPDeliveryHandler) connectSMTPWithRequireTLS(ctx context.Context, add
 	}
 	conn, err := dial(ctx, "tcp", address)
 	if err != nil {
-		return nil, nil, false, false, fmt.Errorf("failed to dial %s: %w", address, err)
+		return nil, nil, fmt.Errorf("failed to dial %s: %w", address, err)
 	}
 
-	// Extract hostname for TLS verification
-	host := strings.Split(address, ":")[0]
-
-	// Create SMTP client
+	host := address
+	if hostOnly, _, err := net.SplitHostPort(address); err == nil {
+		host = hostOnly
+	}
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		_ = conn.Close() // Ignore error on cleanup in error path
-		return nil, nil, false, false, fmt.Errorf("failed to create SMTP client: %w", err)
+		return nil, nil, fmt.Errorf("failed to create SMTP client: %w", err)
 	}
-
-	// Send EHLO/HELO
-	hostname := "localhost"
-	if err := client.Hello(hostname); err != nil {
+	if err := client.Hello(h.ehloName()); err != nil {
 		_ = client.Close() // Ignore error on cleanup in error path
-		return nil, nil, false, false, fmt.Errorf("HELLO command failed: %w", err)
+		return nil, nil, fmt.Errorf("HELLO command failed: %w", err)
 	}
-
-	// Always attempt STARTTLS opportunistically; requireTLS additionally makes it mandatory.
-	tlsUsed := false
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		if err := client.StartTLS(h.outboundTLSConfig(host)); err != nil {
-			if requireTLS {
-				_ = client.Close()
-				return nil, nil, false, false, newRequireTLSError("STARTTLS required but failed against %s: %v", address, err)
-			}
-			// For opportunistic TLS, log the failure but continue in plaintext
-			h.logger.Warn("Opportunistic STARTTLS failed, continuing in plaintext",
-				"address", address,
-				"error", err)
-		} else {
-			// smtp.Client.StartTLS already re-sends EHLO internally per RFC 3207;
-			// calling client.Hello again here would always fail since Hello was
-			// already called above.
-			tlsUsed = true
-			h.logger.Debug("STARTTLS negotiated successfully", "address", address)
-		}
-	} else if requireTLS {
-		_ = client.Close()
-		return nil, nil, false, false, newRequireTLSError("STARTTLS required but not supported by server %s", address)
-	}
-
-	nextHopSupportsRequireTLS, _ := client.Extension("REQUIRETLS")
-	if requireTLS && !nextHopSupportsRequireTLS {
-		_ = client.Close()
-		return nil, nil, false, false, newRequireTLSError("next-hop %s does not advertise REQUIRETLS", address)
-	}
-
-	return client, conn, tlsUsed, nextHopSupportsRequireTLS, nil
+	return client, conn, nil
 }
 
 // outboundTLSConfig builds the TLS config for STARTTLS with the given server name.

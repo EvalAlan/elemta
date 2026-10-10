@@ -185,6 +185,18 @@ func GetBytesProcessed() int64 {
 
 // handleHealthStats returns server health statistics
 func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
+	// Liveness is public, so load balancers and the container health check
+	// can probe without credentials. The details are not: queue depths,
+	// throughput, versions and memory tell an outsider a lot, and computing
+	// the oldest-message ages walks every queue, which an unauthenticated
+	// caller should not be able to trigger in a loop.
+	if s.authMiddleware != nil {
+		if _, err := s.authMiddleware.authenticate(r); err != nil {
+			writeJSON(w, map[string]string{"status": "healthy"})
+			return
+		}
+	}
+
 	ctx := r.Context()
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)

@@ -34,6 +34,19 @@ elemta verifies with the identical implementation.
 
 ## Generating keys
 
+`elemta dkim keygen` writes a key at mode `0600` (it refuses to overwrite an
+existing file) and prints the TXT record to publish:
+
+```sh
+elemta dkim keygen --domain example.com --selector s2026a \
+  --out /etc/elemta/dkim/example.com.s2026a.key            # RSA 2048
+elemta dkim keygen --domain example.com --selector s2026e --type ed25519 \
+  --out /etc/elemta/dkim/example.com.s2026e.key
+```
+
+`elemta dkim record --domain ... --selector ... --key <file>` prints the record
+for a key you already have. To do the same with openssl instead:
+
 RSA (2048-bit is the widely interoperable choice):
 
 ```sh
@@ -118,6 +131,30 @@ body_canonicalization = "relaxed"     # default: relaxed
 Default signed headers (when `headers_to_sign` is omitted): `From`, `To`, `Cc`,
 `Subject`, `Date`, `Message-ID`, `MIME-Version`, `Content-Type`, `Reply-To`,
 `In-Reply-To`, `References`.
+
+## Rotating a key
+
+Rotate under a **new selector**; never replace the key behind a selector that
+is published. The order matters: a server that signs with a selector DNS does
+not serve yet fails DKIM on every message, and under a DMARC `p=reject` policy
+receivers refuse that mail.
+
+1. Generate the new key under a new selector:
+   `elemta dkim keygen --domain example.com --selector s2026b --out /etc/elemta/dkim/example.com.s2026b.key`
+2. Publish the printed TXT record.
+3. Run `elemta dkim check --domain example.com --selector s2026b --key /etc/elemta/dkim/example.com.s2026b.key`
+   until it prints `OK`. It exits non-zero while DNS serves nothing, or a
+   different key, under that selector.
+4. Change the domain's `selector` and `private_key_path` to the new key. The
+   server picks up the change on config reload (within a few seconds of the
+   file changing, or on `SIGHUP`); a key that does not load refuses the
+   reload and signing continues with the old key, so check the log.
+5. Leave the old selector's record published for a few days so messages
+   signed with it and still being delivered or re-verified keep passing, then
+   remove it and delete the old key file.
+
+Settings > DKIM in the dashboard has a check button that runs the same DNS
+comparison for the configured key.
 
 ## Verifying it works
 

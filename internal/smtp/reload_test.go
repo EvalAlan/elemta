@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/dkim"
 )
 
 // Reload changes policy on a running server, so these tests are about the two
@@ -192,4 +194,23 @@ func TestReloadIsSafeUnderTraffic(t *testing.T) {
 
 	close(stop)
 	wg.Wait()
+}
+
+// A DKIM key that does not load must refuse the reload, as it refuses startup,
+// rather than leave the server signing with a key the operator replaced.
+func TestReloadRefusesAnUnloadableDKIMKey(t *testing.T) {
+	cfg := createTestConfig(t)
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+
+	next := createTestConfig(t)
+	next.DKIM = &dkim.Config{Enabled: true, Domains: []dkim.DomainConfig{{
+		Domain: "example.com", Selector: "s2", PrivateKeyPath: "/nonexistent/s2.key",
+	}}}
+	if err := server.Reload(context.Background(), next); err == nil {
+		t.Fatal("reload accepted a DKIM key that cannot be read")
+	}
 }
