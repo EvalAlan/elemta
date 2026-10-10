@@ -18,6 +18,7 @@ import (
 
 	"github.com/EvalAlan/elemta/internal/delivery"
 	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/tlsrpt"
 )
 
 // messageSigner signs outbound message content for a given signing domain.
@@ -138,6 +139,9 @@ type SMTPDeliveryHandler struct {
 	// sessions parks finished outbound sessions for the next message to the
 	// same MX address; see session_cache.go. Nil disables reuse.
 	sessions *sessionCache
+	// tlsReports counts TLS outcomes per recipient domain for TLS-RPT
+	// (RFC 8460). Nil disables counting.
+	tlsReports TLSReportRecorder
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -662,6 +666,9 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 		// next-hop support, so do not apply the overlapping policy a second time.
 		// MTA-STS requires a certificate that validates for the MX host, so only
 		// verified TLS counts; an encrypted-but-unverified session does not.
+		if !reused {
+			h.reportTLS(ctx, domain, mxHost, sess)
+		}
 		if !requireTLS {
 			if err := h.mtastsManager.EnforcePolicy(ctx, domain, mxHost, sess.tls == tlsVerified); err != nil {
 				return "", "", nil, fmt.Errorf("MTA-STS policy check failed for %s: %w", domain, err)
@@ -768,12 +775,14 @@ func (h *SMTPDeliveryHandler) acquireSession(ctx context.Context, address string
 			return s, true, nil
 		}
 	}
-	client, conn, tlsState, nextHopRequireTLS, err := h.connectSMTP(ctx, address, requireTLS)
+	var info tlsAttemptInfo
+	client, conn, tlsState, nextHopRequireTLS, err := h.connectSMTP(ctx, address, requireTLS, &info)
 	if err != nil {
 		return nil, false, err
 	}
 	now := time.Now()
-	return &outboundSession{client: client, conn: conn, tls: tlsState, requireTLS: nextHopRequireTLS, created: now, idleSince: now}, false, nil
+	return &outboundSession{client: client, conn: conn, tls: tlsState, requireTLS: nextHopRequireTLS,
+		starttlsOffered: info.starttlsOffered, verifyErr: info.verifyErr, created: now, idleSince: now}, false, nil
 }
 
 // sendMailFrom opens a transaction, adding the REQUIRETLS parameter when the
@@ -849,6 +858,93 @@ func (h *SMTPDeliveryHandler) SessionCacheStats() (stats SessionCacheStats, ok b
 	return h.sessions.stats(), true
 }
 
+// TLSReportRecorder receives the TLS outcome of each new outbound session.
+type TLSReportRecorder interface {
+	Record(tlsrpt.Session)
+}
+
+// SetTLSReportRecorder enables TLS-RPT counting.
+func (h *SMTPDeliveryHandler) SetTLSReportRecorder(r TLSReportRecorder) {
+	h.tlsReports = r
+}
+
+// stsPolicySource is implemented by the MTA-STS manager; reporting needs the
+// policy itself, not just the enforcement verdict.
+type stsPolicySource interface {
+	GetPolicy(ctx context.Context, domain string) (*delivery.MTASTSPolicy, error)
+}
+
+// reportTLS records a newly negotiated session against the recipient
+// domain's policy. Sessions are counted once, when they are set up: a reused
+// session carries the same TLS as when it was counted.
+func (h *SMTPDeliveryHandler) reportTLS(ctx context.Context, domain, mxHost string, sess *outboundSession) {
+	if h.tlsReports == nil {
+		return
+	}
+	rec := tlsrpt.Session{
+		Policy:      tlsrpt.Policy{Type: tlsrpt.PolicyTypeNoPolicy, Domain: domain},
+		ReceivingMX: strings.TrimSuffix(mxHost, "."),
+	}
+	if sess.conn != nil {
+		rec.SendingIP = addrIP(sess.conn.LocalAddr())
+		rec.ReceivingIP = addrIP(sess.conn.RemoteAddr())
+	}
+
+	var policy *delivery.MTASTSPolicy
+	if src, ok := h.mtastsManager.(stsPolicySource); ok {
+		policy, _ = src.GetPolicy(ctx, domain)
+	}
+	if policy != nil && policy.Mode != "none" {
+		rec.Policy = tlsrpt.Policy{
+			Type:    tlsrpt.PolicyTypeSTS,
+			Domain:  domain,
+			Strings: stsPolicyStrings(policy),
+			MXHosts: append([]string(nil), policy.MX...),
+		}
+	}
+
+	switch {
+	case sess.tls == tlsNone && !sess.starttlsOffered:
+		rec.ResultType = tlsrpt.ResultStartTLSNotSupported
+	case sess.tls == tlsNone:
+		// Offered STARTTLS, but no handshake succeeded even unverified.
+		rec.ResultType = tlsrpt.ResultValidationFailure
+		if sess.verifyErr != nil {
+			rec.FailureReason = sess.verifyErr.Error()
+		}
+	case rec.Policy.Type == tlsrpt.PolicyTypeNoPolicy:
+		// Without a policy, any encryption is what was asked for.
+		rec.Success = true
+	case !policy.MatchesMX(mxHost):
+		rec.ResultType = tlsrpt.ResultValidationFailure
+		rec.FailureReason = "mx host not listed in MTA-STS policy"
+	case sess.tls == tlsVerified:
+		rec.Success = true
+	default:
+		rec.ResultType = tlsrpt.ClassifyCertError(sess.verifyErr)
+	}
+	h.tlsReports.Record(rec)
+}
+
+// stsPolicyStrings renders a policy as the lines it was published as.
+func stsPolicyStrings(p *delivery.MTASTSPolicy) []string {
+	out := []string{"version: " + p.Version, "mode: " + p.Mode}
+	for _, mx := range p.MX {
+		out = append(out, "mx: "+mx)
+	}
+	return append(out, fmt.Sprintf("max_age: %d", p.MaxAge))
+}
+
+func addrIP(a net.Addr) string {
+	if a == nil {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(a.String()); err == nil {
+		return host
+	}
+	return a.String()
+}
+
 // outboundTLS records what protection a delivery connection ended up with.
 type outboundTLS int
 
@@ -857,6 +953,13 @@ const (
 	tlsUnverified                    // encrypted, certificate not validated
 	tlsVerified                      // encrypted, certificate valid for the MX host
 )
+
+// tlsAttemptInfo records how TLS negotiation went, for TLS reporting: whether
+// the receiver offered STARTTLS, and why a verified handshake failed.
+type tlsAttemptInfo struct {
+	starttlsOffered bool
+	verifyErr       error
+}
 
 // connectSMTP connects to address and negotiates the best TLS it can.
 //
@@ -869,7 +972,12 @@ const (
 // of the internet. Unverified encryption still defeats passive interception,
 // which is what opportunistic TLS is for; MTA-STS and REQUIRETLS, which need
 // validation, are told which one was achieved.
-func (h *SMTPDeliveryHandler) connectSMTP(ctx context.Context, address string, requireTLS bool) (*smtp.Client, net.Conn, outboundTLS, bool, error) {
+//
+// info, when non-nil, is filled with what TLS reporting needs to know.
+func (h *SMTPDeliveryHandler) connectSMTP(ctx context.Context, address string, requireTLS bool, info *tlsAttemptInfo) (*smtp.Client, net.Conn, outboundTLS, bool, error) {
+	if info == nil {
+		info = &tlsAttemptInfo{}
+	}
 	host := address
 	if hostOnly, _, err := net.SplitHostPort(address); err == nil {
 		host = hostOnly
@@ -882,10 +990,12 @@ func (h *SMTPDeliveryHandler) connectSMTP(ctx context.Context, address string, r
 
 	state := tlsNone
 	if ok, _ := client.Extension("STARTTLS"); ok {
+		info.starttlsOffered = true
 		if err := client.StartTLS(h.outboundTLSConfig(host)); err == nil {
 			state = tlsVerified
 			h.logger.Debug("STARTTLS negotiated with a verified certificate", "address", address)
 		} else {
+			info.verifyErr = err
 			_ = client.Close()
 			if requireTLS {
 				return nil, nil, tlsNone, false, newRequireTLSError("STARTTLS required but failed against %s: %v", address, err)

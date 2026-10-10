@@ -272,6 +272,31 @@ restart.
   to open a new connection for every message.
 - retry/timeouts
 
+### TLS reporting
+
+`[tls_reporting]` sends SMTP TLS Reporting (RFC 8460) reports. For every
+recipient domain, the server counts each new outbound session against the
+domain's MTA-STS policy (or "no policy found"): successes, and failures by
+cause (`starttls-not-supported`, `certificate-expired`,
+`certificate-host-mismatch`, `certificate-not-trusted`,
+`validation-failure`). After each UTC day it looks up
+`_smtp._tls.<domain>` and, for domains that publish a record, emails the
+report through the queue (`mailto:`) or POSTs it (`https://`). Domains
+without a record are dropped silently. A failed send is retried hourly, up
+to six times.
+
+```toml
+[tls_reporting]
+enabled = false                         # reports are mail to third parties
+report_from = "tlsrpt@example.com"      # required; must be a domain you DKIM-sign
+organization_name = "Example Inc"       # default: hostname
+contact_info = "postmaster@example.com" # default: report_from
+# state_file = "/var/spool/elemta/tlsrpt-state.json"  # default: in the queue dir
+```
+
+Counts are saved to `state_file` every minute and on shutdown, so a restart
+loses at most a minute of counts.
+
 ### Metrics
 
 - `[metrics].enabled`

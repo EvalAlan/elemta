@@ -49,6 +49,7 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 		// which is why the setting did nothing.
 		MaxConnectionsPerDomain: c.MaxConnectionsPerDomain,
 		FeedbackAddresses:       c.FeedbackAddresses,
+		TLSReporting:            c.TLSReporting,
 		MaxRetries:              c.MaxRetries,
 		MaxQueueTime:            c.MaxQueueTime,
 		RetrySchedule:           c.RetrySchedule,

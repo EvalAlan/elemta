@@ -21,6 +21,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/plugin"
 	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/EvalAlan/elemta/internal/suppression"
+	"github.com/EvalAlan/elemta/internal/tlsrpt"
 	"github.com/google/uuid"
 	"github.com/sony/gobreaker"
 	"golang.org/x/sync/errgroup"
@@ -309,6 +310,8 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 	slogger.Info("Unified queue system initialized", "directory", config.QueueDir, "backend", queueManager.BackendType())
 
 	var queueProcessor *queue.Processor
+	// tlsReportHandler is the remote SMTP handler, if any, for TLS reporting.
+	var tlsReportHandler *queue.SMTPDeliveryHandler
 	if config.QueueProcessorEnabled {
 		slogger.Info("Queue processor enabled, initializing")
 
@@ -364,6 +367,8 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		if remoteSMTPHandler != nil {
 			remoteSMTPHandler.SetHeloHostname(config.Hostname)
 		}
+
+		tlsReportHandler = remoteSMTPHandler
 
 		// Outbound session reuse is on unless [delivery] reuse_connections = false.
 		if remoteSMTPHandler != nil && config.Delivery != nil &&
@@ -468,7 +473,44 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		}
 	}
 
+	if queueProcessor != nil && tlsReportHandler != nil {
+		initTLSReporting(config, queueManager, queueProcessor, tlsReportHandler, slogger)
+	}
+
 	return queueManager, queueProcessor, nil
+}
+
+// initTLSReporting starts RFC 8460 TLS reporting on the remote SMTP handler.
+// A failure to start is logged, not fatal: reports are a courtesy to other
+// domains, and mail delivery must not depend on them.
+func initTLSReporting(config *Config, manager *queue.Manager, processor *queue.Processor, handler *queue.SMTPDeliveryHandler, slogger *slog.Logger) {
+	cfg := config.TLSReporting
+	if cfg == nil || !cfg.Enabled {
+		return
+	}
+	stateFile := cfg.StateFile
+	if stateFile == "" && config.QueueDir != "" {
+		stateFile = filepath.Join(config.QueueDir, "tlsrpt-state.json")
+	}
+	enqueue := func(id, from string, to []string, subject string, content []byte) error {
+		_, err := manager.EnqueueMessageWithID(id, from, to, subject, content, queue.PriorityLow, time.Now())
+		return err
+	}
+	reporter, err := tlsrpt.NewReporter(tlsrpt.Config{
+		OrganizationName: cfg.OrganizationName,
+		ContactInfo:      cfg.ContactInfo,
+		Hostname:         config.Hostname,
+		From:             cfg.ReportFrom,
+		StateFile:        stateFile,
+	}, enqueue, slogger)
+	if err != nil {
+		slogger.Warn("TLS reporting not started", "error", err)
+		return
+	}
+	handler.SetTLSReportRecorder(reporter)
+	reporter.Start()
+	processor.OnStop(reporter.Stop)
+	slogger.Info("TLS reporting (RFC 8460) enabled", "report_from", cfg.ReportFrom, "state_file", stateFile)
 }
 
 // initResourceManager initializes resource limits and the resource manager.

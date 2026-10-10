@@ -145,6 +145,9 @@ type Config struct {
 	// complaining recipient; the report is still delivered.
 	FeedbackAddresses []string `toml:"feedback_addresses"`
 
+	// TLSReporting sends RFC 8460 TLS reports to domains that ask for them.
+	TLSReporting *smtp.TLSReportingConfig `toml:"tls_reporting"`
+
 	// StrictLineEndings enforces RFC 5321 CRLF requirements in DATA. Unset
 	// means strict; set it to false only to interoperate with legacy senders.
 	StrictLineEndings *bool `toml:"strict_line_endings"`
