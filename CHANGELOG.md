@@ -1,5 +1,55 @@
 # Elemta Changelog
 
+## v0.3.0 (2026-10-10)
+
+### Breaking: authenticated senders can only send as themselves
+
+After AUTH, `MAIL FROM` must be an address the login owns, or the server
+replies `553 5.7.1 Sender address rejected: not owned by authenticated user`.
+Before this, any authenticated user could send as any address, including one
+in another customer's domain.
+
+A login that is an address owns that address. A bare login (`alice`) owns
+`alice@` at each of `local_domains`. The null sender is always allowed, and
+unauthenticated sessions are unaffected. Grant shared or role addresses under
+`[auth.sender_aliases]` (an exact address, or `@domain` for a whole domain), or
+set `[auth] allow_any_sender = true` to keep the old behaviour while you list
+them.
+
+**Before upgrading:** check which addresses your submission users send as.
+
+### Outbound delivery
+
+- **Connection reuse** (`[delivery] reuse_connections`, on by default). The next
+  message to the same MX goes over the open session instead of reconnecting:
+  connect, EHLO and the TLS handshake are skipped. About 9ms to 5ms a message
+  in the benchmark.
+- **DANE** (`[delivery] dane`, off by default). When an MX is DNSSEC-signed
+  and publishes TLSA records, its certificate must match them, with no
+  fallback to plaintext. Needs a validating resolver at `dane_resolver`
+  (default `127.0.0.1:53`).
+- **SMTP TLS Reporting** (`[tls_reporting]`, off by default). Daily RFC 8460
+  reports to domains that publish `_smtp._tls`, by mail or HTTPS.
+
+### Sender verification is bounded
+
+SPF, DKIM, DMARC and ARC now run together under one deadline, `[inbound_auth]
+timeout` (10s by default). Before, they ran one after another, each with its
+own timeout, and DKIM key lookups had none, so a stalled resolver held a client
+at end-of-DATA for 20 to 36 seconds. TXT answers are cached briefly in-process.
+A plugin `timeout` above `[inbound_auth] timeout` no longer has any effect.
+
+### Deployment and tooling
+
+- A real deploy workflow: manually dispatched, SSH to a host running
+  `deployments/compose/docker-compose.prod.yml`, health-gated with automatic
+  rollback to the previous image tag. See `docs/production-deployment.md`.
+- The dev stack resolves through its own caching resolver (`elemta-dns`), so
+  stress runs measure Elemta rather than the host's DNS. `elemta_network` now
+  has a fixed subnet (10.253.53.0/24); run `make down` once to recreate it.
+- `tests/performance/smtp_stress_test.py` resolves the target once instead of
+  per message, and no longer counts connection errors as corpus mail.
+
 ## Upgrade Notes (August 2026)
 
 This release changes behaviour that was previously inert. Read before rolling
