@@ -62,6 +62,11 @@ type Server struct {
 	authVerifier *authresult.Verifier
 	slogger      *slog.Logger // Structured logger for resource management
 
+	// poolsFingerprint is the pool configuration in force, so a reload can
+	// tell whether pools changed. Only Reload touches it after startup, and
+	// reloads run one at a time.
+	poolsFingerprint string
+
 	// Concurrency management
 	workerPool   *WorkerPool        // Standardized worker pool for connection handling
 	rootCtx      context.Context    // Server root context for lifecycle management
@@ -394,19 +399,20 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			slogger.Info("Outbound SMTP connection reuse disabled")
 		}
 
+		// Shared state goes in before the pools and the shaper so neither
+		// ever runs on per-node counts while the cluster is sharing.
+		if remoteSMTPHandler != nil && config.Delivery != nil && config.Delivery.SharedState {
+			addr := valkeyAddress()
+			remoteSMTPHandler.SetSharedState(queue.NewValkeyState(addr, config.Delivery.SharedStatePrefix), slogger)
+			slogger.Info("Warmup counts and provider throttles are shared through Valkey",
+				"address", addr, "prefix", sharedStatePrefix(config.Delivery))
+		}
+
 		// Sending IP pools. A pool address that is not on this host would fail
 		// every connection, and those failures would read as the destination
 		// refusing us, so that refuses startup rather than deferring all mail.
 		if remoteSMTPHandler != nil && config.Delivery != nil && len(config.Delivery.Pools) > 0 {
-			stateFile := config.Delivery.PoolStateFile
-			if stateFile == "" {
-				stateFile = filepath.Join(config.QueueDir, "pool-state.json")
-			}
-			router, err := queue.NewPoolRouter(queue.PoolsConfig{
-				Pools:       config.Delivery.Pools,
-				DefaultPool: config.Delivery.DefaultPool,
-				StateFile:   stateFile,
-			}, slogger)
+			router, err := queue.NewPoolRouter(poolsSettings(config), slogger)
 			if err != nil {
 				return nil, nil, fmt.Errorf("delivery pools: %w", err)
 			}
@@ -494,10 +500,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 
 		slogger.Info("Queue processor initialized successfully")
 
-		valkeyAddr := os.Getenv("VALKEY_ADDR")
-		if valkeyAddr == "" {
-			valkeyAddr = "elemta-valkey:6379"
-		}
+		valkeyAddr := valkeyAddress()
 		metricsStore, err := newQueueMetricsStore(valkeyAddr)
 		if err != nil {
 			slogger.Warn("Failed to connect to Valkey for metrics", "error", err)
@@ -867,6 +870,7 @@ func NewServer(config *Config) (*Server, error) {
 		cancel:          cancel,
 		errGroup:        errGroup,
 	}
+	server.poolsFingerprint = poolsFingerprint(poolsSettings(config))
 
 	tlsManager, err := initTLSManager(config, slogger)
 	if err != nil {

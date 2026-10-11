@@ -196,9 +196,21 @@ retry_delay = 60
 # Each pool is a set of source addresses that mail is assigned to by envelope
 # sender; each address announces its own EHLO name (match its PTR record) and
 # can be warmed up on a daily-cap schedule. Every address must be bindable on
-# this host or startup is refused. Changing pools needs a restart.
+# this host or startup (or the config reload) is refused. Pools are re-read on
+# a config reload; today's warmup counts carry over.
 #
 # default_pool = "transactional"   # for senders no pool claims, DSNs included
+#
+# Several nodes sending from the same pool addresses (for example on the
+# postgres queue backend) each count warmup on their own unless the counts are
+# shared. shared_state keeps the daily warmup counters and mailbox provider
+# throttles (Gmail's 421 4.7.28 and the like) in Valkey, at the same address
+# sender telemetry uses: the VALKEY_ADDR environment variable, default
+# elemta-valkey:6379. If Valkey cannot be reached, each node falls back to its
+# own counts and pool_state_file, and says so in the log at most once a minute.
+# Needs a restart to change.
+# shared_state = false
+# shared_state_prefix = "elemta:delivery:"  # distinct per cluster sharing one Valkey
 #
 # [[delivery.pools]]
 # name = "transactional"

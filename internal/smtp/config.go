@@ -223,7 +223,8 @@ type DeliveryConfig struct {
 	// addresses that mail is assigned to by envelope sender, each address
 	// with its own EHLO name and optional warmup schedule. None means
 	// outbound mail leaves from whatever address the kernel picks.
-	// Changing pools needs a restart.
+	// Pools, default_pool and pool_state_file are re-read on a config
+	// reload; adding or removing an address still has to pass the bind check.
 	Pools []queue.PoolConfig `toml:"pools" json:"pools,omitempty"`
 	// DefaultPool is the pool for mail whose sender no pool claims, DSNs
 	// included. Empty leaves that mail unpooled.
@@ -231,6 +232,16 @@ type DeliveryConfig struct {
 	// PoolStateFile keeps per-address warmup counts across restarts.
 	// Defaults to pool-state.json in the queue directory.
 	PoolStateFile string `toml:"pool_state_file" json:"pool_state_file,omitempty"`
+	// SharedState keeps warmup counts and provider throttles in Valkey, so
+	// several nodes sending from the same pool addresses share one daily
+	// cap and one throttle. It uses the Valkey that sender telemetry uses
+	// (VALKEY_ADDR, default elemta-valkey:6379). Off keeps them per node.
+	// Needs a restart to change.
+	SharedState bool `toml:"shared_state" json:"shared_state,omitempty"`
+	// SharedStatePrefix namespaces the keys. Clusters that share one Valkey
+	// but not their pool addresses need different prefixes.
+	// Default "elemta:delivery:".
+	SharedStatePrefix string `toml:"shared_state_prefix" json:"shared_state_prefix,omitempty"`
 	// ProviderProfiles shapes mail to Gmail, Yahoo and Microsoft (matched by
 	// MX host, so hosted domains count) as one destination per provider per
 	// source address, and reads their throttle replies. Unset means on.

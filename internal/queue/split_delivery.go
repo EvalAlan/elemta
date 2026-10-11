@@ -213,3 +213,16 @@ func (h *SplitDeliveryHandler) AttributeComplaint(sourceIP string, recipients []
 	}
 	return ComplaintAttribution{}
 }
+
+// ReplacePoolRouter passes reloaded pools to the remote handler, the only
+// one that sends from a pool.
+func (h *SplitDeliveryHandler) ReplacePoolRouter(r *PoolRouter) {
+	if remote, ok := h.remote.(poolReplacer); ok {
+		remote.ReplacePoolRouter(r)
+	}
+}
+
+func (h *SplitDeliveryHandler) sendsFromPools() bool {
+	_, ok := h.remote.(poolReplacer)
+	return ok
+}
