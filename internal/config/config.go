@@ -149,6 +149,9 @@ type Config struct {
 	// TLSReporting sends RFC 8460 TLS reports to domains that ask for them.
 	TLSReporting *smtp.TLSReportingConfig `toml:"tls_reporting"`
 
+	// DMARCReports sends RFC 7489 aggregate reports to domains that ask.
+	DMARCReports *smtp.DMARCReportsConfig `toml:"dmarc_reports"`
+
 	// StrictLineEndings enforces RFC 5321 CRLF requirements in DATA. Unset
 	// means strict; set it to false only to interoperate with legacy senders.
 	StrictLineEndings *bool `toml:"strict_line_endings"`

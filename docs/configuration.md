@@ -443,6 +443,52 @@ contact_info = "postmaster@example.com" # default: report_from
 Counts are saved to `state_file` every minute and on shutdown, so a restart
 loses at most a minute of counts.
 
+### DMARC aggregate reports
+
+`[dmarc_reports]` sends DMARC aggregate reports (RFC 7489 §7.2) for inbound
+mail. Each DMARC evaluation by `[plugins.dmarc]` is counted when the From
+domain's record has a `rua=mailto:` tag: source IP, header From domain, the
+published policy (`p`, `sp`, `pct`, `adkim`, `aspf`), the disposition applied,
+whether DKIM and SPF aligned, and the underlying DKIM (domain, selector,
+result) and SPF (domain, result) outcomes. Evaluations that agree on all of
+these are one record with a count.
+
+After each UTC day, every such domain is mailed one report through the queue:
+RFC 7489 Appendix C XML, gzipped and attached as
+`<hostname>!<policy-domain>!<begin>!<end>.xml.gz`.
+
+- **External destinations.** A `rua` address outside the policy domain's
+  organisational domain gets reports only if it publishes a TXT record
+  `<policy-domain>._report._dmarc.<rua-domain>` starting `v=DMARC1` (RFC 7489
+  §7.1). Otherwise anyone could point a `rua` at a victim. If that lookup
+  fails rather than finding nothing, the report is retried.
+- **Size limits.** A `!size` suffix (`mailto:rua@example.com!10m`) is
+  honoured: a destination whose limit the report exceeds is skipped.
+- **Unenforced failures.** With `[plugins.dmarc] enforce = false`, a failing
+  message under `p=quarantine` or `p=reject` is reported with disposition
+  `none` and reason `local_policy`.
+- **Limits.** At most 10,000 records per domain per day and 10,000 domains
+  per day are kept. Messages past the record limit are counted, and the
+  report says how many were left out.
+- **Which messages count.** Messages are reported under their header From
+  domain, which is the domain DMARC judges. A message with no usable From, or
+  one naming several From domains, is not counted, because no single domain's
+  policy decided it.
+
+A failed send is retried hourly, up to six times.
+
+```toml
+[dmarc_reports]
+enabled = false                              # reports are mail to third parties
+report_from = "dmarc-reports@example.com"    # required; use a domain you DKIM-sign
+organization_name = "Example Inc"            # default: hostname
+contact_email = "postmaster@example.com"     # default: report_from
+# state_dir = "/var/spool/elemta"            # default: the queue directory
+```
+
+Counts are saved to `dmarc-reports-state.json` in `state_dir` every minute
+and on shutdown, so a restart loses at most a minute of counts.
+
 ### Metrics
 
 - `[metrics].enabled`

@@ -317,8 +317,9 @@ func TestBuildDSNBounceStructure(t *testing.T) {
 	assert.Contains(t, contentStr, "message/delivery-status", "Should have delivery-status part")
 	assert.Contains(t, contentStr, "text/plain", "Should have human-readable text part")
 
-	// Check DSN per-recipient fields (ORCPT preserves the original format "rfc822;addr")
-	assert.Contains(t, contentStr, "Final-Recipient: rfc822;recipient@example.com")
+	// ORCPT is reported as Original-Recipient; Final-Recipient is the address tried.
+	assert.Contains(t, contentStr, "Original-Recipient: rfc822;recipient@example.com")
+	assert.Contains(t, contentStr, "Final-Recipient: rfc822; recipient@example.com")
 	assert.Contains(t, contentStr, "Action: failed")
 	assert.Contains(t, contentStr, "Status: 5.1.1")
 	assert.Contains(t, contentStr, "Diagnostic-Code: smtp; 550 5.1.1 User unknown")

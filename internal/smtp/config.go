@@ -60,6 +60,8 @@ type Config struct {
 	FeedbackAddresses []string `toml:"feedback_addresses" json:"feedback_addresses"`
 	// TLSReporting sends RFC 8460 TLS reports to domains that ask for them.
 	TLSReporting *TLSReportingConfig `toml:"tls_reporting" json:"tls_reporting,omitempty"`
+	// DMARCReports sends RFC 7489 aggregate reports to domains that ask.
+	DMARCReports *DMARCReportsConfig `toml:"dmarc_reports" json:"dmarc_reports,omitempty"`
 
 	// Queue processor options
 	QueueProcessorEnabled bool `toml:"queue_processor_enabled" json:"queue_processor_enabled"` // Whether queue processing is enabled
@@ -271,6 +273,27 @@ type TLSReportingConfig struct {
 	// StateFile keeps counts across restarts. Defaults to tlsrpt-state.json
 	// in the queue directory.
 	StateFile string `toml:"state_file" json:"state_file"`
+}
+
+// DMARCReportsConfig configures DMARC aggregate reporting (RFC 7489 §7.2):
+// a daily XML report, to each domain whose DMARC record has a rua= tag, of
+// the inbound mail that claimed to be from it and how it authenticated.
+type DMARCReportsConfig struct {
+	// Enabled turns reporting on. Off by default: reports are mail sent to
+	// third parties, and an operator should choose to send them.
+	Enabled bool `toml:"enabled" json:"enabled"`
+	// OrganizationName identifies this receiver in reports. Defaults to
+	// hostname.
+	OrganizationName string `toml:"organization_name" json:"organization_name"`
+	// ContactEmail is the reporter address the schema requires. Defaults to
+	// report_from.
+	ContactEmail string `toml:"contact_email" json:"contact_email"`
+	// ReportFrom is the sender of reports. Required. Use an address in a
+	// domain this server DKIM-signs: report processors drop unsigned mail.
+	ReportFrom string `toml:"report_from" json:"report_from"`
+	// StateDir holds the day's counts across restarts. Defaults to the queue
+	// directory.
+	StateDir string `toml:"state_dir" json:"state_dir"`
 }
 
 // MetricsConfig represents the configuration for metrics collection

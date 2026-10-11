@@ -26,16 +26,17 @@ func TestVerifyAuthenticationIsBoundedByOneBudget(t *testing.T) {
 			}
 		}
 	}()
-	savedPreferGo, savedDial := net.DefaultResolver.PreferGo, net.DefaultResolver.Dial
-	net.DefaultResolver.PreferGo = true
-	net.DefaultResolver.Dial = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		var d net.Dialer
-		return d.DialContext(ctx, "udp", pc.LocalAddr().String())
+	t.Cleanup(func() { _ = pc.Close() })
+	// A private resolver rather than a patched net.DefaultResolver: lookups
+	// from other tests' goroutines read DefaultResolver's fields while they
+	// run, so writing them here is a data race.
+	stalled := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "udp", pc.LocalAddr().String())
+		},
 	}
-	t.Cleanup(func() {
-		net.DefaultResolver.PreferGo, net.DefaultResolver.Dial = savedPreferGo, savedDial
-		_ = pc.Close()
-	})
 
 	// A real TCP peer, so SPF has a client address to check.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -59,6 +60,7 @@ func TestVerifyAuthenticationIsBoundedByOneBudget(t *testing.T) {
 	session.SetAuthVerifier(authresult.New(authresult.Config{
 		Enabled: true, SPFEnabled: true, DMARCEnabled: true,
 		Timeout: each, SPFTimeout: each, DMARCTimeout: each,
+		Resolver: stalled,
 	}))
 
 	message := []byte("From: a@stalled.example\r\nSubject: hi\r\n\r\nbody\r\n")

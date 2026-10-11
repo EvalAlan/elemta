@@ -321,7 +321,7 @@ func TestDMARCDKIMAlignmentFollowsTheHeaderFrom(t *testing.T) {
 		{"mail.victim.example", strict, "fail"},
 	} {
 		signed := Results{DKIM: []Result{{Method: "dkim", Value: "pass", Domain: tc.signer}}}
-		got, _ := evaluateDMARC("victim.example", tc.record, nil, signed)
+		got, _, _ := evaluateDMARC("victim.example", tc.record, nil, signed)
 		if got.Value != tc.want {
 			t.Errorf("d=%s adkim=%s: dmarc=%s, want %s", tc.signer, tc.record.DKIMAlignment, got.Value, tc.want)
 		}
@@ -387,5 +387,52 @@ func TestDMARCSubdomainInheritsOrganisationalPolicy(t *testing.T) {
 	sub := checkBoth(t, v, "bounce@attacker.example", "From: x@news.subpol.example\r\n")
 	if sub.Policy != "reject" {
 		t.Errorf("subdomain policy = %q, want reject from sp=", sub.Policy)
+	}
+}
+
+// Aggregate reports need the published record and the DKIM selectors, which
+// the verdict alone does not carry.
+func TestCheckKeepsPolicyAndSelectorsForReports(t *testing.T) {
+	zone := &fakeResolver{zone: map[string][]string{
+		"example.com":        {"v=spf1 ip4:192.0.2.1 -all"},
+		"_dmarc.example.com": {"v=DMARC1; p=quarantine; pct=50; aspf=s; rua=mailto:rua@example.com!10m"},
+	}}
+	v := New(Config{Enabled: true, SPFEnabled: true, DKIMEnabled: true, DMARCEnabled: true})
+	v.resolver = newCachingResolver(zone)
+	message := []byte("DKIM-Signature: v=1; a=rsa-sha256; d=example.com;\r\n" +
+		"  s=sel1; c=relaxed/relaxed; h=from; bh=AAAA; b=AAAA\r\n" +
+		"From: a@example.com\r\nSubject: hello\r\n\r\nbody\r\n")
+
+	got := v.Check(t.Context(), net.ParseIP("192.0.2.1"), "helo.example", "a@example.com", message)
+	p := got.DMARCPolicy
+	if p == nil {
+		t.Fatal("no policy recorded")
+	}
+	if p.Domain != "example.com" || p.P != "quarantine" || p.SP != "quarantine" || p.Pct != 50 ||
+		p.ASPF != "s" || p.ADKIM != "r" || len(p.RUA) != 1 || p.RUA[0] != "mailto:rua@example.com!10m" {
+		t.Errorf("policy = %+v", p)
+	}
+	if !p.SPFAligned || p.DKIMAligned {
+		t.Errorf("alignment = spf %v dkim %v", p.SPFAligned, p.DKIMAligned)
+	}
+	if len(got.DKIM) != 1 || got.DKIM[0].Selector != "sel1" {
+		t.Errorf("DKIM = %+v, want selector sel1", got.DKIM)
+	}
+}
+
+func TestHeaderFromDomain(t *testing.T) {
+	cases := map[string]string{
+		"From: A <a@Example.COM>\r\nTo: b@x\r\n\r\nbody": "example.com",
+		"Subject: x\r\nFrom: a@example.com\r\n\r\n":      "example.com",
+		"From: a@example.com\n\nbody":                    "example.com",
+		"Subject: x\r\n\r\nFrom: a@body.test\r\n":        "",
+		"From: a@one.test, b@two.test\r\n\r\n":           "",
+		"From: a@one.test\r\nFrom: b@two.test\r\n\r\n":   "",
+		"From: not an address\r\n\r\n":                   "",
+	}
+	for msg, want := range cases {
+		if got := HeaderFromDomain([]byte(msg)); got != want {
+			t.Errorf("HeaderFromDomain(%q) = %q, want %q", msg, got, want)
+		}
 	}
 }
