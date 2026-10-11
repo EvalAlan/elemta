@@ -299,6 +299,20 @@ enabled = true
 enforce = false
 timeout = 10
 
+# DMARC aggregate reports (RFC 7489 §7.2): once per UTC day, each domain whose
+# DMARC record has a rua=mailto: tag is mailed an XML summary of the inbound
+# mail that claimed to be from it and how that mail authenticated. Off by
+# default because reports are mail to third parties. A rua outside the policy
+# domain's organisation is used only if it publishes
+# <policy-domain>._report._dmarc.<rua-domain>; a "!10m" size suffix is honoured.
+#
+# [dmarc_reports]
+# enabled = true
+# report_from = "dmarc-reports@example.com"   # required; use a domain you DKIM-sign
+# organization_name = "Example Inc"           # default: hostname
+# contact_email = "postmaster@example.com"    # default: report_from
+# state_dir = "/var/spool/elemta"             # default: the queue directory
+
 # ARC (RFC 8617) lets each hop record, signed, what it saw — so a receiver can
 # still see that authentication passed before a forwarder or mailing list broke
 # SPF alignment and the DKIM signature. Verification needs no key and is on by
