@@ -64,6 +64,16 @@ class SMTPLoadTester:
             server = smtplib.SMTP(self.host, self.port)
             
             if username and password:
+                # Password AUTH is only offered after STARTTLS (loopback
+                # excepted, and the test reaches the container through the
+                # Docker bridge). The dev certificate is self-signed.
+                import ssl
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                server.ehlo()
+                server.starttls(context=ctx)
+                server.ehlo()
                 server.login(username, password)
             
             # sendmail expects the sender, recipients, and the message data
