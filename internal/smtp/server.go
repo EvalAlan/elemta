@@ -18,6 +18,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/authresult"
 	"github.com/EvalAlan/elemta/internal/dane"
 	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/dmarcrpt"
 	deliverymetrics "github.com/EvalAlan/elemta/internal/metrics"
 	"github.com/EvalAlan/elemta/internal/plugin"
 	"github.com/EvalAlan/elemta/internal/queue"
@@ -60,6 +61,9 @@ type Server struct {
 	// authVerifier checks the built-in SPF/DKIM/DMARC/ARC plugins. It is swapped
 	// with the other session policy objects on reload.
 	authVerifier *authresult.Verifier
+	// dmarcReports counts inbound DMARC evaluations for aggregate reports;
+	// nil when reporting is off. Fixed at startup, not reloaded.
+	dmarcReports *dmarcrpt.Reporter
 	slogger      *slog.Logger // Structured logger for resource management
 
 	// Concurrency management
@@ -866,6 +870,7 @@ func NewServer(config *Config) (*Server, error) {
 		ctx:             gctx,
 		cancel:          cancel,
 		errGroup:        errGroup,
+		dmarcReports:    initDMARCReports(config, queueManager, queueProcessor, slogger),
 	}
 
 	tlsManager, err := initTLSManager(config, slogger)
@@ -1369,6 +1374,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	session.SetAccessControl(accessControl)
 	session.SetRBLChecker(rblChecker)
 	session.SetAuthVerifier(authVerifier)
+	session.SetDMARCReports(s.dmarcReports)
 
 	// Set queue manager for message processing
 	if s.queueManager != nil {
