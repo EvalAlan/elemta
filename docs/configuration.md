@@ -509,10 +509,10 @@ RFC 7489 Appendix C XML, gzipped and attached as
 - **Limits.** At most 10,000 records per domain per day and 10,000 domains
   per day are kept. Messages past the record limit are counted, and the
   report says how many were left out.
-- **Which messages count.** The verifier evaluates DMARC against the envelope
-  sender's domain. A message whose From header names a different domain is
-  not counted, so a domain is never sent results for mail that was not
-  evaluated under its policy.
+- **Which messages count.** Messages are reported under their header From
+  domain, which is the domain DMARC judges. A message with no usable From, or
+  one naming several From domains, is not counted, because no single domain's
+  policy decided it.
 
 A failed send is retried hourly, up to six times.
 

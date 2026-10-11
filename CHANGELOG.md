@@ -2,6 +2,21 @@
 
 ## v0.4.0 (2026-10-11)
 
+### Fixes
+
+- **DMARC now judges the header From, not the envelope sender.** It was
+  evaluated against the MAIL FROM domain, so a forger could send from their own
+  SPF-passing envelope domain with `From:` set to someone else's and get
+  `dmarc=pass` in Authentication-Results. DMARC now uses the RFC5322.From
+  domain (RFC 7489 §3.1), with SPF and DKIM alignment checked against it and
+  relaxed alignment based on the public suffix list. A subdomain with no DMARC
+  record of its own falls back to its organisational domain's policy (`sp=`
+  when set). A message with no usable From gets `dmarc=permerror`; one naming
+  several From domains never passes and takes the strictest failing policy.
+  **Behaviour change:** with `[plugins.dmarc] enforce = true`, mail whose
+  header From domain fails DMARC is now rejected or quarantined per that
+  domain's policy even when the envelope domain passes SPF and DMARC.
+
 ### Outbound delivery
 
 - **Sending IP pools** (`[[delivery.pools]]`). Outbound mail is bound to named

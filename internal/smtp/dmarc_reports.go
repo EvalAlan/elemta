@@ -71,11 +71,10 @@ func dmarcEvaluation(results authresult.Results, clientIP net.IP, mailFrom strin
 	if p == nil || len(p.RUA) == 0 || clientIP == nil {
 		return dmarcrpt.Evaluation{}, false
 	}
-	// The verifier evaluates DMARC against the envelope sender's domain. When
-	// the From header names a different domain, the verdict is about the
-	// wrong domain, and reporting it as header_from would tell an owner
-	// about mail that was never evaluated under its policy. Only messages
-	// where the two agree are counted.
+	// The verifier judges the header From domain, so the two agree for every
+	// message it evaluated under one record. The check stays as a guard: a
+	// row reported under a domain the verdict was not about would tell an
+	// owner about mail that was never evaluated under its policy.
 	headerFrom := authresult.HeaderFromDomain(message)
 	if headerFrom == "" || !strings.EqualFold(headerFrom, p.Domain) {
 		return dmarcrpt.Evaluation{}, false
