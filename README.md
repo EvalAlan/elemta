@@ -50,6 +50,18 @@ make build
 docker compose -f deployments/compose/docker-compose.yml up -d
 ```
 
+### 4) Kubernetes (optional)
+
+The same dev stack on a local cluster (k3s), next to the Compose one:
+
+```bash
+make k8s-install-dev-full     # make k8s-help for the rest
+```
+
+Or Elemta on its own from the published image:
+`kubectl apply -k deployments/kubernetes/standalone`. See
+[deployments/kubernetes](deployments/kubernetes/README.md).
+
 ## Core Docs
 
 - [Documentation index](docs/README.md)

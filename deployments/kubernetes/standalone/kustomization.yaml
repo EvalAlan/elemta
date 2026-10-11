@@ -1,0 +1,31 @@
+# Elemta on its own: kubectl apply -k deployments/kubernetes/standalone
+#
+# The SMTP server and dashboard, an LMTP sink as the mailbox, and Valkey, from
+# the published image. No LDAP, scanners or mailbox server; elemta.toml here
+# turns off what would point at them. The dev stack (../dev) is the full
+# equivalent of the old compose stack.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../base
+
+# elemta.toml here is the template, not the live config. prepare-config.sh
+# copies it onto the elemta-runtime-config volume the first time the pod starts
+# and never again, because that copy is what the web UI saves to. Editing this
+# file and re-applying rolls the pod (the generated name carries a content
+# hash) but does not change the running config; the README has the reseed
+# command.
+configMapGenerator:
+  - name: elemta-config
+    namespace: elemta
+    files:
+      - elemta.toml
+
+images:
+  - name: elemta
+    newName: ghcr.io/evalalan/elemta
+    newTag: latest
+
+patches:
+  - path: patches.yaml

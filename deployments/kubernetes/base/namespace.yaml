@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: elemta
+  labels:
+    # The pods run as a non-root user with no capabilities and no privilege
+    # escalation, so the restricted profile fits; enforcing it keeps it that way.
+    pod-security.kubernetes.io/enforce: restricted

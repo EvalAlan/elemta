@@ -492,6 +492,8 @@ help:
 	@echo "  PLUGIN_SPF=$(PLUGIN_SPF)  PLUGIN_DKIM=$(PLUGIN_DKIM)  PLUGIN_DMARC=$(PLUGIN_DMARC)  PLUGIN_ARC=$(PLUGIN_ARC)"
 	@echo "    e.g. make install-dev PLUGIN_RBL=off CERT_DAYS=90"
 	@echo ""
+	@echo "☸️  make k8s-help  - The same dev stack on Kubernetes (k3s), as k8s-* targets"
+	@echo ""
 	@echo "💡 make gotchas   - The things that surprise people (config reload, discarded"
 	@echo "                    delivery, cert expiry, what [logging] ignores). Worth reading"
 	@echo "                    once; HANDOFF.md has the same traps in depth."
@@ -923,3 +925,312 @@ uninstall:
 # Kept because install/README.md and deployments/compose/README.md name them.
 update: rebuild
 update-restart: restart
+
+# ---------------------------------------------------------------------------
+# Kubernetes: the same dev stack on a local cluster (k3s on the dev box), as an
+# option next to the Compose one above. Every target is k8s-prefixed; nothing
+# above changes. See deployments/kubernetes/README.md.
+#
+# Each k8s-install-dev* target applies one overlay of deployments/kubernetes/dev:
+#   minimal   Elemta, caching DNS, LDAP, Dovecot, Valkey, LMTP sink
+#   full      + ClamAV, Rspamd, Roundcube
+#   bench     + ClamAV, Rspamd (delivery goes to the sink)
+#   postgres  + Postgres for the queue
+# Services keep their compose names and host ports, so config/elemta.toml and
+# the scripts work against either stack, but not both at once: they want the
+# same ports. k8s-install refuses while the Compose stack is up.
+# ---------------------------------------------------------------------------
+KUBECTL ?= kubectl
+K8S_NAMESPACE ?= elemta
+K8S_DIR ?= deployments/kubernetes
+K8S_OVERLAY ?= minimal
+# The overlays read config/elemta.toml and the LDAP, Rspamd and Roundcube files
+# from where they live in the repository, outside the kustomization's own
+# directory, which kustomize refuses by default.
+KUSTOMIZE = $(KUBECTL) kustomize --load-restrictor LoadRestrictionsNone
+KC = $(KUBECTL) -n $(K8S_NAMESPACE)
+# Applying an overlay removes what the previous one added and this one does
+# not (Roundcube when going from full to minimal). Volumes are not in the list
+# on purpose: switching stacks must not take the ClamAV signatures or the
+# Rspamd Bayes data with it. k8s-down-volumes does.
+K8S_PRUNE = --prune -l app.kubernetes.io/part-of=elemta \
+	--prune-allowlist=apps/v1/Deployment --prune-allowlist=core/v1/Service \
+	--prune-allowlist=core/v1/ConfigMap --prune-allowlist=core/v1/Secret
+# Images the Kubernetes stack builds rather than pulls.
+IMAGE_TAG ?= dev
+DOCKER_BUILD_FLAGS ?=
+# How built images reach the cluster. auto works it out from the node:
+#   docker  k3s running on Docker (docker: true in its config) sees them already
+#   kind    kind load docker-image
+#   k3s     docker save | sudo k3s ctr images import  (asks for sudo)
+K8S_IMAGE_LOAD ?= auto
+# Deployments that run the images built here, restarted after a rebuild
+# because the tag does not change.
+K8S_OWN_IMAGES = deploy/elemta deploy/elemta-sink deploy/elemta-dovecot deploy/elemta-dns
+# The overlay currently applied, recorded on the namespace by k8s-apply, so
+# targets that change config on a running stack re-apply that one rather than
+# the default, which would prune the rest.
+K8S_CURRENT_OVERLAY = $$($(KUBECTL) get namespace $(K8S_NAMESPACE) -o jsonpath='{.metadata.annotations.elemta\.dev/overlay}' 2>/dev/null || true)
+K8S_WEB_EXEC = $(KC) exec -i deploy/elemta -c web -- /app/elemta --config /app/runtime-config/elemta.toml
+
+.PHONY: k8s-help k8s-check k8s-images k8s-load k8s-apply k8s-wait k8s-install \
+	k8s-install-dev k8s-install-dev-full k8s-install-dev-bench k8s-install-dev-postgres \
+	k8s-up k8s-down k8s-down-volumes k8s-restart k8s-status k8s-logs k8s-logs-elemta \
+	k8s-rebuild k8s-rebuild-dev k8s-reseed k8s-sink-up k8s-sink-down \
+	k8s-bootstrap-admin k8s-reset-admin-password k8s-bench-queue k8s-print-dev-summary
+
+k8s-help:
+	@echo "☸️  Kubernetes dev stack (k3s; see deployments/kubernetes/README.md)"
+	@echo "  k8s-install-dev            Minimal stack, plugins on, prints a dashboard login"
+	@echo "  k8s-install-dev-full       + ClamAV, Rspamd, Roundcube"
+	@echo "  k8s-install-dev-bench      + ClamAV, Rspamd; delivery DISCARDED"
+	@echo "  k8s-install-dev-postgres   Postgres queue"
+	@echo "  k8s-up / k8s-down          Scale to zero and back, volumes kept"
+	@echo "  k8s-down-volumes           Delete the namespace and everything in it"
+	@echo "  k8s-restart / k8s-status / k8s-logs / k8s-logs-elemta"
+	@echo "  k8s-rebuild-dev            Build, load into the cluster, restart (k8s-rebuild: no cache)"
+	@echo "  k8s-reseed                 Take config/elemta.toml again, discarding what the UI saved"
+	@echo "  k8s-sink-up / k8s-sink-down   Discard delivery, or deliver to Dovecot again"
+	@echo "  k8s-bootstrap-admin / k8s-reset-admin-password / k8s-bench-queue"
+	@echo "  Same ports as the Compose stack, so run one or the other ('make down' first)."
+	@echo "  K8S_IMAGE_LOAD=$(K8S_IMAGE_LOAD) (auto|docker|kind|k3s|none)  K8S_NAMESPACE=$(K8S_NAMESPACE)  KUBECTL=$(KUBECTL)"
+
+# Fail early and say what to do, rather than letting kubectl print a
+# connection-refused trace from the middle of an install.
+k8s-check:
+	@if ! command -v $(KUBECTL) >/dev/null 2>&1; then \
+		echo "❌ kubectl not found. Install it (Arch: sudo pacman -S kubectl)."; \
+		exit 1; \
+	fi
+	@if ! $(KUBECTL) get nodes >/dev/null 2>&1; then \
+		echo "❌ No Kubernetes cluster reachable (kubectl context: $$($(KUBECTL) config current-context 2>/dev/null || echo none))."; \
+		echo "   Install k3s and copy its kubeconfig: deployments/kubernetes/README.md"; \
+		exit 1; \
+	fi
+
+# The three images the stack builds rather than pulls: Elemta from this tree,
+# Dovecot with the stack's config baked in, and the caching resolver.
+k8s-images:
+	@echo "🔨 Building images ($(IMAGE_TAG))..."
+	docker build $(DOCKER_BUILD_FLAGS) --build-arg VERSION=$$(git rev-parse --short HEAD 2>/dev/null || echo dev) -t elemta:$(IMAGE_TAG) .
+	docker build $(DOCKER_BUILD_FLAGS) -t elemta-dovecot:$(IMAGE_TAG) docker/dovecot
+	docker build $(DOCKER_BUILD_FLAGS) -t elemta-dns:$(IMAGE_TAG) deployments/dns
+	@$(MAKE) --no-print-directory k8s-load
+
+# A cluster does not see Docker's images unless it runs on Docker. Detected
+# from the node rather than configured, so the same command works on k3s, k3s
+# on Docker, and kind.
+k8s-load:
+	@mode="$(K8S_IMAGE_LOAD)"; \
+	if [ "$$mode" = "auto" ]; then \
+		runtime=$$($(KUBECTL) get nodes -o jsonpath='{.items[0].status.nodeInfo.containerRuntimeVersion}' 2>/dev/null); \
+		context=$$($(KUBECTL) config current-context 2>/dev/null); \
+		case "$$runtime" in docker://*) mode=docker ;; *) \
+			case "$$context" in kind-*) mode=kind ;; *) mode=k3s ;; esac ;; \
+		esac; \
+	fi; \
+	images="elemta:$(IMAGE_TAG) elemta-dovecot:$(IMAGE_TAG) elemta-dns:$(IMAGE_TAG)"; \
+	case "$$mode" in \
+		docker|none) echo "ℹ️  The cluster runs on Docker; images are already visible to it" ;; \
+		kind) context=$$($(KUBECTL) config current-context); \
+			kind load docker-image --name "$${context#kind-}" $$images ;; \
+		k3s) echo "📦 Importing images into k3s (sudo k3s ctr images import)..."; \
+			docker save $$images | sudo k3s ctr images import - ;; \
+		*) echo "❌ Unknown K8S_IMAGE_LOAD=$$mode (auto|docker|kind|k3s|none)"; exit 1 ;; \
+	esac
+
+# Apply one overlay. See K8S_PRUNE for what switching removes.
+k8s-apply:
+	@echo "🚀 Applying deployments/kubernetes/dev/$(K8S_OVERLAY)..."
+	@$(KUSTOMIZE) $(K8S_DIR)/dev/$(K8S_OVERLAY) | $(KUBECTL) apply $(K8S_PRUNE) -f - | grep -v ' unchanged$$' || true
+	@$(KUBECTL) annotate namespace $(K8S_NAMESPACE) elemta.dev/overlay=$(K8S_OVERLAY) --overwrite >/dev/null
+
+# Wait for every Deployment to roll out. ClamAV downloads its signatures on a
+# fresh volume, which is why the timeout is long; nothing else needs it.
+k8s-wait:
+	@echo "⏳ Waiting for the stack to become ready..."
+	@for d in $$($(KC) get deployments -o name); do \
+		$(KC) rollout status $$d --timeout=10m >/dev/null || { echo "❌ $$d did not become ready:"; $(KC) describe $$d | tail -15; exit 1; }; \
+	done
+	@echo "✅ All deployments ready"
+
+# Make the next start take config/elemta.toml again, discarding what the web UI
+# saved. Compose does this with ELEMTA_CONFIG_RESEED and a marker in the
+# container; every Kubernetes container start is a fresh layer, so here it is
+# explicit: remove the seeded copy and restart, and prepare-config.sh seeds a
+# new one from the ConfigMap. Re-applies nothing: after editing the file, run
+# an install target (or k8s-sink-*, which re-apply).
+k8s-reseed:
+	@$(KC) exec deploy/elemta -c smtp -- rm -f /app/runtime-config/elemta.toml 2>/dev/null || true
+	@$(KC) rollout restart deploy/elemta >/dev/null
+	@$(KC) rollout status deploy/elemta --timeout=5m >/dev/null
+	@echo "✅ Runtime config re-seeded"
+
+# What every k8s-install-dev* target does, for one overlay: build, configure,
+# apply, re-seed, then accounts.
+k8s-install: check-tools k8s-check ensure-dev-certs
+	@if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx elemta-node0; then \
+		echo "❌ The Compose dev stack is running and holds the same ports. 'make down' first."; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory k8s-images
+	@$(MAKE) --no-print-directory configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) --no-print-directory configure-plugins
+	@$(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$(K8S_OVERLAY)
+	@$(MAKE) --no-print-directory k8s-wait
+	@# This install is authoritative: without the reseed the settings configured
+	@# above would be ignored on every deploy after the first. And images are
+	@# rebuilt under the same tag, so a Deployment whose spec did not change
+	@# would keep running the old one. One restart covers both.
+	@$(KC) exec deploy/elemta -c smtp -- rm -f /app/runtime-config/elemta.toml
+	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+	@echo "⏳ Initializing LDAP..."
+	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) ./scripts/init-ldap-if-needed.sh || true
+	@$(MAKE) --no-print-directory k8s-bootstrap-admin
+
+k8s-install-dev:
+	@echo "☸️  Elemta Development Setup on Kubernetes (Minimal)"
+	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=minimal
+	@$(MAKE) --no-print-directory k8s-print-dev-summary
+
+k8s-install-dev-full:
+	@echo "☸️  Elemta Development Setup on Kubernetes (Full)"
+	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=full
+	@$(MAKE) --no-print-directory k8s-print-dev-summary
+	@echo "   ✉️  Roundcube: http://localhost:8026"
+
+# As install-dev-bench: scanners on, delivery discarded, and the repo config
+# put back afterwards because the sink lives in the seeded copy.
+k8s-install-dev-bench:
+	@echo "☸️  Elemta Development Setup on Kubernetes (Benchmarking)"
+	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=bench
+	@$(MAKE) --no-print-directory k8s-sink-up
+	@$(MAKE) --no-print-directory k8s-print-dev-summary
+	@echo "   Measure with: make k8s-bench-queue"
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424 >/dev/null
+
+# Postgres comes up with the rest. If Elemta wins the race it exits on the
+# unreachable backend and Kubernetes restarts it until Postgres answers, so
+# there is no sqlite-first two-step as in the Compose version.
+k8s-install-dev-postgres:
+	@echo "☸️  Elemta Development Setup on Kubernetes (Postgres Queue)"
+	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=postgres QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) --no-print-directory k8s-print-dev-summary
+	@echo "   Verify: kubectl -n $(K8S_NAMESPACE) exec deploy/elemta-postgres -- psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
+
+k8s-sink-up:
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
+	@ov=$(K8S_CURRENT_OVERLAY); $(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$${ov:-minimal} >/dev/null
+	@$(MAKE) --no-print-directory k8s-reseed >/dev/null
+	@echo "✅ Delivery goes to the sink (elemta-sink:2424). Mail is discarded."
+	@echo "   Sink rate:  kubectl -n $(K8S_NAMESPACE) logs -f deploy/elemta-sink"
+
+k8s-sink-down:
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424
+	@ov=$(K8S_CURRENT_OVERLAY); $(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$${ov:-minimal} >/dev/null
+	@$(MAKE) --no-print-directory k8s-reseed >/dev/null
+	@echo "✅ Delivery goes to Dovecot; mail lands in real mailboxes."
+
+# The users file lives on the runtime volume, so these run inside the pod. The
+# server re-reads the file when it changes, so nothing needs restarting.
+k8s-bootstrap-admin:
+	@needs_account=1; \
+	if $(KC) exec deploy/elemta -c web -- test -e /app/runtime-config/users.json 2>/dev/null; then \
+		if ! $(K8S_WEB_EXEC) user list --file /app/runtime-config/users.json 2>/dev/null | grep -q '^No users'; then \
+			needs_account=0; \
+		fi; \
+	fi; \
+	if [ "$$needs_account" = "0" ]; then \
+		echo "ℹ️  Dashboard account already exists (make k8s-reset-admin-password to change it)"; \
+	else \
+		PW="$(ADMIN_PASSWORD)"; \
+		if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
+		if printf '%s\n' "$$PW" | $(K8S_WEB_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1; then \
+			echo ""; \
+			echo "🔑 Dashboard login created"; \
+			echo "   URL:      http://localhost:8025/"; \
+			echo "   Username: $(ADMIN_USER)"; \
+			echo "   Password: $$PW"; \
+			echo "   (shown once — make k8s-reset-admin-password if you lose it)"; \
+			echo ""; \
+		else \
+			echo "❌ Could not create the dashboard account"; \
+		fi; \
+	fi
+
+k8s-reset-admin-password:
+	@PW="$(ADMIN_PASSWORD)"; \
+	if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
+	OUT=$$(printf '%s\n' "$$PW" | $(K8S_WEB_EXEC) user passwd $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
+	if [ $$? -ne 0 ]; then \
+		OUT=$$(printf '%s\n' "$$PW" | $(K8S_WEB_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
+		if [ $$? -ne 0 ]; then \
+			echo "❌ Could not set the password (is the stack running? make k8s-status):"; \
+			echo "$$OUT" | sed 's/^/   /'; \
+			exit 1; \
+		fi; \
+		echo "ℹ️  No account existed, so one was created."; \
+	fi; \
+	echo ""; \
+	echo "🔑 Dashboard login"; \
+	echo "   URL:      http://localhost:8025/"; \
+	echo "   Username: $(ADMIN_USER)"; \
+	echo "   Password: $$PW"; \
+	echo ""
+
+k8s-print-dev-summary:
+	@echo ""
+	@echo "✅ Development Environment Ready (Kubernetes, namespace $(K8S_NAMESPACE))"
+	@echo "   📧 SMTP:      localhost:2525"
+	@echo "   📊 Metrics:   http://localhost:9080/metrics"
+	@echo "   🌐 Web UI:    http://localhost:8025  (login required)"
+	@target=$$($(KC) exec deploy/elemta -c smtp -- sh -c "sed -n '/^\[delivery\]/,/^\[/p' /app/runtime-config/elemta.toml | grep -m1 '^host'" 2>/dev/null | sed 's/.*= *//; s/"//g'); \
+	if [ "$$target" = "elemta-sink" ]; then \
+		echo "   📭 Delivery:  a DISCARDING SINK. make k8s-sink-down for real mailboxes."; \
+	elif [ -n "$$target" ]; then \
+		echo "   📬 Delivery:  $$target — mail lands in real mailboxes."; \
+	fi
+	@echo "   👤 Mailbox user:   user@example.com / password"
+	@echo "   📋 make k8s-status | k8s-logs | k8s-help"
+
+# 'down' keeps everything but the running pods, as 'docker compose down' keeps
+# the volumes; 'up' brings them back.
+k8s-up: k8s-check
+	@$(KC) scale deployment --all --replicas=1 >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+
+k8s-down:
+	@$(KC) scale deployment --all --replicas=0 >/dev/null
+	@echo "✅ Stopped (volumes kept; make k8s-up to start again)"
+
+k8s-down-volumes:
+	@$(KUBECTL) delete namespace $(K8S_NAMESPACE) --ignore-not-found --wait=true
+	@echo "✅ Namespace $(K8S_NAMESPACE) and its volumes removed"
+
+k8s-restart:
+	@$(KC) rollout restart deployment >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+
+k8s-status:
+	@$(KC) get pods,services -o wide
+
+k8s-logs:
+	$(KC) logs -f --tail=50 --prefix --all-containers --max-log-requests=30 -l app.kubernetes.io/part-of=elemta
+
+k8s-logs-elemta:
+	$(KC) logs -f --tail=100 deploy/elemta -c smtp
+
+# Rebuild the images and roll the pods that run them. Config is left alone.
+k8s-rebuild:
+	@$(MAKE) --no-print-directory k8s-images DOCKER_BUILD_FLAGS=--no-cache
+	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+
+k8s-rebuild-dev:
+	@$(MAKE) --no-print-directory k8s-images
+	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+
+k8s-bench-queue:
+	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) python3 scripts/dev/bench_queue.py --messages $(or $(MESSAGES),6000) --concurrency $(or $(CONCURRENCY),40)

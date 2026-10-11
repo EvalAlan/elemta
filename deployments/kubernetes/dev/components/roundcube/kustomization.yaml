@@ -1,0 +1,12 @@
+# Roundcube on localhost:8026, reading the Dovecot mailboxes and sending
+# through Elemta's submission path. Log in as user@example.com / password.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - roundcube.yaml
+
+configMapGenerator:
+  - name: elemta-roundcube
+    files:
+      - ../../../../../docker/roundcube/config/elemta-smtp.inc.php

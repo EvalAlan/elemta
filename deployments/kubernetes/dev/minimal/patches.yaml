@@ -1,0 +1,67 @@
+# Baseline, not restricted: LDAP, Dovecot, ClamAV, Rspamd and Roundcube run
+# their upstream images as root. Elemta itself still runs as an unprivileged
+# user with no capabilities.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: elemta
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta
+spec:
+  template:
+    spec:
+      # The caching resolver, as the compose stack's `dns:` did, so SPF, DKIM
+      # and DMARC lookups are cached and validated here rather than queued
+      # behind the host's resolver. Cluster names still resolve: unbound
+      # forwards cluster.local to kube-dns (deployments/dns/unbound.conf).
+      dnsPolicy: None
+      dnsConfig:
+        nameservers: ["10.43.53.53"]
+        searches:
+          - elemta.svc.cluster.local
+          - svc.cluster.local
+          - cluster.local
+        options:
+          - name: ndots
+            value: "5"
+      initContainers:
+        - name: prepare-config
+          imagePullPolicy: IfNotPresent
+          env:
+            # Seven days on purpose: the dashboard warns below fourteen, so the
+            # expiry panel is exercised every day. See CERT_DAYS in the Makefile.
+            - name: ELEMTA_DEV_CERT_DAYS
+              value: "7"
+            - name: ELEMTA_HOSTNAME
+              value: mail.dev.evil-admin.com
+      containers:
+        - name: smtp
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ELEMTA_DEMO_DATA
+              value: "true"
+            - name: NODE_ID
+              value: "0"
+        - name: web
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ELEMTA_DEMO_DATA
+              value: "true"
+            - name: NODE_ID
+              value: web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-sink
+spec:
+  template:
+    spec:
+      containers:
+        - name: lmtp-sink
+          imagePullPolicy: IfNotPresent

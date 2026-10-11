@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-postgres
+  labels:
+    app.kubernetes.io/name: elemta-postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          env:
+            # Matches the DSN in config/elemta.toml. Development only.
+            - { name: POSTGRES_USER, value: elemta }
+            - { name: POSTGRES_PASSWORD, value: elemta }
+            - { name: POSTGRES_DB, value: elemta_queue }
+            # A subdirectory, because the volume root can hold lost+found and
+            # initdb refuses a non-empty directory.
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "elemta", "-d", "elemta_queue"]
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: elemta-postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-postgres
+  labels:
+    app.kubernetes.io/name: elemta-postgres
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elemta-postgres-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi

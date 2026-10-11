@@ -37,9 +37,6 @@ GEMINI.md
 # Logs
 *.log
 
-# Archived files
-k8s/archive/
-
 # Compiled binaries
 bin/*.exe
 
@@ -117,6 +114,8 @@ test-*.sh
 
 # Local configuration files
 elemta.toml
+# The Kubernetes deployment's config is a tracked template, not a local file.
+!deployments/kubernetes/**/elemta.toml
 simple-rspamd.conf
 test-rspamd.conf
 
