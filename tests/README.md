@@ -14,9 +14,6 @@ Go unit/integration tests.
 | `tests/*.py`, `tests/*.sh` (specialized) | Standalone checks for subsystems the centralized suite does not yet cover (see below) | run individually |
 | `tests/{config,corpus,data,fixtures,docker,k8s,scripts}` | Test assets, fixtures and helpers | — |
 
-Test *plans* and security-review documents (design docs, not executable) live in
-[`docs/test-plans/`](../docs/test-plans/).
-
 ## Quick start
 
 ```bash
@@ -72,11 +69,12 @@ until their coverage is migrated.
 Defaults target the Docker dev stack:
 
 - SMTP: `localhost:2525`
-- LDAP: `localhost:389`
-- Roundcube: `http://localhost:8025`
+- LDAP: `localhost:1389`
+- Dashboard/API: `http://localhost:8025`
+- Roundcube: `http://localhost:8026` (full stack)
 - ManageSieve: `localhost:4190`
 
-Bring the stack up with `docker-compose up -d` (or `make up`) and wait for
+Bring the stack up with `make install-dev` (or `make up` for an existing one) and wait for
 services to become healthy before running integration/e2e tests.
 
 ## Adding tests

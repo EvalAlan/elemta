@@ -1,139 +1,31 @@
-# Elemta Internal Packages
+# Internal packages
 
-This directory contains internal packages used by the Elemta application.
+A map of `internal/`. Design reasoning and known traps are in
+[HANDOFF.md](../HANDOFF.md); each package's own doc comments carry the detail.
 
-## Cache System
-
-The cache system provides a distributed cache that can be shared across multiple nodes. It supports various backends such as Redis and in-memory caching.
-
-### Features
-
-- Common interface for different cache backends
-- Support for Redis and in-memory caching
-- Key-value operations with expiration
-- Atomic operations (increment, decrement, SetNX)
-- Cache manager for handling multiple cache instances
-
-### Usage
-
-```go
-import "github.com/EvalAlan/elemta/internal/cache"
-
-// Create a cache instance
-redisCache, err := cache.Factory(cache.Config{
-    Type:     "redis",
-    Name:     "session-cache",
-    Host:     "localhost",
-    Port:     6379,
-    Password: "",
-    Database: 0,
-})
-if err != nil {
-    // Handle error
-}
-
-// Connect to the cache
-if err := redisCache.Connect(); err != nil {
-    // Handle error
-}
-
-// Use the cache
-ctx := context.Background()
-err = redisCache.Set(ctx, "user:123:session", sessionData, 30*time.Minute)
-```
-
-### Cache Manager
-
-The cache manager allows you to register and manage multiple cache instances:
-
-```go
-// Create a cache manager
-manager := cache.NewManager()
-
-// Register caches
-manager.Register(redisCache)
-manager.Register(memoryCache)
-
-// Get a cache by name
-if sessionCache, exists := manager.Get("session-cache"); exists {
-    // Use the cache
-}
-
-// Close all caches when shutting down
-manager.CloseAll()
-```
-
-## Logging System
-
-The logging system provides a flexible and pluggable logging framework with support for various backends such as console, file, and Elasticsearch.
-
-### Features
-
-- Common interface for different logging backends
-- Support for console, file, and Elasticsearch logging
-- Structured logging with fields
-- Multiple log levels (Debug, Info, Warn, Error, Fatal)
-- Log formatting in text or JSON
-- File rotation for file logger
-- Buffered logging for Elasticsearch
-
-### Usage
-
-```go
-import "github.com/EvalAlan/elemta/internal/logging"
-
-// Create a logger
-consoleLogger, err := logging.Factory(logging.Config{
-    Type:      "console",
-    Name:      "app-logger",
-    Level:     logging.Info,
-    Formatter: "text",
-})
-if err != nil {
-    // Handle error
-}
-
-// Register the logger
-logging.Register(consoleLogger, "app-logger")
-
-// Set as default logger
-logging.SetDefault("app-logger")
-
-// Use the logger
-logging.Default().Info("Application started", 
-    logging.F("version", "1.0.0"),
-    logging.F("environment", "production"),
-)
-
-// Create a logger with context
-userLogger := logging.Default().WithFields(
-    logging.F("user_id", "123"),
-    logging.F("session_id", "abc123"),
-)
-userLogger.Info("User logged in")
-```
-
-### Logger Manager
-
-The logging system includes a manager for handling multiple logger instances:
-
-```go
-// Get the logger manager
-manager := logging.GetManager()
-
-// Register loggers
-manager.Register(consoleLogger, "console")
-manager.Register(fileLogger, "file")
-
-// Get a logger by name
-if appLogger, exists := manager.Get("app-logger"); exists {
-    // Use the logger
-}
-
-// Close all loggers when shutting down
-manager.CloseAll()
-```
-
-## Example
-
-See the `internal/example/main.go` file for a complete example of using both the cache and logging systems. 
+| Package | What it does |
+|---|---|
+| `smtp` | SMTP/ESMTP server and session: commands, DATA/BDAT spooling, AUTH, STARTTLS, relay and access control, resource and memory limits |
+| `queue` | Queue manager, processor and workers; delivery handlers (SMTP, LMTP, split); per-destination shaper, MX and session caches; storage backends `file`, `sqlite`, `postgres`, `indexedfs` |
+| `config` | TOML loading, defaults and validation. A field without an explicit `toml:` tag is silently ignored |
+| `api` | Dashboard and HTTP API (`elemta web`): auth, roles, queue, config, campaigns, suppression |
+| `auth` | Users file, API keys, sessions and RBAC for the API |
+| `datasource` | SMTP AUTH backends: file, LDAP, MySQL, PostgreSQL, SQLite ([README](datasource/README.md)) |
+| `plugin` | Plugin manager and built-in plugins: SPF, DKIM, DMARC, ARC, rate limiter, antivirus/antispam hooks |
+| `authresult` | Inbound sender verification (SPF/DKIM/DMARC/ARC) under one deadline, and `Authentication-Results` |
+| `arc` | First-party ARC (RFC 8617) verification and sealing |
+| `dkim` | Outbound DKIM signing |
+| `dane` | DANE for SMTP (RFC 7672): TLSA lookup and certificate matching |
+| `delivery` | MTA-STS policy fetch and enforcement |
+| `tlsrpt` | SMTP TLS Reporting (RFC 8460) collection and sending |
+| `antivirus` | ClamAV client (INSTREAM) |
+| `antispam` | Rspamd client (`/checkv2`) |
+| `suppression` | Suppression list, fed by bounces and ARF feedback reports |
+| `campaign` | Bulk sending (mass mailer) |
+| `message` | Message type shared with plugins |
+| `logging` | Console, file and Elasticsearch log sinks; per-message logging |
+| `metrics` | Per-domain delivery stats, optionally in Valkey |
+| `server` | TLS certificate and Let's Encrypt renewal metrics |
+| `runtimepaths` | Resolves runtime file locations |
+| `zimbra` | Zimbra LDAP/SOAP integration and diagnostics |
+| `version` | Build version |

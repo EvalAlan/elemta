@@ -40,7 +40,7 @@ docker exec elemta_rspamd_1 rspamc scan /tmp/gtube.txt
 You can also use the verification script to check the entire monitoring stack:
 
 ```bash
-./scripts/verify-monitoring-stack.sh
+./scripts/monitoring/verify-monitoring-stack.sh
 ```
 
 **Note**: Some systems may automatically quarantine or delete the EICAR test file. This is expected behavior and indicates that the antivirus system is working correctly. 
