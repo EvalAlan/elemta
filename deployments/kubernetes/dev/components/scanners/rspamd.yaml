@@ -1,0 +1,122 @@
+# elemta-rspamd, resolving through elemta-dns like Elemta does: rspamd makes
+# more lookups per message than anything else in the stack (RBLs, SURBLs, ASN),
+# and those are what overwhelmed the host resolver in the first place.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-rspamd
+  labels:
+    app.kubernetes.io/name: elemta-rspamd
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-rspamd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-rspamd
+    spec:
+      dnsPolicy: None
+      dnsConfig:
+        nameservers: ["10.43.53.53"]
+        searches:
+          - elemta.svc.cluster.local
+          - svc.cluster.local
+          - cluster.local
+        options:
+          - name: ndots
+            value: "5"
+      containers:
+        - name: rspamd
+          image: rspamd/rspamd:latest
+          ports:
+            - name: normal
+              containerPort: 11333
+            - name: controller
+              containerPort: 11334
+          startupProbe:
+            tcpSocket:
+              port: normal
+            periodSeconds: 10
+            failureThreshold: 18
+          readinessProbe:
+            tcpSocket:
+              port: normal
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            capabilities:
+              drop: ["NET_RAW"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rspamd
+            - { name: override, mountPath: /etc/rspamd/override.d/rbl.conf, subPath: rbl.conf, readOnly: true }
+            - { name: override, mountPath: /etc/rspamd/override.d/surbl.conf, subPath: surbl.conf, readOnly: true }
+            - { name: override, mountPath: /etc/rspamd/override.d/asn.conf, subPath: asn.conf, readOnly: true }
+            - { name: override, mountPath: /etc/rspamd/override.d/fuzzy_check.conf, subPath: fuzzy_check.conf, readOnly: true }
+            - { name: override, mountPath: /etc/rspamd/override.d/options.inc, subPath: options.inc, readOnly: true }
+            - { name: local, mountPath: /etc/rspamd/local.d/classifier-bayes.conf, subPath: classifier-bayes.conf, readOnly: true }
+            - { name: local, mountPath: /etc/rspamd/local.d/redis.conf, subPath: redis.conf, readOnly: true }
+            - { name: local, mountPath: /etc/rspamd/local.d/greylist.conf, subPath: greylist.conf, readOnly: true }
+            - { name: local, mountPath: /etc/rspamd/local.d/actions.conf, subPath: actions.conf, readOnly: true }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: elemta-rspamd-data
+        - name: override
+          configMap:
+            name: elemta-rspamd-override
+        - name: local
+          configMap:
+            name: elemta-rspamd-local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-rspamd
+  labels:
+    app.kubernetes.io/name: elemta-rspamd
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-rspamd
+  ports:
+    - name: normal
+      port: 11333
+      targetPort: normal
+    - name: controller
+      port: 11334
+      targetPort: controller
+---
+# The web interface on localhost:11334, as before.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-rspamd-host
+  labels:
+    app.kubernetes.io/name: elemta-rspamd
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: elemta-rspamd
+  ports:
+    - name: controller
+      port: 11334
+      targetPort: controller
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elemta-rspamd-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,50 @@
+# NodePorts so the ports are reachable on the node itself (localhost on a
+# single-node cluster) without a load balancer, and clear of the ports the dev
+# stack takes. externalTrafficPolicy: Local keeps the client's real address
+# instead of SNATing it to the node, which is what allowed_relays, the rate
+# limiter and SPF all decide on.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta
+  namespace: elemta
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  ports:
+    - name: smtp
+      port: 2525
+      nodePort: 30025
+    - name: submission
+      port: 2587
+      nodePort: 30587
+    - name: metrics
+      port: 8080
+      nodePort: 30080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-web
+  namespace: elemta
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 8025
+      nodePort: 30825
+---
+# The development certificate names the host the config announces.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta
+  namespace: elemta
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: prepare-config
+          env:
+            - name: ELEMTA_HOSTNAME
+              value: mail.k8s.elemta.local

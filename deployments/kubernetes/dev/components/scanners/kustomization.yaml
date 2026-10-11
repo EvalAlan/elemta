@@ -1,0 +1,25 @@
+# ClamAV and Rspamd, which config/elemta.toml already points at
+# (elemta-clamav:3310, http://elemta-rspamd:11333). Without them the server
+# logs that it is delivering unscanned, which is the minimal stack's trade.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - clamav.yaml
+  - rspamd.yaml
+
+# The same override files the compose stack mounted, one key per file.
+configMapGenerator:
+  - name: elemta-rspamd-override
+    files:
+      - ../../../../../docker/rspamd/override.d/rbl.conf
+      - ../../../../../docker/rspamd/override.d/surbl.conf
+      - ../../../../../docker/rspamd/override.d/asn.conf
+      - ../../../../../docker/rspamd/override.d/fuzzy_check.conf
+      - ../../../../../docker/rspamd/override.d/options.inc
+  - name: elemta-rspamd-local
+    files:
+      - ../../../../../docker/rspamd/local.d/classifier-bayes.conf
+      - ../../../../../docker/rspamd/local.d/redis.conf
+      - ../../../../../docker/rspamd/local.d/greylist.conf
+      - ../../../../../docker/rspamd/local.d/actions.conf

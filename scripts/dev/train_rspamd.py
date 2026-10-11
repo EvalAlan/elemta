@@ -27,7 +27,11 @@ import subprocess
 import sys
 import tempfile
 
-CONTAINER = "elemta-rspamd"
+# The dev stack's Rspamd, the elemta-rspamd Deployment (install-dev-full or
+# install-dev-bench).
+NAMESPACE = os.environ.get("K8S_NAMESPACE", "elemta")
+CONTAINER = "deploy/elemta-rspamd"
+EXEC = ["kubectl", "-n", NAMESPACE, "exec", CONTAINER, "--"]
 # Rspamd's own default: Bayes stays silent until it has seen this many of each
 # class. Training fewer and then wondering why BAYES_* never fires is a
 # well-worn hole.
@@ -39,8 +43,9 @@ def run(args, **kwargs):
 
 
 def container_running():
-    out = run(["docker", "ps", "--format", "{{.Names}}"]).stdout.split()
-    return CONTAINER in out
+    out = run(["kubectl", "-n", NAMESPACE, "get", "deployment", "elemta-rspamd",
+               "-o", "jsonpath={.status.readyReplicas}"]).stdout.strip()
+    return out.isdigit() and int(out) >= 1
 
 
 def collect(directory, limit, seed):
@@ -81,10 +86,16 @@ def stage(paths, prefix):
         except OSError:
             continue
     remote = f"/tmp/{prefix}"
-    run(["docker", "exec", CONTAINER, "rm", "-rf", remote])
-    run(["docker", "exec", CONTAINER, "mkdir", "-p", remote])
-    result = run(["docker", "cp", f"{local}/.", f"{CONTAINER}:{remote}/"])
-    if result.returncode != 0:
+    run(EXEC + ["rm", "-rf", remote])
+    run(EXEC + ["mkdir", "-p", remote])
+    # A tar stream through exec rather than kubectl cp, which needs a pod name
+    # rather than a Deployment and does the same thing underneath.
+    pack = subprocess.Popen(["tar", "-C", local, "-cf", "-", "."], stdout=subprocess.PIPE)
+    result = subprocess.run(EXEC + ["tar", "-C", remote, "-xf", "-"],
+                            stdin=pack.stdout, capture_output=True, text=True)
+    pack.stdout.close()
+    pack.wait()
+    if result.returncode != 0 or pack.returncode != 0:
         sys.exit(f"copying {prefix} into {CONTAINER} failed: {result.stderr.strip()}")
     shutil.rmtree(local, ignore_errors=True)
     return remote
@@ -93,7 +104,7 @@ def stage(paths, prefix):
 def score_dir(remote):
     """Score every message in a container directory, returning the scores.
 
-    One shell loop inside a single exec: a docker exec per message turns a
+    One shell loop inside a single exec: an exec per message turns a
     200-message evaluation into minutes of process startup.
     """
     script = (
@@ -101,13 +112,13 @@ def score_dir(remote):
         f'rspamc symbols "$f" 2>/dev/null | sed -n "s|^Score: \\([0-9.-]*\\).*|\\1|p" | head -1; '
         f'done'
     )
-    out = run(["docker", "exec", CONTAINER, "sh", "-c", script]).stdout
+    out = run(EXEC + ["sh", "-c", script]).stdout
     return [float(line) for line in out.split() if line.replace(".", "").replace("-", "").isdigit()]
 
 
 def learn(remote, spam):
     command = "learn_spam" if spam else "learn_ham"
-    result = run(["docker", "exec", CONTAINER, "sh", "-c",
+    result = run(EXEC + ["sh", "-c",
                   f'rspamc {command} {remote} 2>&1 | grep -c "success = true"'])
     return int(result.stdout.strip() or 0)
 

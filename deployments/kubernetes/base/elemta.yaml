@@ -41,19 +41,18 @@ spec:
       # certificate.
       initContainers:
         - name: prepare-config
-          image: ghcr.io/evalalan/elemta
+          image: elemta
           command: ["/app/prepare-config.sh"]
           env: &env
             - name: TZ
               value: UTC
             # Development certificate, regenerated when it is missing or does
-            # not match its key. Remove for a real certificate; see elemta.toml.
+            # not match its key. An overlay with a real certificate sets this
+            # to "false" and mounts the pair; see standalone/elemta.toml.
             - name: ELEMTA_DEV_CERT
               value: "true"
             - name: ELEMTA_DEV_CERT_DAYS
               value: "30"
-            - name: ELEMTA_HOSTNAME
-              value: mail.k8s.elemta.local
           securityContext: &containerSecurity
             allowPrivilegeEscalation: false
             capabilities:
@@ -72,7 +71,7 @@ spec:
               mountPath: /tmp
       containers:
         - name: smtp
-          image: ghcr.io/evalalan/elemta
+          image: elemta
           args: ["server"]
           env: *env
           ports:
@@ -101,7 +100,7 @@ spec:
           securityContext: *containerSecurity
           volumeMounts: *mounts
         - name: web
-          image: ghcr.io/evalalan/elemta
+          image: elemta
           command:
             - /bin/sh
             - -c
@@ -146,30 +145,28 @@ spec:
             medium: Memory
             sizeLimit: 64Mi
 ---
-# NodePorts so the ports are reachable on the node itself (localhost on a
-# single-node k3s) without a load balancer. externalTrafficPolicy: Local keeps
-# the client's real address instead of SNATing it to the node, which is what
-# allowed_relays, the rate limiter and SPF all decide on.
+# Named after the compose service so everything that already addresses the SMTP
+# server as "elemta" (Roundcube's SMTP host, the dev config) keeps working.
+# ClusterIP here; the overlays decide how it is exposed.
 apiVersion: v1
 kind: Service
 metadata:
-  name: elemta-smtp
+  name: elemta
   labels:
     app.kubernetes.io/name: elemta
 spec:
-  type: NodePort
-  externalTrafficPolicy: Local
   selector:
     app.kubernetes.io/name: elemta
   ports:
     - name: smtp
       port: 2525
       targetPort: smtp
-      nodePort: 30025
     - name: submission
       port: 2587
       targetPort: submission
-      nodePort: 30587
+    - name: metrics
+      port: 8080
+      targetPort: metrics
 ---
 apiVersion: v1
 kind: Service
@@ -178,25 +175,9 @@ metadata:
   labels:
     app.kubernetes.io/name: elemta
 spec:
-  type: NodePort
   selector:
     app.kubernetes.io/name: elemta
   ports:
     - name: http
       port: 8025
       targetPort: http
-      nodePort: 30825
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: elemta-metrics
-  labels:
-    app.kubernetes.io/name: elemta
-spec:
-  selector:
-    app.kubernetes.io/name: elemta
-  ports:
-    - name: metrics
-      port: 8080
-      targetPort: metrics

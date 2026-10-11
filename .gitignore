@@ -114,6 +114,8 @@ test-*.sh
 
 # Local configuration files
 elemta.toml
+# The Kubernetes deployment's config is a tracked template, not a local file.
+!deployments/kubernetes/**/elemta.toml
 simple-rspamd.conf
 test-rspamd.conf
 

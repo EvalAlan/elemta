@@ -1,0 +1,16 @@
+# make install-dev-full: the dev stack plus ClamAV, Rspamd and Roundcube.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Repeated here because minimal's transformers do not reach the components.
+namespace: elemta
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: elemta
+    includeSelectors: false
+
+resources:
+  - ../minimal
+components:
+  - ../components/scanners
+  - ../components/roundcube

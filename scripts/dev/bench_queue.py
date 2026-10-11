@@ -25,17 +25,20 @@ server is falling behind rather than like a configured limit.
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import time
 
-CONTAINER = "elemta-node0"
+# The dev stack's SMTP server: the smtp container of the elemta Deployment.
+NAMESPACE = os.environ.get("K8S_NAMESPACE", "elemta")
+EXEC = ["kubectl", "-n", NAMESPACE, "exec", "deploy/elemta", "-c", "smtp", "--"]
 
 
 def queue_depth():
     """Count files in the active queue. Cheap, and independent of the logs."""
     out = subprocess.run(
-        ["docker", "exec", CONTAINER, "sh", "-c", "ls /app/queue/active 2>/dev/null | wc -l"],
+        EXEC + ["sh", "-c", "ls /app/queue/active 2>/dev/null | wc -l"],
         capture_output=True, text=True, timeout=30)
     try:
         return int(out.stdout.strip())
@@ -45,7 +48,7 @@ def queue_depth():
 
 def setting(pattern):
     out = subprocess.run(
-        ["docker", "exec", CONTAINER, "sh", "-c",
+        EXEC + ["sh", "-c",
          f"grep -m1 -E '{pattern}' /app/runtime-config/elemta.toml"],
         capture_output=True, text=True, timeout=30)
     return out.stdout.strip() or "(not set)"
@@ -110,7 +113,7 @@ def main():
         if time.time() - last_change > 120:
             print("\n  depth has not changed for two minutes — deliveries are "
                   "failing or deferring, not running slowly.")
-            print("  Check: docker logs elemta-node0 | grep deferral_reason")
+            print(f"  Check: kubectl -n {NAMESPACE} logs deploy/elemta -c smtp | grep deferral_reason")
             break
 
     residue = queue_depth()

@@ -1,0 +1,63 @@
+# Host ports, the same ones the compose stack published, so localhost:2525,
+# localhost:8025 and the rest keep working for people and for the scripts in
+# scripts/dev. On k3s a LoadBalancer Service binds the port on the node itself
+# (its built-in service load balancer), which is what makes this work on a dev
+# box with no cloud load balancer. Separate from the ClusterIP Services in base,
+# which are what other pods use.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-host
+  labels:
+    app.kubernetes.io/name: elemta
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: elemta
+  ports:
+    - name: smtp
+      port: 2525
+      targetPort: smtp
+    - name: submission
+      port: 2587
+      targetPort: submission
+    - name: web
+      port: 8025
+      targetPort: http
+    # 9080 outside, 8080 inside, as before: 8080 is too popular on a dev box.
+    - name: metrics
+      port: 9080
+      targetPort: metrics
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-dovecot-host
+  labels:
+    app.kubernetes.io/name: elemta-dovecot
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: elemta-dovecot
+  ports:
+    - name: imap
+      port: 14143
+      targetPort: imap
+    - name: sieve
+      port: 4190
+      targetPort: sieve
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-ldap-host
+  labels:
+    app.kubernetes.io/name: elemta-ldap
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: elemta-ldap
+  ports:
+    - name: ldap
+      port: 1389
+      targetPort: ldap

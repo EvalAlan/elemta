@@ -1,7 +1,10 @@
 # Docker Compose stacks
 
-Run these through `make` from the repository root where a target exists; the
-targets set the environment the files expect.
+**The dev stack has moved to Kubernetes** (`make install-dev*`, see
+[deployments/kubernetes](../kubernetes/README.md)); the `make` targets no longer
+use `docker-compose.yml`. It stays here for the overlays below that have not
+moved yet (mail-auth lab, ELK, multinode, monitoring), and is deleted when the
+last of them does. `docker-compose.prod.yml` is still how production deploys.
 
 | File | What it is | How to run |
 |---|---|---|
