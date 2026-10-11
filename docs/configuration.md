@@ -295,7 +295,9 @@ restart.
 
 `[[delivery.pools]]` defines named sets of source addresses (virtual MTAs)
 for remote SMTP delivery, so separate mail streams build separate sending
-reputations. Pools need a restart to change.
+reputations. Pools are re-read on a config reload (SIGHUP or a saved config
+file). The reload is refused, and the running pools kept, if an address
+does not bind. Today's warmup counts carry over to the new pools.
 
 ```toml
 [delivery]
@@ -356,6 +358,43 @@ helo = "bulk2.example.com"
   source address per destination, because receivers throttle by sending IP.
   Parked outbound sessions are also kept per source address, so mail never
   leaves through another pool's connection.
+
+#### Sharing warmup and throttles across nodes
+
+Each node keeps its own warmup counts and provider throttles by default. Two
+nodes sending from the same pool addresses (for example on the `postgres`
+queue backend) would then each send the full daily cap, and a Gmail throttle
+seen by one node would not slow the other. `shared_state` keeps both in
+Valkey:
+
+```toml
+[delivery]
+shared_state = true                      # default false; needs a restart
+shared_state_prefix = "elemta:delivery:" # the default
+```
+
+- **Connection.** It uses the Valkey that sender telemetry writes to: the
+  `VALKEY_ADDR` environment variable, default `elemta-valkey:6379`. There is
+  no separate address setting.
+- **Warmup.** Each capped address has one counter per UTC day
+  (`<prefix>warmup:<YYYY-MM-DD>:<address>`, kept 48 hours). A Lua script
+  checks the paced allowance and increments in one step, so two nodes cannot
+  both take the last unit. A delivery that reaches no receiver gives its
+  unit back. Warm (uncapped) addresses are not counted in Valkey. The
+  dashboard's `sent_today` for a capped address is the cluster's count.
+- **Throttles.** When a provider's throttle reply (see below) backs off a
+  provider on one node, the backoff end time and the rate penalty are
+  written to `<prefix>throttle:provider:<name>|<address>`. Other nodes read
+  them before sending to that provider, at most every 5 seconds, and take
+  the later backoff and the heavier penalty. A generic 4xx from a plain
+  domain stays with the node that saw it.
+- **Valkey unreachable.** Delivery carries on with the node's own counts and
+  `pool_state_file`, as without `shared_state`, so each node can spend a
+  full cap during the outage. A failed call makes the node skip Valkey for
+  10 seconds, so an outage does not add a timeout to every delivery. The
+  warning is logged at most once a minute, and recovery is logged once.
+- Give each cluster its own `shared_state_prefix` if several share one
+  Valkey but not their pool addresses.
 
 ### Mailbox provider profiles
 

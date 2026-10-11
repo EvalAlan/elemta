@@ -1453,3 +1453,29 @@ type ProcessorMetrics struct {
 	RetryTotal     int64      `json:"retry_total"`
 	QueueStats     QueueStats `json:"queue_stats"`
 }
+
+// poolReplacer is a delivery handler whose sending pools can be swapped on a
+// config reload.
+type poolReplacer interface {
+	ReplacePoolRouter(*PoolRouter)
+}
+
+// SendsFromPools reports whether the delivery handler sends over remote SMTP
+// and so has sending pools to reload. LMTP-only delivery does not.
+func (p *Processor) SendsFromPools() bool {
+	if split, ok := p.handler.(*SplitDeliveryHandler); ok {
+		return split.sendsFromPools()
+	}
+	_, ok := p.handler.(poolReplacer)
+	return ok
+}
+
+// ReplacePoolRouter hands reloaded sending pools to the delivery handler. It
+// reports false when the handler has no pools to replace.
+func (p *Processor) ReplacePoolRouter(r *PoolRouter) bool {
+	if !p.SendsFromPools() {
+		return false
+	}
+	p.handler.(poolReplacer).ReplacePoolRouter(r)
+	return true
+}
