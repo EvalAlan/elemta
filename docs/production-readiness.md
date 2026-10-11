@@ -70,6 +70,14 @@ name and an optional daily warmup schedule paced across the day; limits and
 backoff apply per source address per destination. See
 [Configuration](configuration.md#sending-ip-pools).
 
+**Provider-aware throttling.** Gmail, Yahoo and Microsoft destinations are
+matched by MX host, so hosted domains share one shaping state per provider per
+source address. Their throttle replies (Google `4.7.28`, Yahoo `[TSS04]`,
+Microsoft `4.7.650`/`RP-00x`) trigger a longer backoff and a slower send rate
+that recovers while the provider stays quiet, and full-mailbox deferrals no
+longer slow a whole destination. See
+[Configuration](configuration.md#mailbox-provider-profiles).
+
 **List hygiene.** Permanent bounces and spam complaints from feedback loops
 (ARF reports sent to `feedback_addresses`) suppress the recipient, and
 campaigns skip suppressed addresses.
@@ -109,9 +117,6 @@ so a resolver outage holds outbound mail.
 These are the things a high-volume **outbound** platform provides that Elemta
 does not, and where a purpose-built platform is the right tool:
 
-- **Provider-aware throttling.** Per-destination limits and backoff are
-  generic; there are no built-in policies keyed to Gmail, Yahoo or Microsoft
-  guidance, and no shaping driven by mailbox-provider feedback.
 - **Advanced deliverability telemetry.** Feedback-loop complaints suppress
   recipients, but there is no seedlist integration or engagement-based routing.
 

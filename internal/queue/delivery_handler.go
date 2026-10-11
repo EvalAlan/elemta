@@ -149,6 +149,10 @@ type SMTPDeliveryHandler struct {
 	// pools chooses the source address for each delivery; see pools.go. Nil
 	// leaves the source to the kernel.
 	pools *PoolRouter
+	// providers maps destinations whose MX belongs to a known mailbox
+	// provider onto one shaping state per provider; see providers.go. Nil
+	// shapes every destination per domain.
+	providers *ProviderRouter
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -364,7 +368,10 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 				releasePool()
 			}
 		}
-		shapeKey := shapingKey(src, domain)
+		// Read after the delivery: it is the delivery's MX lookup that tells
+		// us which provider, if any, this domain belongs to.
+		prov := h.providers.known(domain)
+		shapeKey := shapingKey(src, destinationKey(prov, domain))
 		if len(domainOutcomes) > 0 {
 			outcomes = append(outcomes, domainOutcomes...)
 			for _, outcome := range domainOutcomes {
@@ -391,10 +398,7 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 			// and neither is our own pool running out of warmup allowance.
 			if h.shaper != nil && status == RecipientTemporaryFailure &&
 				!errors.Is(err, ErrDestinationBackingOff) && !errors.Is(err, ErrPoolAtCapacity) {
-				backoff := h.shaper.ReportDeferral(shapeKey)
-				h.logger.Info("Backing off from a destination that deferred",
-					"event_type", "traffic_shaping",
-					"domain", domain, "source_ip", sourceAddr(src), "backoff", backoff.String())
+				h.reportDeferral(shapeKey, prov, domain, src, err, domainOutcomes)
 			}
 			// Counted but never a reason to slow down: a domain that accepts
 			// everything and bounces most of it is a deliverability problem,
@@ -506,12 +510,17 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 	// refuses here and the message is deferred, rather than a worker sleeping
 	// until the destination is ready — one slow receiver would otherwise stall
 	// the whole queue behind it.
+	//
+	// The slot is keyed by provider when the MX belongs to one, which is
+	// only known after the MX lookup. So a pause already known for this
+	// domain, or for the provider it was last seen at, is checked first,
+	// before any DNS: a backed-off destination costs nothing.
+	src := sourceFrom(ctx)
 	if h.shaper != nil {
-		release, err := h.shaper.Acquire(ctx, shapingKey(sourceFrom(ctx), domain))
-		if err != nil {
-			return "", "", nil, err
+		key := shapingKey(src, destinationKey(h.providers.known(domain), domain))
+		if wait, backingOff := h.shaper.BackingOff(key); backingOff {
+			return "", "", nil, fmt.Errorf("%w: %s for another %s", ErrDestinationBackingOff, domain, wait.Round(time.Second))
 		}
-		defer release()
 	}
 
 	// Look up MX records for the domain
@@ -522,6 +531,20 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 
 	if len(mxRecords) == 0 {
 		return "", "", nil, fmt.Errorf("no MX records found for domain %s", domain)
+	}
+
+	if h.shaper != nil {
+		prov := h.providers.matchMX(domain, mxRecords)
+		var limits *Limits
+		if prov != nil {
+			l := prov.limits
+			limits = &l
+		}
+		release, err := h.shaper.AcquireWithLimits(ctx, shapingKey(src, destinationKey(prov, domain)), limits)
+		if err != nil {
+			return "", "", nil, err
+		}
+		defer release()
 	}
 
 	// Try each MX record in order of preference
@@ -877,6 +900,40 @@ func sessionGone(err error) bool {
 func isSMTPReply(err error) bool {
 	var tpErr *textproto.Error
 	return errors.As(err, &tpErr)
+}
+
+// SetProviderRouter attaches mailbox provider profiles. Nil shapes every
+// destination per domain.
+func (h *SMTPDeliveryHandler) SetProviderRouter(r *ProviderRouter) {
+	h.providers = r
+}
+
+// reportDeferral tells the shaper what a temporary failure means for pace.
+func (h *SMTPDeliveryHandler) reportDeferral(key string, prov *provider, domain string, src *sourceIP, err error, outcomes []RecipientOutcome) {
+	switch classifyDeferral(prov, err, outcomes) {
+	case deferralThrottle:
+		backoff := h.shaper.ReportThrottle(key, prov.backoff, prov.backoffMax)
+		h.logger.Warn("Mailbox provider is throttling this sender; backing off and slowing down",
+			"event_type", "traffic_shaping", "provider", prov.name,
+			"domain", domain, "source_ip", sourceAddr(src), "backoff", backoff.String(), "error", err)
+	case deferralRecipient:
+		// One mailbox is full or busy; everyone else's mail keeps moving.
+		h.shaper.ReportRecipientDeferral(key)
+		h.logger.Info("Recipient-level deferral; not backing off the destination",
+			"event_type", "traffic_shaping", "domain", domain, "source_ip", sourceAddr(src))
+	default:
+		backoff := h.shaper.ReportDeferral(key)
+		h.logger.Info("Backing off from a destination that deferred",
+			"event_type", "traffic_shaping",
+			"domain", domain, "provider", providerName(prov), "source_ip", sourceAddr(src), "backoff", backoff.String())
+	}
+}
+
+func providerName(p *provider) string {
+	if p == nil {
+		return ""
+	}
+	return p.name
 }
 
 // SetPoolRouter attaches sending pools. Nil leaves deliveries unpooled.
