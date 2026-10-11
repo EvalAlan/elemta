@@ -75,6 +75,11 @@ type Config struct {
 	ARCTimeout   time.Duration
 	// Hostname identifies this server in the Authentication-Results header.
 	Hostname string
+	// Resolver answers every lookup the checks make. Nil means
+	// net.DefaultResolver. It exists so a caller can point verification at a
+	// particular DNS server without mutating net.DefaultResolver, which every
+	// other lookup in the process reads concurrently.
+	Resolver Resolver
 }
 
 // Verifier performs the checks.
@@ -114,7 +119,11 @@ func New(config Config) *Verifier {
 		Verify:  config.ARCEnabled,
 		Timeout: config.ARCTimeout,
 	})
-	resolver := newCachingResolver(net.DefaultResolver)
+	var upstream Resolver = net.DefaultResolver
+	if config.Resolver != nil {
+		upstream = config.Resolver
+	}
+	resolver := newCachingResolver(upstream)
 	arcVerifier.SetResolver(resolver.LookupTXT)
 	return &Verifier{config: config, resolver: resolver, arc: arcVerifier}
 }
