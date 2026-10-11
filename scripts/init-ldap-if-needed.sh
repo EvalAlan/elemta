@@ -1,12 +1,18 @@
 #!/bin/bash
 # Initialize LDAP users if they don't exist
-# Run by the install-dev targets once LDAP is up
+# This script runs after docker-setup to ensure users are loaded
 
 set -e
 
-# The dev stack runs on Kubernetes; LDAP is the elemta-ldap Deployment. -i so
-# the heredocs below reach ldapadd's stdin.
-LDAP_EXEC=(kubectl -n "${K8S_NAMESPACE:-elemta}" exec -i deploy/elemta-ldap --)
+# The Compose dev stack by default; ELEMTA_STACK=k8s (set by the k8s-* make
+# targets) runs the same commands in the Kubernetes one.
+if [ "${ELEMTA_STACK:-}" = "k8s" ]; then
+    LDAP_EXEC=(kubectl -n "${K8S_NAMESPACE:-elemta}" exec deploy/elemta-ldap --)
+    LDAP_LOGS="kubectl -n ${K8S_NAMESPACE:-elemta} logs deploy/elemta-ldap"
+else
+    LDAP_EXEC=(docker exec elemta-ldap)
+    LDAP_LOGS="docker logs elemta-ldap"
+fi
 
 echo "🔍 Checking if LDAP users need initialization..."
 
@@ -53,6 +59,6 @@ if ldap_has_users; then
     echo "✅ LDAP users initialized successfully"
     exit 0
 else
-    echo "⚠️  LDAP users could not be verified — check: kubectl -n ${K8S_NAMESPACE:-elemta} logs deploy/elemta-ldap"
+    echo "⚠️  LDAP users could not be verified — check: $LDAP_LOGS"
     exit 0
 fi

@@ -26,17 +26,13 @@
 
 ### Kubernetes
 
-- **The dev stack runs on Kubernetes.** `make install-dev`, `-full`, `-bench`
-  and `-postgres` build the images, load them into a local cluster (k3s on
+- **The dev stack can also run on Kubernetes**, as an option next to Compose,
+  which stays the default. `make k8s-install-dev`, `-full`, `-bench` and
+  `-postgres` build the images, load them into a local cluster (k3s on
   Arch/CachyOS is the documented path) and apply an overlay of
-  `deployments/kubernetes/dev`. Same services, names and host ports as the
-  compose stack, so `config/elemta.toml` and the scripts work unchanged.
-  `up`, `down`, `down-volumes`, `restart`, `status`, `logs`, `rebuild`,
-  `sink-up`/`sink-down`, `bootstrap-admin` and `test-dev` (was `test-docker`,
-  still accepted) act on the cluster. New: `make reseed`.
-- **`install-dev-mailauth` and `elk-up` are not ported yet** and say so. Their
-  compose files stay until they are; production still deploys with
-  `docker-compose.prod.yml`.
+  `deployments/kubernetes/dev`, with the same services, names and host ports.
+  `make k8s-help` lists the rest (`k8s-up`, `k8s-down`, `k8s-logs`,
+  `k8s-rebuild-dev`, `k8s-reseed`, `k8s-sink-up`, ...).
 - **`deployments/kubernetes/standalone`**: Elemta, its dashboard, an LMTP sink
   and Valkey from the published image, for any cluster.
   `kubectl apply -k deployments/kubernetes/standalone`.

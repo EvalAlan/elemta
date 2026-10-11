@@ -36,13 +36,11 @@ account from the dashboard login. People confuse these.
 ## Traps that will cost you time
 
 **Editing `config/elemta.toml` does not change a running stack.** The services
-read a copy on a shared volume, seeded once, because the web UI writes to it
-too. On the Kubernetes dev stack the chain is one step longer: the file becomes
-a ConfigMap, which prepare-config.sh copies onto the runtime volume. `make
-install-dev*` re-seeds; plain `up` and `restart` deliberately do not, or a
-deploy would discard whatever the operator saved in the UI. To force it:
-`make reseed` (it re-applies nothing, so run the install target if the file
-changed since the last one).
+read a copy on a shared Docker volume, seeded once, because the web UI writes to
+it too. `make install-dev*` re-seeds via `ELEMTA_CONFIG_RESEED=true`; plain `up`
+and `restart` deliberately do not, or a deploy would discard whatever the
+operator saved in the UI. To force it:
+`ELEMTA_CONFIG_RESEED=true docker compose -f deployments/compose/docker-compose.yml up -d --force-recreate elemta elemta-web`
 
 **TOML keys land in the wrong table if you are careless.** A key written after a
 `[section]` header belongs to that section. This bit me twice: scanner settings
@@ -303,8 +301,9 @@ Worth knowing separately: a `soft reject` must stay a 451. Turning it into a
 
 **A stale container will send you hunting a bug that is already fixed.** The
 554-instead-of-451 above looked like a live defect in the disposition mapping;
-the mapping was correct and the running image simply predated it. `make
-rebuild-dev` (build, load into the cluster, restart) before concluding anything from the behaviour of a dev stack that has been up for
+the mapping was correct and the running image simply predated it. `docker
+compose build elemta && docker compose up -d --force-recreate elemta` before
+concluding anything from the behaviour of a dev stack that has been up for
 hours. Reading the source and testing it directly agreed with each other and
 disagreed with the container, which is the signal.
 
@@ -415,13 +414,12 @@ rather than a deploy. `print-dev-summary` reads the *running* delivery target
 rather than asserting one, because the two installs disagree and a summary that
 guesses is worse than none.
 
-Two things that bite when writing targets like this, both live bugs in the
-compose version of `install-dev-bench` and both still true in a different form
-on Kubernetes: applying one stack must remove what another added (the targets
-apply with `--prune`, and remember the applied overlay on the namespace so a
-config change re-applies that one rather than the default and prunes the rest);
-and nothing restarts a pod whose spec has not changed, so a rebuilt image under
-the same tag, or a re-seed, needs an explicit `rollout restart`.
+Two things that bite when writing targets like this: `docker compose up -d
+<list>` starts what is listed and stops nothing, so a Roundcube left from an
+earlier install keeps running; and compose will not recreate a container whose
+spec has not changed, so `ELEMTA_CONFIG_RESEED=true` does nothing without
+`--force-recreate` and the server keeps delivering to the old destination. Both
+were live bugs in the first version of `install-dev-bench`.
 
 **The delivery path used to serialize on one mutex held across disk I/O.**
 `Manager.DeleteMessage` took the manager's single write lock and held it while
@@ -587,11 +585,12 @@ been verified with jsdom harnesses and API responses.
 # stack
 make install-dev-full                 # full dev stack
 make status / make logs
-make restart
+docker compose -f deployments/compose/docker-compose.yml restart elemta elemta-web
 
 # after changing Go code, the dev stack needs a rebuild
-make rebuild-dev                      # build, load into k3s, restart
-make reseed                           # take config/elemta.toml again
+docker build -t elemta:latest .
+ELEMTA_CONFIG_RESEED=true docker compose -f deployments/compose/docker-compose.yml \
+  up -d --force-recreate elemta elemta-web
 
 # tests
 go test ./internal/...                # internal/smtp takes ~135s
@@ -606,4 +605,4 @@ curl -s -c /tmp/c -X POST http://localhost:8025/auth/login \
 curl -s -b /tmp/c http://localhost:8025/api/suppression
 ```
 
-Ports: SMTP 2525, dashboard 8025, Roundcube 8026, metrics 9080.
+Ports: SMTP 2525, dashboard 8025, Roundcube 8026, metrics 8080.
