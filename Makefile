@@ -308,6 +308,7 @@ reset-admin-password:
 	if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
 	if ! docker ps --format '{{.Names}}' | grep -q '^elemta-web$$'; then \
 		echo "❌ elemta-web is not running — start the stack first (make up)"; \
+		echo "   On Kubernetes, use make k8s-reset-admin-password"; \
 		exit 1; \
 	fi; \
 	OUT=$$(printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
@@ -492,7 +493,10 @@ help:
 	@echo "  PLUGIN_SPF=$(PLUGIN_SPF)  PLUGIN_DKIM=$(PLUGIN_DKIM)  PLUGIN_DMARC=$(PLUGIN_DMARC)  PLUGIN_ARC=$(PLUGIN_ARC)"
 	@echo "    e.g. make install-dev PLUGIN_RBL=off CERT_DAYS=90"
 	@echo ""
-	@echo "☸️  make k8s-help  - The same dev stack on Kubernetes (k3s), as k8s-* targets"
+	@echo "The targets above run the Docker Compose stack, the default. To run the same"
+	@echo "dev stack on Kubernetes instead, use the k8s-* targets:"
+	@echo ""
+	@$(MAKE) --no-print-directory k8s-help
 	@echo ""
 	@echo "💡 make gotchas   - The things that surprise people (config reload, discarded"
 	@echo "                    delivery, cert expiry, what [logging] ignores). Worth reading"
@@ -980,7 +984,7 @@ K8S_WEB_EXEC = $(KC) exec -i deploy/elemta -c web -- /app/elemta --config /app/r
 	k8s-bootstrap-admin k8s-reset-admin-password k8s-bench-queue k8s-print-dev-summary
 
 k8s-help:
-	@echo "☸️  Kubernetes dev stack (k3s; see deployments/kubernetes/README.md)"
+	@echo "☸️  Kubernetes (k3s; see deployments/kubernetes/README.md):"
 	@echo "  k8s-install-dev            Minimal stack, plugins on, prints a dashboard login"
 	@echo "  k8s-install-dev-full       + ClamAV, Rspamd, Roundcube"
 	@echo "  k8s-install-dev-bench      + ClamAV, Rspamd; delivery DISCARDED"
@@ -992,6 +996,10 @@ k8s-help:
 	@echo "  k8s-reseed                 Take config/elemta.toml again, discarding what the UI saved"
 	@echo "  k8s-sink-up / k8s-sink-down   Discard delivery, or deliver to Dovecot again"
 	@echo "  k8s-bootstrap-admin / k8s-reset-admin-password / k8s-bench-queue"
+	@echo "  Dashboard users: kubectl -n $(K8S_NAMESPACE) exec -it deploy/elemta -c web -- \\"
+	@echo "    /app/elemta --config /app/runtime-config/elemta.toml \\"
+	@echo "    user list|add|passwd|remove --file /app/runtime-config/users.json"
+	@echo "  See what is running: kubectl -n $(K8S_NAMESPACE) get pods,svc"
 	@echo "  Same ports as the Compose stack, so run one or the other ('make down' first)."
 	@echo "  K8S_IMAGE_LOAD=$(K8S_IMAGE_LOAD) (auto|docker|kind|k3s|none)  K8S_NAMESPACE=$(K8S_NAMESPACE)  KUBECTL=$(KUBECTL)"
 
