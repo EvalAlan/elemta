@@ -78,6 +78,12 @@ that recovers while the provider stays quiet, and full-mailbox deferrals no
 longer slow a whole destination. See
 [Configuration](configuration.md#mailbox-provider-profiles).
 
+**Sender reputation telemetry.** Delivery outcomes, provider throttles and
+feedback-loop complaints are counted per sending pool, source address and
+mailbox provider, in the dashboard and in Prometheus, with complaint rates
+judged against the Gmail and Yahoo 0.1% / 0.3% thresholds. See
+[Configuration](configuration.md#sender-reputation-telemetry).
+
 **List hygiene.** Permanent bounces and spam complaints from feedback loops
 (ARF reports sent to `feedback_addresses`) suppress the recipient, and
 campaigns skip suppressed addresses.
@@ -117,8 +123,10 @@ so a resolver outage holds outbound mail.
 These are the things a high-volume **outbound** platform provides that Elemta
 does not, and where a purpose-built platform is the right tool:
 
-- **Advanced deliverability telemetry.** Feedback-loop complaints suppress
-  recipients, but there is no seedlist integration or engagement-based routing.
+- **Seedlists and engagement-based routing.** Complaint, bounce and throttle
+  rates are reported per pool, address and provider, but there is no seedlist
+  (inbox placement) integration, and no routing of unengaged recipients to a
+  separate pool.
 
 ## Before you go to production
 

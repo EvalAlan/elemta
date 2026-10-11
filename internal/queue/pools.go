@@ -269,6 +269,27 @@ func (r *PoolRouter) CheckLocalAddresses() error {
 	return nil
 }
 
+// poolForAddress returns the pool a source address belongs to, and the
+// address in canonical form, or "", "" when it is not a pool address.
+func (r *PoolRouter) poolForAddress(addr string) (string, string) {
+	if r == nil {
+		return "", ""
+	}
+	ip := net.ParseIP(strings.TrimSpace(addr))
+	if ip == nil {
+		return "", ""
+	}
+	canonical := ip.String()
+	for _, pool := range r.pools {
+		for _, src := range pool.ips {
+			if src.addr == canonical {
+				return pool.name, canonical
+			}
+		}
+	}
+	return "", ""
+}
+
 // poolFor returns the pool for an envelope sender, or "" for unpooled.
 func (r *PoolRouter) poolFor(sender string) string {
 	sender = strings.ToLower(strings.Trim(strings.TrimSpace(sender), "<>"))
