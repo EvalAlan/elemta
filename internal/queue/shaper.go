@@ -83,6 +83,19 @@ type domainState struct {
 
 	lastUsed time.Time
 
+	// rate is this destination's own messages-per-minute cap, set from a
+	// provider profile; zero falls back to the shaper-wide cap.
+	rate int
+	// throttledRate is the cap applied once the destination has said this
+	// sender is going too fast; see ReportThrottle.
+	throttledRate int
+	// penalty is how many times, recently, the destination has throttled
+	// us. Each level halves the send rate; one level is forgiven per
+	// penaltyDecay without another throttle.
+	penalty        int
+	penaltyDecayAt time.Time
+	throttled      uint64
+
 	// Outcome counts for this destination since it started being tracked.
 	// Deliberately not a complete ledger: idle destinations are evicted after
 	// an hour and the table is capped, so these describe recent behaviour, not
@@ -109,13 +122,54 @@ func NewShaper(config ShapingConfig) *Shaper {
 // It returns ErrDestinationBackingOff immediately when the destination is
 // pausing, so the caller can defer the message instead of holding a worker.
 func (s *Shaper) Acquire(ctx context.Context, domain string) (func(), error) {
+	return s.AcquireWithLimits(ctx, domain, nil)
+}
+
+// Limits are per-destination overrides of the shaper-wide limits, used for
+// destinations that a provider profile describes. Zero fields fall back to
+// the shaper-wide values.
+type Limits struct {
+	MaxConnections       int
+	MaxMessagesPerMinute int
+	// ThrottledMessagesPerMinute is the rate after the destination throttles
+	// us, before penalty halving. Zero means DefaultThrottledRate.
+	ThrottledMessagesPerMinute int
+}
+
+// DefaultThrottledRate is the rate a throttled destination drops to when its
+// profile does not say. A destination that has just told us we are sending
+// too fast gets a slower pace after the backoff, not the pace that caused it.
+const DefaultThrottledRate = 60
+
+// penaltyDecay is how long a throttle penalty level lasts without a new
+// throttle. Long enough that a receiver's rate window has rolled over;
+// short enough that one bad hour does not slow a day.
+const penaltyDecay = 15 * time.Minute
+
+// maxPenalty bounds the halving: at the default throttled rate, four levels
+// is under four messages a minute, which is slow enough to be polite and
+// still enough to tell whether the receiver has recovered.
+const maxPenalty = 4
+
+// AcquireWithLimits is Acquire for a destination with its own limits. The
+// connection cap is fixed when a destination is first seen; rates apply on
+// every call, so a reload of profile rates takes effect.
+func (s *Shaper) AcquireWithLimits(ctx context.Context, domain string, limits *Limits) (func(), error) {
 	if s == nil {
 		return func() {}, nil
 	}
 
 	now := time.Now()
 	s.mu.Lock()
-	state := s.stateFor(domain, now)
+	state := s.stateForLimits(domain, now, limits)
+	if limits != nil {
+		state.rate = limits.MaxMessagesPerMinute
+		state.throttledRate = limits.ThrottledMessagesPerMinute
+	}
+	if state.penalty > 0 && !now.Before(state.penaltyDecayAt) {
+		state.penalty--
+		state.penaltyDecayAt = now.Add(penaltyDecay)
+	}
 
 	if now.Before(state.deferUntil) {
 		wait := state.deferUntil.Sub(now)
@@ -126,7 +180,7 @@ func (s *Shaper) Acquire(ctx context.Context, domain string) (func(), error) {
 	// Reserve this send's place in the rate limit while holding the lock, so
 	// concurrent workers space out rather than all reading the same nextSend.
 	var wait time.Duration
-	if interval := s.sendInterval(); interval > 0 {
+	if interval := s.sendInterval(state); interval > 0 {
 		if state.nextSend.After(now) {
 			wait = state.nextSend.Sub(now)
 		}
@@ -173,6 +227,80 @@ func (s *Shaper) ReportSuccess(domain string) {
 	state.failures = 0
 	state.deferUntil = time.Time{}
 	state.delivered++
+}
+
+// BackingOff reports how much longer a destination is paused for, if it is.
+// It lets a caller refuse before doing work (a DNS lookup) that would only
+// find out the same thing.
+func (s *Shaper) BackingOff(domain string) (time.Duration, bool) {
+	if s == nil {
+		return 0, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, ok := s.domains[domain]
+	if !ok {
+		return 0, false
+	}
+	now := time.Now()
+	if now.Before(state.deferUntil) {
+		return state.deferUntil.Sub(now), true
+	}
+	return 0, false
+}
+
+// ReportThrottle records that a destination said, in so many words, that it
+// is rate limiting or reputation limiting this sender. That is a stronger
+// statement than a generic 4xx, so it gets a longer pause (from initial,
+// doubling to max) and a lasting penalty on the send rate afterwards: the
+// pace that caused the throttle is not the pace to resume at.
+func (s *Shaper) ReportThrottle(domain string, initial, maxBackoff time.Duration) time.Duration {
+	if s == nil {
+		return 0
+	}
+	if initial <= 0 {
+		initial = s.config.BackoffInitial
+	}
+	if maxBackoff < initial {
+		maxBackoff = initial
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	state := s.stateFor(domain, now)
+	state.failures++
+	state.deferred++
+	state.throttled++
+	if state.penalty < maxPenalty {
+		state.penalty++
+	}
+	state.penaltyDecayAt = now.Add(penaltyDecay)
+
+	backoff := initial
+	for i := 1; i < state.failures && backoff < maxBackoff; i++ {
+		backoff *= 2
+	}
+	if backoff > maxBackoff {
+		backoff = maxBackoff
+	}
+	// Never shorten a pause already in force.
+	if until := now.Add(backoff); until.After(state.deferUntil) {
+		state.deferUntil = until
+	}
+	return backoff
+}
+
+// ReportRecipientDeferral counts a deferral that was about one mailbox (full,
+// or receiving too fast) rather than about us. It is not a reason to slow
+// down for everyone else at that destination.
+func (s *Shaper) ReportRecipientDeferral(domain string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stateFor(domain, time.Now()).deferred++
 }
 
 // ReportPermanentFailure records a bounce against a destination without
@@ -225,6 +353,9 @@ func (s *Shaper) ReportDeferral(domain string) time.Duration {
 // Status describes what is being applied to a destination, for the dashboard.
 type Status struct {
 	Domain string `json:"domain"`
+	// Provider names the provider profile when Domain is a provider key
+	// rather than a single domain.
+	Provider string `json:"provider,omitempty"`
 	// SourceIP is the pool address these limits apply to. Empty for unpooled
 	// mail, which is shaped per destination alone.
 	SourceIP       string    `json:"source_ip,omitempty"`
@@ -239,6 +370,13 @@ type Status struct {
 	Delivered uint64 `json:"delivered"`
 	Deferred  uint64 `json:"deferred"`
 	Bounced   uint64 `json:"bounced"`
+	// Throttled counts deferrals the destination explained as rate or
+	// reputation limiting; Penalty is how many halvings of the send rate are
+	// in force because of them, and RatePerMinute the resulting cap (0 for
+	// none).
+	Throttled     uint64 `json:"throttled"`
+	Penalty       int    `json:"penalty,omitempty"`
+	RatePerMinute int    `json:"rate_per_minute,omitempty"`
 }
 
 // Statuses reports every destination currently being tracked.
@@ -253,10 +391,18 @@ func (s *Shaper) Statuses() []Status {
 	out := make([]Status, 0, len(s.domains))
 	for key, state := range s.domains {
 		domain, sourceIP, _ := strings.Cut(key, shapingKeySep)
+		maxConn := s.config.MaxConnectionsPerDomain
+		if state.slots != nil {
+			maxConn = cap(state.slots)
+		}
 		status := Status{
+			Provider:       providerOfKey(domain),
+			Throttled:      state.throttled,
+			Penalty:        state.penalty,
+			RatePerMinute:  s.effectiveRate(state),
 			Domain:         domain,
 			SourceIP:       sourceIP,
-			MaxConnections: s.config.MaxConnectionsPerDomain,
+			MaxConnections: maxConn,
 			Failures:       state.failures,
 			LastUsed:       state.lastUsed,
 			Delivered:      state.delivered,
@@ -277,6 +423,10 @@ func (s *Shaper) Statuses() []Status {
 // stateFor returns a destination's state, creating it if needed. Callers hold
 // the lock.
 func (s *Shaper) stateFor(domain string, now time.Time) *domainState {
+	return s.stateForLimits(domain, now, nil)
+}
+
+func (s *Shaper) stateForLimits(domain string, now time.Time, limits *Limits) *domainState {
 	if state, ok := s.domains[domain]; ok {
 		state.lastUsed = now
 		return state
@@ -290,8 +440,12 @@ func (s *Shaper) stateFor(domain string, now time.Time) *domainState {
 	}
 
 	state := &domainState{lastUsed: now}
-	if s.config.MaxConnectionsPerDomain > 0 {
-		state.slots = make(chan struct{}, s.config.MaxConnectionsPerDomain)
+	maxConn := s.config.MaxConnectionsPerDomain
+	if limits != nil && limits.MaxConnections > 0 {
+		maxConn = limits.MaxConnections
+	}
+	if maxConn > 0 {
+		state.slots = make(chan struct{}, maxConn)
 	}
 	s.domains[domain] = state
 	return state
@@ -320,9 +474,34 @@ func (s *Shaper) evictIdleLocked(now time.Time) {
 	}
 }
 
-func (s *Shaper) sendInterval() time.Duration {
-	if s.config.MaxMessagesPerMinute <= 0 {
+func (s *Shaper) sendInterval(state *domainState) time.Duration {
+	rate := s.effectiveRate(state)
+	if rate <= 0 {
 		return 0
 	}
-	return time.Minute / time.Duration(s.config.MaxMessagesPerMinute)
+	return time.Minute / time.Duration(rate)
+}
+
+// effectiveRate is a destination's current messages-per-minute cap, or 0 for
+// none. Callers hold the lock.
+func (s *Shaper) effectiveRate(state *domainState) int {
+	rate := s.config.MaxMessagesPerMinute
+	if state.rate > 0 {
+		rate = state.rate
+	}
+	if state.penalty == 0 {
+		return rate
+	}
+	throttled := state.throttledRate
+	if throttled <= 0 {
+		throttled = DefaultThrottledRate
+	}
+	if rate <= 0 || rate > throttled {
+		rate = throttled
+	}
+	rate >>= state.penalty - 1
+	if rate < 1 {
+		rate = 1
+	}
+	return rate
 }

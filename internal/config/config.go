@@ -1367,6 +1367,9 @@ func (c *Config) validateDelivery(result *ValidationResult, sv *SecurityValidato
 			result.AddError("delivery.pools", len(c.Delivery.Pools), err.Error())
 		}
 	}
+	if _, err := queue.NewProviderRouter(c.Delivery.ProviderProfilesEnabled(), c.Delivery.Providers); err != nil {
+		result.AddError("delivery.providers", len(c.Delivery.Providers), err.Error())
+	}
 
 	// Validate delivery mode
 	// The runtime owns this list; duplicating it here is what let the two
