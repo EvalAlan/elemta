@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/EvalAlan/elemta/internal/runtimepaths"
 	"github.com/EvalAlan/elemta/internal/smtp"
 
@@ -1353,6 +1354,18 @@ func (c *Config) validateQueueProcessor(result *ValidationResult, sv *SecurityVa
 func (c *Config) validateDelivery(result *ValidationResult, sv *SecurityValidator) {
 	if c.Delivery == nil {
 		return // Delivery config is optional
+	}
+
+	// Pools are checked by the same constructor the server uses, so the
+	// dashboard rejects exactly what startup would. Local addresses are not
+	// checked here: the config may be edited on a different host.
+	if len(c.Delivery.Pools) > 0 || c.Delivery.DefaultPool != "" {
+		if _, err := queue.NewPoolRouter(queue.PoolsConfig{
+			Pools:       c.Delivery.Pools,
+			DefaultPool: c.Delivery.DefaultPool,
+		}, nil); err != nil {
+			result.AddError("delivery.pools", len(c.Delivery.Pools), err.Error())
+		}
 	}
 
 	// Validate delivery mode

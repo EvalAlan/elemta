@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -223,7 +224,10 @@ func (s *Shaper) ReportDeferral(domain string) time.Duration {
 
 // Status describes what is being applied to a destination, for the dashboard.
 type Status struct {
-	Domain         string    `json:"domain"`
+	Domain string `json:"domain"`
+	// SourceIP is the pool address these limits apply to. Empty for unpooled
+	// mail, which is shaped per destination alone.
+	SourceIP       string    `json:"source_ip,omitempty"`
 	InUse          int       `json:"in_use"`
 	MaxConnections int       `json:"max_connections"`
 	Failures       int       `json:"failures"`
@@ -247,9 +251,11 @@ func (s *Shaper) Statuses() []Status {
 
 	now := time.Now()
 	out := make([]Status, 0, len(s.domains))
-	for domain, state := range s.domains {
+	for key, state := range s.domains {
+		domain, sourceIP, _ := strings.Cut(key, shapingKeySep)
 		status := Status{
 			Domain:         domain,
+			SourceIP:       sourceIP,
 			MaxConnections: s.config.MaxConnectionsPerDomain,
 			Failures:       state.failures,
 			LastUsed:       state.lastUsed,
