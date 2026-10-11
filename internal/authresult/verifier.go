@@ -16,6 +16,7 @@ package authresult
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/mail"
@@ -27,6 +28,7 @@ import (
 	arcplugin "github.com/EvalAlan/elemta/internal/arc"
 	"github.com/emersion/go-msgauth/dkim"
 	"github.com/emersion/go-msgauth/dmarc"
+	"golang.org/x/net/publicsuffix"
 )
 
 // Result is one authentication method's verdict.
@@ -167,12 +169,12 @@ func (v *Verifier) Check(ctx context.Context, clientIP net.IP, heloName, mailFro
 	ctx, cancel := context.WithTimeout(ctx, v.config.Timeout)
 	defer cancel()
 
-	fromDomain := domainOf(mailFrom)
-	var (
-		wg          sync.WaitGroup
-		dmarcRecord *dmarc.Record
-		dmarcErr    error
-	)
+	// DMARC is about the From the recipient sees (RFC 7489 §3.1), not the
+	// envelope. Parsed before anything starts so the policy lookups can run
+	// alongside SPF and DKIM rather than after them.
+	authors, authorErr := authorDomains(message)
+	lookups := make([]dmarcLookup, len(authors))
+	var wg sync.WaitGroup
 	run := func(timeout time.Duration, check func(context.Context)) {
 		wg.Add(1)
 		go func() {
@@ -195,10 +197,12 @@ func (v *Verifier) Check(ctx context.Context, clientIP net.IP, heloName, mailFro
 			results.DKIM = verifyDKIM(ctx, message, v.resolver.LookupTXT)
 		})
 	}
-	if v.config.DMARCEnabled && fromDomain != "" {
-		run(v.config.DMARCTimeout, func(ctx context.Context) {
-			dmarcRecord, dmarcErr = v.lookupDMARC(ctx, fromDomain)
-		})
+	if v.config.DMARCEnabled && shouldLookUp(authors, authorErr) {
+		for i, domain := range authors {
+			run(v.config.DMARCTimeout, func(ctx context.Context) {
+				lookups[i].record, lookups[i].err = v.lookupDMARC(ctx, domain)
+			})
+		}
 	}
 	if v.config.ARCEnabled {
 		run(v.config.ARCTimeout, func(ctx context.Context) {
@@ -210,7 +214,7 @@ func (v *Verifier) Check(ctx context.Context, clientIP net.IP, heloName, mailFro
 	wg.Wait()
 
 	if v.config.DMARCEnabled {
-		results.DMARC, results.Policy, results.DMARCPolicy = evaluateDMARC(fromDomain, dmarcRecord, dmarcErr, results)
+		results.DMARC, results.Policy, results.DMARCPolicy = decideDMARC(authors, authorErr, lookups, results)
 	} else {
 		results.DMARC = Result{Method: "dmarc", Value: "none", Reason: "DMARC plugin disabled"}
 	}
@@ -232,7 +236,9 @@ func (v *Verifier) DKIMEnabled() bool { return v != nil && v.config.DKIMEnabled 
 // evidence of forgery. Treating an inconclusive check as a failure would refuse
 // legitimate mail whenever a resolver hiccuped, which is a far more likely
 // event than the forgery it would be catching.
-func (v *Verifier) Verify(ctx context.Context, clientIP net.IP, heloName, mailFrom string, dkimResults []Result) Results {
+//
+// message is needed for its From header, which is the identity DMARC judges.
+func (v *Verifier) Verify(ctx context.Context, clientIP net.IP, heloName, mailFrom string, message []byte, dkimResults []Result) Results {
 	results := Results{Disposition: "accept"}
 	if !v.Enabled() {
 		return results
@@ -249,8 +255,14 @@ func (v *Verifier) Verify(ctx context.Context, clientIP net.IP, heloName, mailFr
 
 	if v.config.DMARCEnabled {
 		dmarcCtx, cancel := context.WithTimeout(ctx, v.config.DMARCTimeout)
-		fromDomain := domainOf(mailFrom)
-		results.DMARC, results.Policy, results.DMARCPolicy = v.checkDMARC(dmarcCtx, fromDomain, results)
+		authors, authorErr := authorDomains(message)
+		lookups := make([]dmarcLookup, len(authors))
+		if shouldLookUp(authors, authorErr) {
+			for i, domain := range authors {
+				lookups[i].record, lookups[i].err = v.lookupDMARC(dmarcCtx, domain)
+			}
+		}
+		results.DMARC, results.Policy, results.DMARCPolicy = decideDMARC(authors, authorErr, lookups, results)
 		cancel()
 	} else {
 		results.DMARC = Result{Method: "dmarc", Value: "none", Reason: "DMARC plugin disabled"}
@@ -310,28 +322,140 @@ func (v *Verifier) checkSPF(ctx context.Context, clientIP net.IP, heloName, mail
 	return out
 }
 
-// checkDMARC looks up the From domain's policy and decides alignment.
+// maxAuthorDomains bounds the policy lookups one message can cause. The From
+// header is written by the sender, so without a bound it would decide how much
+// DNS work this server does while the client waits.
+const maxAuthorDomains = 4
+
+var errNoFrom = errors.New("message has no From header")
+
+// dmarcLookup is one author domain's policy lookup.
+type dmarcLookup struct {
+	record *dmarc.Record
+	err    error
+}
+
+// authorDomains returns the distinct domains of the RFC5322.From addresses.
+//
+// Every From header is collected, not just the first: a forger who adds a
+// second From with their own domain must not get to choose which one is
+// judged, because mail clients disagree about which one they display.
+func authorDomains(message []byte) ([]string, error) {
+	msg, err := mail.ReadMessage(bytes.NewReader(message))
+	if err != nil {
+		return nil, fmt.Errorf("unparseable header: %w", err)
+	}
+	fields := msg.Header["From"]
+	if len(fields) == 0 {
+		return nil, errNoFrom
+	}
+	var domains []string
+	seen := map[string]bool{}
+	for _, field := range fields {
+		addresses, err := mail.ParseAddressList(field)
+		if err != nil {
+			return nil, fmt.Errorf("unparseable From header: %w", err)
+		}
+		for _, address := range addresses {
+			domain := strings.TrimSuffix(domainOf(address.Address), ".")
+			if domain == "" {
+				return nil, errors.New("From address has no domain")
+			}
+			if !seen[domain] {
+				seen[domain] = true
+				domains = append(domains, domain)
+			}
+		}
+	}
+	return domains, nil
+}
+
+// shouldLookUp reports whether the author domains are worth fetching policy
+// for. Beyond the bound the verdict does not depend on any record.
+func shouldLookUp(authors []string, authorErr error) bool {
+	return authorErr == nil && len(authors) <= maxAuthorDomains
+}
+
+// decideDMARC turns the author domains and their policies into one verdict.
 //
 // DMARC passes when SPF or DKIM passes *and* the passing identity aligns with
 // the From domain. Alignment is the whole point: SPF passing for a domain the
 // recipient never sees says nothing about whether the visible From is genuine,
 // which is exactly how a forgery gets through a naive check.
-func (v *Verifier) checkDMARC(ctx context.Context, fromDomain string, results Results) (Result, string, *DMARCPolicy) {
-	if fromDomain == "" {
-		return evaluateDMARC(fromDomain, nil, nil, results)
+// The returned policy is the one record a report can be filed under, so it is
+// nil whenever the message is not judged under exactly one domain's record.
+func decideDMARC(authors []string, authorErr error, lookups []dmarcLookup, results Results) (Result, string, *DMARCPolicy) {
+	if authorErr != nil {
+		// permerror rather than none: "none" reads as "this domain published
+		// no policy", a claim about a domain we never identified. The message
+		// is malformed (RFC 5322 requires exactly one From) and saying so lets
+		// a later hop treat it accordingly. With no domain there is no policy
+		// to apply, so the disposition is left alone; what matters is that
+		// this can never read as a pass.
+		return Result{Method: "dmarc", Value: "permerror", Reason: authorErr.Error()}, "", nil
 	}
-	record, err := v.lookupDMARC(ctx, fromDomain)
-	return evaluateDMARC(fromDomain, record, err, results)
+	if len(authors) == 1 {
+		return evaluateDMARC(authors[0], lookups[0].record, lookups[0].err, results)
+	}
+
+	// Several author domains. RFC 7489 §6.6.1 lets a receiver reject these
+	// outright and otherwise asks for the strictest policy among them. This
+	// never passes, even if each domain would on its own: one verdict for the
+	// message would otherwise belong to whichever domain the forger made
+	// pass, while the reader may be shown the other.
+	out := Result{Method: "dmarc", Value: "fail",
+		Reason: fmt.Sprintf("From names %d domains: %s", len(authors), strings.Join(authors, ", "))}
+	if len(authors) > maxAuthorDomains {
+		// Too many to look up. Rejecting is what §6.6.1 permits, and anything
+		// weaker would let a forger hide the victim past the bound.
+		return out, string(dmarc.PolicyReject), nil
+	}
+	policy := ""
+	for i, domain := range authors {
+		verdict, domainPolicy, _ := evaluateDMARC(domain, lookups[i].record, lookups[i].err, results)
+		if verdict.Value != "pass" && policyRank(domainPolicy) > policyRank(policy) {
+			policy = domainPolicy
+		}
+	}
+	return out, policy, nil
+}
+
+func policyRank(policy string) int {
+	switch policy {
+	case string(dmarc.PolicyReject):
+		return 2
+	case string(dmarc.PolicyQuarantine):
+		return 1
+	}
+	return 0
 }
 
 // lookupDMARC fetches the From domain's policy. It is separate from the
 // verdict so the lookup can run alongside SPF and DKIM.
+//
+// A subdomain with no record of its own is governed by its organisational
+// domain (RFC 7489 §6.6.3). Without that fallback a forger sidesteps
+// p=reject by writing From: anything@mail.victim.example.
 func (v *Verifier) lookupDMARC(ctx context.Context, fromDomain string) (*dmarc.Record, error) {
-	return dmarc.LookupWithOptions(fromDomain, &dmarc.LookupOptions{
-		LookupTXT: func(name string) ([]string, error) {
-			return v.resolver.LookupTXT(ctx, name)
-		},
-	})
+	lookup := func(domain string) (*dmarc.Record, error) {
+		return dmarc.LookupWithOptions(domain, &dmarc.LookupOptions{
+			LookupTXT: func(name string) ([]string, error) {
+				return v.resolver.LookupTXT(ctx, name)
+			},
+		})
+	}
+	record, err := lookup(fromDomain)
+	org := organizationalDomain(fromDomain)
+	if !errors.Is(err, dmarc.ErrNoPolicy) || org == fromDomain {
+		return record, err
+	}
+	record, err = lookup(org)
+	if err == nil && record.SubdomainPolicy != "" {
+		inherited := *record
+		inherited.Policy = record.SubdomainPolicy
+		record = &inherited
+	}
+	return record, err
 }
 
 // evaluateDMARC decides alignment from a looked-up record.
@@ -407,6 +531,11 @@ func publishedPolicy(domain string, record *dmarc.Record, dkimAligned, spfAligne
 // Relaxed alignment — the default — accepts a shared organisational domain, so
 // mail.example.com aligns with example.com. That is what lets an organisation
 // send from a subdomain without publishing policy for every one of them.
+//
+// The organisational domain comes from the public suffix list rather than
+// from comparing suffixes: suffix matching aligns victim.co.uk with anything
+// that authenticates as co.uk, and fails to align siblings such as
+// bounce.example.com and news.example.com.
 func aligned(authenticated, from string, strict bool) bool {
 	authenticated = strings.ToLower(strings.TrimSuffix(authenticated, "."))
 	from = strings.ToLower(strings.TrimSuffix(from, "."))
@@ -419,7 +548,19 @@ func aligned(authenticated, from string, strict bool) bool {
 	if strict {
 		return false
 	}
-	return strings.HasSuffix(authenticated, "."+from) || strings.HasSuffix(from, "."+authenticated)
+	return organizationalDomain(authenticated) == organizationalDomain(from)
+}
+
+// organizationalDomain is the registrable domain (RFC 7489 §3.2). A name that
+// is itself a public suffix, or that the list cannot place, is its own
+// organisational domain, so it aligns only on an exact match.
+func organizationalDomain(domain string) string {
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
+	org, err := publicsuffix.EffectiveTLDPlusOne(domain)
+	if err != nil {
+		return domain
+	}
+	return org
 }
 
 // Header renders the Authentication-Results header.

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/emersion/go-msgauth/dmarc"
 )
 
 // The libraries do SPF, DKIM and DMARC record parsing. What is ours is the
@@ -30,6 +32,10 @@ func TestAlignmentIsWhatMakesDMARCMeanSomething(t *testing.T) {
 		{"mail.example.com", "example.com", true, false, "a subdomain does not align when strict"},
 		{"attacker.example", "example.com", false, false, "an unrelated domain never aligns"},
 		{"notexample.com", "example.com", false, false, "a domain that merely ends similarly"},
+		{"bounce.example.com", "news.example.com", false, true, "siblings share an organisational domain"},
+		{"bounce.example.com", "news.example.com", true, false, "siblings do not align strictly"},
+		{"co.uk", "victim.co.uk", false, false, "a public suffix is nobody's organisation"},
+		{"attacker.co.uk", "victim.co.uk", false, false, "neighbours under a public suffix"},
 		{"", "example.com", false, false, "nothing authenticated"},
 		{"example.com", "", false, false, "no From domain"},
 	}
@@ -47,7 +53,7 @@ func TestAlignmentIsWhatMakesDMARCMeanSomething(t *testing.T) {
 // must behave exactly as it did before, including writing no verdict.
 func TestDisabledVerifierAcceptsEverything(t *testing.T) {
 	v := New(Config{Enabled: false})
-	results := v.Verify(t.Context(), nil, "helo.example", "someone@example.com", nil)
+	results := v.Verify(t.Context(), nil, "helo.example", "someone@example.com", nil, nil)
 	if results.Disposition != "accept" {
 		t.Errorf("disposition = %q, want accept", results.Disposition)
 	}
@@ -192,7 +198,6 @@ func TestCheckAgreesWithVerify(t *testing.T) {
 	}}
 	v := New(Config{Enabled: true, SPFEnabled: true, DKIMEnabled: true, DMARCEnabled: true, EnforceDMARC: true})
 	v.resolver = newCachingResolver(zone)
-	message := []byte("From: a@example.com\r\nSubject: hello\r\n\r\nbody\r\n")
 
 	for _, tc := range []struct {
 		from             string
@@ -201,16 +206,187 @@ func TestCheckAgreesWithVerify(t *testing.T) {
 		{"a@example.com", "pass", "pass", "accept"},
 		{"a@other.example", "fail", "fail", "quarantine"},
 	} {
+		message := []byte("From: " + tc.from + "\r\nSubject: hello\r\n\r\nbody\r\n")
 		got := v.Check(t.Context(), net.ParseIP("192.0.2.1"), "helo.example", tc.from, message)
 		if got.SPF.Value != tc.spf || got.DMARC.Value != tc.dmarc || got.Disposition != tc.disp {
 			t.Errorf("%s: Check = spf %q dmarc %q disposition %q, want %q %q %q",
 				tc.from, got.SPF.Value, got.DMARC.Value, got.Disposition, tc.spf, tc.dmarc, tc.disp)
 		}
-		want := v.Verify(t.Context(), net.ParseIP("192.0.2.1"), "helo.example", tc.from, nil)
+		want := v.Verify(t.Context(), net.ParseIP("192.0.2.1"), "helo.example", tc.from, message, nil)
 		if got.SPF.Value != want.SPF.Value || got.DMARC.Value != want.DMARC.Value ||
 			got.Policy != want.Policy || got.Disposition != want.Disposition {
 			t.Errorf("%s: Check %+v disagrees with Verify %+v", tc.from, got, want)
 		}
+	}
+}
+
+// headerFromZone is a world with a victim that publishes p=reject and an
+// attacker whose SPF authorises the connecting address.
+func headerFromZone() *fakeResolver {
+	return &fakeResolver{zone: map[string][]string{
+		"attacker.example":          {"v=spf1 ip4:192.0.2.1 -all"},
+		"victim.example":            {"v=spf1 ip4:192.0.2.1 -all"},
+		"_dmarc.victim.example":     {"v=DMARC1; p=reject"},
+		"strict.example":            {"v=spf1 ip4:192.0.2.1 -all"},
+		"mail.strict.example":       {"v=spf1 ip4:192.0.2.1 -all"},
+		"_dmarc.strict.example":     {"v=DMARC1; p=quarantine; aspf=s"},
+		"mail.relaxed.example":      {"v=spf1 ip4:192.0.2.1 -all"},
+		"_dmarc.relaxed.example":    {"v=DMARC1; p=reject"},
+		"_dmarc.subpol.example":     {"v=DMARC1; p=none; sp=reject"},
+		"_dmarc.quarantine.example": {"v=DMARC1; p=quarantine"},
+	}}
+}
+
+func headerFromVerifier(enforce bool) *Verifier {
+	v := New(Config{Enabled: true, SPFEnabled: true, DMARCEnabled: true, EnforceDMARC: enforce})
+	v.resolver = newCachingResolver(headerFromZone())
+	return v
+}
+
+// checkBoth runs Check and Verify on one message so neither path can drift
+// back to judging the envelope.
+func checkBoth(t *testing.T, v *Verifier, mailFrom, headers string) Results {
+	t.Helper()
+	message := []byte(headers + "Subject: hello\r\n\r\nbody\r\n")
+	ip := net.ParseIP("192.0.2.1")
+	got := v.Check(t.Context(), ip, "helo.example", mailFrom, message)
+	want := v.Verify(t.Context(), ip, "helo.example", mailFrom, message, nil)
+	if got.DMARC != want.DMARC || got.Policy != want.Policy || got.Disposition != want.Disposition {
+		t.Errorf("Check %+v disagrees with Verify %+v", got, want)
+	}
+	return got
+}
+
+// TestDMARCJudgesTheHeaderFromNotTheEnvelope is the spoof DMARC exists to
+// stop: the envelope names the forger's own SPF-passing domain and the From
+// the reader sees names someone else's. Judging the envelope reported
+// dmarc=pass for a forged From and left a p=reject domain unprotected.
+func TestDMARCJudgesTheHeaderFromNotTheEnvelope(t *testing.T) {
+	got := checkBoth(t, headerFromVerifier(true), "bounce@attacker.example", "From: CEO <ceo@victim.example>\r\n")
+	if got.SPF.Value != "pass" || got.SPF.Domain != "attacker.example" {
+		t.Errorf("SPF = %+v: SPF still judges the envelope and should pass for it", got.SPF)
+	}
+	if got.DMARC.Value != "fail" || got.DMARC.Domain != "victim.example" {
+		t.Errorf("DMARC = %+v, want fail for victim.example", got.DMARC)
+	}
+	if got.Policy != "reject" || got.Disposition != "reject" {
+		t.Errorf("policy %q disposition %q, want reject/reject", got.Policy, got.Disposition)
+	}
+	if header := got.Header("mx.example"); !strings.Contains(header, "dmarc=fail (p=reject) header.from=victim.example") {
+		t.Errorf("header does not report the forged From: %q", header)
+	}
+
+	// Recorded but not acted on when the operator has not asked for it.
+	if got := checkBoth(t, headerFromVerifier(false), "bounce@attacker.example", "From: ceo@victim.example\r\n"); got.Disposition != "accept" {
+		t.Errorf("disposition without enforcement = %q, want accept", got.Disposition)
+	}
+}
+
+func TestDMARCPassesForAnAlignedSender(t *testing.T) {
+	got := checkBoth(t, headerFromVerifier(true), "bounce@victim.example", "From: ceo@victim.example\r\n")
+	if got.DMARC.Value != "pass" || got.Disposition != "accept" {
+		t.Errorf("DMARC %+v disposition %q, want pass/accept", got.DMARC, got.Disposition)
+	}
+}
+
+func TestDMARCRelaxedAndStrictSPFAlignment(t *testing.T) {
+	v := headerFromVerifier(true)
+	relaxed := checkBoth(t, v, "bounce@mail.relaxed.example", "From: news@relaxed.example\r\n")
+	if relaxed.DMARC.Value != "pass" {
+		t.Errorf("relaxed: a subdomain envelope should align, got %+v", relaxed.DMARC)
+	}
+	strict := checkBoth(t, v, "bounce@mail.strict.example", "From: news@strict.example\r\n")
+	if strict.DMARC.Value != "fail" || strict.Disposition != "quarantine" {
+		t.Errorf("strict: a subdomain envelope must not align, got %+v disposition %q", strict.DMARC, strict.Disposition)
+	}
+	exact := checkBoth(t, v, "bounce@strict.example", "From: news@strict.example\r\n")
+	if exact.DMARC.Value != "pass" {
+		t.Errorf("strict: an exact match should align, got %+v", exact.DMARC)
+	}
+}
+
+// TestDMARCDKIMAlignmentFollowsTheHeaderFrom: a valid signature by the
+// forger's own domain is not a signature by the victim's.
+func TestDMARCDKIMAlignmentFollowsTheHeaderFrom(t *testing.T) {
+	relaxed := &dmarc.Record{Policy: dmarc.PolicyReject, DKIMAlignment: dmarc.AlignmentRelaxed}
+	strict := &dmarc.Record{Policy: dmarc.PolicyReject, DKIMAlignment: dmarc.AlignmentStrict}
+	for _, tc := range []struct {
+		signer string
+		record *dmarc.Record
+		want   string
+	}{
+		{"attacker.example", relaxed, "fail"},
+		{"victim.example", strict, "pass"},
+		{"mail.victim.example", relaxed, "pass"},
+		{"mail.victim.example", strict, "fail"},
+	} {
+		signed := Results{DKIM: []Result{{Method: "dkim", Value: "pass", Domain: tc.signer}}}
+		got, _, _ := evaluateDMARC("victim.example", tc.record, nil, signed)
+		if got.Value != tc.want {
+			t.Errorf("d=%s adkim=%s: dmarc=%s, want %s", tc.signer, tc.record.DKIMAlignment, got.Value, tc.want)
+		}
+	}
+}
+
+// TestDMARCWithoutAUsableFromNeverPasses: no From, or one that cannot be read,
+// identifies no domain. That must not be mistaken for a pass, and with no
+// domain there is no policy to enforce.
+func TestDMARCWithoutAUsableFromNeverPasses(t *testing.T) {
+	v := headerFromVerifier(true)
+	for name, headers := range map[string]string{
+		"missing":     "",
+		"unparseable": "From: <<not an address\r\n",
+		"no domain":   "From: someone\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := checkBoth(t, v, "bounce@victim.example", headers)
+			if got.DMARC.Value != "permerror" || got.Disposition != "accept" {
+				t.Errorf("DMARC %+v disposition %q, want permerror/accept", got.DMARC, got.Disposition)
+			}
+		})
+	}
+}
+
+// TestDMARCMultipleFromDomainsNeverPass: a forger adding their own From next
+// to the victim's must not get to choose which one is judged.
+func TestDMARCMultipleFromDomainsNeverPass(t *testing.T) {
+	v := headerFromVerifier(true)
+	for name, headers := range map[string]string{
+		"two headers":         "From: me@attacker.example\r\nFrom: ceo@victim.example\r\n",
+		"two addresses":       "From: me@attacker.example, ceo@victim.example\r\n",
+		"too many to look up": "From: a@a.example, b@b.example, c@c.example, d@d.example, e@e.example\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := checkBoth(t, v, "bounce@attacker.example", headers)
+			if got.DMARC.Value != "fail" || got.Disposition != "reject" {
+				t.Errorf("DMARC %+v policy %q disposition %q, want fail/reject", got.DMARC, got.Policy, got.Disposition)
+			}
+		})
+	}
+
+	// The strictest failing policy is the one applied.
+	got := checkBoth(t, v, "bounce@attacker.example", "From: a@quarantine.example, b@attacker.example\r\n")
+	if got.DMARC.Value != "fail" || got.Policy != "quarantine" || got.Disposition != "quarantine" {
+		t.Errorf("DMARC %+v policy %q disposition %q, want fail/quarantine", got.DMARC, got.Policy, got.Disposition)
+	}
+	// Two addresses at one domain are one author domain.
+	same := checkBoth(t, v, "bounce@victim.example", "From: a@victim.example, b@Victim.Example\r\n")
+	if same.DMARC.Value != "pass" {
+		t.Errorf("two addresses at one domain: %+v, want pass", same.DMARC)
+	}
+}
+
+// TestDMARCSubdomainInheritsOrganisationalPolicy: without the fallback a
+// forger sidesteps p=reject by putting a subdomain in the From.
+func TestDMARCSubdomainInheritsOrganisationalPolicy(t *testing.T) {
+	v := headerFromVerifier(true)
+	got := checkBoth(t, v, "bounce@attacker.example", "From: ceo@anything.victim.example\r\n")
+	if got.DMARC.Value != "fail" || got.Disposition != "reject" {
+		t.Errorf("DMARC %+v disposition %q, want fail/reject", got.DMARC, got.Disposition)
+	}
+	sub := checkBoth(t, v, "bounce@attacker.example", "From: x@news.subpol.example\r\n")
+	if sub.Policy != "reject" {
+		t.Errorf("subdomain policy = %q, want reject from sp=", sub.Policy)
 	}
 }
 
