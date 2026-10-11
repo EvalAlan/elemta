@@ -64,6 +64,12 @@ domains keep flowing.
 user, readonly) managed in the dashboard or with `elemta user`, failed-login
 lockout, and refusal of cross-site requests that ride the session cookie.
 
+**Sending IP pools.** `[[delivery.pools]]` binds outbound mail to named
+sets of source addresses chosen by envelope sender, with a per-address EHLO
+name and an optional daily warmup schedule paced across the day; limits and
+backoff apply per source address per destination. See
+[Configuration](configuration.md#sending-ip-pools).
+
 **List hygiene.** Permanent bounces and spam complaints from feedback loops
 (ARF reports sent to `feedback_addresses`) suppress the recipient, and
 campaigns skip suppressed addresses.
@@ -103,8 +109,6 @@ so a resolver outage holds outbound mail.
 These are the things a high-volume **outbound** platform provides that Elemta
 does not, and where a purpose-built platform is the right tool:
 
-- **Sending IP pools / virtual MTAs.** No per-pool source-IP binding and no IP
-  warmup schedules.
 - **Provider-aware throttling.** Per-destination limits and backoff are
   generic; there are no built-in policies keyed to Gmail, Yahoo or Microsoft
   guidance, and no shaping driven by mailbox-provider feedback.

@@ -10,6 +10,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/queue"
 )
 
 // Config represents the main configuration for the SMTP server
@@ -218,6 +219,18 @@ type DeliveryConfig struct {
 	// path it travelled. Default 127.0.0.1:53.
 	DANEResolver string `toml:"dane_resolver" json:"dane_resolver"`
 	Debug        bool   `toml:"debug" json:"debug"` // Enable debug logging for delivery
+	// Pools are sending IP pools ([[delivery.pools]]): named sets of source
+	// addresses that mail is assigned to by envelope sender, each address
+	// with its own EHLO name and optional warmup schedule. None means
+	// outbound mail leaves from whatever address the kernel picks.
+	// Changing pools needs a restart.
+	Pools []queue.PoolConfig `toml:"pools" json:"pools,omitempty"`
+	// DefaultPool is the pool for mail whose sender no pool claims, DSNs
+	// included. Empty leaves that mail unpooled.
+	DefaultPool string `toml:"default_pool" json:"default_pool,omitempty"`
+	// PoolStateFile keeps per-address warmup counts across restarts.
+	// Defaults to pool-state.json in the queue directory.
+	PoolStateFile string `toml:"pool_state_file" json:"pool_state_file,omitempty"`
 }
 
 // TLSReportingConfig configures SMTP TLS Reporting (RFC 8460): daily
