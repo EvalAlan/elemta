@@ -25,7 +25,7 @@ cd elemta
 make install-dev
 ```
 
-Starts the core services (Elemta + web + Dovecot + LDAP + Valkey) and bootstraps local dev defaults.
+Starts the core services (Elemta + web + Dovecot + LDAP + Valkey + a caching DNS resolver) and bootstraps local dev defaults. The dashboard is on http://localhost:8025, SMTP on 2525, submission on 2587.
 
 ### Full dev stack
 
@@ -33,7 +33,9 @@ Starts the core services (Elemta + web + Dovecot + LDAP + Valkey) and bootstraps
 make install-dev-full
 ```
 
-Includes extra services (e.g. ClamAV, Rspamd, Roundcube) in addition to the core stack.
+Includes extra services (ClamAV, Rspamd, Roundcube on http://localhost:8026) in addition to the core stack.
+
+Other variants: `make install-dev-postgres` (Postgres queue), `make install-dev-mailauth` (outbound DKIM signing and ARC sealing lab, delivering to a local sink), and `make install-dev-bench` (delivers to a discarding LMTP sink, for benchmarks only).
 
 ### Day-to-day commands
 
@@ -97,25 +99,18 @@ make test-race-smoke
 
 ## 4) Other deployment models
 
-### Kubernetes
+### Production (Docker Compose over SSH)
 
-Manifest examples are in `k8s/`.
+See [Production Deployment](production-deployment.md).
 
-```bash
-kubectl apply -f k8s/
-```
+### Native packages (RPM/DEB, proposed)
 
-See also: `k8s/README.md`.
-
-### Native packages (RPM/DEB direction)
-
-For path/layout and packaging direction, see:
-
-- [Native Install Spec v1](native-install-spec-v1.md)
+Not shipped yet. The intended layout is in
+[Native Install Spec v1](native-install-spec-v1.md).
 
 ---
 
 ## Notes
 
 - Configuration is TOML-based. See [Configuration](configuration.md).
-- Queue backend can be `file` or `sqlite`. See [Queue Management](queue_management.md) and [Queue Backend Runbook](queue-backend-runbook.md).
+- Queue backend can be `file`, `sqlite`, `postgres` or `indexedfs`. See [Queue Management](queue_management.md) and [Queue Backend Runbook](queue-backend-runbook.md).

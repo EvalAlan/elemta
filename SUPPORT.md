@@ -26,6 +26,6 @@ See [SECURITY.md](SECURITY.md).
 
 Start with:
 
-- [docs/index.md](docs/index.md)
+- [docs/README.md](docs/README.md)
 - [docs/troubleshooting.md](docs/troubleshooting.md)
 - [docs/testing.md](docs/testing.md)

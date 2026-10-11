@@ -15,7 +15,7 @@ first step and says which settings are missing. See
 ## Deployment models
 
 1. **Containerized** (recommended operationally for this repo)
-2. **Native package/systemd** (tracked in [Native Install Spec v1](native-install-spec-v1.md))
+2. **Native package/systemd** (proposed, not shipped; see [Native Install Spec v1](native-install-spec-v1.md))
 
 ---
 
@@ -79,49 +79,61 @@ bash remote-deploy.sh <commit-sha>
 
 ## 2) Minimal production TOML profile
 
+Written for `docker-compose.prod.yml`, so paths are the container's: the host's
+`ELEMTA_CONFIG_DIR` (default `/etc/elemta`) is mounted at `/app/config`, and
+the queue volume at `/app/queue`. The server listens on 2525 and 2587 and the
+host maps 25 and 587 onto them; the compose file binds metrics and the
+dashboard to loopback on the host, so they listen on all addresses inside.
+
 ```toml
 hostname = "mail.example.com"
-listen_addr = ":25"
+listen_addr = ":2525"            # MX: anyone may deliver to local_domains
 max_size = 52428800
 local_domains = ["example.com"]
 failed_queue_retention_hours = 72
 
+[server]
+listen_submission = ":2587"      # submission: log in over STARTTLS, or be in allowed_relays
+
 [queue]
-dir = "/var/spool/elemta/queue"
+dir = "/app/queue"
 backend = "sqlite"
 
 [queue.sqlite]
-path = "/var/spool/elemta/queue/queue.db"
+path = "/app/queue/queue.db"
 busy_timeout_ms = 5000
 journal_mode = "WAL"
 synchronous = "NORMAL"
 
 [auth]
 enabled = true
-required = true
+# Keep required = false on an MX. It refuses MAIL FROM from every client that
+# has not logged in, which includes every server delivering mail to you.
+# The submission port still requires a login (or an allowed_relays address).
+required = false
 datasource_type = "ldap"
 
 [tls]
 enabled = true
 enable_starttls = true
-cert_file = "/etc/elemta/certs/fullchain.pem"
-key_file = "/etc/elemta/certs/privkey.pem"
+cert_file = "/app/config/certs/fullchain.pem"
+key_file = "/app/config/certs/privkey.pem"
 
 [api]
 enabled = true
-listen_addr = "127.0.0.1:8025"
-web_root = "./web/static"
+listen_addr = ":8025"
+web_root = "/app/web/static"
 auth_enabled = true
-auth_file = "/etc/elemta/users.txt"
+auth_file = "/app/config/users.txt"
 
 [metrics]
 enabled = true
-listen_addr = "127.0.0.1:8080"
+listen_addr = ":8080"
 
 [queue_processor]
 enabled = true
 interval = 10
-workers = 5
+workers = 20
 ```
 
 ---
@@ -132,14 +144,14 @@ workers = 5
 # SMTP reachable
 nc -vz 127.0.0.1 25
 
-# API health
+# API health (no login needed)
 curl -s http://127.0.0.1:8025/api/health | jq
 
-# Queue stats
-curl -s http://127.0.0.1:8025/api/queue/stats | jq
+# Queue stats (prompts for the admin password)
+curl -s -u admin http://127.0.0.1:8025/api/queue/stats | jq
 
 # Queue storage backend info
-curl -s http://127.0.0.1:8025/api/queue/storage | jq
+curl -s -u admin http://127.0.0.1:8025/api/queue/storage | jq
 ```
 
 ---

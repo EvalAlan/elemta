@@ -4,7 +4,7 @@ Elemta currently ships three binaries:
 
 - `elemta` — primary command (server/web/queue/cert/zimbra)
 - `elemta-queue` — queue status utility
-- `elemta-cli` — lightweight helper CLI (`status`, `queue`)
+- `elemta-cli` — remote queue client over the HTTP API
 
 Build all binaries:
 
@@ -43,6 +43,12 @@ Global flag:
 ./bin/elemta queue flush
 ./bin/elemta queue stats
 ```
+
+### Reloading configuration
+
+There is no reload subcommand. A running `elemta server` reloads on `SIGHUP`
+(`docker kill -s HUP <container>`), and also notices within about 5 seconds
+when its configuration file changes, which is how dashboard edits apply.
 
 ### `elemta web` useful flags
 
@@ -100,14 +106,25 @@ ELEMTA_CONFIG_PATH=./config/elemta.toml ./bin/elemta-queue
 
 ## 3) `elemta-cli`
 
-`elemta-cli` is currently minimal:
+`elemta-cli` drives a running `elemta web` over its HTTP API, so it works from
+any host that can reach the dashboard. Its `--api-url` default is
+`http://localhost:8081`, not the dashboard's `8025`, so pass it explicitly:
 
 ```bash
-./bin/elemta-cli status
-./bin/elemta-cli queue
+export API="--api-url http://127.0.0.1:8025 --api-key $ELEMTA_API_KEY"
+
+./bin/elemta-cli $API status
+./bin/elemta-cli $API queue list [active|deferred|hold|failed]
+./bin/elemta-cli $API queue show <message-id> [--raw]
+./bin/elemta-cli $API queue delete <message-id>
+./bin/elemta-cli $API queue retry [queue-type]
+./bin/elemta-cli $API queue flush [queue-type] --yes   # deletes messages
+./bin/elemta-cli $API queue stats
+./bin/elemta-cli version
 ```
 
-If you need full queue management, use `elemta queue` or HTTP API endpoints.
+Create the API key in the dashboard or with `POST /auth/apikeys`; see the
+[API Reference](api-reference.md#authentication).
 
 ---
 

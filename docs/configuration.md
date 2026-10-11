@@ -40,7 +40,7 @@ local_domains = ["example.com", "localhost"]
 
 [queue]
 dir = "/var/spool/elemta/queue"
-backend = "file" # file | sqlite | postgres
+backend = "file" # file | sqlite | postgres | indexedfs
 
 [queue.sqlite]
 path = "/var/spool/elemta/queue/queue.db"
@@ -111,6 +111,10 @@ file = "/var/log/elemta/elemta.log"
   balancer or Docker's userland proxy). `dev_mode` no longer bypasses this.
 - `failed_queue_retention_hours`
 - `max_workers`, `max_retries`, `max_queue_time`, `retry_schedule`
+- `max_connections_per_domain` — simultaneous outbound deliveries to one
+  destination domain (the per-destination traffic shaper). Keep it at or above
+  `[queue_processor].workers` for single-domain benchmarks, or the number
+  measures the shaper
 - `session_timeout` (duration string, e.g. `5m`)
 - `strict_line_endings` (default `true`)
 - `trusted_networks` (CIDRs; default loopback + RFC 1918)
@@ -208,8 +212,9 @@ restart.
 ### Queue backend
 
 - `[queue].dir`
-- `[queue].backend` (`file`, `sqlite`, or `postgres`)
+- `[queue].backend` (`file`, `sqlite`, `postgres`, or `indexedfs`)
 - `[queue.sqlite]` settings
+- `[queue.indexedfs]` settings (`index_path`, `content_dir`, `sync_mode`, `recovery_on_startup`)
 - `[queue.postgres]` settings (`dsn`, pool sizing)
 
 ### API/web
@@ -259,6 +264,9 @@ restart.
 - `[delivery].mode`
 - `[delivery].host`
 - `[delivery].port`
+- `[delivery].max_messages_per_minute_per_domain` (default 0, no limit) caps
+  the send rate to one destination. A destination that defers is backed off
+  on its own, with a doubling interval, without blocking a worker.
 - `[delivery].verify_recipients` — ask the LMTP server at RCPT time whether a
   local mailbox exists and refuse unknown users with `550 5.1.1`, instead of
   accepting and bouncing (backscatter). Default on in `lmtp`/`split` mode when
@@ -282,6 +290,16 @@ restart.
   A DNSSEC lookup that fails defers the message rather than sending without
   DANE, so a resolver outage holds outbound mail.
 - retry/timeouts
+
+### Inbound sender verification
+
+SPF, DKIM, DMARC and ARC verification are configured under `[plugins.spf]`,
+`[plugins.dkim]`, `[plugins.dmarc]` and `[plugins.arc]`. They run together
+under one deadline, `[inbound_auth] timeout` (seconds, default 10); a plugin's
+own `timeout` caps that check and cannot extend past the shared deadline.
+`[plugins.dmarc] enforce` (default false) decides whether a DMARC `fail`
+applies the sender's published policy; leave it off until you have watched the
+results, since forwarders and mailing lists break SPF alignment by design.
 
 ### TLS reporting
 

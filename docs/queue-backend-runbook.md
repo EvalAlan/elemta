@@ -9,7 +9,7 @@ Operator playbook for switching queue backends, validating runtime behavior, and
 ### Via API
 
 ```bash
-curl -s http://127.0.0.1:8025/api/queue/storage | jq
+curl -s -u admin http://127.0.0.1:8025/api/queue/storage | jq
 ```
 
 Look for `backend: "file"`, `"sqlite"`, or `"postgres"`.

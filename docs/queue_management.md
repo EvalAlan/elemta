@@ -1,6 +1,6 @@
 # Queue Management
 
-Elemta supports file-backed and sqlite-backed queue storage with the same queue lifecycle semantics.
+Elemta supports `file` (default), `sqlite`, `postgres` and `indexedfs` queue storage with the same queue lifecycle semantics.
 
 ---
 
@@ -20,7 +20,7 @@ Current queue states:
 ```toml
 [queue]
 dir = "/var/spool/elemta/queue"
-backend = "file" # file | sqlite
+backend = "file" # file | sqlite | postgres | indexedfs
 
 [queue.sqlite]
 path = "/var/spool/elemta/queue/queue.db"
@@ -32,7 +32,7 @@ synchronous = "NORMAL"
 Rules:
 
 - Default backend is `file` when unset.
-- `sqlite` is explicit opt-in.
+- `sqlite`, `postgres` and `indexedfs` are explicit opt-in. Postgres is the multi-node backend.
 - Switching backend does **not** auto-migrate existing queued mail.
 
 See: [Queue Backend Runbook](queue-backend-runbook.md).
@@ -45,7 +45,7 @@ See: [Queue Backend Runbook](queue-backend-runbook.md).
 [queue_processor]
 enabled = true
 interval = 10
-workers = 5
+workers = 20
 debug = false
 ```
 
@@ -78,6 +78,10 @@ Base API path: `/api`
 - `GET /api/queue/storage` — backend/storage diagnostics
 - `DELETE /api/queue/message/{id}` — delete one message
 - `POST /api/queue/{type}/flush` — flush a queue (`all` supported)
+- `POST /api/queue/{type}/retry` — retry a queue now
+- `POST /api/queue/message/{id}/requeue`, `/hold`, `/release-claim`
+
+All of these need a login; see [API Reference](api-reference.md#authentication).
 
 ---
 
@@ -96,10 +100,10 @@ All queue files are written with secure permissions and atomic update semantics.
 
 ```bash
 # API queue stats
-curl -s http://127.0.0.1:8025/api/queue/stats | jq
+curl -s -u admin http://127.0.0.1:8025/api/queue/stats | jq
 
 # Storage/backend diagnostics
-curl -s http://127.0.0.1:8025/api/queue/storage | jq
+curl -s -u admin http://127.0.0.1:8025/api/queue/storage | jq
 ```
 
 ---

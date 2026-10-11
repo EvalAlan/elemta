@@ -26,8 +26,8 @@ docker compose -f deployments/compose/docker-compose-monitoring.yml up -d
 ### Queue and delivery health
 
 ```bash
-curl -s http://127.0.0.1:8025/api/queue/stats | jq
-curl -s http://127.0.0.1:8025/api/stats/delivery | jq
+curl -s -u admin http://127.0.0.1:8025/api/queue/stats | jq
+curl -s -u admin http://127.0.0.1:8025/api/stats/delivery | jq
 ```
 
 ### Runtime logs
