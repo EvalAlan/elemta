@@ -231,6 +231,26 @@ type DeliveryConfig struct {
 	// PoolStateFile keeps per-address warmup counts across restarts.
 	// Defaults to pool-state.json in the queue directory.
 	PoolStateFile string `toml:"pool_state_file" json:"pool_state_file,omitempty"`
+	// ProviderProfiles shapes mail to Gmail, Yahoo and Microsoft (matched by
+	// MX host, so hosted domains count) as one destination per provider per
+	// source address, and reads their throttle replies. Unset means on.
+	ProviderProfiles *bool `toml:"provider_profiles" json:"provider_profiles,omitempty"`
+	// Providers ([[delivery.providers]]) override the built-in profiles by
+	// name, disable one, or add a provider.
+	Providers []queue.ProviderConfig `toml:"providers" json:"providers,omitempty"`
+}
+
+// ProviderProfilesEnabled reports whether provider profiles apply.
+func (d *DeliveryConfig) ProviderProfilesEnabled() bool {
+	return d == nil || d.ProviderProfiles == nil || *d.ProviderProfiles
+}
+
+// ProviderOverrides returns the configured provider overrides.
+func (d *DeliveryConfig) ProviderOverrides() []queue.ProviderConfig {
+	if d == nil {
+		return nil
+	}
+	return d.Providers
 }
 
 // TLSReportingConfig configures SMTP TLS Reporting (RFC 8460): daily

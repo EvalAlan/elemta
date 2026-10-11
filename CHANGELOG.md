@@ -10,6 +10,14 @@
   across the day, with counts kept across restarts. Shaping limits and backoff
   apply per source address per destination when pools are in use. No pools
   configured means no change.
+- **Mailbox provider profiles** (`[delivery] provider_profiles`, on by
+  default). Gmail, Yahoo and Microsoft destinations are matched by MX host and
+  shaped as one destination per provider per source address, so Workspace and
+  Microsoft 365 domains share their provider's limits. The providers' own
+  throttle replies get a longer backoff and a slower send rate afterwards.
+  Override, disable or add providers under `[[delivery.providers]]`.
+- **Full mailboxes no longer back off a destination.** A `4.2.2` deferral (or
+  Google's per-recipient `4.2.1`) defers that message only.
 
 ## v0.3.0 (2026-10-10)
 

@@ -357,6 +357,57 @@ helo = "bulk2.example.com"
   Parked outbound sessions are also kept per source address, so mail never
   leaves through another pool's connection.
 
+### Mailbox provider profiles
+
+Gmail, Yahoo (which also hosts AOL) and Microsoft (Outlook.com and
+Microsoft 365) apply their limits per sending IP across every domain they
+host. `[delivery] provider_profiles` is on by default; set it to false to
+go back to plain per-domain shaping. While it is on:
+
+- **Matching by MX.** A recipient domain whose most preferred MX host ends
+  in a provider's suffix (`google.com`, `googlemail.com`; `yahoodns.net`;
+  `protection.outlook.com`) is shaped as that provider. gmail.com and every
+  Google Workspace domain then share one connection cap, rate cap and
+  backoff per source address. A provider that appears only as a backup MX
+  does not count.
+- **Throttle replies.** A deferral whose text is the provider's own "you
+  are being limited" reply counts as a throttle. For Google that is
+  `4.7.28`. For Yahoo it is `[TSS04]` or `[TSS09]`. For Microsoft it is
+  `4.7.650`, `RP-001` to `RP-003`, or `4.7.500`. A throttle backs the
+  provider off for longer than a generic 4xx: 10 minutes doubling to 2
+  hours for Google and Microsoft, and 15 minutes doubling to 4 hours for
+  Yahoo. After the pause, sending resumes at the provider's
+  `throttled_messages_per_minute` (default 60) per source address, halved
+  for each further throttle (down to 1/8). The cut is lifted one step for
+  every 15 minutes without another throttle.
+- **Recipient replies.** A deferral about one mailbox does not back off the
+  destination. That covers `4.2.2` mailbox full (at every destination, with
+  or without a profile) and Google's `4.2.1` "receiving mail at a rate". The
+  message still defers and retries as usual.
+
+No built-in profile sets a connection or message rate, because none of these
+providers publishes one. Set them per provider if you need to.
+
+```toml
+[[delivery.providers]]
+name = "gmail"                       # override a built-in
+max_connections = 10                 # per source address; default max_connections_per_domain
+max_messages_per_minute = 600        # per source address; default none
+throttled_messages_per_minute = 120  # after a throttle; default 60
+throttle_backoff = 600               # seconds; first pause after a throttle
+throttle_backoff_max = 7200
+throttle_signals = ["some new reply text"]   # added to the built-in signals
+
+[[delivery.providers]]
+name = "yahoo"
+disabled = true                      # shape yahoo.com per domain again
+
+[[delivery.providers]]
+name = "corp-relay"                  # a custom provider
+mx_suffixes = ["mx.corp.example"]
+max_connections = 4
+```
+
 ### Inbound sender verification
 
 SPF, DKIM, DMARC and ARC verification are configured under `[plugins.spf]`,

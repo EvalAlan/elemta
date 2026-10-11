@@ -440,6 +440,13 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 				shaping.MaxMessagesPerMinute = config.Delivery.MaxMessagesPerMinutePerDomain
 			}
 			smtpHandler.SetShaper(queue.NewShaper(shaping))
+			// Provider profiles only mean anything with a shaper to apply them.
+			providers, err := queue.NewProviderRouter(config.Delivery.ProviderProfilesEnabled(), config.Delivery.ProviderOverrides())
+			if err != nil {
+				return nil, nil, fmt.Errorf("delivery providers: %w", err)
+			}
+			smtpHandler.SetProviderRouter(providers)
+			slogger.Info("Mailbox provider profiles", "enabled", providers != nil)
 			slogger.Info("Per-destination traffic shaping enabled",
 				"max_connections_per_domain", shaping.MaxConnectionsPerDomain,
 				"max_messages_per_minute_per_domain", shaping.MaxMessagesPerMinute,
