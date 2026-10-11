@@ -523,7 +523,14 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			slogger.Warn("Suppression list unavailable; permanent failures will not be recorded",
 				"path", suppressionPath, "error", err)
 		} else {
-			queueProcessor.SetSuppressionRecorder(suppression.NewRecorder(store, slogger))
+			recorder := suppression.NewRecorder(store, slogger)
+			// Complaints also count against the pool, address and provider
+			// they concern; that rate is what receivers judge a sender by.
+			processor := queueProcessor
+			recorder.OnComplaint(func(report suppression.FeedbackReport) {
+				processor.RecordComplaint(report.SourceIP, report.Recipients)
+			})
+			queueProcessor.SetSuppressionRecorder(recorder)
 			queueProcessor.SetFeedbackAddresses(config.FeedbackAddresses)
 			slogger.Info("Suppression list ready", "path", suppressionPath,
 				"feedback_addresses", config.FeedbackAddresses)

@@ -194,6 +194,7 @@ function switchView(viewName) {
         case 'reports':
             refreshReports();
             refreshDomainStats();
+            refreshSenderStats();
             break;
         case 'campaigns':
             refreshCampaigns();
@@ -3449,6 +3450,72 @@ async function refreshDomainStats() {
             ${data.note ? `<div class="field-hint">${escapeHtml(data.note)}</div>` : ''}`;
     } catch (error) {
         container.innerHTML = `<div class="error-message">Could not load per-destination statistics: ${
+            escapeHtml(error.message)}</div>`;
+    }
+}
+
+// refreshSenderStats fills the sender reputation table on the Reports page.
+//
+// Per-destination numbers say how Gmail treats our mail; once mail leaves
+// from several pools, the question that decides what to do is how Gmail
+// treats *this* pool. Rows are grouped by what they describe.
+async function refreshSenderStats() {
+    const container = document.getElementById('sender-stats');
+    if (!container) return;
+    const daysSelect = document.getElementById('sender-stats-days');
+    const days = daysSelect ? daysSelect.value : '1';
+
+    try {
+        const response = await fetch(`${API_BASE}/stats/senders?days=${encodeURIComponent(days)}`);
+        const data = await response.json().catch(() => ({}));
+
+        if (!data.available) {
+            container.innerHTML = `<div class="loading-placeholder">${
+                escapeHtml(data.reason || 'Sender statistics are unavailable')}</div>`;
+            return;
+        }
+
+        const senders = data.senders || [];
+        if (senders.length === 0) {
+            container.innerHTML = '<div class="loading-placeholder">No pooled or provider traffic recorded in this window</div>';
+            return;
+        }
+
+        const labels = { pool: 'Pool', ip: 'Source address', provider: 'Provider' };
+        const states = { ok: 'ok', warning: 'warn', critical: 'bad', low_volume: '' };
+        const rows = senders.map(s => {
+            const state = states[s.status] || '';
+            const status = s.status === 'low_volume' ? 'too little volume to judge' : s.status;
+            const why = (s.reasons || []).join('; ');
+            return `
+                <tr>
+                    <td>${escapeHtml(labels[s.dimension] || s.dimension)}</td>
+                    <td>${escapeHtml(s.key)}</td>
+                    <td class="domain-rate ${state ? 'domain-rate-' + state : ''}" title="${escapeHtml(why)}">${escapeHtml(status)}</td>
+                    <td>${s.delivered}</td>
+                    <td>${s.deferred}</td>
+                    <td>${s.bounced}</td>
+                    <td>${s.throttled}</td>
+                    <td>${s.complained}</td>
+                    <td>${s.complaint_rate_percent.toFixed(2)}%</td>
+                    <td>${s.bounce_rate_percent.toFixed(2)}%</td>
+                </tr>`;
+        }).join('');
+
+        container.innerHTML = `
+            <table class="messages-table domain-stats-table">
+                <thead>
+                    <tr>
+                        <th>Kind</th><th>Sender</th><th>Status</th>
+                        <th>Delivered</th><th>Deferred</th><th>Bounced</th>
+                        <th>Throttled</th><th>Complaints</th><th>Complaint rate</th><th>Bounce rate</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+            ${data.note ? `<div class="field-hint">${escapeHtml(data.note)}</div>` : ''}`;
+    } catch (error) {
+        container.innerHTML = `<div class="error-message">Could not load sender statistics: ${
             escapeHtml(error.message)}</div>`;
     }
 }

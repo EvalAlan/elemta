@@ -44,7 +44,11 @@ type Metrics struct {
 	DeliverySuccesses prometheus.Counter
 	DeliveryFailures  prometheus.Counter
 	DeliveryDeferred  prometheus.Counter
-	DeliveryDuration  prometheus.Histogram
+	// SenderOutcomes counts outcomes per sending pool, source address and
+	// mailbox provider. Unlike destinations these are a small set fixed by
+	// configuration, so they are safe as labels.
+	SenderOutcomes   *prometheus.CounterVec
+	DeliveryDuration prometheus.Histogram
 
 	// TLS metrics
 	TLSConnections       prometheus.Counter
@@ -148,6 +152,10 @@ func newMetrics() *Metrics {
 			Name: "elemta_delivery_deferred_total",
 			Help: "Total number of deferred deliveries (temporary failures queued for retry)",
 		}),
+		SenderOutcomes: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "elemta_sender_outcomes_total",
+			Help: "Recipient outcomes per sending pool, source address and mailbox provider (dimension = pool|ip|provider; outcome = delivered|deferred|bounced|throttled|complained)",
+		}, []string{"dimension", "key", "outcome"}),
 		DeliveryDuration: promauto.NewHistogram(prometheus.HistogramOpts{
 			Name:    "elemta_delivery_duration_seconds",
 			Help:    "Duration of delivery attempts",
@@ -305,6 +313,17 @@ func (m *Metrics) IncrDeferred(_ context.Context) error {
 // counts live in Valkey, where they are a bounded set that can be pruned.
 // Present to satisfy queue.MetricsRecorder.
 func (m *Metrics) IncrDomainOutcome(_ context.Context, _, _ string) error {
+	return nil
+}
+
+// IncrSenderOutcome counts an outcome per pool, address or provider. The
+// callers only pass configured pools, configured addresses and known
+// providers, which is what keeps the label set bounded.
+func (m *Metrics) IncrSenderOutcome(_ context.Context, dimension, key, outcome string) error {
+	if m.SenderOutcomes == nil || key == "" {
+		return nil
+	}
+	m.SenderOutcomes.WithLabelValues(dimension, key, outcome).Inc()
 	return nil
 }
 
