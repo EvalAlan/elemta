@@ -15,6 +15,16 @@ import (
 type Recorder struct {
 	store  *Store
 	logger *slog.Logger
+	// onComplaint, when set, is told about every complaint report, so
+	// complaints can be counted per sender as well as suppressed.
+	onComplaint func(FeedbackReport)
+}
+
+// OnComplaint registers fn to be called for every complaint report received.
+func (r *Recorder) OnComplaint(fn func(FeedbackReport)) {
+	if r != nil {
+		r.onComplaint = fn
+	}
 }
 
 func NewRecorder(store *Store, logger *slog.Logger) *Recorder {

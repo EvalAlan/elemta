@@ -121,3 +121,31 @@ func TestRecorderSuppressesComplainers(t *testing.T) {
 		t.Error("a not-spam report suppressed its recipient")
 	}
 }
+
+func TestComplaintObserverSeesEveryComplaint(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	rec := NewRecorder(store, nil)
+	var seen []FeedbackReport
+	rec.OnComplaint(func(r FeedbackReport) { seen = append(seen, r) })
+
+	rec.RecordFeedbackReport([]byte(arfReport))
+	// A report with the recipient redacted is still a complaint about our
+	// mail and must be counted, even though there is no one to suppress.
+	redacted := strings.Replace(arfReport, "Original-Rcpt-To: <User@Example.com>\r\n", "", 1)
+	redacted = strings.Replace(redacted, "To: <Undisclosed Recipients>\r\n", "", 1)
+	rec.RecordFeedbackReport([]byte(redacted))
+	// Not complaints: not counted.
+	rec.RecordFeedbackReport([]byte(strings.Replace(arfReport, "Feedback-Type: abuse", "Feedback-Type: not-spam", 1)))
+	rec.RecordFeedbackReport([]byte("Subject: hello\r\n\r\njust mail\r\n"))
+
+	if len(seen) != 2 {
+		t.Fatalf("observer saw %d reports, want 2", len(seen))
+	}
+	if seen[0].SourceIP != "192.0.2.1" || len(seen[0].Recipients) != 1 {
+		t.Errorf("first report = %+v", seen[0])
+	}
+}

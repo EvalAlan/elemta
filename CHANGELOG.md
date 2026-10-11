@@ -16,6 +16,11 @@
   Microsoft 365 domains share their provider's limits. The providers' own
   throttle replies get a longer backoff and a slower send rate afterwards.
   Override, disable or add providers under `[[delivery.providers]]`.
+- **Sender reputation telemetry.** Outcomes, provider throttles and feedback-loop
+  complaints per sending pool, source address and mailbox provider: Reports →
+  Sender reputation, `GET /api/stats/senders`, and
+  `elemta_sender_outcomes_total`. Complaint rates are flagged at the Gmail and
+  Yahoo 0.1% / 0.3% thresholds.
 - **Full mailboxes no longer back off a destination.** A `4.2.2` deferral (or
   Google's per-recipient `4.2.1`) defers that message only.
 

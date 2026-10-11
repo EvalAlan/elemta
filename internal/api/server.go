@@ -695,6 +695,7 @@ func (s *Server) Start() error {
 	api.HandleFunc("/health", s.handleHealthStats).Methods("GET")
 	api.Handle("/stats/delivery", s.requireAuthIfConfigured(http.HandlerFunc(s.handleDeliveryStats))).Methods("GET")
 	api.Handle("/stats/domains", s.requireAuthIfConfigured(http.HandlerFunc(s.handleDomainStats))).Methods("GET")
+	api.Handle("/stats/senders", s.requireAuthIfConfigured(http.HandlerFunc(s.handleSenderStats))).Methods("GET")
 
 	// Configuration read endpoints expose operational topology.
 	api.Handle("/config", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetConfig))).Methods("GET")
