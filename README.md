@@ -7,10 +7,10 @@ Elemta is a high-performance SMTP server written in Go with a modular pipeline, 
 ## Highlights
 
 - SMTP server with extensible processing pipeline
-- Queue backends: `file` (default) and `sqlite` (opt-in)
+- Queue backends: `file` (default), `sqlite`, `postgres` (multi-node) and `indexedfs`
 - Built-in queue/API/web tooling for operational visibility
 - Delivery/auth integrations (file, LDAP, SQL backends)
-- Docker and Kubernetes deployment assets
+- Docker Compose deployment, with an SSH deploy workflow that health-checks and rolls back
 - Prometheus/Grafana-ready metrics and health endpoints
 
 ## Quick Start
@@ -52,7 +52,7 @@ docker compose -f deployments/compose/docker-compose.yml up -d
 
 ## Core Docs
 
-- [Documentation index](docs/index.md)
+- [Documentation index](docs/README.md)
 - [Installation](docs/installation.md)
 - [Configuration](docs/configuration.md)
 - [Queue backend operator runbook](docs/queue-backend-runbook.md)

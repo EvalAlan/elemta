@@ -86,7 +86,7 @@ The SMTP server enqueues accepted mail and the queue processor handles delivery 
 [queue_processor]
 enabled = true
 interval = 10
-workers = 5
+workers = 20
 debug = false
 ```
 
@@ -94,9 +94,16 @@ debug = false
 
 ## Relay behavior at a glance
 
-- Local-domain delivery uses configured `local_domains`.
-- External relay behavior is controlled by auth requirements and delivery config.
-- For production, do not run open relay settings.
+- Mail for `local_domains` is accepted from anyone on the MX port
+  (`listen_addr`).
+- Relay to other domains needs a login, loopback, or an `allowed_relays`
+  address. An authenticated client may only use a `MAIL FROM` it owns.
+- The submission port (`[server].listen_submission`, usually `:587`) refuses
+  `MAIL FROM` until the client has logged in, unless it is in `allowed_relays`.
+- Do not set `[auth].required = true` on an MX: it refuses unauthenticated
+  `MAIL FROM`, which is every server delivering mail to you.
+
+See [Production Deployment](production-deployment.md#inbound-and-outbound-on-one-server).
 
 ---
 

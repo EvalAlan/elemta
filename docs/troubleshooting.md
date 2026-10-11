@@ -53,8 +53,8 @@ make rebuild
 ./bin/elemta queue list
 
 # API view
-curl -s http://127.0.0.1:8025/api/queue/stats | jq
-curl -s http://127.0.0.1:8025/api/queue/storage | jq
+curl -s -u admin http://127.0.0.1:8025/api/queue/stats | jq
+curl -s -u admin http://127.0.0.1:8025/api/queue/storage | jq
 ```
 
 If using sqlite backend, confirm `[queue].backend = "sqlite"` and sqlite path is writable.

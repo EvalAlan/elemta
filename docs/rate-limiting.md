@@ -45,7 +45,7 @@ This config is surfaced in API config endpoints and used where plugin-style rate
 curl -s http://127.0.0.1:8025/api/health | jq
 
 # Queue pressure (often first symptom of throttling/misconfig)
-curl -s http://127.0.0.1:8025/api/queue/stats | jq
+curl -s -u admin http://127.0.0.1:8025/api/queue/stats | jq
 ```
 
 ## Tuning guidance
