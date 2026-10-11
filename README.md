@@ -50,6 +50,14 @@ make build
 docker compose -f deployments/compose/docker-compose.yml up -d
 ```
 
+### 4) Kubernetes (single-node dev cluster)
+
+```bash
+kubectl apply -k deployments/kubernetes
+```
+
+See [deployments/kubernetes](deployments/kubernetes/README.md) for what it runs, what it leaves out, and how to install k3s.
+
 ## Core Docs
 
 - [Documentation index](docs/README.md)

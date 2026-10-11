@@ -1,0 +1,68 @@
+# The mailbox server Elemta delivers local mail to: deployments/sink/lmtp_sink.py,
+# which speaks just enough LMTP to accept a message and then discards it.
+#
+# It stands in for Dovecot so the deployment is complete on its own: mail sent
+# to a local domain is accepted, queued and delivered, and the sink's log shows
+# the count. Swap it for a real LMTP server by deleting this file from the
+# kustomization and pointing a Service named elemta-mailbox at that server.
+#
+# It runs from the Elemta image, which ships the script and Python, rather than
+# a second image that would need pulling and pinning.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-mailbox
+  labels:
+    app.kubernetes.io/name: elemta-mailbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-mailbox
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-mailbox
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: lmtp-sink
+          image: ghcr.io/evalalan/elemta
+          command: ["python3", "-u", "/app/tools/lmtp_sink.py", "--port", "2424"]
+          ports:
+            - name: lmtp
+              containerPort: 2424
+          readinessProbe:
+            tcpSocket:
+              port: lmtp
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-mailbox
+  labels:
+    app.kubernetes.io/name: elemta-mailbox
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-mailbox
+  ports:
+    - name: lmtp
+      port: 2424
+      targetPort: lmtp

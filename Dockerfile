@@ -62,6 +62,12 @@ RUN dos2unix /app/entrypoint.sh /app/prepare-config.sh && \
     chmod +x /app/entrypoint.sh /app/prepare-config.sh && \
     chown elemta:elemta /app/entrypoint.sh /app/prepare-config.sh
 
+# The LMTP sink the Kubernetes deployment delivers to when no mailbox server is
+# deployed (deployments/kubernetes/lmtp-sink.yaml). Shipped in this image so
+# that deployment needs no second image; it is one stdlib-only script and is
+# never run unless something asks for it.
+COPY deployments/sink/lmtp_sink.py /app/tools/lmtp_sink.py
+
 # Copy the binary and config files with proper ownership
 COPY --from=builder --chown=elemta:elemta /build/elemta /app/elemta
 COPY --from=builder --chown=elemta:elemta /build/elemta-queue /app/elemta-queue

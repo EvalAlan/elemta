@@ -1,0 +1,73 @@
+# Valkey holds the delivery counters behind the dashboard's charts. Elemta
+# looks for it at elemta-valkey:6379 (VALKEY_ADDR overrides that) and carries
+# on without it, so this is optional: without it the SMTP server logs a warning
+# at startup and the dashboard's delivery statistics stay empty.
+#
+# emptyDir rather than a volume: these are rolling metrics, not mail, and
+# losing them on a pod restart costs a few hours of chart history.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-valkey
+  labels:
+    app.kubernetes.io/name: elemta-valkey
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-valkey
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-valkey
+    spec:
+      securityContext:
+        # The image's own valkey user, set numerically so runAsNonRoot can
+        # verify it.
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: valkey
+          image: valkey/valkey:8.0-alpine
+          args: ["valkey-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+          ports:
+            - name: valkey
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 192Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-valkey
+  labels:
+    app.kubernetes.io/name: elemta-valkey
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-valkey
+  ports:
+    - name: valkey
+      port: 6379
+      targetPort: valkey

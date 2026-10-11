@@ -1,0 +1,23 @@
+# No storageClassName: the cluster default is used (local-path on k3s).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elemta-queue
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+# The runtime config the web UI saves to, plus the dev certificate and the
+# dashboard users file. On a volume, not in the container, so a setting saved
+# in the UI survives a pod restart (scripts/prepare-config.sh explains why).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elemta-runtime-config
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 64Mi

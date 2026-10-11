@@ -24,6 +24,18 @@
 - **Full mailboxes no longer back off a destination.** A `4.2.2` deferral (or
   Google's per-recipient `4.2.1`) defers that message only.
 
+### Kubernetes
+
+- **`deployments/kubernetes`**, a kustomize deployment for a single-node
+  development cluster: the SMTP server and dashboard in one pod, an LMTP sink
+  as the mailbox, Valkey, and persistent volumes for the queue and runtime
+  config. Every pod runs under the `restricted` pod security profile. `kubectl apply -k deployments/kubernetes`.
+- **The old `k8s/` and `tests/k8s/` are removed.** They used the pre-TOML
+  config format and a `make k8s-deploy` target that no longer existed, so they
+  could not deploy the current server.
+- The image now ships `deployments/sink/lmtp_sink.py` as
+  `/app/tools/lmtp_sink.py`.
+
 ## v0.3.0 (2026-10-10)
 
 ### Breaking: authenticated senders can only send as themselves

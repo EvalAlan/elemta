@@ -37,9 +37,6 @@ GEMINI.md
 # Logs
 *.log
 
-# Archived files
-k8s/archive/
-
 # Compiled binaries
 bin/*.exe
 

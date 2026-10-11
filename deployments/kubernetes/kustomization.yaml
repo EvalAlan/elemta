@@ -1,0 +1,34 @@
+# Elemta on Kubernetes: kubectl apply -k deployments/kubernetes
+#
+# See README.md in this directory for what this deploys and what it leaves out.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: elemta
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: elemta
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - elemta.yaml
+  - lmtp-sink.yaml
+  - valkey.yaml
+
+# elemta.toml here is the template, not the live config. prepare-config.sh
+# copies it onto the elemta-runtime-config volume the first time the pod starts
+# and never again, because that copy is what the web UI saves to. Editing this
+# file and re-applying rolls the pod (the generated name carries a content
+# hash) but does not change the running config; the README has the reseed
+# command.
+configMapGenerator:
+  - name: elemta-config
+    files:
+      - elemta.toml
+
+images:
+  - name: ghcr.io/evalalan/elemta
+    newTag: latest
