@@ -1,27 +1,16 @@
 # elemta-cli
 
-`elemta-cli` is currently a lightweight helper binary.
+`elemta-cli` is a queue client for a running `elemta web`, over its HTTP API.
 
 ## Build
 
 ```bash
-make build
+make build   # produces bin/elemta-cli
 ```
 
-Binary:
+## Commands
 
-- `bin/elemta-cli`
-
-## Current commands
-
-```bash
-bin/elemta-cli status
-bin/elemta-cli queue
-```
-
-## Notes
-
-For full queue management and operational commands, use:
-
-- `bin/elemta queue ...`
-- HTTP API endpoints exposed by `bin/elemta web`
+`status`, `version`, and `queue list|show|delete|retry|flush|stats`. Pass
+`--api-url` (the default, `http://localhost:8081`, is not the dashboard's
+port) and `--api-key`. See [docs/cli.md](../../docs/cli.md#3-elemta-cli) for
+examples.

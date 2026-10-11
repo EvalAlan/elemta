@@ -16,7 +16,7 @@ This directory contains LDIF files for testing LDAP authentication and user mana
 
 These fixtures are used by:
 - Integration tests in `tests/`
-- Docker LDAP bootstrap in `docker/ldap/bootstrap.ldif`
+- Docker LDAP bootstrap in `docker/ldap/` (seeded by `scripts/init-ldap-if-needed.sh`)
 - Manual testing with `ldapadd` commands
 
 ## Loading Fixtures

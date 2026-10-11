@@ -1,63 +1,35 @@
-# Docker Compose Deployments
+# Docker Compose stacks
 
-This directory contains various Docker Compose configurations for different deployment scenarios.
+Run these through `make` from the repository root where a target exists; the
+targets set the environment the files expect.
 
-## Available Configurations
+| File | What it is | How to run |
+|---|---|---|
+| `docker-compose.yml` | Dev stack: Elemta, dashboard, caching resolver, Dovecot, LDAP, Valkey, LMTP sink, and optionally ClamAV, Rspamd, Roundcube | `make install-dev`, `make install-dev-full` |
+| `docker-compose.prod.yml` | Production stack, run from the ghcr.io image | Deploy workflow; see [Production Deployment](../../docs/production-deployment.md) |
+| `docker-compose-mailauth.yml` | Overlay: DKIM signing / ARC sealing lab with its own DNS zone | `make install-dev-mailauth` |
+| `docker-compose-elk.yml` | Overlay: Filebeat, Elasticsearch and Kibana log shipping | `make elk-up` |
+| `docker-compose-full.yml` | Older ELK overlay used by `scripts/setup-elk.sh` | `scripts/setup-elk.sh` |
+| `docker-compose-multinode.yml` | Overlay: three SMTP nodes sharing Valkey rate limits | `docker compose -f docker-compose.yml -f docker-compose-multinode.yml up -d` |
+| `docker-compose-monitoring.yml` | Prometheus, Grafana, Alertmanager | `docker compose -f docker-compose-monitoring.yml up -d` |
+| `docker-compose-cli.yml`, `docker-compose-test.yml` | CLI and test helpers | by hand |
 
-### `docker-compose.yml` (Main Development Stack)
-Complete development environment including:
-- Elemta SMTP server
-- LDAP authentication server
-- Dovecot IMAP/LMTP
-- Roundcube webmail
-- Rspamd spam filtering
-- ClamAV antivirus
-- Valkey distributed cache
+## Dev stack ports (host side)
 
-**Usage:**
-```bash
-cd deployments/compose
-docker compose up -d
-```
+| Port | Service |
+|---|---|
+| 2525 | SMTP (MX) |
+| 2587 | Submission |
+| 8025 | Dashboard and API |
+| 8026 | Roundcube (full stack) |
+| 9080 | Prometheus metrics (container port 8080) |
+| 11334 | Rspamd web UI (full stack) |
+| 1389 / 1636 | LDAP / LDAPS |
+| 14143 | IMAP (Dovecot) |
+| 2424 | LMTP (Dovecot) |
+| 4190 | ManageSieve |
+| 6379 | Valkey |
 
-### `docker-compose-monitoring.yml`
-Monitoring stack with:
-- Prometheus metrics collection
-- Grafana dashboards
-- Alertmanager
-
-**Usage:**
-```bash
-docker compose -f docker-compose.yml -f docker-compose-monitoring.yml up -d
-```
-
-### `docker-compose-cli.yml`
-CLI tools for testing and management
-
-### `docker-compose-test.yml`
-Test environment configuration
-
-## Quick Start
-
-From the project root:
-```bash
-# Start main stack
-make docker-setup
-
-# View logs
-docker compose -f deployments/compose/docker-compose.yml logs -f
-
-# Stop stack
-make docker-down
-```
-
-## Network Architecture
-
-All services run on the `elemta_network` bridge network with the following ports:
-- **2525**: SMTP (Elemta)
-- **8080**: Metrics (Prometheus format)
-- **1389**: LDAP
-- **14143**: IMAP (Dovecot)
-- **8000**: Webmail (Roundcube)
-- **6379**: Valkey (internal)
-
+All services share `elemta_network`, which has a fixed subnet
+(10.253.53.0/24) so the caching resolver `elemta-dns` has a stable address.
+After pulling a change to it, run `make down` once to recreate the network.
