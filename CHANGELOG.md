@@ -23,6 +23,28 @@
   Yahoo 0.1% / 0.3% thresholds.
 - **Full mailboxes no longer back off a destination.** A `4.2.2` deferral (or
   Google's per-recipient `4.2.1`) defers that message only.
+- **Pool state shared across nodes** (`[delivery] shared_state`, off by
+  default). Warmup caps and mailbox provider throttles are kept in Valkey, so
+  several nodes sending from the same addresses share one daily cap and one
+  backoff. Without Valkey, or while it is unreachable, each node counts on its
+  own as before. Pools are now reloaded with the configuration.
+
+### Bounces
+
+- **Delivery status notifications follow RFC 3464.** Final-Recipient is the
+  address tried and Original-Recipient carries ORCPT; ENVID and ORCPT are
+  decoded; remote server text is reduced to printable ASCII and folded, so it
+  cannot add fields or parts; each bounce gets its own Message-ID; local errors
+  are labelled `X-Elemta` rather than `smtp`.
+- **No bounces to MAILER-DAEMON or this host's postmaster**, so two servers
+  cannot bounce at each other.
+
+### DMARC aggregate reports
+
+- **`[dmarc_reports]`** (off by default). Daily RFC 7489 aggregate reports to
+  domains that publish `rua=mailto:`, gzipped XML through the queue, with
+  external destination verification and `!size` limits honoured. Counts
+  survive a restart.
 
 ### Kubernetes
 
