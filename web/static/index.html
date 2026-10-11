@@ -761,6 +761,23 @@
                         <div id="domain-stats"><div class="loading-placeholder">Loading...</div></div>
                     </div>
                 </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Sender reputation</h3>
+                        <select id="sender-stats-days" class="filter-select" onchange="refreshSenderStats()" aria-label="Window">
+                            <option value="1">Today (UTC)</option>
+                            <option value="7">Last 7 days</option>
+                        </select>
+                        <button class="btn btn-secondary btn-sm" onclick="refreshSenderStats()">Refresh</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="field-hint">
+                            Outcomes and complaint rates per sending pool, source address and mailbox provider.
+                            Gmail and Yahoo require a spam complaint rate below 0.1%, and never 0.3% or more.
+                        </div>
+                        <div id="sender-stats"><div class="loading-placeholder">Loading...</div></div>
+                    </div>
+                </div>
             </section>
 
             <!-- Logs View -->
@@ -1394,7 +1411,7 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261010-users"></script>
+    <script src="/static/app.js?v=20261011-senders"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261010-users2"></script>
 </body>

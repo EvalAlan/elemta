@@ -90,6 +90,17 @@ type RecipientOutcome struct {
 	EnhancedStatusCode string
 	Diagnostic         string
 	Route              string
+
+	// Who the receiver was talking to, for sender reputation telemetry:
+	// the source address and pool the attempt left from (empty when
+	// unpooled), and the mailbox provider the destination belongs to (empty
+	// when none). All empty when the attempt never reached a receiver.
+	SourceIP string
+	Pool     string
+	Provider string
+	// Throttled is set on a deferral the provider explained as rate or
+	// reputation limiting of this sender.
+	Throttled bool
 }
 
 // normalizeDeliveryResult enforces a deterministic, panic-free handler contract.
@@ -153,6 +164,21 @@ type MetricsRecorder interface {
 	// receiver has been deferring everything for an hour.
 	IncrDomainOutcome(ctx context.Context, domain, outcome string) error
 }
+
+// SenderOutcomeRecorder is implemented by metrics recorders that keep
+// sender reputation telemetry: outcomes per sending pool, source address and
+// mailbox provider. Optional, so recorders that do not keep it need not
+// change.
+type SenderOutcomeRecorder interface {
+	IncrSenderOutcome(ctx context.Context, dimension, key, outcome string) error
+}
+
+// The dimensions sender telemetry is kept along.
+const (
+	SenderDimensionPool     = "pool"
+	SenderDimensionIP       = "ip"
+	SenderDimensionProvider = "provider"
+)
 
 // ClaimingStorageBackend defines optional atomic-claim semantics for distributed queue workers.
 type ClaimingStorageBackend interface {
@@ -288,12 +314,41 @@ func (p *Processor) recordDomainOutcomes(result *DeliveryResult) {
 		default:
 			continue
 		}
+		p.recordSenderOutcome(outcome, name)
 		domain := recipientDomain(outcome.Recipient)
 		if domain == "" {
 			continue
 		}
 		p.recordMetric(func(r MetricsRecorder) error {
 			return r.IncrDomainOutcome(p.ctx, domain, name)
+		})
+	}
+}
+
+// recordSenderOutcome attributes one outcome to the pool, source address and
+// provider it happened on. A throttle is counted as well as the deferral it
+// is part of, so throttles can be read as a share of deferrals.
+func (p *Processor) recordSenderOutcome(outcome RecipientOutcome, name string) {
+	for _, d := range [...]struct{ dimension, key string }{
+		{SenderDimensionPool, outcome.Pool},
+		{SenderDimensionIP, outcome.SourceIP},
+		{SenderDimensionProvider, outcome.Provider},
+	} {
+		if d.key == "" {
+			continue
+		}
+		p.recordMetric(func(r MetricsRecorder) error {
+			sr, ok := r.(SenderOutcomeRecorder)
+			if !ok {
+				return nil
+			}
+			if err := sr.IncrSenderOutcome(p.ctx, d.dimension, d.key, name); err != nil {
+				return err
+			}
+			if outcome.Throttled {
+				return sr.IncrSenderOutcome(p.ctx, d.dimension, d.key, metrics.OutcomeThrottled)
+			}
+			return nil
 		})
 	}
 }
@@ -666,6 +721,31 @@ func (p *Processor) offerFeedbackReport(msg Message, content []byte) {
 			return
 		}
 	}
+}
+
+// ComplaintAttribution is where a feedback-loop complaint is counted: the
+// pool and source address the complained-about message left from, and the
+// recipient's mailbox provider. Any of them may be empty.
+type ComplaintAttribution struct {
+	Pool     string
+	SourceIP string
+	Provider string
+}
+
+type complaintAttributor interface {
+	AttributeComplaint(sourceIP string, recipients []string) ComplaintAttribution
+}
+
+// RecordComplaint counts a feedback-loop complaint against the pool, address
+// and provider it concerns. sourceIP is the report's Source-IP, which the
+// provider fills in with the address our message arrived from.
+func (p *Processor) RecordComplaint(sourceIP string, recipients []string) {
+	attributor, ok := p.handler.(complaintAttributor)
+	if !ok {
+		return
+	}
+	a := attributor.AttributeComplaint(sourceIP, recipients)
+	p.recordSenderOutcome(RecipientOutcome{Pool: a.Pool, SourceIP: a.SourceIP, Provider: a.Provider}, metrics.OutcomeComplained)
 }
 
 // SetDKIMSigner replaces the signer on the delivery handler, for config

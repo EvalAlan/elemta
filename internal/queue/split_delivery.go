@@ -204,3 +204,12 @@ func (h *SplitDeliveryHandler) CloseIdleSessions() {
 		remote.CloseIdleSessions()
 	}
 }
+
+// AttributeComplaint passes through to the remote handler, which is the one
+// that knows the pools and providers.
+func (h *SplitDeliveryHandler) AttributeComplaint(sourceIP string, recipients []string) ComplaintAttribution {
+	if remote, ok := h.remote.(complaintAttributor); ok {
+		return remote.AttributeComplaint(sourceIP, recipients)
+	}
+	return ComplaintAttribution{}
+}

@@ -448,6 +448,36 @@ loses at most a minute of counts.
 - `[metrics].enabled`
 - `[metrics].listen_addr`
 
+### Sender reputation telemetry
+
+No configuration. Every remote delivery outcome is counted per sending pool,
+per source address and per mailbox provider, alongside the existing
+per-destination counts. That covers delivered, deferred, bounced, throttled
+(a deferral the provider explained as rate or reputation limiting) and
+complained (an ARF feedback-loop complaint). Outcomes without a pool or
+provider are counted only per destination. Neither are attempts we refused
+ourselves, such as a pool at its warmup cap or a destination in backoff,
+because the receiver never saw them.
+
+- **Dashboard and API.** Reports, then Sender reputation, or
+  `GET /api/stats/senders?days=1` (1 to 7 UTC days). Each row has its
+  complaint, bounce, deferral and throttle rates and a status:
+  - `critical` at a 0.3% complaint rate, the Gmail and Yahoo limit.
+  - `warning` at 0.1%, their target.
+  - Bounce rates of 2% and 5% are flagged too. Those are a rule of thumb,
+    not a provider limit.
+  - Below 100 delivered messages the status is `low_volume`.
+  The counts live in Valkey as daily buckets kept for 8 days.
+- **Prometheus.** `elemta_sender_outcomes_total{dimension, key, outcome}`,
+  with `dimension` one of `pool`, `ip` or `provider`.
+- **Complaints.** A complaint arriving at `feedback_addresses` is counted
+  against the pool and address in its `Source-IP`, but only when that is one
+  of the configured pool addresses, because anyone can send a report. It is
+  counted against the provider of the complaining recipient's domain. A
+  report with the recipient redacted still counts. Gmail sends no
+  feedback-loop reports, so read Gmail's spam rate in Google Postmaster
+  Tools; a Gmail complaint rate of zero here means "not reported".
+
 ### TLS
 
 - `[tls].enabled`

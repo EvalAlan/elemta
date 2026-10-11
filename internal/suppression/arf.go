@@ -175,6 +175,12 @@ func (r *Recorder) RecordFeedbackReport(raw []byte) {
 			"feedback_type", report.FeedbackType, "reported_domain", report.ReportedDomain)
 		return
 	}
+	// Counted before anything else can stop it: a report with redacted
+	// recipients is still a complaint about our mail, and the complaint
+	// rate is the number receivers judge a sender by.
+	if r.onComplaint != nil {
+		r.onComplaint(report)
+	}
 	if len(report.Recipients) == 0 {
 		r.logger.Warn("Complaint report names no recipient (redacted by the provider?); nothing suppressed",
 			"user_agent", report.UserAgent, "reported_domain", report.ReportedDomain)

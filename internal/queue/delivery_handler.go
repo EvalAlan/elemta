@@ -351,6 +351,8 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 
 	for _, domain := range domains {
 		recipients := domainGroups[domain]
+		first := len(outcomes)
+		throttled := false
 		// Each domain is its own SMTP transaction, so each takes its own
 		// source address and its own unit of warmup allowance.
 		src, releasePool, poolErr := h.pools.acquire(msg.From)
@@ -398,7 +400,7 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 			// and neither is our own pool running out of warmup allowance.
 			if h.shaper != nil && status == RecipientTemporaryFailure &&
 				!errors.Is(err, ErrDestinationBackingOff) && !errors.Is(err, ErrPoolAtCapacity) {
-				h.reportDeferral(shapeKey, prov, domain, src, err, domainOutcomes)
+				throttled = h.reportDeferral(shapeKey, prov, domain, src, err, domainOutcomes) == deferralThrottle
 			}
 			// Counted but never a reason to slow down: a domain that accepts
 			// everything and bounces most of it is a deliverability problem,
@@ -431,6 +433,20 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 			if firstSuccessfulIP == "" && ip != "" {
 				firstSuccessfulIP = ip
 				firstSuccessfulHost = host
+			}
+		}
+
+		// Attribute what the receiver said to the address and provider it
+		// said it to. A refusal of our own making (a pool at its warmup cap,
+		// a destination we are already backing off) is left unattributed:
+		// the receiver never saw that message, so it says nothing about how
+		// the receiver regards this sender.
+		if !errors.Is(err, ErrPoolAtCapacity) && !errors.Is(err, ErrDestinationBackingOff) {
+			for i := first; i < len(outcomes); i++ {
+				outcomes[i].SourceIP = sourceAddr(src)
+				outcomes[i].Pool = sourcePool(src)
+				outcomes[i].Provider = providerName(prov)
+				outcomes[i].Throttled = throttled && outcomes[i].Status == RecipientTemporaryFailure
 			}
 		}
 	}
@@ -908,9 +924,11 @@ func (h *SMTPDeliveryHandler) SetProviderRouter(r *ProviderRouter) {
 	h.providers = r
 }
 
-// reportDeferral tells the shaper what a temporary failure means for pace.
-func (h *SMTPDeliveryHandler) reportDeferral(key string, prov *provider, domain string, src *sourceIP, err error, outcomes []RecipientOutcome) {
-	switch classifyDeferral(prov, err, outcomes) {
+// reportDeferral tells the shaper what a temporary failure means for pace,
+// and returns what it decided the failure was.
+func (h *SMTPDeliveryHandler) reportDeferral(key string, prov *provider, domain string, src *sourceIP, err error, outcomes []RecipientOutcome) deferralKind {
+	kind := classifyDeferral(prov, err, outcomes)
+	switch kind {
 	case deferralThrottle:
 		backoff := h.shaper.ReportThrottle(key, prov.backoff, prov.backoffMax)
 		h.logger.Warn("Mailbox provider is throttling this sender; backing off and slowing down",
@@ -927,6 +945,28 @@ func (h *SMTPDeliveryHandler) reportDeferral(key string, prov *provider, domain 
 			"event_type", "traffic_shaping",
 			"domain", domain, "provider", providerName(prov), "source_ip", sourceAddr(src), "backoff", backoff.String())
 	}
+	return kind
+}
+
+// AttributeComplaint says where a complaint belongs.
+//
+// The source address is only taken when it is one of our pool addresses. The
+// report's Source-IP is written by whoever sent the report, and anyone can
+// send one to a feedback address; counting arbitrary addresses would let a
+// stranger invent rows (and Prometheus labels). The provider comes from the
+// recipient's domain, as last seen by delivery: a report names the
+// complaining recipient, and that recipient's provider is the one keeping
+// score.
+func (h *SMTPDeliveryHandler) AttributeComplaint(sourceIP string, recipients []string) ComplaintAttribution {
+	var a ComplaintAttribution
+	a.Pool, a.SourceIP = h.pools.poolForAddress(sourceIP)
+	for _, rcpt := range recipients {
+		if p := h.providers.known(recipientDomain(rcpt)); p != nil {
+			a.Provider = p.name
+			break
+		}
+	}
+	return a
 }
 
 func providerName(p *provider) string {
