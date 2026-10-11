@@ -111,8 +111,12 @@ limit is inside Elemta, not the mailbox server (see `HANDOFF.md`). Measure on
 your own hardware, with scanning enabled.
 
 **Delivery and bounce handling.** Retry scheduling, deferral, and failure
-queues exist. Bounce generation and DSN emission are less battle-tested than the
-intake path.
+queues exist. Failure DSNs are tested against RFC 3464 structure, NOTIFY,
+RET=HDRS/FULL (with size caps), ENVID/ORCPT, null-sender and MAILER-DAEMON loop
+guards, and CR/LF in remote server text. Gaps remain: no delay (warning) or
+success DSNs, DSN parameters are not passed on to the next hop, and one bounce
+reports the first failed recipient's status and diagnostic for every recipient
+it lists.
 
 **DANE and TLS reporting.** Both are new in v0.3.0 and off by default. With
 DANE on, a DNSSEC lookup failure defers mail rather than sending without DANE,
