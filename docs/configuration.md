@@ -291,6 +291,72 @@ restart.
   DANE, so a resolver outage holds outbound mail.
 - retry/timeouts
 
+### Sending IP pools
+
+`[[delivery.pools]]` defines named sets of source addresses (virtual MTAs)
+for remote SMTP delivery, so separate mail streams build separate sending
+reputations. Pools need a restart to change.
+
+```toml
+[delivery]
+mode = "smtp"
+default_pool = "transactional"
+
+[[delivery.pools]]
+name = "transactional"
+senders = ["example.com", "alerts@corp.example"]
+
+[[delivery.pools.ips]]
+address = "203.0.113.10"
+helo = "mta1.example.com"
+
+[[delivery.pools]]
+name = "bulk"
+senders = ["news.example.com", ".promo.example.com"]
+warmup_schedule = [200, 500, 1000, 2000, 5000, 10000, 20000, 50000]
+
+[[delivery.pools.ips]]
+address = "203.0.113.20"
+helo = "bulk1.example.com"
+warmup_start = "2026-10-01"
+
+[[delivery.pools.ips]]
+address = "203.0.113.21"
+helo = "bulk2.example.com"
+```
+
+- **Selection.** A message goes to the pool whose `senders` match its
+  envelope sender: a full address beats a domain, which beats a
+  leading-dot entry (`.promo.example.com` covers every subdomain, not the
+  domain itself). A sender no pool claims, including the null sender of a
+  bounce, goes to `default_pool`; with no `default_pool` it leaves unpooled,
+  from whatever address the kernel picks, as before. A sender may be claimed
+  by only one pool, and an address may be in only one pool.
+- **Addresses.** Deliveries rotate across a pool's `ips`. Each connection
+  binds to the address and sends `helo` in EHLO (default: the server
+  hostname); set `helo` to the address's PTR name, with forward DNS that
+  points back. An IPv4 address only reaches IPv4 MX addresses and an IPv6
+  address only IPv6 ones. Every address must be bindable on the host, or
+  startup is refused: a missing address would otherwise fail every
+  connection and look like the destination refusing mail.
+- **Warmup.** An address with a `warmup_start` (UTC date) is capped at
+  `warmup_schedule[n]` messages on the n-th day after it, counting each SMTP
+  transaction (one message to one recipient domain) that reached the
+  receiver. Past the end of the schedule the address is uncapped. The cap
+  is released evenly over the UTC day, plus one hour's worth up front, so a
+  warming address never sends its whole day in a burst; the rest of the
+  traffic goes to the pool's other addresses. When every address in a pool
+  is at its cap, mail defers and is retried on the normal schedule. That
+  deferral is not treated as the destination deferring, so it does not back
+  off the destination. Counts are saved to `[delivery] pool_state_file`
+  (default `pool-state.json` in the queue directory) every 10 seconds and at
+  shutdown.
+- **Shaping.** With pools, `max_connections_per_domain`,
+  `max_messages_per_minute_per_domain` and deferral backoff apply per
+  source address per destination, because receivers throttle by sending IP.
+  Parked outbound sessions are also kept per source address, so mail never
+  leaves through another pool's connection.
+
 ### Inbound sender verification
 
 SPF, DKIM, DMARC and ARC verification are configured under `[plugins.spf]`,

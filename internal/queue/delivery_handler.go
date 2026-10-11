@@ -146,6 +146,9 @@ type SMTPDeliveryHandler struct {
 	// dane validates MX certificates against TLSA records (RFC 7672). Nil
 	// disables DANE.
 	dane dane.Resolver
+	// pools chooses the source address for each delivery; see pools.go. Nil
+	// leaves the source to the kernel.
+	pools *PoolRouter
 }
 
 // NewSMTPDeliveryHandler creates a new SMTP delivery handler
@@ -170,6 +173,16 @@ func NewSMTPDeliveryHandler(failedQueueRetentionHours int) *SMTPDeliveryHandler 
 // policy both do), and some refuse it outright.
 func (h *SMTPDeliveryHandler) SetHeloHostname(name string) {
 	h.heloName = strings.TrimSpace(name)
+}
+
+// ehloNameFor is the EHLO name for a connection from src. A pool address
+// announces its own name, because receivers compare EHLO with the connecting
+// IP's reverse DNS, and each pool address has its own.
+func (h *SMTPDeliveryHandler) ehloNameFor(src *sourceIP) string {
+	if src != nil && src.helo != "" {
+		return src.helo
+	}
+	return h.ehloName()
 }
 
 func (h *SMTPDeliveryHandler) ehloName() string {
@@ -334,7 +347,24 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 
 	for _, domain := range domains {
 		recipients := domainGroups[domain]
-		ip, host, domainOutcomes, err := h.deliverToDomainWithMetadata(ctx, msg, domain, recipients, content, requireTLS)
+		// Each domain is its own SMTP transaction, so each takes its own
+		// source address and its own unit of warmup allowance.
+		src, releasePool, poolErr := h.pools.acquire(msg.From)
+		var ip, host string
+		var domainOutcomes []RecipientOutcome
+		if poolErr != nil {
+			err = poolErr
+			h.logger.Info("Deferring: sending pool is at its warmup cap",
+				"event_type", "traffic_shaping", "domain", domain, "error", poolErr)
+		} else {
+			ip, host, domainOutcomes, err = h.deliverToDomainWithMetadata(withSource(ctx, src), msg, domain, recipients, content, requireTLS)
+			if err != nil && !anyDelivered(domainOutcomes) {
+				// Nothing reached the receiver, so nothing counts against the
+				// address's warmup allowance.
+				releasePool()
+			}
+		}
+		shapeKey := shapingKey(src, domain)
 		if len(domainOutcomes) > 0 {
 			outcomes = append(outcomes, domainOutcomes...)
 			for _, outcome := range domainOutcomes {
@@ -357,18 +387,20 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 			// back off from it — and only from it. A permanent one is about the
 			// message or the recipient and says nothing about pace; backing off
 			// on those would slow a queue because one address does not exist.
-			// A refusal we caused ourselves by backing off is not new news.
-			if h.shaper != nil && status == RecipientTemporaryFailure && !errors.Is(err, ErrDestinationBackingOff) {
-				backoff := h.shaper.ReportDeferral(domain)
+			// A refusal we caused ourselves by backing off is not new news,
+			// and neither is our own pool running out of warmup allowance.
+			if h.shaper != nil && status == RecipientTemporaryFailure &&
+				!errors.Is(err, ErrDestinationBackingOff) && !errors.Is(err, ErrPoolAtCapacity) {
+				backoff := h.shaper.ReportDeferral(shapeKey)
 				h.logger.Info("Backing off from a destination that deferred",
 					"event_type", "traffic_shaping",
-					"domain", domain, "backoff", backoff.String())
+					"domain", domain, "source_ip", sourceAddr(src), "backoff", backoff.String())
 			}
 			// Counted but never a reason to slow down: a domain that accepts
 			// everything and bounces most of it is a deliverability problem,
 			// not a pace problem.
 			if h.shaper != nil && status == RecipientPermanentFailure {
-				h.shaper.ReportPermanentFailure(domain)
+				h.shaper.ReportPermanentFailure(shapeKey)
 			}
 			for _, recipient := range recipients[len(domainOutcomes):] {
 				outcomes = append(outcomes, RecipientOutcome{Recipient: recipient, Status: status, Diagnostic: err.Error(), Route: domain})
@@ -384,11 +416,12 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 			// evidently willing again, and holding the pause after that slows
 			// the queue for no reason.
 			if h.shaper != nil {
-				h.shaper.ReportSuccess(domain)
+				h.shaper.ReportSuccess(shapeKey)
 			}
 			h.logger.Info("Successfully delivered to domain",
 				"domain", domain,
-				"recipients", len(recipients))
+				"recipients", len(recipients),
+				"pool", sourcePool(src), "source_ip", sourceAddr(src))
 
 			// Capture first successful delivery IP
 			if firstSuccessfulIP == "" && ip != "" {
@@ -474,7 +507,7 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 	// until the destination is ready — one slow receiver would otherwise stall
 	// the whole queue behind it.
 	if h.shaper != nil {
-		release, err := h.shaper.Acquire(ctx, domain)
+		release, err := h.shaper.Acquire(ctx, shapingKey(sourceFrom(ctx), domain))
 		if err != nil {
 			return "", "", nil, err
 		}
@@ -646,7 +679,7 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 			return
 		}
 		if reusable && h.sessions != nil {
-			h.sessions.put(address, sess, clean)
+			h.sessions.put(sessionKey(sourceFrom(ctx), address), sess, clean)
 			return
 		}
 		closeSession(sess)
@@ -788,7 +821,7 @@ func (h *SMTPDeliveryHandler) deliverToAddressWithMetadata(ctx context.Context, 
 // and allowCached is set, otherwise a newly connected one. reused says which.
 func (h *SMTPDeliveryHandler) acquireSession(ctx context.Context, address string, requireTLS, allowCached bool, dp *danePolicy) (*outboundSession, bool, error) {
 	if allowCached && h.sessions != nil {
-		if s := h.sessions.get(address, requireTLS, dp != nil); s != nil {
+		if s := h.sessions.get(sessionKey(sourceFrom(ctx), address), requireTLS, dp != nil); s != nil {
 			h.logger.Debug("Reusing outbound SMTP session", "address", address, "uses", s.uses)
 			return s, true, nil
 		}
@@ -846,6 +879,39 @@ func isSMTPReply(err error) bool {
 	return errors.As(err, &tpErr)
 }
 
+// SetPoolRouter attaches sending pools. Nil leaves deliveries unpooled.
+func (h *SMTPDeliveryHandler) SetPoolRouter(r *PoolRouter) {
+	h.pools = r
+}
+
+// PoolStatuses reports each pool address and its warmup state.
+func (h *SMTPDeliveryHandler) PoolStatuses() []PoolIPStatus {
+	return h.pools.Statuses()
+}
+
+func anyDelivered(outcomes []RecipientOutcome) bool {
+	for _, o := range outcomes {
+		if o.Status == RecipientDelivered {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceAddr(src *sourceIP) string {
+	if src == nil {
+		return ""
+	}
+	return src.addr
+}
+
+func sourcePool(src *sourceIP) string {
+	if src == nil {
+		return ""
+	}
+	return src.pool
+}
+
 // SetConnectionReuse turns outbound session reuse on or off. It is on by
 // default; turning it off closes any parked sessions.
 func (h *SMTPDeliveryHandler) SetConnectionReuse(enabled bool) {
@@ -867,6 +933,8 @@ func (h *SMTPDeliveryHandler) CloseIdleSessions() {
 	if h.sessions != nil {
 		h.sessions.closeAll()
 	}
+	// Shutdown is also when the last warmup counts must reach disk.
+	h.pools.Close()
 }
 
 // SessionCacheStats reports outbound session reuse; ok is false when reuse is off.
@@ -1109,9 +1177,16 @@ func (h *SMTPDeliveryHandler) reconnectOpportunistic(ctx context.Context, addres
 // dialAndGreet opens a connection and sends EHLO.
 func (h *SMTPDeliveryHandler) dialAndGreet(ctx context.Context, address string) (*smtp.Client, net.Conn, error) {
 	// Use an injected dial function in tests; production uses a bounded net.Dialer.
+	src := sourceFrom(ctx)
 	dial := h.dialContext
 	if dial == nil {
 		dialer := &net.Dialer{Timeout: h.timeout}
+		if src != nil {
+			// Binding the local address also restricts the dial to MX
+			// addresses of the same family: an IPv4 pool address never
+			// tries to reach an IPv6-only MX it cannot route to.
+			dialer.LocalAddr = &net.TCPAddr{IP: src.ip}
+		}
 		dial = dialer.DialContext
 	}
 	conn, err := dial(ctx, "tcp", address)
@@ -1128,7 +1203,7 @@ func (h *SMTPDeliveryHandler) dialAndGreet(ctx context.Context, address string) 
 		_ = conn.Close() // Ignore error on cleanup in error path
 		return nil, nil, fmt.Errorf("failed to create SMTP client: %w", err)
 	}
-	if err := client.Hello(h.ehloName()); err != nil {
+	if err := client.Hello(h.ehloNameFor(src)); err != nil {
 		_ = client.Close() // Ignore error on cleanup in error path
 		return nil, nil, fmt.Errorf("HELLO command failed: %w", err)
 	}

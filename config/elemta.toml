@@ -192,6 +192,30 @@ port = 2424
 timeout = 30
 retry_delay = 60
 
+# Sending IP pools apply to remote SMTP delivery (mode "smtp" or "split").
+# Each pool is a set of source addresses that mail is assigned to by envelope
+# sender; each address announces its own EHLO name (match its PTR record) and
+# can be warmed up on a daily-cap schedule. Every address must be bindable on
+# this host or startup is refused. Changing pools needs a restart.
+#
+# default_pool = "transactional"   # for senders no pool claims, DSNs included
+#
+# [[delivery.pools]]
+# name = "transactional"
+# senders = ["example.com"]        # address, domain, or ".domain" for subdomains
+# [[delivery.pools.ips]]
+# address = "203.0.113.10"
+# helo = "mta1.example.com"
+#
+# [[delivery.pools]]
+# name = "bulk"
+# senders = ["news.example.com"]
+# warmup_schedule = [200, 500, 1000, 2000, 5000, 10000, 20000, 50000]
+# [[delivery.pools.ips]]
+# address = "203.0.113.20"
+# helo = "bulk1.example.com"
+# warmup_start = "2026-10-01"      # UTC date the address entered service
+
 # Content scanning.
 #
 # These sections must name the sidecar containers explicitly. When the
