@@ -156,14 +156,12 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-# For the dev stack (now on Kubernetes; the docker-* names are kept so existing
-# invocations still work), check that the SMTP server is up.
+# For Docker deployments, check if Docker is running
 if [[ "$DEPLOYMENT" == "docker-desktop" || "$DEPLOYMENT" == "docker-dev" ]]; then
-    ready=$(kubectl -n "${K8S_NAMESPACE:-elemta}" get deployment elemta -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
-    if [[ "${ready:-0}" -lt 1 ]]; then
-        print_status $RED "❌ The Elemta dev stack is not running!"
-        print_status $YELLOW "Please start it first:"
-        print_status $YELLOW "  make install-dev-full"
+    if ! docker compose -f deployments/compose/docker-compose.yml ps | grep -q "elemta-node0.*Up"; then
+        print_status $RED "❌ Elemta Docker container is not running!"
+        print_status $YELLOW "Please start the Docker deployment first:"
+        print_status $YELLOW "  make docker-setup"
         exit 1
     fi
 fi

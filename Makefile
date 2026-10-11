@@ -1,45 +1,24 @@
 .PHONY: all help gotchas build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
 	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
-	mailauth-check mailauth-check-fail \
-	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs print-dev-summary check-tools \
-	install-dev-bench uninstall run test test-load test-race-smoke test-dev test-docker up down down-volumes restart logs logs-elemta status \
-	rebuild rebuild-dev docker docker-build docker-setup docker-down update lint lint-fix fmt \
-	k8s-check k8s-images k8s-load k8s-apply k8s-install k8s-wait reseed
+	mailauth-check mailauth-check-fail stop-mailauth-services \
+	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
+	install-dev-bench uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
+	rebuild rebuild-dev docker docker-build docker-setup docker-down update lint lint-fix fmt
 
-# The dev stack runs on Kubernetes (a single-node k3s on the dev box; see
-# deployments/kubernetes/README.md). Each install-dev target applies one
-# overlay under deployments/kubernetes/dev:
-#   minimal   Elemta, caching DNS, LDAP, Dovecot, Valkey, LMTP sink
-#   full      + ClamAV, Rspamd, Roundcube
-#   bench     + ClamAV, Rspamd (delivery goes to the sink)
-#   postgres  + Postgres for the queue
+# Core paths/config
+COMPOSE_FILE ?= deployments/compose/docker-compose.yml
+MAILAUTH_COMPOSE_FILE ?= deployments/compose/docker-compose-mailauth.yml
+ELK_COMPOSE_FILE ?= deployments/compose/docker-compose-elk.yml
+MAILAUTH_LAB_DIR ?= /tmp/elemta-mailauth-lab
+DEV_ENV_FILE ?= .env
 # elemta-sink runs in every dev stack but is not the delivery target: keeping it
-# up means 'make sink-up' is a reseed rather than a deploy, and mail still goes
+# up means 'make sink-up' is a restart rather than a deploy, and mail still goes
 # to a real mailbox until someone asks otherwise.
-KUBECTL ?= kubectl
-K8S_NAMESPACE ?= elemta
-K8S_DIR ?= deployments/kubernetes
-K8S_OVERLAY ?= minimal
-# The overlays read config/elemta.toml and the LDAP, Rspamd and Roundcube files
-# from where they live in the repository, outside the kustomization's own
-# directory, which kustomize refuses by default.
-KUSTOMIZE = $(KUBECTL) kustomize --load-restrictor LoadRestrictionsNone
-KC = $(KUBECTL) -n $(K8S_NAMESPACE)
-# Applying an overlay removes what the previous one added and this one does
-# not (Roundcube when going from full to minimal), as 'up -d <services>' never
-# did. Volumes are not in the list on purpose: switching stacks must not take
-# the ClamAV signatures or the Rspamd Bayes data with it. down-volumes does.
-K8S_PRUNE = --prune -l app.kubernetes.io/part-of=elemta \
-	--prune-allowlist=apps/v1/Deployment --prune-allowlist=core/v1/Service \
-	--prune-allowlist=core/v1/ConfigMap --prune-allowlist=core/v1/Secret
-# Images the dev stack builds rather than pulls.
-IMAGE_TAG ?= dev
-DOCKER_BUILD_FLAGS ?=
-# How built images reach the cluster. auto works it out from the node:
-#   docker  k3s running on Docker (k3s --docker) sees Docker's images already
-#   kind    kind load docker-image
-#   k3s     docker save | sudo k3s ctr images import  (asks for sudo)
-K8S_IMAGE_LOAD ?= auto
+DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-dovecot elemta-ldap valkey elemta-sink
+DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-roundcube
+# The benchmarking stack: everything that scans, nothing that stores. Roundcube
+# is pointless here because delivery is discarded.
+DEV_BENCH_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd
 
 # Development TLS certificate.
 #
@@ -75,8 +54,11 @@ ADMIN_PASSWORD ?=
 # Queue backend config
 QUEUE_BACKEND ?= file
 QUEUE_POSTGRES_DSN ?= postgres://elemta:elemta@elemta-postgres:5432/elemta_queue?sslmode=disable
+POSTGRES_CONTAINER_NAME ?= elemta-postgres
 POSTGRES_USER ?= elemta
+POSTGRES_PASSWORD ?= elemta
 POSTGRES_DB ?= elemta_queue
+POSTGRES_VOLUME ?= elemta_pg
 
 # Default target
 all: build
@@ -91,23 +73,22 @@ gotchas:
 	@echo "    is about Elemta. Mail is discarded while it is on; 'make sink-down' undoes it."
 	@echo "  • Editing config/elemta.toml does not change a running stack. The services read a"
 	@echo "    copy on a shared volume, seeded once, because the web UI writes to it too."
-	@echo "    'make install-dev' and 'make reseed' re-seed from the file; 'up' and 'restart' do not."
+	@echo "    'make install-dev' re-seeds from the file; 'up' and 'restart' do not."
 	@echo "  • Scanner, allow/deny, blocklist and inbound mail-auth verification changes apply"
 	@echo "    on their own within ~5 seconds. Listen address, size limits, timeouts, queue"
 	@echo "    backend and ARC sealing need a restart; the UI and logs say so."
-	@echo "  • The dev stack is Kubernetes (k3s). Images are built locally and loaded into the"
-	@echo "    cluster; on plain k3s that is 'sudo k3s ctr images import', so a build asks for"
-	@echo "    sudo. Run k3s with --docker (see deployments/kubernetes/README.md) to skip it."
-	@echo "  • The mail-auth lab and ELK have not moved to Kubernetes yet; their targets say so."
+	@echo "  • 'install-dev-mailauth' is a different stack, not an add-on. Delivery mode is a"
+	@echo "    single global setting, so it sends over remote SMTP to a sink at :8027 instead"
+	@echo "    of over LMTP to Roundcube. That is what makes DKIM signing and ARC sealing"
+	@echo "    visible. Run any other install-dev target to go back; it cleans up for you."
 	@echo "  • Logs are line-delimited JSON on stdout and in /app/logs/elemta.log. Only"
 	@echo "    'level' from [logging] is read; type/output/file are ignored and the server"
 	@echo "    warns if they are set. Shipping is 'make elk-up', which reads the log volume"
 	@echo "    rather than making the mail server depend on a log store being up."
-	@echo "    On Kubernetes the stdout half is 'make logs-elemta'."
 	@echo "  • The dev TLS certificate expires in $(CERT_DAYS) days on purpose, so the expiry warning on"
 	@echo "    the Health page is exercised. It is regenerated when it lapses."
-	@echo "  • The dev stack is self-signed and its ports listen on every interface (k3s's"
-	@echo "    service load balancer). Fine on a laptop; firewall them if it is not isolated."
+	@echo "  • The dev stack is self-signed and binds 0.0.0.0. Fine on a laptop; bind 127.0.0.1"
+	@echo "    in the compose file if the machine is not isolated."
 	@echo "  • The RBL plugin ships in tag mode (adds a header, refuses nothing). Turn on"
 	@echo "    'Refuse listed senders' in Settings once you trust what it is flagging."
 	@echo "  • The Mass Mailer opens with a demo campaign — a draft addressed to this"
@@ -156,17 +137,17 @@ install-bin: build
 	cp bin/elemta-cli $(GOPATH)/bin/
 	@echo "Install complete."
 
-# Local server run (for debugging outside the cluster)
+# Local server run (for debugging outside Docker)
 run: build
-	@echo "Running Elemta server locally (not in the cluster)..."
-	@echo "⚠️  For normal use, run: make install-dev"
+	@echo "Running Elemta server locally (not in Docker)..."
+	@echo "⚠️  For normal use, run: make up"
 	./bin/elemta server --dev
 
 # Test targets
 test:
 	@echo "Running Go tests..."
-	@echo "⚠️  Note: Some packages require the dev stack to be running"
-	@echo "For complete integration tests, run: make test-dev"
+	@echo "⚠️  Note: Some packages require Docker services to be running"
+	@echo "For complete integration tests, run: make test-docker"
 	@go test -v -short -timeout 60s ./internal/antispam ./internal/api ./internal/auth ./internal/datasource ./internal/delivery ./internal/plugin ./internal/queue 2>&1; \
 	status=$$?; \
 	echo ""; \
@@ -174,9 +155,9 @@ test:
 		echo "✅ All unit tests passed"; \
 	else \
 		echo "⚠️  Some unit tests failed (exit code: $$status)"; \
-		echo "Note: Integration tests may require the dev stack"; \
+		echo "Note: Integration tests may require Docker services"; \
 	fi; \
-	echo "💡 Run 'make test-dev' for full integration test suite (21 tests)"; \
+	echo "💡 Run 'make test-docker' for full integration test suite (21 tests)"; \
 	exit $$status
 
 test-centralized:
@@ -188,12 +169,9 @@ init-test-env:
 	@./scripts/init-ldap-users.sh
 	@echo "✅ Test environment ready"
 
-test-dev: init-test-env
-	@echo "Running dev stack integration tests..."
+test-docker: init-test-env
+	@echo "Running Docker deployment tests..."
 	./tests/run_centralized_tests.sh --deployment docker-dev
-
-# The old name, from when the dev stack was Compose.
-test-docker: test-dev
 
 test-auth: ## Quick authentication test
 	@echo "Running authentication test..."
@@ -205,7 +183,7 @@ test-security:
 
 test-load:
 	@echo "Running SMTP load tests..."
-	@echo "⚠️  Note: Requires the dev stack running (make install-dev-full)"
+	@echo "⚠️  Note: Requires Docker services running (make docker-setup)"
 	python3 tests/performance/smtp_load_test.py
 
 test-race-smoke:
@@ -247,106 +225,12 @@ fmt:
 		echo "⚠️  goimports not installed. Install with: go install golang.org/x/tools/cmd/goimports@latest"; \
 	fi
 
-# Kubernetes plumbing for the dev stack.
+# Docker targets
+docker: docker-build up
 
-# Fail early and say what to do, rather than letting kubectl print a
-# connection-refused trace from the middle of an install.
-k8s-check:
-	@if ! command -v $(KUBECTL) >/dev/null 2>&1; then \
-		echo "❌ kubectl not found. Install it (Arch: sudo pacman -S kubectl)."; \
-		exit 1; \
-	fi
-	@if ! $(KUBECTL) get nodes >/dev/null 2>&1; then \
-		echo "❌ No Kubernetes cluster reachable (kubectl context: $$($(KUBECTL) config current-context 2>/dev/null || echo none))."; \
-		echo "   Install k3s and copy its kubeconfig: deployments/kubernetes/README.md"; \
-		exit 1; \
-	fi
-
-# The three images the dev stack builds rather than pulls: Elemta from this
-# tree, Dovecot with the stack's config baked in, and the caching resolver.
-k8s-images:
-	@echo "🔨 Building images ($(IMAGE_TAG))..."
-	docker build $(DOCKER_BUILD_FLAGS) --build-arg VERSION=$$(git rev-parse --short HEAD 2>/dev/null || echo dev) -t elemta:$(IMAGE_TAG) .
-	docker build $(DOCKER_BUILD_FLAGS) -t elemta-dovecot:$(IMAGE_TAG) docker/dovecot
-	docker build $(DOCKER_BUILD_FLAGS) -t elemta-dns:$(IMAGE_TAG) deployments/dns
-	@$(MAKE) --no-print-directory k8s-load
-
-# A cluster does not see Docker's images unless it runs on Docker. Detected
-# from the node rather than configured, so the same command works on k3s, k3s
-# with --docker, and kind.
-k8s-load:
-	@mode="$(K8S_IMAGE_LOAD)"; \
-	if [ "$$mode" = "auto" ]; then \
-		runtime=$$($(KUBECTL) get nodes -o jsonpath='{.items[0].status.nodeInfo.containerRuntimeVersion}' 2>/dev/null); \
-		context=$$($(KUBECTL) config current-context 2>/dev/null); \
-		case "$$runtime" in docker://*) mode=docker ;; *) \
-			case "$$context" in kind-*) mode=kind ;; *) mode=k3s ;; esac ;; \
-		esac; \
-	fi; \
-	images="elemta:$(IMAGE_TAG) elemta-dovecot:$(IMAGE_TAG) elemta-dns:$(IMAGE_TAG)"; \
-	case "$$mode" in \
-		docker|none) echo "ℹ️  The cluster runs on Docker; images are already visible to it" ;; \
-		kind) context=$$($(KUBECTL) config current-context); \
-			kind load docker-image --name "$${context#kind-}" $$images ;; \
-		k3s) echo "📦 Importing images into k3s (sudo k3s ctr images import)..."; \
-			docker save $$images | sudo k3s ctr images import - ;; \
-		*) echo "❌ Unknown K8S_IMAGE_LOAD=$$mode (auto|docker|kind|k3s|none)"; exit 1 ;; \
-	esac
-
-# Apply one overlay of the dev stack. See K8S_PRUNE for what switching removes.
-k8s-apply:
-	@echo "🚀 Applying deployments/kubernetes/dev/$(K8S_OVERLAY)..."
-	@$(KUSTOMIZE) $(K8S_DIR)/dev/$(K8S_OVERLAY) | $(KUBECTL) apply $(K8S_PRUNE) -f - | grep -v ' unchanged$$' || true
-	@# Remembered on the namespace, so sink-up and friends re-apply the stack
-	@# that is running rather than the default one, which would prune the rest.
-	@$(KUBECTL) annotate namespace $(K8S_NAMESPACE) elemta.dev/overlay=$(K8S_OVERLAY) --overwrite >/dev/null
-
-# The overlay currently applied, for targets that change config on a running
-# stack. Falls back to minimal before anything has been installed.
-CURRENT_OVERLAY = $$($(KUBECTL) get namespace $(K8S_NAMESPACE) -o jsonpath='{.metadata.annotations.elemta\.dev/overlay}' 2>/dev/null || true)
-
-# Wait for every Deployment to roll out. ClamAV downloads its signatures on a
-# fresh volume, which is why the timeout is long; nothing else needs it.
-k8s-wait:
-	@echo "⏳ Waiting for the stack to become ready..."
-	@for d in $$($(KC) get deployments -o name); do \
-		$(KC) rollout status $$d --timeout=10m >/dev/null || { echo "❌ $$d did not become ready:"; $(KC) describe $$d | tail -15; exit 1; }; \
-	done
-	@echo "✅ All deployments ready"
-
-# Make the next start take config/elemta.toml again, discarding what the web UI
-# saved. The compose stack did this with ELEMTA_CONFIG_RESEED and a marker in
-# the container; here it is explicit: remove the seeded copy and restart, and
-# prepare-config.sh seeds a new one from the ConfigMap.
-reseed:
-	@$(KC) exec deploy/elemta -c smtp -- rm -f /app/runtime-config/elemta.toml 2>/dev/null || true
-	@$(KC) rollout restart deploy/elemta >/dev/null
-	@$(KC) rollout status deploy/elemta --timeout=5m >/dev/null
-	@echo "✅ Runtime config re-seeded from config/elemta.toml"
-
-# What every install-dev target does, for one overlay. Separate from the
-# targets so the steps are in one place: build, configure, apply, re-seed, then
-# accounts.
-k8s-install: check-tools k8s-check ensure-dev-certs k8s-images
-	@$(MAKE) --no-print-directory configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
-	@$(MAKE) --no-print-directory configure-plugins
-	@$(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$(K8S_OVERLAY)
-	@$(MAKE) --no-print-directory k8s-wait
-	@# This install is authoritative: without the reseed the settings configured
-	@# above would be ignored on every deploy after the first. And images are
-	@# rebuilt under the same tag, so a Deployment whose spec did not change
-	@# would keep running the old one. One restart of what runs our images
-	@# covers both.
-	@$(KC) exec deploy/elemta -c smtp -- rm -f /app/runtime-config/elemta.toml
-	@$(KC) rollout restart deploy/elemta deploy/elemta-sink deploy/elemta-dovecot deploy/elemta-dns >/dev/null
-	@$(MAKE) --no-print-directory k8s-wait
-	@echo "⏳ Initializing LDAP..."
-	@./scripts/init-ldap-if-needed.sh || true
-	@$(MAKE) --no-print-directory bootstrap-admin
-
-# The old names.
-docker-build: k8s-images
-docker: install-dev
+docker-build:
+	@echo "Building Docker image..."
+	docker compose -f $(COMPOSE_FILE) build
 
 # Advanced/internal targets (not shown in help)
 
@@ -383,17 +267,16 @@ configure-plugins:
 		mass_mailer=$(PLUGIN_MASS_MAILER)
 
 # Create the dashboard's first account, once. The users file lives on the
-# runtime volume, so this runs inside the pod: it has to be written by the user
-# that reads it, and the host cannot write there. The server re-reads the file
-# when it changes, so nothing needs restarting afterwards.
-WEB_EXEC = $(KC) exec -i deploy/elemta -c web -- /app/elemta --config /app/runtime-config/elemta.toml
+# runtime volume, so this runs inside the container: it has to be written by the
+# user that reads it, and the host cannot write there.
 bootstrap-admin:
 	@# Whether an *account* exists, not whether the file does: the runtime setup
 	@# leaves an empty `{}` there so the service can start locked, and testing
 	@# for the file would read that as an account and skip the bootstrap.
 	@needs_account=1; \
-	if $(KC) exec deploy/elemta -c web -- test -e /app/runtime-config/users.json 2>/dev/null; then \
-		if ! $(WEB_EXEC) user list --file /app/runtime-config/users.json 2>/dev/null | grep -q '^No users'; then \
+	if docker exec elemta-web test -e /app/runtime-config/users.json 2>/dev/null; then \
+		if ! docker exec elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+			user list --file /app/runtime-config/users.json 2>/dev/null | grep -q '^No users'; then \
 			needs_account=0; \
 		fi; \
 	fi; \
@@ -402,7 +285,8 @@ bootstrap-admin:
 	else \
 		PW="$(ADMIN_PASSWORD)"; \
 		if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
-		if printf '%s\n' "$$PW" | $(WEB_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1; then \
+		if printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+			user add $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1; then \
 			echo ""; \
 			echo "🔑 Dashboard login created"; \
 			echo "   URL:      http://localhost:8025/"; \
@@ -410,6 +294,8 @@ bootstrap-admin:
 			echo "   Password: $$PW"; \
 			echo "   (shown once — make reset-admin-password if you lose it)"; \
 			echo ""; \
+			echo "🔄 Restarting the web service so it picks up the new account..."; \
+			docker compose -f $(COMPOSE_FILE) restart elemta-web >/dev/null 2>&1 || true; \
 		else \
 			echo "❌ Could not create the dashboard account"; \
 		fi; \
@@ -420,13 +306,15 @@ bootstrap-admin:
 reset-admin-password:
 	@PW="$(ADMIN_PASSWORD)"; \
 	if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
-	if [ "$$($(KC) get deployment elemta -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" != "1" ]; then \
-		echo "❌ The dev stack is not running — start it first (make up, or make install-dev)"; \
+	if ! docker ps --format '{{.Names}}' | grep -q '^elemta-web$$'; then \
+		echo "❌ elemta-web is not running — start the stack first (make up)"; \
 		exit 1; \
 	fi; \
-	OUT=$$(printf '%s\n' "$$PW" | $(WEB_EXEC) user passwd $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
+	OUT=$$(printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+		user passwd $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
 	if [ $$? -ne 0 ]; then \
-		OUT=$$(printf '%s\n' "$$PW" | $(WEB_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
+		OUT=$$(printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+			user add $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
 		if [ $$? -ne 0 ]; then \
 			echo "❌ Could not set the password:"; \
 			echo "$$OUT" | sed 's/^/   /'; \
@@ -439,11 +327,13 @@ reset-admin-password:
 	echo "   URL:      http://localhost:8025/"; \
 	echo "   Username: $(ADMIN_USER)"; \
 	echo "   Password: $$PW"; \
-	echo ""
+	echo ""; \
+	docker compose -f $(COMPOSE_FILE) restart elemta-web >/dev/null 2>&1; \
+	echo "🔄 Web service restarted so the change takes effect."
 
 
 check-tools:
-	@for tool in docker $(KUBECTL) python3 openssl; do \
+	@for tool in docker python3 openssl; do \
 		if ! command -v $$tool >/dev/null 2>&1; then \
 			echo "❌ Missing required tool: $$tool"; \
 			exit 1; \
@@ -464,17 +354,51 @@ ensure-dev-certs:
 		echo "ℹ️  Using existing TLS certificate (expires $$(openssl x509 -enddate -noout -in config/test.crt | cut -d= -f2))"; \
 	fi
 
+ensure-dev-env:
+	@if [ ! -f $(DEV_ENV_FILE) ]; then \
+		echo "📝 Creating $(DEV_ENV_FILE) for development..."; \
+		printf "# Elemta Development Environment - Auto-generated\n" > $(DEV_ENV_FILE); \
+		printf "ENVIRONMENT=development\n" >> $(DEV_ENV_FILE); \
+		printf "HOSTNAME=mail.dev.evil-admin.com\n" >> $(DEV_ENV_FILE); \
+		printf "LISTEN_PORT=2525\n" >> $(DEV_ENV_FILE); \
+		printf "LOG_LEVEL=DEBUG\n" >> $(DEV_ENV_FILE); \
+		printf "DEV_MODE=true\n" >> $(DEV_ENV_FILE); \
+		printf "TEST_MODE=true\n" >> $(DEV_ENV_FILE); \
+		printf "AUTH_REQUIRED=false\n" >> $(DEV_ENV_FILE); \
+		printf "LDAP_HOST=elemta-ldap\n" >> $(DEV_ENV_FILE); \
+		printf "DELIVERY_HOST=elemta-dovecot\n" >> $(DEV_ENV_FILE); \
+		printf "COMPOSE_PROJECT_NAME=elemta\n" >> $(DEV_ENV_FILE); \
+		printf "COMPOSE_FILE=$(COMPOSE_FILE)\n" >> $(DEV_ENV_FILE); \
+		echo "✅ $(DEV_ENV_FILE) created"; \
+	else \
+		echo "ℹ️  Using existing $(DEV_ENV_FILE)"; \
+	fi
+
+refresh-dev-env:
+	@touch $(DEV_ENV_FILE)
+	@for kv in \
+		"QUEUE_BACKEND=$(QUEUE_BACKEND)" \
+		"QUEUE_POSTGRES_DSN=$(QUEUE_POSTGRES_DSN)" \
+		"COMPOSE_FILE=$(COMPOSE_FILE)"; do \
+		key=$${kv%%=*}; \
+		if grep -q "^$${key}=" $(DEV_ENV_FILE); then \
+			sed -i "s|^$${key}=.*|$${kv}|" $(DEV_ENV_FILE); \
+		else \
+			echo "$${kv}" >> $(DEV_ENV_FILE); \
+		fi; \
+	done
+
 print-dev-summary:
 	@echo ""
 	@echo "✅ Development Environment Ready!"
 	@echo "=================================="
 	@echo "   📧 SMTP:      localhost:2525"
-	@echo "   📊 Metrics:   http://localhost:9080/metrics"
+	@echo "   📊 Metrics:   http://localhost:8080/metrics"
 	@echo "   🌐 Web UI:    http://localhost:8025  (login required)"
 	@echo ""
 	@# Report where mail actually goes rather than asserting it. The two installs
 	@# differ on this, and a summary that guesses is worse than none.
-	@target=$$($(KC) exec deploy/elemta -c smtp -- sh -c "sed -n '/^\[delivery\]/,/^\[/p' /app/runtime-config/elemta.toml | grep -m1 '^host'" 2>/dev/null | sed 's/.*= *//; s/"//g'); \
+	@target=$$(docker exec elemta-node0 sh -c "sed -n '/^\[delivery\]/,/^\[/p' /app/runtime-config/elemta.toml | grep -m1 '^host'" 2>/dev/null | sed 's/.*= *//; s/"//g'); \
 	if [ "$$target" = "elemta-sink" ]; then \
 		echo "   📭 Delivery:  a DISCARDING SINK. Delivered mail is not stored anywhere."; \
 		echo "                 make sink-down   → real mailboxes + Roundcube"; \
@@ -497,13 +421,13 @@ print-dev-summary:
 help:
 	@echo "Elemta - High Performance SMTP Server"
 	@echo ""
-	@echo "⚡ Quick Start (the dev stack runs on Kubernetes; see deployments/kubernetes/README.md):"
+	@echo "⚡ Quick Start:"
 	@echo "  make install-dev              # Minimal dev stack, plugins on, prints a dashboard login"
 	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
 	@echo "  make install-dev-bench        # Scanners on, delivery DISCARDED — for throughput work"
 	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
-	@echo "  make install-dev-mailauth     # (not on Kubernetes yet)"
-	@echo "  make install                  # Interactive production setup (Compose)"
+	@echo "  make install-dev-mailauth     # Dev stack for SPF/DKIM/DMARC/ARC: fixed DNS, mail lands at :8027"
+	@echo "  make install                  # Interactive production setup"
 	@echo ""
 	@echo "🔑 Accounts & Access:"
 	@echo "  Web UI            http://localhost:8025  (login required — there is no guest access)"
@@ -512,34 +436,34 @@ help:
 	@echo "                          ADMIN_USER=name ADMIN_PASSWORD=secret to choose your own"
 	@echo "  The dashboard login is NOT the mailbox login. Mailbox users live in LDAP;"
 	@echo "  the dashboard account lives in the users file and is managed with:"
-	@echo "    kubectl -n $(K8S_NAMESPACE) exec -it deploy/elemta -c web -- /app/elemta \\"
-	@echo "      --config /app/runtime-config/elemta.toml user list|add|passwd|remove"
-	@echo "  The server re-reads that file when it changes; nothing needs restarting."
+	@echo "    docker exec -it elemta-web /app/elemta --config /app/runtime-config/elemta.toml \\"
+	@echo "      user list|add|passwd|remove --file /app/runtime-config/users.json"
+	@echo "  A running server reads that file at startup, so restart elemta-web after changing it."
 	@echo ""
-	@echo "☸️  Services (namespace $(K8S_NAMESPACE)):"
-	@echo "  up             - Start the stack again after 'down'"
-	@echo "  down           - Stop everything (scale to zero), keep volumes"
-	@echo "  down-volumes   - Delete the namespace: queue, config, mailboxes and login all go"
-	@echo "  restart        - Restart all deployments"
-	@echo "  rebuild        - Rebuild images without cache, load them, restart"
-	@echo "  rebuild-dev    - Rebuild images with cache, load them, restart"
-	@echo "  reseed         - Take config/elemta.toml again, discarding what the UI saved"
-	@echo "  status         - Pods and services"
+	@echo "🐳 Services:"
+	@echo "  up             - Start services (requires .env)"
+	@echo "  down           - Stop services, keep volumes"
+	@echo "  down-volumes   - Stop services and DELETE volumes (queue, config and login all go)"
+	@echo "  restart        - Restart all services"
+	@echo "  rebuild        - Rebuild images and restart"
+	@echo "  rebuild-dev    - Quick rebuild (dev only, skips cert check)"
+	@echo "  status         - Show service status"
 	@echo "  logs           - Follow all logs        logs-elemta - Elemta SMTP logs only"
 	@echo ""
 	@echo "⚙️  Configuration:"
 	@echo "  configure-plugins        - Apply the PLUGIN_* settings below to config/elemta.toml"
 	@echo "  configure-queue-backend  - Set the queue backend (QUEUE_BACKEND=file|sqlite|postgres)"
+	@echo "  refresh-dev-env          - Refresh backend/compose keys in .env"
 	@echo "  certs / clean-certs      - Generate or remove the dev TLS certificate"
 	@echo ""
 	@echo "📊 Logs & Observability:"
-	@echo "  elk-up         - (not on Kubernetes yet)"
+	@echo "  elk-up         - Elasticsearch + Kibana + Filebeat, reading the log volume"
 	@echo "  elk-dashboard  - Import the Elemta overview dashboard into Kibana"
 	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
 	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
 	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
 	@echo "  sink-up        - Discard delivered mail (~4500/s) so benchmarks measure Elemta"
-	@echo "  sink-down      - Delivery to real mailboxes (Roundcube at :8026 on the full stack)"
+	@echo "  sink-down      - Delivery to real mailboxes + Roundcube at :8026"
 	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
 	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
 	@echo "  elk-status     - Cluster health and how many events are indexed"
@@ -549,7 +473,7 @@ help:
 	@echo ""
 	@echo "🔧 Build & Test:"
 	@echo "  build          - Build all binaries (server, queue, cli)   clean - Remove artifacts"
-	@echo "  test           - Go unit tests            test-dev       - Integration suite"
+	@echo "  test           - Go unit tests            test-docker    - Integration suite"
 	@echo "  test-load      - SMTP load tests          test-race-smoke - Session race checks"
 	@echo "  test-auth      - Authentication tests     test-security  - Security tests"
 	@echo "  lint / lint-fix / fmt   - Code quality"
@@ -562,79 +486,182 @@ help:
 	@echo "  ADMIN_USER=admin              Dashboard account name"
 	@echo "  ADMIN_PASSWORD=               Dashboard password (generated when empty)"
 	@echo "  CERT_DAYS=$(CERT_DAYS)                  Dev certificate lifetime, in days"
-	@echo "  K8S_IMAGE_LOAD=$(K8S_IMAGE_LOAD)           How images reach the cluster: auto | docker | kind | k3s | none"
-	@echo "  KUBECTL=$(KUBECTL)  K8S_NAMESPACE=$(K8S_NAMESPACE)"
 	@echo "  QUEUE_BACKEND=$(QUEUE_BACKEND)           file | sqlite | postgres"
 	@echo "  PLUGIN_RATE_LIMITER=$(PLUGIN_RATE_LIMITER)      PLUGIN_CLAMAV=$(PLUGIN_CLAMAV)   PLUGIN_RSPAMD=$(PLUGIN_RSPAMD)"
 	@echo "  PLUGIN_ACCESS_CONTROL=$(PLUGIN_ACCESS_CONTROL)    PLUGIN_RBL=$(PLUGIN_RBL)      PLUGIN_MASS_MAILER=$(PLUGIN_MASS_MAILER)"
 	@echo "  PLUGIN_SPF=$(PLUGIN_SPF)  PLUGIN_DKIM=$(PLUGIN_DKIM)  PLUGIN_DMARC=$(PLUGIN_DMARC)  PLUGIN_ARC=$(PLUGIN_ARC)"
 	@echo "    e.g. make install-dev PLUGIN_RBL=off CERT_DAYS=90"
 	@echo ""
+	@echo "☸️  make k8s-help  - The same dev stack on Kubernetes (k3s), as k8s-* targets"
+	@echo ""
 	@echo "💡 make gotchas   - The things that surprise people (config reload, discarded"
 	@echo "                    delivery, cert expiry, what [logging] ignores). Worth reading"
 	@echo "                    once; HANDOFF.md has the same traps in depth."
 
-install-dev:
+install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Minimal)"
 	@echo "======================================"
-	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=minimal
-	@$(MAKE) --no-print-directory print-dev-summary
+	@$(MAKE) stop-mailauth-services
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) configure-plugins
+	@echo "🚀 Starting services..."
+	@# ELEMTA_CONFIG_RESEED makes this install authoritative: the services read a
+	@# configuration on a shared volume, which is seeded once and then owned by
+	@# whatever the web UI saves. Without this, the settings configured above
+	@# would be ignored on every deploy after the first.
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --no-deps $(DEV_MIN_SERVICES)
+	@echo "⏳ Waiting for services to become healthy..."
+	@sleep 5
+	@echo "⏳ Initializing LDAP..."
+	@./scripts/init-ldap-if-needed.sh || true
+	@$(MAKE) bootstrap-admin
+	@$(MAKE) print-dev-summary
 
 # A stack for measuring throughput: scanners on, delivery discarded.
 #
 # Separate from install-dev-full rather than a flag on it, because "mail is
 # thrown away" is not a detail to bury in an option. Anyone running this has
 # said so.
-install-dev-bench:
+install-dev-bench: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Benchmarking)"
 	@echo "=========================================="
-	@# The bench overlay has no Roundcube, and applying it prunes one left over
-	@# from install-dev-full: there is nothing to read when mail is discarded.
-	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=bench
+	@$(MAKE) stop-mailauth-services
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) configure-plugins
+	@echo "🚀 Starting services..."
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d $(DEV_BENCH_SERVICES)
+	@# 'up -d <list>' starts what is listed and stops nothing, so a Roundcube
+	@# left over from install-dev-full would keep running against mail that is
+	@# now being discarded.
+	@docker compose -f $(COMPOSE_FILE) rm -sf elemta-roundcube >/dev/null 2>&1 || true
+	@echo "⏳ Initializing LDAP..."
+	@./scripts/init-ldap-if-needed.sh || true
+	@$(MAKE) bootstrap-admin
+	@# sink-up rather than a configure step: it force-recreates elemta, which is
+	@# what actually makes the reseed happen. Compose will not recreate a
+	@# container whose spec has not changed, so setting the target without it
+	@# leaves the running server delivering to the old destination.
 	@$(MAKE) --no-print-directory sink-up
-	@$(MAKE) --no-print-directory print-dev-summary
+	@$(MAKE) print-dev-summary
 	@echo "   Measure with: make bench-queue"
 	@# The repo config stays as shipped: the sink lives in the seeded copy the
 	@# server reads, and a benchmarking run should not rewrite the default
 	@# everyone else gets.
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424 >/dev/null
 
-# The minimal stack with a Postgres queue. Postgres comes up with the rest
-# (its Service name is what [queue.postgres] dsn already says). If Elemta wins
-# the race it exits on the unreachable backend and Kubernetes restarts it until
-# Postgres answers, so the compose version's sqlite-first two-step is gone.
 install-dev-postgres:
 	@echo "🐘 Elemta Development Setup (Postgres Queue)"
 	@echo "============================================"
-	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=postgres QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
-	@$(MAKE) --no-print-directory print-dev-summary
+	@$(MAKE) install-dev QUEUE_BACKEND=sqlite
+	@NET=$$(docker inspect -f '{{range $$k,$$v := .NetworkSettings.Networks}}{{println $$k}}{{end}}' elemta-web 2>/dev/null | head -n1); \
+	if [ -z "$$NET" ]; then \
+		echo "❌ Could not detect Docker network from elemta-web"; \
+		exit 1; \
+	fi; \
+	echo "🔎 Using network: $$NET"; \
+	if docker ps -a --format '{{.Names}}' | grep -q '^$(POSTGRES_CONTAINER_NAME)$$'; then \
+		echo "♻️  Recreating $(POSTGRES_CONTAINER_NAME)"; \
+		docker rm -f $(POSTGRES_CONTAINER_NAME) >/dev/null 2>&1 || true; \
+	fi; \
+	docker run -d --name $(POSTGRES_CONTAINER_NAME) \
+		--network "$$NET" \
+		-e POSTGRES_USER=$(POSTGRES_USER) \
+		-e POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
+		-e POSTGRES_DB=$(POSTGRES_DB) \
+		-v $(POSTGRES_VOLUME):/var/lib/postgresql/data \
+		postgres:16 >/dev/null; \
+	echo "✅ Started $(POSTGRES_CONTAINER_NAME)"; \
+	echo "⏳ Waiting for Postgres readiness..."; \
+	for i in $$(seq 1 30); do \
+		if docker exec $(POSTGRES_CONTAINER_NAME) pg_isready -U $(POSTGRES_USER) -d $(POSTGRES_DB) >/dev/null 2>&1; then \
+			echo "✅ Postgres is ready"; \
+			break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			echo "❌ Postgres did not become ready in time"; \
+			exit 1; \
+		fi; \
+		sleep 1; \
+	done
+	@$(MAKE) refresh-dev-env QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) stop-mailauth-services
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@docker compose -f $(COMPOSE_FILE) restart elemta elemta-web
+	@echo "✅ Postgres queue dev setup complete"
 	@echo "   DSN: $(QUEUE_POSTGRES_DSN)"
-	@echo "   Verify: kubectl -n $(K8S_NAMESPACE) exec deploy/elemta-postgres -- psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
+	@echo "   Verify: docker exec -it $(POSTGRES_CONTAINER_NAME) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
 
-install-dev-full:
+install-dev-full: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Full)"
 	@echo "=================================="
-	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=full
-	@$(MAKE) --no-print-directory print-dev-summary
+	@$(MAKE) stop-mailauth-services
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) configure-plugins
+	@echo "🚀 Starting services..."
+	@# See install-dev: without the reseed the settings configured above are
+	@# ignored on every deploy after the first.
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d $(DEV_FULL_SERVICES)
+	@echo "⏳ Initializing LDAP..."
+	@./scripts/init-ldap-if-needed.sh || true
+	@$(MAKE) bootstrap-admin
+	@$(MAKE) print-dev-summary
 	@echo "   ✉️  Roundcube: http://localhost:8026"
 
-# The mail-auth lab (fixed DNS zone, DKIM keys, a remote-SMTP sink at :8027)
-# is still a Compose overlay of a stack that no longer runs on Compose. It moves
-# to Kubernetes next; until then this says so rather than starting half a lab.
-install-dev-mailauth:
-	@echo "❌ The mail-auth lab has not moved to Kubernetes yet."
-	@echo "   deployments/compose/docker-compose-mailauth.yml is what it was; it is next to port."
-	@exit 1
+# install-dev-mailauth is a dev stack in its own right, not a mode layered on
+# another one. Delivery mode is a single global setting, so a stack cannot
+# deliver locally over LMTP and out over SMTP at the same time: this install
+# sends over remote SMTP to a local sink, which is what makes DKIM signing and
+# ARC sealing observable, and is why mail does not reach Roundcube here.
+#
+# Switching back is just running another install-dev target; they remove these
+# services for you.
+install-dev-mailauth: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+	@echo "🔐 Elemta Development Setup (Mail Authentication)"
+	@echo "================================================="
+	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) configure-plugins
+	@echo "🔐 Generating deterministic DNS, keys and zone data..."
+	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) ./scripts/dev/prepare-mailauth-lab.sh >/dev/null
+	@echo "🚀 Starting services..."
+	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) up -d elemta-mailauth-dns elemta-mailauth-sink
+	@# See install-dev: without the reseed the settings configured above are
+	@# ignored on every deploy after the first.
+	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) up -d --force-recreate elemta elemta-web
+	@echo "⏳ Initializing LDAP..."
+	@./scripts/init-ldap-if-needed.sh || true
+	@$(MAKE) bootstrap-admin
+	@$(MAKE) print-dev-summary
+	@echo "   📥 Delivered mail: http://localhost:8027 (this stack does not deliver to Roundcube)"
+	@echo "   ✅ SPF/DMARC pass: pass.auth.test      ❌ fail: fail.auth.test"
+	@echo "   Send one: make mailauth-check   or   make mailauth-check-fail"
 
-# ELK ships the log volume Filebeat used to read from the compose stack. On
-# Kubernetes that volume is inside the elemta pod, so shipping needs a Filebeat
-# sidecar or a DaemonSet reading container logs instead; that is the next port.
-# elk-status, elk-data-view and elk-dashboard only talk to localhost:9200 and
-# :5601 and work against any Elasticsearch and Kibana there.
+# Removes the mail-auth services so an ordinary dev install is not left with
+# orphaned DNS and sink containers from a previous one.
+# ELK adds to whatever dev stack is already running rather than replacing one.
+# Nothing about how Elemta runs changes: it already writes line-delimited JSON
+# to a shared volume, and Filebeat reads that volume. That is why this is
+# elk-up rather than another install-dev target.
 elk-up:
-	@echo "❌ ELK has not moved to Kubernetes yet."
-	@echo "   deployments/compose/docker-compose-elk.yml is what it was; it is next to port."
-	@exit 1
+	@echo "📊 Starting Elasticsearch, Kibana and Filebeat"
+	@# Elasticsearch stores an index per day and Kibana is not small. Warning
+	@# here beats the failure mode this replaces, where a full disk surfaced as
+	@# bulk-insert timeouts with nothing pointing at the cause.
+	@free=$$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2 {print int($$4/1048576)}'); \
+	if [ -n "$$free" ] && [ "$$free" -lt 10 ]; then \
+		echo "⚠️  Only $${free}GB free where Docker stores data."; \
+		echo "    Elasticsearch will run, but it has nowhere to grow."; \
+		echo "    'docker system df' shows what is reclaimable; build cache is usually most of it."; \
+	fi
+	@docker compose -f $(COMPOSE_FILE) -f $(ELK_COMPOSE_FILE) up -d elemta-elasticsearch elemta-kibana elemta-filebeat
+	@echo "⏳ Waiting for Elasticsearch (first start builds indices; this takes a minute)..."
+	@for i in $$(seq 1 60); do 		if curl -fs "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=1s" >/dev/null 2>&1; then break; fi; 		sleep 2; 	done
+	@curl -fs "http://localhost:9200/_cluster/health" >/dev/null 2>&1 		&& echo "✅ Elasticsearch is up at http://localhost:9200" 		|| echo "⚠️  Elasticsearch did not become healthy; check 'docker logs elemta-elasticsearch'"
+	@$(MAKE) --no-print-directory elk-data-view
+	@$(MAKE) --no-print-directory elk-dashboard
+	@echo "   📊 Kibana:        http://localhost:5601  (give it a minute on first start)"
+	@echo "   🔎 Logs:          Kibana > Discover > elemta-*"
+	@echo "   Both ports bind to 127.0.0.1 only: this stack has no authentication."
+	@echo "   Try: make elk-status    to see what has been indexed"
 
 # The data view is what makes Discover usable; without it Kibana shows a setup
 # wizard instead of the logs. Created through the API so it is visible here
@@ -706,23 +733,22 @@ elk-dashboard-check:
 # cannot be the thing being measured. Dovecot and Roundcube keep running; only
 # where the queue delivers changes.
 sink-up:
+	@docker compose -f $(COMPOSE_FILE) up -d elemta-sink
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
-	@# The setting reaches the server only through the seeded copy of the
-	@# config, so it has to go into the ConfigMap and then be re-seeded. Same
-	@# trap as install-dev.
-	@ov=$(CURRENT_OVERLAY); $(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$${ov:-minimal} >/dev/null
-	@$(MAKE) --no-print-directory reseed >/dev/null
+	@# Without the reseed the setting above is ignored: the services read a copy
+	@# of the config on a volume, seeded once. Same trap as install-dev.
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
 	@echo "✅ Delivery goes to the sink (elemta-sink:2424). Mail is discarded."
 	@echo "   Benchmark:  make bench-queue"
-	@echo "   Sink rate:  kubectl -n $(K8S_NAMESPACE) logs -f deploy/elemta-sink"
+	@echo "   Sink rate:  docker logs -f elemta-sink"
 
-# Real mailboxes: deliver to Dovecot again.
+# Real mailboxes: deliver to Dovecot and start Roundcube to read the result.
 sink-down:
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424
-	@ov=$(CURRENT_OVERLAY); $(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$${ov:-minimal} >/dev/null
-	@$(MAKE) --no-print-directory reseed >/dev/null
+	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
+	@docker compose -f $(COMPOSE_FILE) up -d elemta-roundcube >/dev/null 2>&1 || true
 	@echo "✅ Delivery goes to Dovecot; mail lands in real mailboxes."
-	@echo "   ✉️  Roundcube is part of install-dev-full: http://localhost:8026  (user@example.com / password)"
+	@echo "   ✉️  Roundcube: http://localhost:8026  (user@example.com / password)"
 
 # Rewrites [delivery] host/port. Same approach as configure-plugins: the repo
 # config is the source that gets seeded, so it is what has to change.
@@ -766,7 +792,12 @@ elk-status:
 		| python3 -c "import json,sys; h=json.load(sys.stdin)['hits']['hits']; s=h[0]['_source'] if h else None; print('🔎 Latest:', s.get('@timestamp'), s.get('component'), '-', s.get('msg')) if s else print('🔎 Latest: nothing yet')" 2>/dev/null
 
 elk-down:
-	@echo "ELK does not run on the Kubernetes dev stack yet; nothing to stop."
+	@docker compose -f $(COMPOSE_FILE) -f $(ELK_COMPOSE_FILE) rm -sf elemta-elasticsearch elemta-kibana elemta-filebeat >/dev/null 2>&1 || true
+	@echo "Stopped the ELK services. Their data volumes are kept;"
+	@echo "'docker volume rm compose_elemta_elasticsearch_data' removes the indexed logs."
+
+stop-mailauth-services:
+	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) rm -sf elemta-mailauth-dns elemta-mailauth-sink >/dev/null 2>&1 || true
 
 mailauth-check:
 	@printf 'EHLO lab\r\nMAIL FROM:<sender@pass.auth.test>\r\nRCPT TO:<user@receiver.auth.test>\r\nDATA\r\nFrom: sender@pass.auth.test\r\nTo: user@receiver.auth.test\r\nSubject: Elemta mail-auth lab\r\nDate: Tue, 11 Aug 2026 12:00:00 -0400\r\nMessage-ID: <mailauth-lab@pass.auth.test>\r\n\r\nSPF, DKIM and DMARC lab message.\r\n.\r\nQUIT\r\n' | nc localhost 2525
@@ -779,57 +810,51 @@ mailauth-check-fail:
 
 docker-setup: install-dev-full
 
-# Day-to-day control of the dev stack. install-dev* create it; these act on
-# whatever is running in $(K8S_NAMESPACE).
-
-# 'down' keeps everything but the running pods, as 'docker compose down' kept
-# the volumes; 'up' brings them back.
-up: k8s-check
+# Modern Docker commands
+up:
 	@echo "🚀 Starting Elemta services..."
-	@$(KC) scale deployment --all --replicas=1 >/dev/null
-	@$(MAKE) --no-print-directory k8s-wait
+	docker compose -f $(COMPOSE_FILE) up -d
+	@echo "✅ Services started"
 
 down:
 	@echo "🛑 Stopping Elemta services..."
-	@$(KC) scale deployment --all --replicas=0 >/dev/null
-	@echo "✅ Services stopped (volumes kept; make up to start again)"
+	docker compose -f $(COMPOSE_FILE) down
+	@echo "✅ Services stopped"
 
 down-volumes:
-	@echo "🛑 Deleting the $(K8S_NAMESPACE) namespace and everything in it..."
-	@$(KUBECTL) delete namespace $(K8S_NAMESPACE) --ignore-not-found --wait=true
-	@echo "✅ Services and volumes removed"
+	@echo "🛑 Stopping Elemta services and removing volumes..."
+	docker compose -f $(COMPOSE_FILE) down -v
+	@echo "✅ Services stopped and volumes removed"
 
 restart:
 	@echo "🔄 Restarting Elemta services..."
-	@$(KC) rollout restart deployment >/dev/null
-	@$(MAKE) --no-print-directory k8s-wait
+	docker compose -f $(COMPOSE_FILE) restart
+	@echo "✅ Services restarted"
 
 logs:
 	@echo "📋 Showing Elemta logs (Ctrl+C to exit)..."
-	$(KC) logs -f --tail=50 --prefix --all-containers --max-log-requests=30 -l app.kubernetes.io/part-of=elemta
+	docker compose -f $(COMPOSE_FILE) logs -f
 
 logs-elemta:
 	@echo "📋 Showing Elemta SMTP server logs..."
-	$(KC) logs -f --tail=100 deploy/elemta -c smtp
+	docker compose -f $(COMPOSE_FILE) logs -f elemta
 
 status:
 	@echo "📊 Elemta Services Status:"
-	@$(KC) get pods,services -o wide
+	@docker compose -f $(COMPOSE_FILE) ps
 
-# Rebuild the images and roll the pods that run them. Configuration is left
-# alone: that is install-dev's job (or reseed's).
 rebuild:
 	@echo "🔨 Rebuilding and restarting Elemta..."
-	@$(MAKE) --no-print-directory k8s-images DOCKER_BUILD_FLAGS=--no-cache
-	@$(KC) rollout restart deploy/elemta deploy/elemta-sink deploy/elemta-dovecot deploy/elemta-dns >/dev/null
-	@$(MAKE) --no-print-directory k8s-wait
+	@$(MAKE) down
+	docker compose -f $(COMPOSE_FILE) build --no-cache elemta elemta-web
+	@$(MAKE) up
 	@echo "✅ Rebuild complete"
 
 rebuild-dev:
 	@echo "🔨 Quick rebuild for development..."
-	@$(MAKE) --no-print-directory k8s-images
-	@$(KC) rollout restart deploy/elemta deploy/elemta-sink deploy/elemta-dovecot deploy/elemta-dns >/dev/null
-	@$(MAKE) --no-print-directory k8s-wait
+	@$(MAKE) down
+	docker compose -f $(COMPOSE_FILE) build elemta elemta-web
+	@$(MAKE) up
 	@echo "✅ Development rebuild complete"
 
 docker-down: down-volumes
@@ -883,7 +908,7 @@ install:
 	@echo "   1. Review and edit .env for your environment"
 	@echo "   2. Configure TLS certificates (or enable Let's Encrypt)"
 	@echo "   3. Update LDAP credentials in .env"
-	@echo "   4. Run: docker compose -f deployments/compose/docker-compose.prod.yml up -d"
+	@echo "   4. Run: make up"
 	@echo ""
 	@echo "🔐 Security Reminders:"
 	@echo "   • Change default passwords in .env"
@@ -900,3 +925,312 @@ uninstall:
 # Kept because install/README.md and deployments/compose/README.md name them.
 update: rebuild
 update-restart: restart
+
+# ---------------------------------------------------------------------------
+# Kubernetes: the same dev stack on a local cluster (k3s on the dev box), as an
+# option next to the Compose one above. Every target is k8s-prefixed; nothing
+# above changes. See deployments/kubernetes/README.md.
+#
+# Each k8s-install-dev* target applies one overlay of deployments/kubernetes/dev:
+#   minimal   Elemta, caching DNS, LDAP, Dovecot, Valkey, LMTP sink
+#   full      + ClamAV, Rspamd, Roundcube
+#   bench     + ClamAV, Rspamd (delivery goes to the sink)
+#   postgres  + Postgres for the queue
+# Services keep their compose names and host ports, so config/elemta.toml and
+# the scripts work against either stack, but not both at once: they want the
+# same ports. k8s-install refuses while the Compose stack is up.
+# ---------------------------------------------------------------------------
+KUBECTL ?= kubectl
+K8S_NAMESPACE ?= elemta
+K8S_DIR ?= deployments/kubernetes
+K8S_OVERLAY ?= minimal
+# The overlays read config/elemta.toml and the LDAP, Rspamd and Roundcube files
+# from where they live in the repository, outside the kustomization's own
+# directory, which kustomize refuses by default.
+KUSTOMIZE = $(KUBECTL) kustomize --load-restrictor LoadRestrictionsNone
+KC = $(KUBECTL) -n $(K8S_NAMESPACE)
+# Applying an overlay removes what the previous one added and this one does
+# not (Roundcube when going from full to minimal). Volumes are not in the list
+# on purpose: switching stacks must not take the ClamAV signatures or the
+# Rspamd Bayes data with it. k8s-down-volumes does.
+K8S_PRUNE = --prune -l app.kubernetes.io/part-of=elemta \
+	--prune-allowlist=apps/v1/Deployment --prune-allowlist=core/v1/Service \
+	--prune-allowlist=core/v1/ConfigMap --prune-allowlist=core/v1/Secret
+# Images the Kubernetes stack builds rather than pulls.
+IMAGE_TAG ?= dev
+DOCKER_BUILD_FLAGS ?=
+# How built images reach the cluster. auto works it out from the node:
+#   docker  k3s running on Docker (docker: true in its config) sees them already
+#   kind    kind load docker-image
+#   k3s     docker save | sudo k3s ctr images import  (asks for sudo)
+K8S_IMAGE_LOAD ?= auto
+# Deployments that run the images built here, restarted after a rebuild
+# because the tag does not change.
+K8S_OWN_IMAGES = deploy/elemta deploy/elemta-sink deploy/elemta-dovecot deploy/elemta-dns
+# The overlay currently applied, recorded on the namespace by k8s-apply, so
+# targets that change config on a running stack re-apply that one rather than
+# the default, which would prune the rest.
+K8S_CURRENT_OVERLAY = $$($(KUBECTL) get namespace $(K8S_NAMESPACE) -o jsonpath='{.metadata.annotations.elemta\.dev/overlay}' 2>/dev/null || true)
+K8S_WEB_EXEC = $(KC) exec -i deploy/elemta -c web -- /app/elemta --config /app/runtime-config/elemta.toml
+
+.PHONY: k8s-help k8s-check k8s-images k8s-load k8s-apply k8s-wait k8s-install \
+	k8s-install-dev k8s-install-dev-full k8s-install-dev-bench k8s-install-dev-postgres \
+	k8s-up k8s-down k8s-down-volumes k8s-restart k8s-status k8s-logs k8s-logs-elemta \
+	k8s-rebuild k8s-rebuild-dev k8s-reseed k8s-sink-up k8s-sink-down \
+	k8s-bootstrap-admin k8s-reset-admin-password k8s-bench-queue k8s-print-dev-summary
+
+k8s-help:
+	@echo "☸️  Kubernetes dev stack (k3s; see deployments/kubernetes/README.md)"
+	@echo "  k8s-install-dev            Minimal stack, plugins on, prints a dashboard login"
+	@echo "  k8s-install-dev-full       + ClamAV, Rspamd, Roundcube"
+	@echo "  k8s-install-dev-bench      + ClamAV, Rspamd; delivery DISCARDED"
+	@echo "  k8s-install-dev-postgres   Postgres queue"
+	@echo "  k8s-up / k8s-down          Scale to zero and back, volumes kept"
+	@echo "  k8s-down-volumes           Delete the namespace and everything in it"
+	@echo "  k8s-restart / k8s-status / k8s-logs / k8s-logs-elemta"
+	@echo "  k8s-rebuild-dev            Build, load into the cluster, restart (k8s-rebuild: no cache)"
+	@echo "  k8s-reseed                 Take config/elemta.toml again, discarding what the UI saved"
+	@echo "  k8s-sink-up / k8s-sink-down   Discard delivery, or deliver to Dovecot again"
+	@echo "  k8s-bootstrap-admin / k8s-reset-admin-password / k8s-bench-queue"
+	@echo "  Same ports as the Compose stack, so run one or the other ('make down' first)."
+	@echo "  K8S_IMAGE_LOAD=$(K8S_IMAGE_LOAD) (auto|docker|kind|k3s|none)  K8S_NAMESPACE=$(K8S_NAMESPACE)  KUBECTL=$(KUBECTL)"
+
+# Fail early and say what to do, rather than letting kubectl print a
+# connection-refused trace from the middle of an install.
+k8s-check:
+	@if ! command -v $(KUBECTL) >/dev/null 2>&1; then \
+		echo "❌ kubectl not found. Install it (Arch: sudo pacman -S kubectl)."; \
+		exit 1; \
+	fi
+	@if ! $(KUBECTL) get nodes >/dev/null 2>&1; then \
+		echo "❌ No Kubernetes cluster reachable (kubectl context: $$($(KUBECTL) config current-context 2>/dev/null || echo none))."; \
+		echo "   Install k3s and copy its kubeconfig: deployments/kubernetes/README.md"; \
+		exit 1; \
+	fi
+
+# The three images the stack builds rather than pulls: Elemta from this tree,
+# Dovecot with the stack's config baked in, and the caching resolver.
+k8s-images:
+	@echo "🔨 Building images ($(IMAGE_TAG))..."
+	docker build $(DOCKER_BUILD_FLAGS) --build-arg VERSION=$$(git rev-parse --short HEAD 2>/dev/null || echo dev) -t elemta:$(IMAGE_TAG) .
+	docker build $(DOCKER_BUILD_FLAGS) -t elemta-dovecot:$(IMAGE_TAG) docker/dovecot
+	docker build $(DOCKER_BUILD_FLAGS) -t elemta-dns:$(IMAGE_TAG) deployments/dns
+	@$(MAKE) --no-print-directory k8s-load
+
+# A cluster does not see Docker's images unless it runs on Docker. Detected
+# from the node rather than configured, so the same command works on k3s, k3s
+# on Docker, and kind.
+k8s-load:
+	@mode="$(K8S_IMAGE_LOAD)"; \
+	if [ "$$mode" = "auto" ]; then \
+		runtime=$$($(KUBECTL) get nodes -o jsonpath='{.items[0].status.nodeInfo.containerRuntimeVersion}' 2>/dev/null); \
+		context=$$($(KUBECTL) config current-context 2>/dev/null); \
+		case "$$runtime" in docker://*) mode=docker ;; *) \
+			case "$$context" in kind-*) mode=kind ;; *) mode=k3s ;; esac ;; \
+		esac; \
+	fi; \
+	images="elemta:$(IMAGE_TAG) elemta-dovecot:$(IMAGE_TAG) elemta-dns:$(IMAGE_TAG)"; \
+	case "$$mode" in \
+		docker|none) echo "ℹ️  The cluster runs on Docker; images are already visible to it" ;; \
+		kind) context=$$($(KUBECTL) config current-context); \
+			kind load docker-image --name "$${context#kind-}" $$images ;; \
+		k3s) echo "📦 Importing images into k3s (sudo k3s ctr images import)..."; \
+			docker save $$images | sudo k3s ctr images import - ;; \
+		*) echo "❌ Unknown K8S_IMAGE_LOAD=$$mode (auto|docker|kind|k3s|none)"; exit 1 ;; \
+	esac
+
+# Apply one overlay. See K8S_PRUNE for what switching removes.
+k8s-apply:
+	@echo "🚀 Applying deployments/kubernetes/dev/$(K8S_OVERLAY)..."
+	@$(KUSTOMIZE) $(K8S_DIR)/dev/$(K8S_OVERLAY) | $(KUBECTL) apply $(K8S_PRUNE) -f - | grep -v ' unchanged$$' || true
+	@$(KUBECTL) annotate namespace $(K8S_NAMESPACE) elemta.dev/overlay=$(K8S_OVERLAY) --overwrite >/dev/null
+
+# Wait for every Deployment to roll out. ClamAV downloads its signatures on a
+# fresh volume, which is why the timeout is long; nothing else needs it.
+k8s-wait:
+	@echo "⏳ Waiting for the stack to become ready..."
+	@for d in $$($(KC) get deployments -o name); do \
+		$(KC) rollout status $$d --timeout=10m >/dev/null || { echo "❌ $$d did not become ready:"; $(KC) describe $$d | tail -15; exit 1; }; \
+	done
+	@echo "✅ All deployments ready"
+
+# Make the next start take config/elemta.toml again, discarding what the web UI
+# saved. Compose does this with ELEMTA_CONFIG_RESEED and a marker in the
+# container; every Kubernetes container start is a fresh layer, so here it is
+# explicit: remove the seeded copy and restart, and prepare-config.sh seeds a
+# new one from the ConfigMap. Re-applies nothing: after editing the file, run
+# an install target (or k8s-sink-*, which re-apply).
+k8s-reseed:
+	@$(KC) exec deploy/elemta -c smtp -- rm -f /app/runtime-config/elemta.toml 2>/dev/null || true
+	@$(KC) rollout restart deploy/elemta >/dev/null
+	@$(KC) rollout status deploy/elemta --timeout=5m >/dev/null
+	@echo "✅ Runtime config re-seeded"
+
+# What every k8s-install-dev* target does, for one overlay: build, configure,
+# apply, re-seed, then accounts.
+k8s-install: check-tools k8s-check ensure-dev-certs
+	@if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx elemta-node0; then \
+		echo "❌ The Compose dev stack is running and holds the same ports. 'make down' first."; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory k8s-images
+	@$(MAKE) --no-print-directory configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) --no-print-directory configure-plugins
+	@$(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$(K8S_OVERLAY)
+	@$(MAKE) --no-print-directory k8s-wait
+	@# This install is authoritative: without the reseed the settings configured
+	@# above would be ignored on every deploy after the first. And images are
+	@# rebuilt under the same tag, so a Deployment whose spec did not change
+	@# would keep running the old one. One restart covers both.
+	@$(KC) exec deploy/elemta -c smtp -- rm -f /app/runtime-config/elemta.toml
+	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+	@echo "⏳ Initializing LDAP..."
+	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) ./scripts/init-ldap-if-needed.sh || true
+	@$(MAKE) --no-print-directory k8s-bootstrap-admin
+
+k8s-install-dev:
+	@echo "☸️  Elemta Development Setup on Kubernetes (Minimal)"
+	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=minimal
+	@$(MAKE) --no-print-directory k8s-print-dev-summary
+
+k8s-install-dev-full:
+	@echo "☸️  Elemta Development Setup on Kubernetes (Full)"
+	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=full
+	@$(MAKE) --no-print-directory k8s-print-dev-summary
+	@echo "   ✉️  Roundcube: http://localhost:8026"
+
+# As install-dev-bench: scanners on, delivery discarded, and the repo config
+# put back afterwards because the sink lives in the seeded copy.
+k8s-install-dev-bench:
+	@echo "☸️  Elemta Development Setup on Kubernetes (Benchmarking)"
+	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=bench
+	@$(MAKE) --no-print-directory k8s-sink-up
+	@$(MAKE) --no-print-directory k8s-print-dev-summary
+	@echo "   Measure with: make k8s-bench-queue"
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424 >/dev/null
+
+# Postgres comes up with the rest. If Elemta wins the race it exits on the
+# unreachable backend and Kubernetes restarts it until Postgres answers, so
+# there is no sqlite-first two-step as in the Compose version.
+k8s-install-dev-postgres:
+	@echo "☸️  Elemta Development Setup on Kubernetes (Postgres Queue)"
+	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=postgres QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
+	@$(MAKE) --no-print-directory k8s-print-dev-summary
+	@echo "   Verify: kubectl -n $(K8S_NAMESPACE) exec deploy/elemta-postgres -- psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
+
+k8s-sink-up:
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
+	@ov=$(K8S_CURRENT_OVERLAY); $(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$${ov:-minimal} >/dev/null
+	@$(MAKE) --no-print-directory k8s-reseed >/dev/null
+	@echo "✅ Delivery goes to the sink (elemta-sink:2424). Mail is discarded."
+	@echo "   Sink rate:  kubectl -n $(K8S_NAMESPACE) logs -f deploy/elemta-sink"
+
+k8s-sink-down:
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424
+	@ov=$(K8S_CURRENT_OVERLAY); $(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$${ov:-minimal} >/dev/null
+	@$(MAKE) --no-print-directory k8s-reseed >/dev/null
+	@echo "✅ Delivery goes to Dovecot; mail lands in real mailboxes."
+
+# The users file lives on the runtime volume, so these run inside the pod. The
+# server re-reads the file when it changes, so nothing needs restarting.
+k8s-bootstrap-admin:
+	@needs_account=1; \
+	if $(KC) exec deploy/elemta -c web -- test -e /app/runtime-config/users.json 2>/dev/null; then \
+		if ! $(K8S_WEB_EXEC) user list --file /app/runtime-config/users.json 2>/dev/null | grep -q '^No users'; then \
+			needs_account=0; \
+		fi; \
+	fi; \
+	if [ "$$needs_account" = "0" ]; then \
+		echo "ℹ️  Dashboard account already exists (make k8s-reset-admin-password to change it)"; \
+	else \
+		PW="$(ADMIN_PASSWORD)"; \
+		if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
+		if printf '%s\n' "$$PW" | $(K8S_WEB_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1; then \
+			echo ""; \
+			echo "🔑 Dashboard login created"; \
+			echo "   URL:      http://localhost:8025/"; \
+			echo "   Username: $(ADMIN_USER)"; \
+			echo "   Password: $$PW"; \
+			echo "   (shown once — make k8s-reset-admin-password if you lose it)"; \
+			echo ""; \
+		else \
+			echo "❌ Could not create the dashboard account"; \
+		fi; \
+	fi
+
+k8s-reset-admin-password:
+	@PW="$(ADMIN_PASSWORD)"; \
+	if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
+	OUT=$$(printf '%s\n' "$$PW" | $(K8S_WEB_EXEC) user passwd $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
+	if [ $$? -ne 0 ]; then \
+		OUT=$$(printf '%s\n' "$$PW" | $(K8S_WEB_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
+		if [ $$? -ne 0 ]; then \
+			echo "❌ Could not set the password (is the stack running? make k8s-status):"; \
+			echo "$$OUT" | sed 's/^/   /'; \
+			exit 1; \
+		fi; \
+		echo "ℹ️  No account existed, so one was created."; \
+	fi; \
+	echo ""; \
+	echo "🔑 Dashboard login"; \
+	echo "   URL:      http://localhost:8025/"; \
+	echo "   Username: $(ADMIN_USER)"; \
+	echo "   Password: $$PW"; \
+	echo ""
+
+k8s-print-dev-summary:
+	@echo ""
+	@echo "✅ Development Environment Ready (Kubernetes, namespace $(K8S_NAMESPACE))"
+	@echo "   📧 SMTP:      localhost:2525"
+	@echo "   📊 Metrics:   http://localhost:9080/metrics"
+	@echo "   🌐 Web UI:    http://localhost:8025  (login required)"
+	@target=$$($(KC) exec deploy/elemta -c smtp -- sh -c "sed -n '/^\[delivery\]/,/^\[/p' /app/runtime-config/elemta.toml | grep -m1 '^host'" 2>/dev/null | sed 's/.*= *//; s/"//g'); \
+	if [ "$$target" = "elemta-sink" ]; then \
+		echo "   📭 Delivery:  a DISCARDING SINK. make k8s-sink-down for real mailboxes."; \
+	elif [ -n "$$target" ]; then \
+		echo "   📬 Delivery:  $$target — mail lands in real mailboxes."; \
+	fi
+	@echo "   👤 Mailbox user:   user@example.com / password"
+	@echo "   📋 make k8s-status | k8s-logs | k8s-help"
+
+# 'down' keeps everything but the running pods, as 'docker compose down' keeps
+# the volumes; 'up' brings them back.
+k8s-up: k8s-check
+	@$(KC) scale deployment --all --replicas=1 >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+
+k8s-down:
+	@$(KC) scale deployment --all --replicas=0 >/dev/null
+	@echo "✅ Stopped (volumes kept; make k8s-up to start again)"
+
+k8s-down-volumes:
+	@$(KUBECTL) delete namespace $(K8S_NAMESPACE) --ignore-not-found --wait=true
+	@echo "✅ Namespace $(K8S_NAMESPACE) and its volumes removed"
+
+k8s-restart:
+	@$(KC) rollout restart deployment >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+
+k8s-status:
+	@$(KC) get pods,services -o wide
+
+k8s-logs:
+	$(KC) logs -f --tail=50 --prefix --all-containers --max-log-requests=30 -l app.kubernetes.io/part-of=elemta
+
+k8s-logs-elemta:
+	$(KC) logs -f --tail=100 deploy/elemta -c smtp
+
+# Rebuild the images and roll the pods that run them. Config is left alone.
+k8s-rebuild:
+	@$(MAKE) --no-print-directory k8s-images DOCKER_BUILD_FLAGS=--no-cache
+	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+
+k8s-rebuild-dev:
+	@$(MAKE) --no-print-directory k8s-images
+	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+
+k8s-bench-queue:
+	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) python3 scripts/dev/bench_queue.py --messages $(or $(MESSAGES),6000) --concurrency $(or $(CONCURRENCY),40)

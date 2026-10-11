@@ -610,51 +610,45 @@ class ElemtaTestSuite:
 
     # Test implementation methods
     def _test_docker_containers_running(self):
-        """Test that the dev stack's workloads are up.
-
-        The dev stack runs on Kubernetes (deployments/kubernetes/dev); the
-        deployment type names predate that and are kept so existing
-        invocations still work. docker-desktop is the full stack.
-        """
+        """Test that all Docker containers are running"""
         if self.config.deployment not in [DeploymentType.DOCKER_DESKTOP, DeploymentType.DOCKER_DEV]:
-            raise Exception("Stack deployment test only applicable for the dev stack")
-
-        namespace = os.environ.get("K8S_NAMESPACE", "elemta")
+            raise Exception("Docker deployment test only applicable for Docker deployments")
+        
         try:
             result = subprocess.run(
-                ["kubectl", "-n", namespace, "get", "deployments", "-o", "json"],
+                ["docker", "compose", "-f", "deployments/compose/docker-compose.yml", "ps", "--format", "json"],
                 capture_output=True, text=True, timeout=10
             )
-
+            
             if result.returncode != 0:
-                raise Exception(f"kubectl get deployments failed: {result.stderr}")
-
-            ready = [
-                d["metadata"]["name"]
-                for d in json.loads(result.stdout).get("items", [])
-                if d.get("status", {}).get("readyReplicas", 0) >= 1
-            ]
-
+                raise Exception(f"Docker compose ps failed: {result.stderr}")
+            
+            containers = []
+            for line in result.stdout.strip().split('\n'):
+                if line:
+                    containers.append(json.loads(line))
+            
             if self.config.deployment == DeploymentType.DOCKER_DESKTOP:
-                required = ["elemta", "elemta-dovecot", "elemta-roundcube", "elemta-ldap"]
+                required_containers = ["elemta-node0", "elemta-dovecot", "elemta-roundcube", "elemta-ldap"]
             else:  # docker-dev or other minimal deployments
-                required = ["elemta"]
-
-            missing = [d for d in required if d not in ready]
-            if missing:
-                raise Exception(f"Deployments not ready: {missing}")
-
-            self.logger.info(f"All required deployments ready: {ready}")
-
+                required_containers = ["elemta-node0"]
+            running_containers = [c["Name"] for c in containers if c["State"] == "running"]
+            
+            missing_containers = [c for c in required_containers if c not in running_containers]
+            if missing_containers:
+                raise Exception(f"Missing running containers: {missing_containers}")
+            
+            self.logger.info(f"All required containers running: {running_containers}")
+            
         except subprocess.TimeoutExpired:
-            raise Exception("kubectl timed out")
+            raise Exception("Docker compose command timed out")
         except Exception as e:
-            raise Exception(f"Failed to check the dev stack: {e}")
+            raise Exception(f"Failed to check Docker containers: {e}")
 
     def _test_docker_services_healthy(self):
-        """Test that the dev stack's services are healthy"""
-        # Readiness probes already cover health on Kubernetes, so ready
-        # deployments are healthy ones.
+        """Test that all Docker services are healthy"""
+        # This would check health endpoints, logs, etc.
+        # For now, just verify containers are running
         self._test_docker_containers_running()
 
     def _test_smtp_greeting(self):

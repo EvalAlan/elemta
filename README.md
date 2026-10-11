@@ -10,15 +10,12 @@ Elemta is a high-performance SMTP server written in Go with a modular pipeline, 
 - Queue backends: `file` (default), `sqlite`, `postgres` (multi-node) and `indexedfs`
 - Built-in queue/API/web tooling for operational visibility
 - Delivery/auth integrations (file, LDAP, SQL backends)
-- Kubernetes dev stack (k3s) driven by `make`, and a Docker Compose production deployment with an SSH deploy workflow that health-checks and rolls back
+- Docker Compose deployment, with an SSH deploy workflow that health-checks and rolls back
 - Prometheus/Grafana-ready metrics and health endpoints
 
 ## Quick Start
 
 ### 1) Local development (recommended)
-
-The dev stack runs on a local Kubernetes cluster. On a Linux box that is k3s;
-[deployments/kubernetes](deployments/kubernetes/README.md) has the install.
 
 ```bash
 git clone https://github.com/EvalAlan/elemta.git
@@ -47,15 +44,23 @@ make build
 ./bin/elemta server --config ./config/elemta.toml
 ```
 
-### 3) Kubernetes without the dev tooling
+### 3) Docker Compose directly
 
 ```bash
-kubectl apply -k deployments/kubernetes/standalone
+docker compose -f deployments/compose/docker-compose.yml up -d
 ```
 
-Elemta, its dashboard, an LMTP sink and Valkey from the published image. See
-[deployments/kubernetes](deployments/kubernetes/README.md) for what it runs and
-what it leaves out.
+### 4) Kubernetes (optional)
+
+The same dev stack on a local cluster (k3s), next to the Compose one:
+
+```bash
+make k8s-install-dev-full     # make k8s-help for the rest
+```
+
+Or Elemta on its own from the published image:
+`kubectl apply -k deployments/kubernetes/standalone`. See
+[deployments/kubernetes](deployments/kubernetes/README.md).
 
 ## Core Docs
 

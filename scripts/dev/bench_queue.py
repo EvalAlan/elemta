@@ -30,9 +30,17 @@ import subprocess
 import sys
 import time
 
-# The dev stack's SMTP server: the smtp container of the elemta Deployment.
-NAMESPACE = os.environ.get("K8S_NAMESPACE", "elemta")
-EXEC = ["kubectl", "-n", NAMESPACE, "exec", "deploy/elemta", "-c", "smtp", "--"]
+CONTAINER = "elemta-node0"
+
+# The Compose dev stack by default; ELEMTA_STACK=k8s (make k8s-bench-queue)
+# reads the Kubernetes one instead.
+if os.environ.get("ELEMTA_STACK") == "k8s":
+    NAMESPACE = os.environ.get("K8S_NAMESPACE", "elemta")
+    EXEC = ["kubectl", "-n", NAMESPACE, "exec", "deploy/elemta", "-c", "smtp", "--"]
+    LOGS_HINT = f"kubectl -n {NAMESPACE} logs deploy/elemta -c smtp"
+else:
+    EXEC = ["docker", "exec", CONTAINER]
+    LOGS_HINT = f"docker logs {CONTAINER}"
 
 
 def queue_depth():
@@ -113,7 +121,7 @@ def main():
         if time.time() - last_change > 120:
             print("\n  depth has not changed for two minutes — deliveries are "
                   "failing or deferring, not running slowly.")
-            print(f"  Check: kubectl -n {NAMESPACE} logs deploy/elemta -c smtp | grep deferral_reason")
+            print(f"  Check: {LOGS_HINT} | grep deferral_reason")
             break
 
     residue = queue_depth()

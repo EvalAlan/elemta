@@ -2,9 +2,10 @@
 
 Two ways in:
 
-- **`dev/`, the development stack.** It is what `make install-dev*` runs, and
-  it replaces the old Docker Compose dev stack service for service. It is
-  driven by the Makefile, not applied by hand.
+- **`dev/`, the development stack on Kubernetes.** It is what
+  `make k8s-install-dev*` runs: the same services as the Compose dev stack
+  (`make install-dev*`), which remains the default. It is driven by the
+  Makefile, not applied by hand.
 - **`standalone/`, Elemta on its own** from the published image:
   `kubectl apply -k deployments/kubernetes/standalone`.
 
@@ -12,8 +13,7 @@ Both are built on `base/`, which holds the Elemta pod (the SMTP server and
 dashboard as two containers sharing the queue and runtime config), the LMTP
 sink, Valkey, and their volumes.
 
-Both target a single-node cluster on a dev box, written for and tested
-against k3s.
+Both target a single-node cluster on a dev box, written for k3s.
 
 ## Installing k3s on Arch / CachyOS
 
@@ -59,11 +59,16 @@ sudo ufw allow from 10.43.0.0/16
 ## The dev stack
 
 ```bash
-make install-dev          # minimal
-make install-dev-full     # + ClamAV, Rspamd, Roundcube
-make install-dev-bench    # + ClamAV, Rspamd, delivery discarded
-make install-dev-postgres # + Postgres as the queue backend
+make k8s-install-dev          # minimal
+make k8s-install-dev-full     # + ClamAV, Rspamd, Roundcube
+make k8s-install-dev-bench    # + ClamAV, Rspamd, delivery discarded
+make k8s-install-dev-postgres # + Postgres as the queue backend
+make k8s-help                 # everything else
 ```
+
+It uses the same host ports as the Compose stack, so run one or the other:
+`make down` before a `k8s-install-dev*` (which refuses while Compose is up),
+and `make k8s-down` before going back to `make install-dev`.
 
 Each one does the following:
 
@@ -85,8 +90,8 @@ Each one does the following:
 Services keep their compose names, so `config/elemta.toml` works unchanged. So
 does every other file that says `elemta-ldap` or `elemta-dovecot`.
 
-Host ports are the same as before. On k3s they are LoadBalancer Services that
-bind on the host:
+Host ports are the same as the Compose stack's. On k3s they are LoadBalancer
+Services that bind on the host:
 
 | Port | Service |
 |---|---|
@@ -101,12 +106,13 @@ bind on the host:
 Day to day:
 
 ```bash
-make status | logs | logs-elemta
-make rebuild-dev     # after changing Go code: build, load, restart
-make reseed          # take config/elemta.toml again, discarding UI saves
-make sink-up | sink-down
-make down | up       # scale to zero and back; volumes kept
-make down-volumes    # delete the namespace and everything in it
+make k8s-status | k8s-logs | k8s-logs-elemta
+make k8s-rebuild-dev     # after changing Go code: build, load, restart
+make k8s-reseed          # take config/elemta.toml again, discarding UI saves
+make k8s-sink-up | k8s-sink-down
+make k8s-down | k8s-up   # scale to zero and back; volumes kept
+make k8s-down-volumes    # delete the namespace and everything in it
+make k8s-bench-queue     # bench-queue against this stack
 ```
 
 ### Things that differ from Compose
@@ -122,8 +128,8 @@ make down-volumes    # delete the namespace and everything in it
   `deployments/dns/unbound.conf`.
 - **The dev certificate** is still `make certs` on the host. It is mounted
   from a Secret where compose bind-mounted it, and regenerated when it lapses.
-- **The mail-auth lab and ELK have not moved yet.** Their targets say so, and
-  their compose files stay until they do.
+- **Not on Kubernetes:** the mail-auth lab, ELK, the multinode and monitoring
+  overlays, `rspamd-train` and `test-docker`. They stay Compose-only.
 
 ## Standalone
 
