@@ -102,6 +102,9 @@ jobs:
           cache: true
 
       - name: Run SMTP race smoke tests
+        # The whole smtp package, not a filtered subset: a filter only catches
+        # races in the tests it names, and the full package takes about 2.5
+        # minutes under -race.
         run: |
-          go test ./internal/smtp -race -run 'TestHandleUnknown|TestCommandSequencing|TestConnectionDraining'
+          go test ./internal/smtp -race -count=1
           go test ./tests/integration -race -run 'TestIntegration_PersistentConnection|TestIntegration_TimeoutHandling'
