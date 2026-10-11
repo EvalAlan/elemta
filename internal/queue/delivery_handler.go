@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/dane"
@@ -147,8 +148,12 @@ type SMTPDeliveryHandler struct {
 	// disables DANE.
 	dane dane.Resolver
 	// pools chooses the source address for each delivery; see pools.go. Nil
-	// leaves the source to the kernel.
-	pools *PoolRouter
+	// leaves the source to the kernel. Atomic because a config reload swaps
+	// it while deliveries are reading it.
+	pools atomic.Pointer[PoolRouter]
+	// shared is the cross-node store for warmup counts and provider
+	// throttles, or nil for per-node state. Set once at startup.
+	shared *sharedGuard
 	// providers maps destinations whose MX belongs to a known mailbox
 	// provider onto one shaping state per provider; see providers.go. Nil
 	// shapes every destination per domain.
@@ -355,7 +360,7 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 		throttled := false
 		// Each domain is its own SMTP transaction, so each takes its own
 		// source address and its own unit of warmup allowance.
-		src, releasePool, poolErr := h.pools.acquire(msg.From)
+		src, releasePool, poolErr := h.poolRouter().acquire(msg.From)
 		var ip, host string
 		var domainOutcomes []RecipientOutcome
 		if poolErr != nil {
@@ -518,6 +523,9 @@ func (h *SMTPDeliveryHandler) groupRecipientsByDomain(recipients []string) map[s
 // deliverToDomainWithMetadata delivers messages to all recipients in a specific domain and returns delivery metadata
 // SetShaper attaches per-destination traffic shaping.
 func (h *SMTPDeliveryHandler) SetShaper(shaper *Shaper) {
+	if h.shared != nil {
+		shaper.setShared(h.shared)
+	}
 	h.shaper = shaper
 }
 
@@ -959,7 +967,7 @@ func (h *SMTPDeliveryHandler) reportDeferral(key string, prov *provider, domain 
 // score.
 func (h *SMTPDeliveryHandler) AttributeComplaint(sourceIP string, recipients []string) ComplaintAttribution {
 	var a ComplaintAttribution
-	a.Pool, a.SourceIP = h.pools.poolForAddress(sourceIP)
+	a.Pool, a.SourceIP = h.poolRouter().poolForAddress(sourceIP)
 	for _, rcpt := range recipients {
 		if p := h.providers.known(recipientDomain(rcpt)); p != nil {
 			a.Provider = p.name
@@ -978,12 +986,44 @@ func providerName(p *provider) string {
 
 // SetPoolRouter attaches sending pools. Nil leaves deliveries unpooled.
 func (h *SMTPDeliveryHandler) SetPoolRouter(r *PoolRouter) {
-	h.pools = r
+	r.setShared(h.shared)
+	h.pools.Store(r)
+}
+
+func (h *SMTPDeliveryHandler) poolRouter() *PoolRouter {
+	return h.pools.Load()
+}
+
+// ReplacePoolRouter swaps in pools from a reloaded configuration.
+//
+// Today's counts move to the new router so an edit does not reset warmup
+// allowances. The old router's final counts reach the state file before the
+// new one starts writing it, so the file never goes backwards. Deliveries
+// already holding an address from the old router finish on it; a refund
+// they make lands on the old router and is lost, which overcounts by at
+// most the number in flight.
+func (h *SMTPDeliveryHandler) ReplacePoolRouter(next *PoolRouter) {
+	next.setShared(h.shared)
+	old := h.pools.Load()
+	next.adoptUsage(old)
+	h.pools.Store(next)
+	old.Close()
+	next.Start(0)
+}
+
+// SetSharedState makes warmup counts and provider throttles cluster-wide.
+// Call it at startup, before deliveries begin; nil keeps per-node state.
+func (h *SMTPDeliveryHandler) SetSharedState(store SharedState, logger *slog.Logger) {
+	h.shared = newSharedGuard(store, logger)
+	h.pools.Load().setShared(h.shared)
+	if h.shaper != nil {
+		h.shaper.setShared(h.shared)
+	}
 }
 
 // PoolStatuses reports each pool address and its warmup state.
 func (h *SMTPDeliveryHandler) PoolStatuses() []PoolIPStatus {
-	return h.pools.Statuses()
+	return h.poolRouter().Statuses()
 }
 
 func anyDelivered(outcomes []RecipientOutcome) bool {
@@ -1031,7 +1071,7 @@ func (h *SMTPDeliveryHandler) CloseIdleSessions() {
 		h.sessions.closeAll()
 	}
 	// Shutdown is also when the last warmup counts must reach disk.
-	h.pools.Close()
+	h.poolRouter().Close()
 }
 
 // SessionCacheStats reports outbound session reuse; ok is false when reuse is off.
