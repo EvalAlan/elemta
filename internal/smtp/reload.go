@@ -7,6 +7,7 @@ import (
 
 	"github.com/EvalAlan/elemta/internal/authresult"
 	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/queue"
 )
 
 // Reloading configuration without a restart.
@@ -22,7 +23,8 @@ import (
 //
 //   - Reloadable: the things a session consults through a component object —
 //     the scanners, the allow/deny lists, the blocklists — and the DKIM
-//     signing keys, which the delivery handler reads per message. A session captures
+//     signing keys, which the delivery handler reads per message, and the
+//     sending pools, which a delivery reads when it starts. A session captures
 //     these when it is created, so replacing the server's copy affects the next
 //     session and leaves sessions already running with the configuration they
 //     started under. A message is never half-scanned by two different policies.
@@ -46,6 +48,12 @@ type reloadableComponents struct {
 	// dkimSigner is nil when signing is off. A delivery picks up the signer
 	// in force when it signs, so a rotated key applies from the next message.
 	dkimSigner *dkim.Signer
+	// pools is the sending pool router to install when poolsChanged; nil
+	// with poolsChanged means pools were removed. A delivery takes its
+	// source address when it starts, so a change applies from the next one.
+	pools            *queue.PoolRouter
+	poolsChanged     bool
+	poolsFingerprint string
 }
 
 // Reload rebuilds the reloadable components from a freshly loaded
@@ -86,6 +94,11 @@ func (s *Server) Reload(ctx context.Context, newConfig *Config) error {
 			*newConfig.QueueRetainTombstoneBody)
 	}
 
+	if next.poolsChanged && s.queueProcessor.ReplacePoolRouter(next.pools) {
+		s.poolsFingerprint = next.poolsFingerprint
+		s.slogger.Info("Sending pools reloaded", "event_type", "system", "pools", len(poolsSettings(newConfig).Pools))
+	}
+
 	s.slogger.Info("Configuration reloaded",
 		"event_type", "system",
 		"antivirus", next.scanners.HasAntivirusScanners(),
@@ -95,7 +108,7 @@ func (s *Server) Reload(ctx context.Context, newConfig *Config) error {
 		"mail_auth", next.authVerifier.Enabled(),
 		"dkim_signing", dkimReloaded && next.dkimSigner != nil,
 		"retain_tombstone_body", newConfig.QueueRetainTombstoneBody == nil || *newConfig.QueueRetainTombstoneBody,
-		"note", "listen address, size limits, timeouts and the queue backend still need a restart",
+		"note", "listen address, size limits, timeouts, the queue backend and delivery shared_state still need a restart",
 	)
 	return nil
 }
@@ -127,12 +140,22 @@ func (s *Server) buildReloadable(ctx context.Context, config *Config, logger *sl
 		return nil, fmt.Errorf("dkim configuration: %w", err)
 	}
 
+	// Pools are built here, not swapped in Reload, so an address that does
+	// not bind refuses the whole reload like it refuses startup.
+	pools, fingerprint, poolsChanged, err := s.buildReloadPools(config)
+	if err != nil {
+		return nil, fmt.Errorf("delivery pools: %w", err)
+	}
+
 	return &reloadableComponents{
-		scanners:      scanners,
-		accessControl: accessControl,
-		rbl:           rbl,
-		authVerifier:  authresult.New(authPluginRuntimeConfig(config)),
-		dkimSigner:    dkimSigner,
+		scanners:         scanners,
+		accessControl:    accessControl,
+		rbl:              rbl,
+		authVerifier:     authresult.New(authPluginRuntimeConfig(config)),
+		dkimSigner:       dkimSigner,
+		pools:            pools,
+		poolsChanged:     poolsChanged,
+		poolsFingerprint: fingerprint,
 	}, nil
 }
 

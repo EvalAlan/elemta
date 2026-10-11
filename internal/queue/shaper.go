@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +68,11 @@ type Shaper struct {
 
 	mu      sync.Mutex
 	domains map[string]*domainState
+
+	// shared, when set, makes provider throttles cluster-wide; see
+	// shared_state.go. sharedSynced is when each key was last read from it.
+	shared       *sharedGuard
+	sharedSynced map[string]time.Time
 }
 
 type domainState struct {
@@ -159,12 +165,16 @@ func (s *Shaper) AcquireWithLimits(ctx context.Context, domain string, limits *L
 		return func() {}, nil
 	}
 
+	remote, haveRemote := s.fetchShared(domain)
 	now := time.Now()
 	s.mu.Lock()
 	state := s.stateForLimits(domain, now, limits)
 	if limits != nil {
 		state.rate = limits.MaxMessagesPerMinute
 		state.throttledRate = limits.ThrottledMessagesPerMinute
+	}
+	if haveRemote {
+		mergeShared(state, remote, now)
 	}
 	if state.penalty > 0 && !now.Before(state.penaltyDecayAt) {
 		state.penalty--
@@ -236,13 +246,22 @@ func (s *Shaper) BackingOff(domain string) (time.Duration, bool) {
 	if s == nil {
 		return 0, false
 	}
+	remote, haveRemote := s.fetchShared(domain)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
 	state, ok := s.domains[domain]
 	if !ok {
+		// Another node's throttle applies here even before this node has
+		// sent anything to the provider.
+		if haveRemote && now.Before(remote.DeferUntil) {
+			return remote.DeferUntil.Sub(now), true
+		}
 		return 0, false
 	}
-	now := time.Now()
+	if haveRemote {
+		mergeShared(state, remote, now)
+	}
 	if now.Before(state.deferUntil) {
 		return state.deferUntil.Sub(now), true
 	}
@@ -264,6 +283,12 @@ func (s *Shaper) ReportThrottle(domain string, initial, maxBackoff time.Duration
 	if maxBackoff < initial {
 		maxBackoff = initial
 	}
+	backoff, snapshot := s.reportThrottleLocal(domain, initial, maxBackoff)
+	s.publishShared(domain, snapshot)
+	return backoff
+}
+
+func (s *Shaper) reportThrottleLocal(domain string, initial, maxBackoff time.Duration) (time.Duration, ThrottleState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -288,7 +313,114 @@ func (s *Shaper) ReportThrottle(domain string, initial, maxBackoff time.Duration
 	if until := now.Add(backoff); until.After(state.deferUntil) {
 		state.deferUntil = until
 	}
-	return backoff
+	return backoff, ThrottleState{DeferUntil: state.deferUntil, Penalty: state.penalty, PenaltyDecayAt: state.penaltyDecayAt}
+}
+
+// SetSharedState makes provider throttles visible to every node using the
+// same store. Nil returns to per-node state.
+func (s *Shaper) SetSharedState(store SharedState, logger *slog.Logger) {
+	s.setShared(newSharedGuard(store, logger))
+}
+
+func (s *Shaper) setShared(g *sharedGuard) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shared = g
+	s.sharedSynced = make(map[string]time.Time)
+}
+
+// sharedKey reports whether a shaping key's state is shared. Only provider
+// keys are: a provider throttles a sending IP across every domain it hosts,
+// so its 421 is news to every node. A plain domain's generic 4xx is often
+// about one MX host or one moment and stays with the node that saw it.
+func sharedKey(key string) bool {
+	domain, _, _ := strings.Cut(key, shapingKeySep)
+	return providerOfKey(domain) != ""
+}
+
+// fetchShared reads a key's shared throttle, at most once per
+// sharedSyncInterval, without holding the shaper lock across the call.
+func (s *Shaper) fetchShared(key string) (ThrottleState, bool) {
+	if !sharedKey(key) {
+		return ThrottleState{}, false
+	}
+	s.mu.Lock()
+	g := s.shared
+	if g == nil {
+		s.mu.Unlock()
+		return ThrottleState{}, false
+	}
+	now := time.Now()
+	if last, ok := s.sharedSynced[key]; ok && now.Sub(last) < sharedSyncInterval {
+		s.mu.Unlock()
+		return ThrottleState{}, false
+	}
+	if len(s.sharedSynced) >= maxTrackedDomains {
+		s.sharedSynced = make(map[string]time.Time)
+	}
+	s.sharedSynced[key] = now
+	s.mu.Unlock()
+
+	if !g.available() {
+		return ThrottleState{}, false
+	}
+	ctx, cancel := g.ctx()
+	defer cancel()
+	st, err := g.store.Throttle(ctx, key)
+	if err != nil {
+		g.fail("read throttle", err)
+		return ThrottleState{}, false
+	}
+	g.ok()
+	return st, true
+}
+
+// publishShared merges a local throttle into the shared state and takes back
+// whatever other nodes had already recorded.
+func (s *Shaper) publishShared(key string, st ThrottleState) {
+	if !sharedKey(key) {
+		return
+	}
+	s.mu.Lock()
+	g := s.shared
+	s.mu.Unlock()
+	if !g.available() {
+		return
+	}
+	ctx, cancel := g.ctx()
+	defer cancel()
+	merged, err := g.store.MergeThrottle(ctx, key, st)
+	if err != nil {
+		g.fail("record throttle", err)
+		return
+	}
+	g.ok()
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if state, ok := s.domains[key]; ok {
+		mergeShared(state, merged, now)
+	}
+	if s.sharedSynced != nil {
+		s.sharedSynced[key] = now
+	}
+}
+
+// mergeShared folds another node's view into local state: the later pause
+// and the heavier penalty win, so a throttle anywhere slows every node and
+// no node's merge can lift one early. Callers hold the lock.
+func mergeShared(state *domainState, remote ThrottleState, now time.Time) {
+	remote = remote.normalized(now)
+	if remote.DeferUntil.After(state.deferUntil) {
+		state.deferUntil = remote.DeferUntil
+	}
+	if remote.Penalty > state.penalty {
+		state.penalty = remote.Penalty
+		state.penaltyDecayAt = remote.PenaltyDecayAt
+	}
 }
 
 // ReportRecipientDeferral counts a deferral that was about one mailbox (full,

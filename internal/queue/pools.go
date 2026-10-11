@@ -123,6 +123,11 @@ type PoolRouter struct {
 	stateFile string
 	now       func() time.Time
 
+	// shared, when set, holds the authoritative warmup counts for every
+	// node; usage below is then this node's own share, kept for the state
+	// file and for falling back on when the store is unreachable.
+	shared *sharedGuard
+
 	mu    sync.Mutex
 	usage map[string]*ipUsage // by sourceIP.addr
 	dirty bool
@@ -335,6 +340,9 @@ func (r *PoolRouter) acquire(sender string) (*sourceIP, func(), error) {
 		return nil, func() {}, nil
 	}
 	pool := r.pools[name]
+	if r.shared != nil {
+		return r.acquireShared(pool)
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -354,22 +362,154 @@ func (r *PoolRouter) acquire(sender string) (*sourceIP, func(), error) {
 		pool.next = (pool.next + i + 1) % len(pool.ips)
 		u.Sent++
 		r.dirty = true
-		refunded := false
-		return src, func() {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			if refunded {
-				return
-			}
-			refunded = true
-			// Only refund against the day it was taken from.
-			if cur := r.usage[src.addr]; cur != nil && cur.Day == day && cur.Sent > 0 {
-				cur.Sent--
-				r.dirty = true
-			}
-		}, nil
+		return src, r.localRefund(src, day), nil
 	}
 	return nil, nil, &poolCapacityError{pool: name}
+}
+
+// localRefund undoes one local count, once, and only against the day it was
+// taken from.
+func (r *PoolRouter) localRefund(src *sourceIP, day string) func() {
+	refunded := false
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if refunded {
+			return
+		}
+		refunded = true
+		if cur := r.usage[src.addr]; cur != nil && cur.Day == day && cur.Sent > 0 {
+			cur.Sent--
+			r.dirty = true
+		}
+	}
+}
+
+// acquireShared is acquire against the cluster-wide counts.
+//
+// The candidate order is fixed under the lock, but the store is called
+// without it: holding the router lock across a network round trip would
+// serialise every delivery on this node behind the slowest one.
+func (r *PoolRouter) acquireShared(pool *sendingPool) (*sourceIP, func(), error) {
+	type candidate struct {
+		src     *sourceIP
+		allowed int
+	}
+	r.mu.Lock()
+	now := r.now().UTC()
+	day := now.Format("2006-01-02")
+	start := pool.next
+	cands := make([]candidate, len(pool.ips))
+	for i := range pool.ips {
+		src := pool.ips[(start+i)%len(pool.ips)]
+		cands[i] = candidate{src: src, allowed: pool.allowedSoFar(src, now)}
+	}
+	r.mu.Unlock()
+
+	// take records a send in this node's own counts. With localCap set it
+	// refuses once this node alone has reached the allowance, which is the
+	// fallback rule when the store cannot be asked.
+	take := func(i int, c candidate, localCap bool) bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		u := r.usageLocked(c.src.addr, day)
+		if localCap && c.allowed >= 0 && u.Sent >= c.allowed {
+			return false
+		}
+		pool.next = (start + i + 1) % len(pool.ips)
+		u.Sent++
+		r.dirty = true
+		return true
+	}
+
+	for i, c := range cands {
+		// An uncapped address has nothing to coordinate; counting it
+		// remotely would add a round trip to every warm delivery.
+		if c.allowed < 0 {
+			take(i, c, false)
+			return c.src, r.localRefund(c.src, day), nil
+		}
+		if !r.shared.available() {
+			if take(i, c, true) {
+				return c.src, r.localRefund(c.src, day), nil
+			}
+			continue
+		}
+		ctx, cancel := r.shared.ctx()
+		taken, _, err := r.shared.store.TakeWarmup(ctx, day, c.src.addr, c.allowed)
+		cancel()
+		if err != nil {
+			r.shared.fail("take warmup", err)
+			if take(i, c, true) {
+				return c.src, r.localRefund(c.src, day), nil
+			}
+			continue
+		}
+		r.shared.ok()
+		if !taken {
+			continue
+		}
+		take(i, c, false)
+		return c.src, r.sharedRefund(c.src, day), nil
+	}
+	return nil, nil, &poolCapacityError{pool: pool.name}
+}
+
+// sharedRefund returns a unit to the shared count as well as the local one.
+// A refund the store misses leaves the cluster count one high, which errs
+// towards sending less: the safe direction for a warming address.
+func (r *PoolRouter) sharedRefund(src *sourceIP, day string) func() {
+	local := r.localRefund(src, day)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			local()
+			if !r.shared.available() {
+				return
+			}
+			ctx, cancel := r.shared.ctx()
+			defer cancel()
+			if err := r.shared.store.RefundWarmup(ctx, day, src.addr); err != nil {
+				r.shared.fail("refund warmup", err)
+				return
+			}
+			r.shared.ok()
+		})
+	}
+}
+
+// setShared makes warmup counts cluster-wide. It must be called before the
+// router is in use, since acquire reads the field without a lock.
+func (r *PoolRouter) setShared(g *sharedGuard) {
+	if r != nil {
+		r.shared = g
+	}
+}
+
+// adoptUsage carries today's counts over from the router this one replaces
+// on a config reload; otherwise editing any pool would hand every address a
+// fresh day. Only addresses still configured are carried.
+func (r *PoolRouter) adoptUsage(old *PoolRouter) {
+	if r == nil || old == nil || r == old {
+		return
+	}
+	old.mu.Lock()
+	snapshot := make(map[string]ipUsage, len(old.usage))
+	for k, v := range old.usage {
+		snapshot[k] = *v
+	}
+	old.mu.Unlock()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for addr, u := range snapshot {
+		if pool, _ := r.poolForAddress(addr); pool == "" {
+			continue
+		}
+		u := u
+		r.usage[addr] = &u
+		r.dirty = true
+	}
 }
 
 // poolCapacityError is ErrPoolAtCapacity for one pool. It is explicitly
@@ -453,6 +593,31 @@ func (r *PoolRouter) Statuses() []PoolIPStatus {
 	if r == nil {
 		return nil
 	}
+	out, day := r.localStatuses()
+	// With a shared store the cluster's count is the one that matters for a
+	// capped address; this node's own share would understate it. Warm
+	// addresses are not counted remotely (see acquireShared), so theirs stay
+	// local.
+	if r.shared != nil {
+		for i := range out {
+			if out[i].DailyCap < 0 || !r.shared.available() {
+				continue
+			}
+			ctx, cancel := r.shared.ctx()
+			n, err := r.shared.store.WarmupSent(ctx, day, out[i].Address)
+			cancel()
+			if err != nil {
+				r.shared.fail("read warmup", err)
+				continue
+			}
+			r.shared.ok()
+			out[i].SentToday = n
+		}
+	}
+	return out
+}
+
+func (r *PoolRouter) localStatuses() ([]PoolIPStatus, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now().UTC()
@@ -481,7 +646,7 @@ func (r *PoolRouter) Statuses() []PoolIPStatus {
 		}
 		return out[i].Address < out[j].Address
 	})
-	return out
+	return out, day
 }
 
 // Start begins writing warmup counts to the state file in the background.
