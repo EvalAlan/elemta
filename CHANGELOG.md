@@ -24,6 +24,25 @@
 - **Full mailboxes no longer back off a destination.** A `4.2.2` deferral (or
   Google's per-recipient `4.2.1`) defers that message only.
 
+### Kubernetes
+
+- **The dev stack can also run on Kubernetes**, as an option next to Compose,
+  which stays the default. `make k8s-install-dev`, `-full`, `-bench` and
+  `-postgres` build the images, load them into a local cluster (k3s on
+  Arch/CachyOS is the documented path) and apply an overlay of
+  `deployments/kubernetes/dev`, with the same services, names and host ports.
+  `make k8s-help` lists the rest (`k8s-up`, `k8s-down`, `k8s-logs`,
+  `k8s-rebuild-dev`, `k8s-reseed`, `k8s-sink-up`, ...).
+- **`deployments/kubernetes/standalone`**: Elemta, its dashboard, an LMTP sink
+  and Valkey from the published image, for any cluster.
+  `kubectl apply -k deployments/kubernetes/standalone`.
+- **The old `k8s/` and `tests/k8s/` are removed.** They used the pre-TOML
+  config format and a `make k8s-deploy` target that no longer existed, so they
+  could not deploy the current server.
+- The image now ships `deployments/sink/lmtp_sink.py` as
+  `/app/tools/lmtp_sink.py`, and installs `openssl` explicitly for
+  `prepare-config.sh`.
+
 ## v0.3.0 (2026-10-10)
 
 ### Breaking: authenticated senders can only send as themselves

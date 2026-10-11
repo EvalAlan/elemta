@@ -1,0 +1,87 @@
+# Valkey holds the delivery counters behind the dashboard's charts, the shared
+# rate-limit state, and in the dev stack Rspamd's Bayes tokens (database 5; see
+# docker/rspamd/local.d/redis.conf). Elemta looks for it at elemta-valkey:6379
+# (VALKEY_ADDR overrides that) and carries on without it, logging a warning.
+#
+# On a volume with append-only persistence, as in the compose stack: a trained
+# Bayes classifier that forgets everything on a pod restart is worse than an
+# untrained one, because it looks trained.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-valkey
+  labels:
+    app.kubernetes.io/name: elemta-valkey
+spec:
+  replicas: 1
+  # The volume is ReadWriteOnce and two Valkeys must not share an AOF file.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-valkey
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-valkey
+    spec:
+      securityContext:
+        # The image's own valkey user, set numerically so runAsNonRoot can
+        # verify it.
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: valkey
+          image: valkey/valkey:8.0-alpine
+          args:
+            - valkey-server
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - everysec
+            - --maxmemory
+            - 512mb
+            - --maxmemory-policy
+            - allkeys-lru
+          ports:
+            - name: valkey
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 640Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: elemta-valkey
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-valkey
+  labels:
+    app.kubernetes.io/name: elemta-valkey
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-valkey
+  ports:
+    - name: valkey
+      port: 6379
+      targetPort: valkey

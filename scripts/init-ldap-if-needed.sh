@@ -4,12 +4,22 @@
 
 set -e
 
+# The Compose dev stack by default; ELEMTA_STACK=k8s (set by the k8s-* make
+# targets) runs the same commands in the Kubernetes one.
+if [ "${ELEMTA_STACK:-}" = "k8s" ]; then
+    LDAP_EXEC=(kubectl -n "${K8S_NAMESPACE:-elemta}" exec deploy/elemta-ldap --)
+    LDAP_LOGS="kubectl -n ${K8S_NAMESPACE:-elemta} logs deploy/elemta-ldap"
+else
+    LDAP_EXEC=(docker exec elemta-ldap)
+    LDAP_LOGS="docker logs elemta-ldap"
+fi
+
 echo "🔍 Checking if LDAP users need initialization..."
 
 # Wait for LDAP to be healthy
 timeout=60
 counter=0
-while ! docker exec elemta-ldap ldapsearch -x -D "cn=admin,dc=example,dc=com" -w admin -b "dc=example,dc=com" -s base > /dev/null 2>&1; do
+while ! "${LDAP_EXEC[@]}" ldapsearch -x -D "cn=admin,dc=example,dc=com" -w admin -b "dc=example,dc=com" -s base > /dev/null 2>&1; do
     sleep 2
     counter=$((counter + 2))
     if [ $counter -ge $timeout ]; then
@@ -27,7 +37,7 @@ done
 # `set -e` ended the script before it could verify anything. The warning about
 # verification being "unclear" was this, not a problem with LDAP.
 ldap_has_users() {
-    docker exec elemta-ldap ldapsearch -x -D "cn=admin,dc=example,dc=com" -w admin \
+    "${LDAP_EXEC[@]}" ldapsearch -x -D "cn=admin,dc=example,dc=com" -w admin \
         -b "ou=people,dc=example,dc=com" "(uid=user)" 2>/dev/null | grep -q "^dn: uid=user"
 }
 
@@ -40,7 +50,7 @@ echo "📝 LDAP users not found, adding them now..."
 
 # Adding entries that already exist is not a failure for an idempotent
 # initialiser, so this must not take `set -e` with it.
-docker exec elemta-ldap ldapadd -x -D "cn=admin,dc=example,dc=com" -w admin \
+"${LDAP_EXEC[@]}" ldapadd -x -D "cn=admin,dc=example,dc=com" -w admin \
     -f /docker-entrypoint-initdb.d/99-stress-users.ldif 2>&1 | grep -v "Already exists" || true
 
 sleep 2
@@ -49,6 +59,6 @@ if ldap_has_users; then
     echo "✅ LDAP users initialized successfully"
     exit 0
 else
-    echo "⚠️  LDAP users could not be verified — check: docker logs elemta-ldap"
+    echo "⚠️  LDAP users could not be verified — check: $LDAP_LOGS"
     exit 0
 fi

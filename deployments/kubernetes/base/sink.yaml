@@ -1,0 +1,68 @@
+# An LMTP sink: deployments/sink/lmtp_sink.py,
+# which speaks just enough LMTP to accept a message and then discards it.
+#
+# The standalone deployment delivers here, so it is complete on its own: mail
+# sent to a local domain is accepted, queued and delivered, and the sink's log
+# shows the count. The dev stack delivers to Dovecot and keeps this running for
+# `make sink-up`, as the compose stack did.
+#
+# It runs from the Elemta image, which ships the script and Python, rather than
+# a second image that would need pulling and pinning.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-sink
+  labels:
+    app.kubernetes.io/name: elemta-sink
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-sink
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-sink
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: lmtp-sink
+          image: elemta
+          command: ["python3", "-u", "/app/tools/lmtp_sink.py", "--port", "2424"]
+          ports:
+            - name: lmtp
+              containerPort: 2424
+          readinessProbe:
+            tcpSocket:
+              port: lmtp
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-sink
+  labels:
+    app.kubernetes.io/name: elemta-sink
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-sink
+  ports:
+    - name: lmtp
+      port: 2424
+      targetPort: lmtp

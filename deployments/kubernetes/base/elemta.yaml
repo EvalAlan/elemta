@@ -1,0 +1,183 @@
+# One pod, two containers: the SMTP server and the web dashboard.
+#
+# They share the queue and the runtime config, which the compose stack does
+# with named volumes. Here that would mean two pods on two ReadWriteOnce
+# volumes, which only works while the scheduler happens to put both pods on the
+# same node. Putting both processes in one pod makes the sharing explicit and
+# true on any cluster. The cost is that they scale together; the file queue
+# backend cannot be shared between replicas anyway, so this runs one replica.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta
+  labels:
+    app.kubernetes.io/name: elemta
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: a second pod would try to attach the same
+  # ReadWriteOnce volumes and, with the file backend, process the same queue.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      # Seed the runtime config, certificate and users file once, before either
+      # container starts. Both containers run prepare-config.sh again, and that
+      # is safe once this has finished; what is not safe is the two of them
+      # generating a certificate at the same moment, because they write the
+      # same temporary file names and can leave a key next to the other's
+      # certificate.
+      initContainers:
+        - name: prepare-config
+          image: elemta
+          command: ["/app/prepare-config.sh"]
+          env: &env
+            - name: TZ
+              value: UTC
+            # Development certificate, regenerated when it is missing or does
+            # not match its key. An overlay with a real certificate sets this
+            # to "false" and mounts the pair; see standalone/elemta.toml.
+            - name: ELEMTA_DEV_CERT
+              value: "true"
+            - name: ELEMTA_DEV_CERT_DAYS
+              value: "30"
+          securityContext: &containerSecurity
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts: &mounts
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+            - name: runtime-config
+              mountPath: /app/runtime-config
+            - name: queue
+              mountPath: /app/queue
+            - name: logs
+              mountPath: /app/logs
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: smtp
+          image: elemta
+          args: ["server"]
+          env: *env
+          ports:
+            - name: smtp
+              containerPort: 2525
+            - name: submission
+              containerPort: 2587
+            - name: metrics
+              containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: smtp
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: smtp
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+          securityContext: *containerSecurity
+          volumeMounts: *mounts
+        - name: web
+          image: elemta
+          command:
+            - /bin/sh
+            - -c
+            - exec /app/elemta --config "$(/app/prepare-config.sh)" web --listen 0.0.0.0:8025 --web-root /app/web/static
+          env: *env
+          ports:
+            - name: http
+              containerPort: 8025
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+          securityContext: *containerSecurity
+          volumeMounts: *mounts
+      volumes:
+        - name: config
+          configMap:
+            name: elemta-config
+        - name: runtime-config
+          persistentVolumeClaim:
+            claimName: elemta-runtime-config
+        - name: queue
+          persistentVolumeClaim:
+            claimName: elemta-queue
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+---
+# Named after the compose service so everything that already addresses the SMTP
+# server as "elemta" (Roundcube's SMTP host, the dev config) keeps working.
+# ClusterIP here; the overlays decide how it is exposed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta
+  labels:
+    app.kubernetes.io/name: elemta
+spec:
+  selector:
+    app.kubernetes.io/name: elemta
+  ports:
+    - name: smtp
+      port: 2525
+      targetPort: smtp
+    - name: submission
+      port: 2587
+      targetPort: submission
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-web
+  labels:
+    app.kubernetes.io/name: elemta
+spec:
+  selector:
+    app.kubernetes.io/name: elemta
+  ports:
+    - name: http
+      port: 8025
+      targetPort: http

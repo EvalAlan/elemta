@@ -1,0 +1,97 @@
+# The development stack, the Kubernetes equivalent of what
+# deployments/compose/docker-compose.yml used to run for `make install-dev`.
+#
+# Driven by the Makefile, not applied by hand: it reads config/elemta.toml and
+# the LDAP, Rspamd and Roundcube files from where they live in the repository,
+# which kustomize only allows with --load-restrictor LoadRestrictionsNone, and
+# it runs images the Makefile builds and loads into the cluster.
+#
+#   make install-dev           this directory: Elemta, DNS, LDAP, Dovecot, Valkey, sink
+#   make install-dev-full      ../full:     + ClamAV, Rspamd, Roundcube
+#   make install-dev-bench     ../bench:    + ClamAV, Rspamd; delivery to the sink
+#   make install-dev-postgres  ../postgres: + Postgres for the queue
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: elemta
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: elemta
+    includeSelectors: false
+
+resources:
+  - ../../base
+  - dns.yaml
+  - ldap.yaml
+  - dovecot.yaml
+  - expose.yaml
+
+# The repository's config, as the compose stack bind-mounted it. Not mounted
+# live: a ConfigMap is a copy, and the runtime config is a copy of that, so
+# `make reseed` (which install-dev runs) is how an edit reaches the server.
+configMapGenerator:
+  - name: elemta-config
+    files:
+      - ../../../../config/elemta.toml
+  - name: elemta-dns
+    files:
+      - ../../../dns/unbound.conf
+  - name: elemta-ldap-init
+    files:
+      - ../../../../docker/ldap/99-stress-users.ldif
+      - ../../../../docker/ldap/demo-complete.ldif
+
+# The development certificate from `make certs`, as the compose stack mounted
+# config/test.crt and test.key. Projected next to elemta.toml in /app/config,
+# where scripts/prepare-config.sh looks for a host pair. Generated on the host
+# rather than in the pod so that `make ensure-dev-certs` can replace it when
+# it lapses, which it does every CERT_DAYS.
+secretGenerator:
+  - name: elemta-dev-tls
+    type: kubernetes.io/tls
+    files:
+      - tls.crt=../../../../config/test.crt
+      - tls.key=../../../../config/test.key
+
+images:
+  - name: elemta
+    newName: elemta
+    newTag: dev
+  - name: elemta-dns
+    newName: elemta-dns
+    newTag: dev
+  - name: elemta-dovecot
+    newName: elemta-dovecot
+    newTag: dev
+
+patches:
+  - path: patches.yaml
+  - target:
+      kind: Deployment
+      name: elemta
+    patch: |-
+      # By index, so check it is the right one: a reordered base fails the
+      # build here instead of replacing the queue volume.
+      - op: test
+        path: /spec/template/spec/volumes/0/name
+        value: config
+      - op: replace
+        path: /spec/template/spec/volumes/0
+        value:
+          name: config
+          projected:
+            # Group-readable: the files are root-owned and the service runs
+            # as uid 1001 with fsGroup 1001. prepare-config.sh copies them
+            # to 0600 files it owns before anything uses them.
+            defaultMode: 0440
+            sources:
+              - configMap:
+                  name: elemta-config
+              - secret:
+                  name: elemta-dev-tls
+                  items:
+                    - key: tls.crt
+                      path: test.crt
+                    - key: tls.key
+                      path: test.key
