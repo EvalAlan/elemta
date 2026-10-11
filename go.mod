@@ -6,7 +6,7 @@ require (
 	blitiri.com.ar/go/spf v1.6.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/emersion/go-msgauth v0.7.0
-	github.com/go-ldap/ldap/v3 v3.4.14
+	github.com/go-ldap/ldap/v3 v3.4.15
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
