@@ -165,6 +165,7 @@ func fullyPopulatedConfig() *Config {
 		MaxConnectionsPerDomain:   5,
 		FeedbackAddresses:         []string{"fbl@example.com"},
 		TLSReporting:              &smtp.TLSReportingConfig{Enabled: true, ReportFrom: "tlsrpt@example.com"},
+		DMARCReports:              &smtp.DMARCReportsConfig{Enabled: true, ReportFrom: "dmarc@example.com"},
 		MaxRetries:                7,
 		MaxQueueTime:              3600,
 		RetrySchedule:             []int{60, 300},

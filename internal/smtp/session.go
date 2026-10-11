@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/authresult"
+	"github.com/EvalAlan/elemta/internal/dmarcrpt"
 	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/google/uuid"
 )
@@ -53,6 +54,9 @@ type Session struct {
 	authResults     authresult.Results
 	authChecked     bool
 	resourceManager *ResourceManager
+	// dmarcReports counts DMARC evaluations for aggregate reports; nil when
+	// reporting is off.
+	dmarcReports *dmarcrpt.Reporter
 	// enhancedValidator would be added here if needed
 
 	// Session metadata
@@ -359,7 +363,15 @@ func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, mes
 	s.mu.Lock()
 	s.authResults = results
 	s.authChecked = true
+	reports := s.dmarcReports
 	s.mu.Unlock()
+	if reports != nil {
+		// Counted before any rejection below: a report exists to tell the
+		// domain owner what was refused in its name.
+		if eval, ok := dmarcEvaluation(results, clientIP, mailFrom, message); ok {
+			reports.Record(eval)
+		}
+	}
 
 	s.logger.InfoContext(ctx, "Sender authentication checked",
 		"event_type", "authentication",

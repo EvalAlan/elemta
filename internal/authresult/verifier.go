@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/mail"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +34,10 @@ type Result struct {
 	Method string `json:"method"` // spf, dkim, dmarc
 	Value  string `json:"value"`  // pass, fail, softfail, none, temperror, permerror
 	Domain string `json:"domain,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	// Selector is the DKIM s= tag. DMARC aggregate reports name it so the
+	// domain owner can tell which of its keys signed.
+	Selector string `json:"selector,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // Results is everything learned about one message.
@@ -48,6 +52,25 @@ type Results struct {
 	Policy string `json:"policy,omitempty"`
 	// Disposition is what we decided: accept, quarantine or reject.
 	Disposition string `json:"disposition"`
+	// DMARCPolicy is the record the verdict was reached under, kept for
+	// aggregate reporting. Not serialised: only the reporter needs it, and
+	// only while the message is still in hand.
+	DMARCPolicy *DMARCPolicy `json:"-"`
+}
+
+// DMARCPolicy is a published DMARC record and how one message aligned with it.
+type DMARCPolicy struct {
+	Domain string
+	// P and SP are the published policies; SP defaults to P (RFC 7489 §6.3).
+	P, SP string
+	Pct   int
+	// ADKIM and ASPF are "r" or "s".
+	ADKIM, ASPF string
+	// RUA is the aggregate report URIs exactly as published, size suffixes
+	// included, so the reporter can apply them.
+	RUA         []string
+	DKIMAligned bool
+	SPFAligned  bool
 }
 
 // Config controls verification.
@@ -178,7 +201,7 @@ func (v *Verifier) Check(ctx context.Context, clientIP net.IP, heloName, mailFro
 	wg.Wait()
 
 	if v.config.DMARCEnabled {
-		results.DMARC, results.Policy = evaluateDMARC(fromDomain, dmarcRecord, dmarcErr, results)
+		results.DMARC, results.Policy, results.DMARCPolicy = evaluateDMARC(fromDomain, dmarcRecord, dmarcErr, results)
 	} else {
 		results.DMARC = Result{Method: "dmarc", Value: "none", Reason: "DMARC plugin disabled"}
 	}
@@ -218,7 +241,7 @@ func (v *Verifier) Verify(ctx context.Context, clientIP net.IP, heloName, mailFr
 	if v.config.DMARCEnabled {
 		dmarcCtx, cancel := context.WithTimeout(ctx, v.config.DMARCTimeout)
 		fromDomain := domainOf(mailFrom)
-		results.DMARC, results.Policy = v.checkDMARC(dmarcCtx, fromDomain, results)
+		results.DMARC, results.Policy, results.DMARCPolicy = v.checkDMARC(dmarcCtx, fromDomain, results)
 		cancel()
 	} else {
 		results.DMARC = Result{Method: "dmarc", Value: "none", Reason: "DMARC plugin disabled"}
@@ -284,7 +307,7 @@ func (v *Verifier) checkSPF(ctx context.Context, clientIP net.IP, heloName, mail
 // the From domain. Alignment is the whole point: SPF passing for a domain the
 // recipient never sees says nothing about whether the visible From is genuine,
 // which is exactly how a forgery gets through a naive check.
-func (v *Verifier) checkDMARC(ctx context.Context, fromDomain string, results Results) (Result, string) {
+func (v *Verifier) checkDMARC(ctx context.Context, fromDomain string, results Results) (Result, string, *DMARCPolicy) {
 	if fromDomain == "" {
 		return evaluateDMARC(fromDomain, nil, nil, results)
 	}
@@ -303,11 +326,11 @@ func (v *Verifier) lookupDMARC(ctx context.Context, fromDomain string) (*dmarc.R
 }
 
 // evaluateDMARC decides alignment from a looked-up record.
-func evaluateDMARC(fromDomain string, record *dmarc.Record, err error, results Results) (Result, string) {
+func evaluateDMARC(fromDomain string, record *dmarc.Record, err error, results Results) (Result, string, *DMARCPolicy) {
 	out := Result{Method: "dmarc", Domain: fromDomain}
 	if fromDomain == "" {
 		out.Value = "none"
-		return out, ""
+		return out, "", nil
 	}
 	if err != nil {
 		// No record is "none": the domain has not asked for anything, which is
@@ -315,11 +338,11 @@ func evaluateDMARC(fromDomain string, record *dmarc.Record, err error, results R
 		// nothing else here fails closed.
 		if err == dmarc.ErrNoPolicy {
 			out.Value = "none"
-			return out, ""
+			return out, "", nil
 		}
 		out.Value = "temperror"
 		out.Reason = err.Error()
-		return out, ""
+		return out, "", nil
 	}
 
 	policy := string(record.Policy)
@@ -340,7 +363,34 @@ func evaluateDMARC(fromDomain string, record *dmarc.Record, err error, results R
 		out.Value = "fail"
 		out.Reason = "neither SPF nor DKIM passed for an identity aligned with the From domain"
 	}
-	return out, policy
+	return out, policy, publishedPolicy(fromDomain, record, dkimAligned, spfAligned)
+}
+
+func publishedPolicy(domain string, record *dmarc.Record, dkimAligned, spfAligned bool) *DMARCPolicy {
+	p := &DMARCPolicy{
+		Domain:      domain,
+		P:           string(record.Policy),
+		SP:          string(record.SubdomainPolicy),
+		Pct:         100,
+		ADKIM:       "r",
+		ASPF:        "r",
+		RUA:         append([]string(nil), record.ReportURIAggregate...),
+		DKIMAligned: dkimAligned,
+		SPFAligned:  spfAligned,
+	}
+	if p.SP == "" {
+		p.SP = p.P
+	}
+	if record.Percent != nil {
+		p.Pct = *record.Percent
+	}
+	if record.DKIMAlignment == dmarc.AlignmentStrict {
+		p.ADKIM = "s"
+	}
+	if record.SPFAlignment == dmarc.AlignmentStrict {
+		p.ASPF = "s"
+	}
+	return p
 }
 
 // aligned reports whether an authenticated domain matches the From domain.
@@ -466,9 +516,16 @@ func verifyDKIM(ctx context.Context, message []byte, lookupTXT func(context.Cont
 		return nil
 	}
 
+	selectors := dkimSelectors(message)
 	results := make([]Result, 0, len(verifications))
-	for _, verification := range verifications {
+	for i, verification := range verifications {
 		result := Result{Method: "dkim", Domain: verification.Domain, Value: "pass"}
+		// The library verifies signatures in header order but does not report
+		// the selector, so take it from the same header, checking d= matches
+		// in case the two ever disagree.
+		if i < len(selectors) && strings.EqualFold(selectors[i].domain, verification.Domain) {
+			result.Selector = selectors[i].selector
+		}
 		if verification.Err != nil {
 			result.Value = "fail"
 			result.Reason = verification.Err.Error()
@@ -484,4 +541,75 @@ func verifyDKIM(ctx context.Context, message []byte, lookupTXT func(context.Cont
 		results = append(results, result)
 	}
 	return results
+}
+
+type dkimTags struct{ domain, selector string }
+
+// dkimSelectors returns the d= and s= tags of each DKIM-Signature header, in
+// header order.
+func dkimSelectors(message []byte) []dkimTags {
+	var out []dkimTags
+	var field string
+	flush := func() {
+		name, value, ok := strings.Cut(field, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), "DKIM-Signature") {
+			return
+		}
+		var tags dkimTags
+		for _, tag := range strings.Split(value, ";") {
+			k, v, ok := strings.Cut(tag, "=")
+			if !ok {
+				continue
+			}
+			v = strings.Join(strings.Fields(v), "")
+			switch strings.TrimSpace(k) {
+			case "d":
+				tags.domain = v
+			case "s":
+				tags.selector = v
+			}
+		}
+		out = append(out, tags)
+	}
+	for _, line := range strings.Split(string(headerBlock(message)), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line != "" && (line[0] == ' ' || line[0] == '\t') {
+			field += line
+			continue
+		}
+		flush()
+		field = line
+	}
+	flush()
+	return out
+}
+
+// headerBlock is the message up to the blank line that ends the header.
+func headerBlock(message []byte) []byte {
+	if i := bytes.Index(message, []byte("\r\n\r\n")); i >= 0 {
+		return message[:i]
+	}
+	if i := bytes.Index(message, []byte("\n\n")); i >= 0 {
+		return message[:i]
+	}
+	return message
+}
+
+// HeaderFromDomain returns the domain of the message's single RFC 5322 From
+// address, or "" when there is none or more than one: DMARC has no single
+// answer for a message with several authors (RFC 7489 §6.6.1).
+func HeaderFromDomain(message []byte) string {
+	head := append(append([]byte(nil), headerBlock(message)...), "\r\n\r\n"...)
+	msg, err := mail.ReadMessage(bytes.NewReader(head))
+	if err != nil {
+		return ""
+	}
+	if len(msg.Header["From"]) != 1 {
+		return ""
+	}
+	addrs, err := mail.ParseAddressList(msg.Header.Get("From"))
+	if err != nil || len(addrs) != 1 {
+		return ""
+	}
+	return domainOf(addrs[0].Address)
 }
