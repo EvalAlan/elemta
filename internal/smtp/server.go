@@ -394,6 +394,39 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 			slogger.Info("Outbound SMTP connection reuse disabled")
 		}
 
+		// Sending IP pools. A pool address that is not on this host would fail
+		// every connection, and those failures would read as the destination
+		// refusing us, so that refuses startup rather than deferring all mail.
+		if remoteSMTPHandler != nil && config.Delivery != nil && len(config.Delivery.Pools) > 0 {
+			stateFile := config.Delivery.PoolStateFile
+			if stateFile == "" {
+				stateFile = filepath.Join(config.QueueDir, "pool-state.json")
+			}
+			router, err := queue.NewPoolRouter(queue.PoolsConfig{
+				Pools:       config.Delivery.Pools,
+				DefaultPool: config.Delivery.DefaultPool,
+				StateFile:   stateFile,
+			}, slogger)
+			if err != nil {
+				return nil, nil, fmt.Errorf("delivery pools: %w", err)
+			}
+			if err := router.CheckLocalAddresses(); err != nil {
+				return nil, nil, fmt.Errorf("delivery pools: %w", err)
+			}
+			router.Start(0)
+			remoteSMTPHandler.SetPoolRouter(router)
+			for _, st := range router.Statuses() {
+				slogger.Info("Sending pool address",
+					"pool", st.Pool, "address", st.Address, "helo", st.Helo,
+					"warmup_day", st.WarmupDay, "daily_cap", st.DailyCap, "sent_today", st.SentToday)
+			}
+		} else if config.Delivery != nil && len(config.Delivery.Pools) > 0 {
+			slogger.Warn("[[delivery.pools]] are configured but this delivery mode sends nothing over remote SMTP; pools are ignored",
+				"mode", deliveryMode)
+		} else if config.Delivery != nil && config.Delivery.DefaultPool != "" {
+			return nil, nil, fmt.Errorf("delivery pools: default_pool %q is set but no [[delivery.pools]] are defined", config.Delivery.DefaultPool)
+		}
+
 		// Per-destination traffic shaping. max_connections_per_domain was
 		// configured, surfaced and unused until now; it finally reaches the
 		// thing that opens the connections. Remote SMTP only: LMTP goes to one

@@ -1,5 +1,16 @@
 # Elemta Changelog
 
+## Unreleased
+
+### Outbound delivery
+
+- **Sending IP pools** (`[[delivery.pools]]`). Outbound mail is bound to named
+  sets of source addresses chosen by envelope sender, each address with its own
+  EHLO name. An optional per-address warmup schedule caps daily volume, paced
+  across the day, with counts kept across restarts. Shaping limits and backoff
+  apply per source address per destination when pools are in use. No pools
+  configured means no change.
+
 ## v0.3.0 (2026-10-10)
 
 ### Breaking: authenticated senders can only send as themselves
