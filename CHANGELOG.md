@@ -26,15 +26,26 @@
 
 ### Kubernetes
 
-- **`deployments/kubernetes`**, a kustomize deployment for a single-node
-  development cluster: the SMTP server and dashboard in one pod, an LMTP sink
-  as the mailbox, Valkey, and persistent volumes for the queue and runtime
-  config. Every pod runs under the `restricted` pod security profile. `kubectl apply -k deployments/kubernetes`.
+- **The dev stack runs on Kubernetes.** `make install-dev`, `-full`, `-bench`
+  and `-postgres` build the images, load them into a local cluster (k3s on
+  Arch/CachyOS is the documented path) and apply an overlay of
+  `deployments/kubernetes/dev`. Same services, names and host ports as the
+  compose stack, so `config/elemta.toml` and the scripts work unchanged.
+  `up`, `down`, `down-volumes`, `restart`, `status`, `logs`, `rebuild`,
+  `sink-up`/`sink-down`, `bootstrap-admin` and `test-dev` (was `test-docker`,
+  still accepted) act on the cluster. New: `make reseed`.
+- **`install-dev-mailauth` and `elk-up` are not ported yet** and say so. Their
+  compose files stay until they are; production still deploys with
+  `docker-compose.prod.yml`.
+- **`deployments/kubernetes/standalone`**: Elemta, its dashboard, an LMTP sink
+  and Valkey from the published image, for any cluster.
+  `kubectl apply -k deployments/kubernetes/standalone`.
 - **The old `k8s/` and `tests/k8s/` are removed.** They used the pre-TOML
   config format and a `make k8s-deploy` target that no longer existed, so they
   could not deploy the current server.
 - The image now ships `deployments/sink/lmtp_sink.py` as
-  `/app/tools/lmtp_sink.py`.
+  `/app/tools/lmtp_sink.py`, and installs `openssl` explicitly for
+  `prepare-config.sh`.
 
 ## v0.3.0 (2026-10-10)
 

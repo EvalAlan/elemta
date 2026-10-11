@@ -1,22 +1,14 @@
-# Elemta on Kubernetes: kubectl apply -k deployments/kubernetes
+# Elemta on its own: kubectl apply -k deployments/kubernetes/standalone
 #
-# See README.md in this directory for what this deploys and what it leaves out.
+# The SMTP server and dashboard, an LMTP sink as the mailbox, and Valkey, from
+# the published image. No LDAP, scanners or mailbox server; elemta.toml here
+# turns off what would point at them. The dev stack (../dev) is the full
+# equivalent of the old compose stack.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: elemta
-
-labels:
-  - pairs:
-      app.kubernetes.io/part-of: elemta
-    includeSelectors: false
-
 resources:
-  - namespace.yaml
-  - pvc.yaml
-  - elemta.yaml
-  - lmtp-sink.yaml
-  - valkey.yaml
+  - ../base
 
 # elemta.toml here is the template, not the live config. prepare-config.sh
 # copies it onto the elemta-runtime-config volume the first time the pod starts
@@ -26,9 +18,14 @@ resources:
 # command.
 configMapGenerator:
   - name: elemta-config
+    namespace: elemta
     files:
       - elemta.toml
 
 images:
-  - name: ghcr.io/evalalan/elemta
+  - name: elemta
+    newName: ghcr.io/evalalan/elemta
     newTag: latest
+
+patches:
+  - path: patches.yaml

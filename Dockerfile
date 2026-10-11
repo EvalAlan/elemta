@@ -39,9 +39,12 @@ RUN groupadd -r elemta -g 1001 && \
     useradd -r -g elemta -u 1001 -d /app -s /bin/sh elemta
 
 # Install required packages (no gosu - we don't need privilege dropping)
+# openssl is named rather than left to arrive as a dependency: prepare-config.sh
+# uses it to check that a certificate matches its key and, with
+# ELEMTA_DEV_CERT=true, to generate a development pair.
 RUN apt-get update && \
     apt-get -y upgrade && \
-    apt-get install -y --no-install-recommends python3 python3-pip curl netcat-openbsd dos2unix libc6 sqlite3 && \
+    apt-get install -y --no-install-recommends python3 python3-pip curl netcat-openbsd dos2unix libc6 sqlite3 openssl && \
     rm -rf /var/lib/apt/lists/*
 
 # Create directories with proper ownership from the start

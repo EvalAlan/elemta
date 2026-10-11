@@ -1,0 +1,19 @@
+# Shared by the standalone deployment and the dev stack. Not applied on its
+# own: it has no config, and its image is the placeholder name "elemta", which
+# each overlay points at a real image.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: elemta
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: elemta
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - elemta.yaml
+  - sink.yaml
+  - valkey.yaml
