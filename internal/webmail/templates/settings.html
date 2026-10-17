@@ -72,6 +72,17 @@
     <div class="form-actions"><button class="button primary" type="submit">Change password</button></div>
   </form>
   {{end}}
+  {{if .Settings.CanRecover}}
+  <form class="card form-grid" action="/settings/recovery" method="post">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <h2 class="card-title">Password recovery</h2>
+    <span class="label">Verified recovery email</span><span>{{if .Settings.RecoveryEmail}}{{.Settings.RecoveryEmail}}{{else}}None{{end}}</span>
+    <label for="recovery-email">Recovery email</label><input id="recovery-email" name="email" type="email" placeholder="An address outside this mailbox">
+    <label for="recovery-current">Current password</label><input id="recovery-current" name="current" type="password" autocomplete="current-password" required>
+    <span></span><span class="small muted">Verify the link sent to the new address. Leave the address empty to remove recovery.</span>
+    <div class="form-actions"><button class="button primary" type="submit">Update recovery email</button></div>
+  </form>
+  {{end}}
   <div class="card links-card">
     <h2 class="card-title">More</h2>
     <ul class="link-list">

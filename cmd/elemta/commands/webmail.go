@@ -28,6 +28,7 @@ It keeps no mail of its own, so any number of instances can run side by side.`,
 
 func init() {
 	rootCmd.AddCommand(webmailCmd)
+	webmailCmd.AddCommand(webmailResetCmd)
 	webmailCmd.Flags().StringVar(&webmailListen, "listen", "", "HTTP listen address (overrides [webmail].listen)")
 }
 
@@ -78,4 +79,34 @@ func runWebmail(cmd *cobra.Command, args []string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return httpSrv.Shutdown(shutdownCtx)
+}
+
+var webmailResetCmd = &cobra.Command{
+	Use:   "reset-password <email>",
+	Short: "Reset a mailbox password as a directory administrator",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var cfg webmail.Config
+		if c := GetConfig(); c != nil && c.Webmail != nil {
+			cfg = *c.Webmail
+		}
+		if cfg.WithDefaults().SessionStore != "valkey" {
+			return errors.New("webmail: administrator reset requires Valkey sessions to revoke existing sign-ins")
+		}
+		srv, err := webmail.NewServer(cfg, nil, nil, nil)
+		if err != nil {
+			return err
+		}
+		password, err := readPassword(cmd, true)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+		defer cancel()
+		if err := srv.AdminResetPassword(ctx, args[0], password); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Password reset for %s. Webmail sessions ended.\n", args[0])
+		return nil
+	},
 }

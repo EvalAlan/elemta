@@ -339,6 +339,7 @@ func (s SMTPSubmitter) Submit(ctx context.Context, user, password, from string, 
 	if err := c.Auth(smtp.PlainAuth("", user, password, host)); err != nil {
 		return fmt.Errorf("webmail: AUTH: %w", err)
 	}
+	// #nosec G707 -- net/smtp.Client.Mail validates and rejects CR/LF before writing the envelope address
 	if err := c.Mail(from); err != nil {
 		return rejected("MAIL FROM", err)
 	}

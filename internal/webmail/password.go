@@ -39,7 +39,7 @@ type ldapPasswords struct {
 	insecureSkipVerify       bool
 }
 
-func (l ldapPasswords) ChangePassword(ctx context.Context, user, current, next string) error {
+func (l ldapPasswords) find(ctx context.Context, user string) (*ldap.Conn, string, error) {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	conn, err := ldap.DialURL(l.url, ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(&tls.Config{
 		MinVersion: tls.VersionTLS12,
@@ -47,9 +47,14 @@ func (l ldapPasswords) ChangePassword(ctx context.Context, user, current, next s
 		InsecureSkipVerify: l.insecureSkipVerify,
 	}))
 	if err != nil {
-		return fmt.Errorf("webmail: connect to LDAP: %w", err)
+		return nil, "", fmt.Errorf("webmail: connect to LDAP: %w", err)
 	}
-	defer func() { _ = conn.Close() }()
+	ok := false
+	defer func() {
+		if !ok {
+			_ = conn.Close()
+		}
+	}()
 	if dl, ok := ctx.Deadline(); ok {
 		conn.SetTimeout(time.Until(dl))
 	}
@@ -57,18 +62,27 @@ func (l ldapPasswords) ChangePassword(ctx context.Context, user, current, next s
 	// Find the user's entry. The lookup account only needs to read DNs.
 	if l.searchDN != "" {
 		if err := conn.Bind(l.searchDN, l.searchPassword); err != nil {
-			return fmt.Errorf("webmail: LDAP lookup bind: %w", err)
+			return nil, "", fmt.Errorf("webmail: LDAP lookup bind: %w", err)
 		}
 	}
 	filter := strings.ReplaceAll(l.filter, "%s", ldap.EscapeFilter(user))
 	res, err := conn.Search(ldap.NewSearchRequest(l.base, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 10, false, filter, []string{"dn"}, nil))
 	if err != nil {
-		return fmt.Errorf("webmail: LDAP search: %w", err)
+		return nil, "", fmt.Errorf("webmail: LDAP search: %w", err)
 	}
 	if len(res.Entries) != 1 {
-		return fmt.Errorf("webmail: LDAP search for %q found %d entries", user, len(res.Entries))
+		return nil, "", fmt.Errorf("webmail: LDAP search for %q found %d entries", user, len(res.Entries))
 	}
-	dn := res.Entries[0].DN
+	ok = true
+	return conn, res.Entries[0].DN, nil
+}
+
+func (l ldapPasswords) ChangePassword(ctx context.Context, user, current, next string) error {
+	conn, dn, err := l.find(ctx, user)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
 
 	// From here on the connection acts as the user.
 	if err := conn.Bind(dn, current); err != nil {
@@ -153,4 +167,28 @@ func (s *Server) passwordSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	}
 	s.log.Info("webmail: password changed", "user", sess.User, "ip", clientIP(r))
 	http.Redirect(w, r, "/settings?n=password-changed", http.StatusSeeOther)
+}
+
+// PasswordResetter requires a directory account authorized to reset passwords.
+// It is separate from PasswordChanger so self-service never gains that power.
+type PasswordResetter interface {
+	ResetPassword(context.Context, string, string) error
+}
+
+func (l ldapPasswords) ResetPassword(ctx context.Context, user, next string) error {
+	if l.searchDN == "" || l.searchPassword == "" {
+		return errors.New("webmail: privileged LDAP reset credentials are required")
+	}
+	conn, dn, err := l.find(ctx, user)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.PasswordModify(ldap.NewPasswordModifyRequest(dn, "", next)); err != nil {
+		if ldap.IsErrorWithCode(err, ldap.LDAPResultConstraintViolation) || ldap.IsErrorWithCode(err, ldap.LDAPResultUnwillingToPerform) {
+			return errPolicyRejected
+		}
+		return fmt.Errorf("webmail: LDAP password reset: %w", err)
+	}
+	return nil
 }

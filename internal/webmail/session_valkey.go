@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,19 @@ func (v *valkeySessions) Load(ctx context.Context, id string) (*SessionRecord, e
 	var rec SessionRecord
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, err
+	}
+	revoked, err := v.client.Do(ctx, v.client.B().Get().Key(v.prefix+"revoked:"+accountKey(strings.ToLower(rec.Address))).Build()).ToString()
+	if err != nil && !valkey.IsValkeyNil(err) {
+		return nil, err
+	}
+	if revoked != "" {
+		n, e := strconv.ParseInt(revoked, 10, 64)
+		if e != nil {
+			return nil, e
+		}
+		if rec.Created.UnixNano() <= n {
+			return nil, nil
+		}
 	}
 	return &rec, nil
 }
@@ -98,4 +112,8 @@ func loadSessionKey(path string) ([]byte, error) {
 		return nil, fmt.Errorf("webmail: session key %s must hold 32 base64-encoded bytes", path)
 	}
 	return key, nil
+}
+
+func (v *valkeySessions) RevokeUser(ctx context.Context, address string, ttl time.Duration) error {
+	return v.client.Do(ctx, v.client.B().Set().Key(v.prefix+"revoked:"+accountKey(address)).Value(strconv.FormatInt(time.Now().UnixNano(), 10)).Ex(ttl+time.Minute).Build()).Error()
 }

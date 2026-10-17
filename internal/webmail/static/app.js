@@ -538,14 +538,8 @@
   }
 
   // ---- new mail ----------------------------------------------------------
-  // The page asks the server for each folder's counts every 30 seconds
-  // (every 90 while the tab is in the background). Unread badges and the
-  // tab title follow them. When the folder on screen has gained messages,
-  // the list is fetched again and swapped in place, with the new rows
-  // highlighted, unless the user is in the middle of something (a
-  // selection, an open menu, a later page), in which case a "new mail"
-  // button offers the refresh instead. With notifications turned on, new
-  // unread mail that arrives while the tab is hidden raises one.
+  // IDLE events trigger counts and list refreshes; polling covers servers
+  // or proxies that cannot keep the event stream open.
   var baseTitle = doc.title.replace(/^\(\d+\) /, "");
   var knownTotals = {};
   $$("a.folder[data-folder]").forEach(function (a) {
@@ -623,7 +617,10 @@
       .catch(function () {});
   }
 
+  var checkingMail = false, pendingMailCheck = false;
   function checkMail() {
+    if (checkingMail) { pendingMailCheck = true; return; }
+    checkingMail = true;
     fetch("/api/counts", { credentials: "same-origin" })
       .then(function (r) {
         if (r.status === 401) { location.href = "/login"; return null; }
@@ -647,16 +644,33 @@
         if (folder && folder in totals && folder in knownTotals && totals[folder] > knownTotals[folder]) refreshList();
         Object.keys(totals).forEach(function (k) { knownTotals[k] = totals[k]; });
       })
-      .catch(function () {});
+      .catch(function () {})
+      .then(function () {
+        checkingMail = false;
+        if (pendingMailCheck) { pendingMailCheck = false; checkMail(); }
+      });
   }
   if ($("a.folder[data-folder]")) {
-    var mailTimer = null;
-    var schedule = function () {
-      clearInterval(mailTimer);
-      mailTimer = setInterval(checkMail, doc.hidden ? 90000 : 30000);
-    };
-    schedule();
-    doc.addEventListener("visibilitychange", function () { schedule(); if (!doc.hidden) checkMail(); });
+    var mailTimer = null, stream = null;
+    function fallback() {
+      if (!mailTimer) mailTimer = setInterval(checkMail, 60000);
+    }
+    if (window.EventSource) {
+      var currentList = listEl();
+      var watchedFolder = currentList ? currentList.getAttribute("data-folder") : "INBOX";
+      function connectMail() {
+        stream = new EventSource("/api/events?folder=" + encodeURIComponent(watchedFolder || "INBOX"));
+        stream.addEventListener("ready", function () { clearInterval(mailTimer); mailTimer = null; checkMail(); });
+        stream.addEventListener("mail", checkMail);
+        stream.addEventListener("unavailable", function () { stream.close(); fallback(); });
+        stream.addEventListener("signedout", function () { stream.close(); location.href = "/login"; });
+        stream.onerror = fallback;
+      }
+      connectMail();
+      window.addEventListener("pagehide", function () { stream.close(); });
+      window.addEventListener("pageshow", function (event) { if (event.persisted) connectMail(); });
+    } else { fallback(); }
+    doc.addEventListener("visibilitychange", function () { if (!doc.hidden) checkMail(); });
   }
 
   // ---- keyboard shortcuts ------------------------------------------------

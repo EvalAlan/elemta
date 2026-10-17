@@ -40,11 +40,16 @@ func IMAPDialer(cfg Config) Dialer {
 }
 
 func dialIMAP(ctx context.Context, cfg Config, username, password string) (*imapStore, error) {
+	return dialIMAPUpdates(ctx, cfg, username, password, nil)
+}
+
+func dialIMAPUpdates(ctx context.Context, cfg Config, username, password string, updates *imapclient.UnilateralDataHandler) (*imapStore, error) {
 	host, _, err := net.SplitHostPort(cfg.IMAPAddr)
 	if err != nil {
 		return nil, fmt.Errorf("webmail: imap_addr: %w", err)
 	}
 	opts := &imapclient.Options{
+		UnilateralDataHandler: updates,
 		TLSConfig: &tls.Config{
 			ServerName: host,
 			MinVersion: tls.VersionTLS12,

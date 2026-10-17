@@ -20,6 +20,7 @@
     <input id="password" name="password" type="password" autocomplete="current-password" required>
     <button class="button primary block" type="submit">Sign in</button>
   </form>
+  {{if .Recovery}}<p><a href="/forgot-password">Forgot password?</a></p>{{end}}
 </main>
 </body>
 </html>

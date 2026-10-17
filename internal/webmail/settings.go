@@ -205,8 +205,10 @@ var commonZones = []string{
 }
 
 type settingsView struct {
-	Prefs Settings
-	Zones []string
+	CanRecover    bool
+	RecoveryEmail string
+	Prefs         Settings
+	Zones         []string
 	// CanChangePassword shows the password form.
 	CanChangePassword bool
 	MinPasswordLength int
@@ -215,6 +217,15 @@ type settingsView struct {
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, sess *Session) {
 	p := s.prefs(r.Context(), sess)
 	v := view{Title: "Settings", Session: sess, Notice: notices[r.URL.Query().Get("n")], Settings: &settingsView{Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength}}
+	if s.recovery != nil {
+		rec, err := s.recoveryRecord(r.Context(), s.recoveryAccount(sess.User))
+		if err != nil {
+			s.fail(w, r, sess, err)
+			return
+		}
+		v.Settings.CanRecover = true
+		v.Settings.RecoveryEmail = rec.Email
+	}
 	s.withFolders(r, sess, &v)
 	s.render(w, "settings.html", http.StatusOK, v)
 }

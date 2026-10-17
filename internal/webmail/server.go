@@ -30,11 +30,17 @@ type Server struct {
 	// configured, which hides the feature.
 	sieve SieveDialer
 	// passwords changes users' passwords; nil hides the feature.
-	passwords PasswordChanger
-	tmpl      map[string]*template.Template
-	log       *slog.Logger
-	limiter   *loginLimiter
-	now       func() time.Time
+	passwords    PasswordChanger
+	recovery     RecoveryStore
+	recoveryMail chan struct{}
+	resetter     PasswordResetter
+	watch        MailWatcher
+	pushMu       sync.Mutex
+	pushStreams  map[string]int
+	tmpl         map[string]*template.Template
+	log          *slog.Logger
+	limiter      *loginLimiter
+	now          func() time.Time
 	// defaultLoc is the time zone for users who haven't chosen one and
 	// whose browser hasn't reported one yet.
 	defaultLoc *time.Location
@@ -76,12 +82,27 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		}
 		passwords = ldapPasswords{url: cfg.LDAPURL, base: cfg.LDAPBase, filter: cfg.LDAPUserFilter, searchDN: cfg.LDAPSearchDN, searchPassword: pw, insecureSkipVerify: cfg.InsecureSkipVerify}
 	}
-	return &Server{
-		passwords: passwords,
-		cfg:       cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
+	server := &Server{
+		passwords: passwords, recoveryMail: make(chan struct{}, 4),
+		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
 		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now,
 		defaultLoc: cfg.location(),
-	}, nil
+	}
+	if cfg.RecoveryURL != "" {
+		if envOr("ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD", cfg.LDAPResetPassword) == "" || envOr("ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD", cfg.RecoverySMTPPassword) == "" {
+			return nil, errors.New("webmail: recovery requires LDAP reset and SMTP service passwords")
+		}
+		if !validRecoveryEmail(cfg.RecoverySender, "") {
+			return nil, errors.New("webmail: recovery_sender must be an email address")
+		}
+		v, ok := sessions.shared.(*valkeySessions)
+		if !ok {
+			return nil, errors.New("webmail: recovery requires Valkey")
+		}
+		server.recovery = valkeyRecovery{client: v.client}
+		server.resetter = ldapPasswords{url: cfg.LDAPURL, base: cfg.LDAPBase, filter: cfg.LDAPUserFilter, searchDN: cfg.LDAPResetDN, searchPassword: envOr("ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD", cfg.LDAPResetPassword), insecureSkipVerify: cfg.InsecureSkipVerify}
+	}
+	return server, nil
 }
 
 // newSessions builds the session manager the config asks for.
@@ -115,6 +136,13 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "ok\n") })
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServerFS(staticFiles()))))
+	mux.HandleFunc("GET /forgot-password", s.forgotPage)
+	mux.HandleFunc("POST /forgot-password", s.forgotSubmit)
+	mux.HandleFunc("GET /reset-password", s.resetPage)
+	mux.HandleFunc("POST /reset-password", s.resetSubmit)
+	mux.HandleFunc("GET /verify-recovery", s.verifyPage)
+	mux.HandleFunc("POST /verify-recovery", s.verifySubmit)
+	mux.HandleFunc("POST /settings/recovery", s.authed(s.recoverySubmit))
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.loginSubmit)
 	mux.HandleFunc("POST /logout", s.authed(s.logout))
@@ -151,6 +179,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /filters", s.authed(s.filtersSubmit))
 	mux.HandleFunc("GET /tasks", s.authed(s.tasksPage))
 	mux.HandleFunc("POST /tasks", s.authed(s.tasksSubmit))
+	mux.HandleFunc("GET /api/events", s.authed(s.mailEvents))
 	mux.HandleFunc("GET /api/counts", s.authed(s.countsAPI))
 	mux.HandleFunc("GET /api/addresses", s.authed(s.addressesAPI))
 	return securityHeaders(mux)
@@ -349,6 +378,10 @@ var notices = map[string]string{
 	"folder-renamed":    "Folder renamed.",
 	"folder-deleted":    "Folder deleted.",
 	"settings-saved":    "Settings saved.",
+	"password-reset":    "Your password was reset. Sign in with your new password.",
+	"recovery-sent":     "A verification link was sent to your recovery address.",
+	"recovery-verified": "Your recovery email is verified.",
+	"recovery-removed":  "Your recovery email was removed.",
 	"password-changed":  "Your password was changed. Use the new one everywhere you read mail.",
 	"contact-saved":     "Contact saved.",
 	"contact-exists":    "That sender is already in your contacts.",
@@ -371,11 +404,12 @@ var notices = map[string]string{
 // ---- login -----------------------------------------------------------------
 
 type loginView struct {
-	Theme   string
-	Token   string
-	User    string
-	Problem string
-	Notice  string
+	Recovery bool
+	Theme    string
+	Token    string
+	User     string
+	Problem  string
+	Notice   string
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int) {
@@ -406,7 +440,7 @@ func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int,
 		return
 	}
 	s.setCookie(w, preLoginCookie, token, 600)
-	s.render(w, "login.html", status, loginView{Theme: themeFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
+	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Theme: themeFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
 }
 
 func clientIP(r *http.Request) string {

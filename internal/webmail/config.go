@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -106,6 +107,15 @@ type Config struct {
 	// MinPasswordLength is the shortest new password accepted (10).
 	MinPasswordLength int `toml:"min_password_length"`
 
+	// RecoveryURL is the public origin used in emailed links. Enabling recovery
+	// requires shared Valkey sessions and a separate privileged directory bind.
+	RecoveryURL          string `toml:"recovery_url"`
+	LDAPResetDN          string `toml:"ldap_reset_dn"`
+	LDAPResetPassword    string `toml:"ldap_reset_password"`
+	RecoverySender       string `toml:"recovery_sender"`
+	RecoverySMTPUser     string `toml:"recovery_smtp_user"`
+	RecoverySMTPPassword string `toml:"recovery_smtp_password"`
+
 	// SessionKeyFile holds the key that seals passwords in shared sessions,
 	// base64 encoded. It is created if missing. Every pod must read the
 	// same file, and it must not be stored in Valkey.
@@ -196,6 +206,15 @@ func (c Config) Validate() error {
 		}
 	default:
 		errs = append(errs, fmt.Errorf("webmail: session_store must be memory or valkey, not %q", c.SessionStore))
+	}
+	if c.RecoveryURL != "" {
+		u, err := url.Parse(c.RecoveryURL)
+		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "https" && !(u.Scheme == "http" && !*c.SecureCookies)) {
+			errs = append(errs, errors.New("webmail: recovery_url must be an HTTPS origin (HTTP allowed with secure_cookies=false)"))
+		}
+		if c.SessionStore != "valkey" || c.LDAPURL == "" || c.LDAPResetDN == "" || c.RecoverySender == "" || c.RecoverySMTPUser == "" {
+			errs = append(errs, errors.New("webmail: recovery needs Valkey sessions, ldap_url, ldap_reset_dn, recovery_sender and recovery_smtp_user"))
+		}
 	}
 	if _, err := time.LoadLocation(c.DefaultTimezone); err != nil {
 		errs = append(errs, fmt.Errorf("webmail: default_timezone %q: %w", c.DefaultTimezone, err))

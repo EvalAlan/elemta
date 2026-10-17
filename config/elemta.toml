@@ -521,6 +521,12 @@ ldap_url = "ldap://elemta-ldap:389"
 ldap_base = "ou=people,dc=example,dc=com"
 ldap_user_filter = "(&(objectClass=posixAccount)(mail=%s))"
 ldap_search_dn = "cn=admin,dc=example,dc=com"
+# Dev recovery links use this origin, never a request's Host header.
+# Production needs its public HTTPS origin and dedicated LDAP/SMTP accounts.
+recovery_url = "http://localhost:8027"
+ldap_reset_dn = "cn=admin,dc=example,dc=com"
+recovery_sender = "sender@example.com"
+recovery_smtp_user = "sender@example.com"
 session_key_file = "/app/runtime-config/webmail-session.key"
 max_upload_mb = 25
 page_size = 50

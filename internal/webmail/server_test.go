@@ -222,6 +222,7 @@ func (f *fakeStore) DeleteObject(_ context.Context, c Collection, id string) err
 func (f *fakeStore) Close() error { return nil }
 
 type fakeSubmitter struct {
+	sent             chan struct{}
 	user, pass, from string
 	rcpts            []string
 	raw              []byte
@@ -230,6 +231,9 @@ type fakeSubmitter struct {
 
 func (f *fakeSubmitter) Submit(_ context.Context, user, pass, from string, rcpts []string, raw []byte) error {
 	f.user, f.pass, f.from, f.rcpts, f.raw = user, pass, from, rcpts, raw
+	if f.sent != nil {
+		f.sent <- struct{}{}
+	}
 	return f.err
 }
 

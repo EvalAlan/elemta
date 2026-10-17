@@ -181,6 +181,9 @@ services:
       # Dev only: the LDAP lookup account for password changes (the dev
       # directory's admin, as Dovecot uses). See [webmail] ldap_* settings.
       - ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD=${ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD:-admin}
+      # Dev credentials only; production uses separate service accounts.
+      - ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD=${ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD:-admin}
+      - ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=${ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD:-password}
     security_opt:
       - no-new-privileges:true
     user: "1001:1001"

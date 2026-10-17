@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -172,6 +173,18 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 	m.mu.Lock()
 	s, ok := m.sessions[id]
 	m.mu.Unlock()
+	if ok && m.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		rec, err := m.shared.Load(ctx, id)
+		cancel()
+		if err != nil {
+			return nil, false
+		}
+		if rec == nil {
+			m.Destroy(id)
+			return nil, false
+		}
+	}
 	if !ok && m.shared != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		rec, err := m.shared.Load(ctx, id)
@@ -223,7 +236,10 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 	}
 	if touch {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = m.shared.Save(ctx, s.record(), m.ttl)
+		m.mu.Lock()
+		rec := s.record()
+		m.mu.Unlock()
+		_ = m.shared.Save(ctx, rec, m.ttl)
 		cancel()
 	}
 	return s, true
@@ -287,6 +303,8 @@ func (m *SessionManager) Run(ctx context.Context) {
 }
 
 func (m *SessionManager) password(s *Session) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	pw, err := m.aead.Open(nil, s.nonce, s.sealed, []byte(s.ID))
 	if err != nil {
 		return "", errors.New("webmail: session credentials unreadable")
@@ -354,4 +372,32 @@ func (m *SessionManager) withStore(ctx context.Context, s *Session, dial Dialer,
 		_ = s.store.Close()
 		s.store = nil
 	}
+}
+
+// RevokeUser ends webmail sessions even when an existing IMAP connection
+// would otherwise keep working with the old password.
+func (m *SessionManager) RevokeUser(ctx context.Context, address string) error {
+	if m.shared != nil {
+		revoker, ok := m.shared.(interface {
+			RevokeUser(context.Context, string, time.Duration) error
+		})
+		if !ok {
+			return errors.New("webmail: session store cannot revoke accounts")
+		}
+		if err := revoker.RevokeUser(ctx, strings.ToLower(address), m.ttl); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	var ids []string
+	for id, s := range m.sessions {
+		if strings.EqualFold(s.Address, address) {
+			ids = append(ids, id)
+		}
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		m.Destroy(id)
+	}
+	return nil
 }
