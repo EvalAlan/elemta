@@ -155,10 +155,20 @@
       </div>
       {{with .Invite}}{{template "invite" .}}{{end}}
       {{if .ReceiptTo}}<p class="banner subtle">The sender asked for a read receipt. Elemta doesn't send them automatically.</p>{{end}}
+      {{with $.Thread}}
+      <details class="thread" open>
+        <summary>Conversation · {{add (len .) 1}} messages</summary>
+        <ol class="thread-list">
+          {{range .}}
+          <li><a href="{{messageURL .Folder .UID 1 ""}}"><span class="strong">{{if eq .Folder $.Message.Folder}}{{addrs .From}}{{else}}{{addrs .From}} <span class="muted small">({{.Folder}})</span>{{end}}</span><span class="subject muted">{{.Subject}}</span><time class="mono muted small">{{shortDate $.Loc $.Clock24 .Date}}</time></a></li>
+          {{end}}
+        </ol>
+      </details>
+      {{end}}
       {{with .Attachments}}
       <ul class="attachments" aria-label="Attachments">
         {{range .}}
-        <li><a class="attachment" href="{{partURL $.Message.Folder $.Message.UID .Index}}">{{template "icon-clip"}}<span><span class="strong">{{.Filename}}</span><span class="mono muted small">{{humanSize .Size}}</span></span></a></li>
+        <li><a class="attachment" href="{{partURL $.Message.Folder $.Message.UID .Index}}">{{if and (previewable .ContentType) (lt .Size 10485760)}}<img class="thumb" src="{{partURL $.Message.Folder $.Message.UID .Index}}&amp;inline=1" alt="" loading="lazy">{{else}}{{template "icon-clip"}}{{end}}<span><span class="strong">{{.Filename}}</span><span class="mono muted small">{{humanSize .Size}}</span></span></a></li>
         {{end}}
       </ul>
       {{end}}
@@ -170,7 +180,7 @@
       {{else}}
         <pre class="text-body">{{linkify .Text}}</pre>
       {{end}}
-      <p class="small"><a href="{{rawURL .Folder .UID}}">Download original (.eml)</a></p>
+      <p class="small"><a href="{{rawURL .Folder .UID}}">Download original (.eml)</a> · <a href="{{printURL .Folder .UID}}" target="_blank" rel="noopener">Print</a></p>
     </div>
   {{else}}
     <p class="empty reader-empty">Select a message to read it.<br><span class="small">Press <kbd>?</kbd> for keyboard shortcuts.</span></p>

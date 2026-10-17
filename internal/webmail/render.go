@@ -70,7 +70,7 @@ func loadTemplates() (map[string]*template.Template, error) {
 		switch p {
 		case "layout.html", "icons.html", "partials.html":
 			continue
-		case "login.html":
+		case "login.html", "print.html":
 			t, err := template.New(p).Funcs(templateFuncs).ParseFS(templateFS, path, "templates/icons.html")
 			if err != nil {
 				return nil, fmt.Errorf("webmail: template %s: %w", p, err)
@@ -98,6 +98,10 @@ var templateFuncs = template.FuncMap{
 	"messageURL": messageURL,
 	"partURL": func(folder string, uid uint32, n int) string {
 		return "/mail/part?" + url.Values{"f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}, "n": {strconv.Itoa(n)}}.Encode()
+	},
+	"previewable": previewable,
+	"printURL": func(folder string, uid uint32) string {
+		return "/mail/print?" + url.Values{"f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}}.Encode()
 	},
 	"bodyURL": func(folder string, uid uint32, remote bool) string {
 		v := url.Values{"f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}}

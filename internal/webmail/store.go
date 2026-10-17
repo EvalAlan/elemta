@@ -63,6 +63,12 @@ type Summary struct {
 	Tags          []string // user keywords, see isTagKeyword
 }
 
+// Related is a message found in another place in a conversation.
+type Related struct {
+	Folder string
+	Summary
+}
+
 // Page is a window of a folder's messages, newest first.
 type Page struct {
 	Folder   string
@@ -163,6 +169,10 @@ type Mailstore interface {
 	Delimiter(ctx context.Context) (string, error)
 	// Tags lists the user keywords in use in folder, for suggestions.
 	Tags(ctx context.Context, folder string) ([]string, error)
+	// Related finds the messages in folders that belong to the same
+	// conversation as the given Message-IDs: those IDs themselves, and
+	// anything whose References or In-Reply-To name one of them.
+	Related(ctx context.Context, folders []string, ids []string) ([]Related, error)
 
 	ObjectStore
 	Close() error

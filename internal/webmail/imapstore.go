@@ -685,6 +685,68 @@ func (s *imapStore) Tags(ctx context.Context, folder string) ([]string, error) {
 	return out, nil
 }
 
+// maxThreadIDs bounds how many Message-IDs one conversation search ORs
+// together; long threads are matched on their most recent references.
+const maxThreadIDs = 12
+
+func (s *imapStore) Related(ctx context.Context, folders []string, ids []string) ([]Related, error) {
+	if len(ids) > maxThreadIDs {
+		ids = ids[len(ids)-maxThreadIDs:]
+	}
+	var tests []imap.SearchCriteria
+	for _, id := range ids {
+		for _, h := range []string{"Message-Id", "References", "In-Reply-To"} {
+			tests = append(tests, imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{{Key: h, Value: id}}})
+		}
+	}
+	if len(tests) == 0 {
+		return nil, nil
+	}
+	criteria := orAll(tests)
+	var out []Related
+	for _, folder := range folders {
+		if folder == "" {
+			continue
+		}
+		if _, err := s.syncFolder(folder); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		data, err := s.c.UIDSearch(&criteria, nil).Wait()
+		if err != nil {
+			return nil, fmt.Errorf("webmail: conversation search %q: %w", folder, err)
+		}
+		uids := data.AllUIDs()
+		if len(uids) == 0 {
+			continue
+		}
+		if len(uids) > 100 {
+			uids = uids[len(uids)-100:]
+		}
+		msgs, err := s.c.Fetch(imap.UIDSetNum(uids...), summaryFetch).Collect()
+		if err != nil {
+			return nil, fmt.Errorf("webmail: fetch conversation %q: %w", folder, err)
+		}
+		for _, m := range msgs {
+			out = append(out, Related{Folder: folder, Summary: toSummary(m)})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Date.Before(out[j].Date) })
+	return out, nil
+}
+
+// orAll combines criteria with OR as a balanced tree, which keeps the
+// command's nesting shallow.
+func orAll(list []imap.SearchCriteria) imap.SearchCriteria {
+	if len(list) == 1 {
+		return list[0]
+	}
+	mid := len(list) / 2
+	return imap.SearchCriteria{Or: [][2]imap.SearchCriteria{{orAll(list[:mid]), orAll(list[mid:])}}}
+}
+
 // defaultRoleNames are the folders Append creates when an account has none.
 var defaultRoleNames = map[Role]string{RoleSent: "Sent", RoleDrafts: "Drafts", RoleTrash: "Trash", RoleJunk: "Junk", RoleArchive: "Archive"}
 

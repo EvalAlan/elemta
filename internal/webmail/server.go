@@ -88,6 +88,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /mail/body", s.authed(s.messageBody))
 	mux.HandleFunc("GET /mail/part", s.authed(s.messagePart))
 	mux.HandleFunc("GET /mail/raw", s.authed(s.messageRaw))
+	mux.HandleFunc("GET /mail/print", s.authed(s.messagePrint))
+	mux.HandleFunc("GET /api/reminders", s.authed(s.remindersAPI))
 	mux.HandleFunc("POST /mail/action", s.authed(s.messageAction))
 	mux.HandleFunc("GET /compose", s.authed(s.composePage))
 	mux.HandleFunc("POST /compose", s.authed(s.composeSubmit))
@@ -208,6 +210,7 @@ type view struct {
 	Body     *sanitizeResult
 	Remote   bool
 	Tags     []string
+	Thread   []Related
 	Compose  *composeView
 	Settings *settingsView
 	Contacts *contactsView

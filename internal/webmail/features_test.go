@@ -330,3 +330,86 @@ func TestDraftBuildAlternativeAndCalendar(t *testing.T) {
 		t.Errorf("attachments + alternative:\n%s", raw)
 	}
 }
+
+func TestConversationAndPrint(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.store.related = []Related{
+		{Folder: "Sent", Summary: Summary{UID: 3, Subject: "Re: Signed MSA", From: []Address{{Email: "dana@example.com"}}}},
+		{Folder: "INBOX", Summary: Summary{UID: 7, Subject: "Signed MSA"}}, // the open message itself
+	}
+	_, page := h.get("/mail?f=INBOX&uid=7")
+	if !strings.Contains(page, "Conversation · 2 messages") || !strings.Contains(page, "Re: Signed MSA") {
+		t.Fatalf("conversation missing:\n%s", page)
+	}
+	resp, body := h.get("/mail/print?f=INBOX&uid=7")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `data-print="1"`) || !strings.Contains(body, "Café at ten.") {
+		t.Fatalf("print = %d\n%s", resp.StatusCode, body)
+	}
+}
+
+func TestThreadIDs(t *testing.T) {
+	m := &Message{MessageID: "<c@x>", InReplyTo: "<b@x>", References: "<a@x> <b@x>"}
+	if got := strings.Join(threadIDs(m), " "); got != "<a@x> <b@x> <c@x>" {
+		t.Fatalf("ids = %q", got)
+	}
+}
+
+func TestInlinePreviewOnlyForRasterImages(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	msg, _ := parseMessage([]byte(multipartMessage))
+	for _, p := range msg.Parts {
+		resp, _ := h.get("/mail/part?f=INBOX&uid=7&inline=1&n=" + strconv.Itoa(p.Index))
+		ct := resp.Header.Get("Content-Type")
+		switch {
+		case previewable(p.ContentType):
+			if ct != p.ContentType || !strings.HasPrefix(resp.Header.Get("Content-Disposition"), "inline") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "sandbox") {
+				t.Errorf("%s preview headers: %v", p.ContentType, resp.Header)
+			}
+		default:
+			if ct != "application/octet-stream" {
+				t.Errorf("%s served inline as %q", p.ContentType, ct)
+			}
+		}
+	}
+}
+
+func TestRemindersAndBirthdays(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	now := time.Now().In(time.UTC)
+	start := now.Add(10 * time.Minute)
+	h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}})
+	h.post("/calendar/event", url.Values{
+		"csrf": {csrf}, "op": {"save"}, "summary": {"Soon"}, "start_date": {start.Format("2006-01-02")}, "start_time": {start.Format("15:04")},
+		"end_date": {start.Add(time.Hour).Format("2006-01-02")}, "end_time": {start.Add(time.Hour).Format("15:04")}, "reminder": {"15"},
+	})
+	_, js := h.get("/api/reminders")
+	var list []map[string]any
+	if err := json.Unmarshal([]byte(js), &list); err != nil || len(list) != 1 || list[0]["title"] != "Soon" {
+		t.Fatalf("reminders = %s", js)
+	}
+	if at := int64(list[0]["at"].(float64)); at > time.Now().Unix() {
+		t.Errorf("a reminder 15 minutes before an event 10 minutes away is already due, got at=%d", at)
+	}
+
+	h.post("/contacts", url.Values{"csrf": {csrf}, "op": {"save"}, "name": {"Priya Shah"}, "birthday": {"--02-29"}})
+	_, page := h.get("/calendar?view=month&date=2028-02-10")
+	if !strings.Contains(page, "Priya Shah&#39;s birthday") {
+		t.Fatalf("birthday missing from February 2028")
+	}
+	_, page = h.get("/calendar/event?uid=birthday-" + firstContactID(t, h))
+	if strings.Contains(page, ">Edit<") || !strings.Contains(page, "comes from your contacts") {
+		t.Error("birthday event offered editing")
+	}
+}
+
+func firstContactID(t *testing.T, h *harness) string {
+	t.Helper()
+	objs, _ := h.store.Objects(context.Background(), CollContacts)
+	if len(objs) == 0 {
+		t.Fatal("no contacts")
+	}
+	return objs[0].ID
+}

@@ -42,6 +42,9 @@ type Event struct {
 	Modified time.Time
 	// URL is a link for the event, such as a video meeting.
 	URL string
+	// ReadOnly marks events made from other data (contact birthdays),
+	// which the calendar shows but can't edit.
+	ReadOnly bool
 }
 
 // Attendee is a participant in a meeting.

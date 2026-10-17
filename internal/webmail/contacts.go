@@ -100,7 +100,14 @@ func contactToCard(c Contact) vcard.Card {
 		card.SetAddress(&vcard.Address{StreetAddress: c.Address, Field: &vcard.Field{Params: vcard.Params{}}})
 	}
 	if c.Birthday != "" {
-		card.SetValue(vcard.FieldBirthday, strings.ReplaceAll(c.Birthday, "-", ""))
+		// vCard writes 1985-02-14 as 19850214 and a birthday without a
+		// year as --0214; the leading dashes are what mark the year as
+		// missing, so they must survive.
+		bday := strings.ReplaceAll(c.Birthday, "-", "")
+		if strings.HasPrefix(c.Birthday, "--") {
+			bday = "--" + bday
+		}
+		card.SetValue(vcard.FieldBirthday, bday)
 	}
 	if c.Website != "" {
 		card.SetValue(vcard.FieldURL, c.Website)

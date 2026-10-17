@@ -34,6 +34,7 @@ type fakeStore struct {
 	expunged  []uint32
 	objects   map[Collection]map[string]Object
 	lastQuery ListQuery
+	related   []Related
 }
 
 func newFakeStore() *fakeStore {
@@ -133,6 +134,9 @@ func (f *fakeStore) DeleteFolder(_ context.Context, name string) error {
 func (f *fakeStore) EmptyFolder(_ context.Context, folder string) error {
 	f.emptied = append(f.emptied, folder)
 	return nil
+}
+func (f *fakeStore) Related(_ context.Context, folders []string, ids []string) ([]Related, error) {
+	return f.related, nil
 }
 func (f *fakeStore) Delimiter(context.Context) (string, error)      { return "/", nil }
 func (f *fakeStore) Tags(context.Context, string) ([]string, error) { return []string{"invoices"}, nil }

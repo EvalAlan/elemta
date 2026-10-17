@@ -187,7 +187,7 @@ func (s *Server) calendarPage(w http.ResponseWriter, r *http.Request, sess *Sess
 			view = "month"
 		}
 	}
-	events, err := s.events(r.Context(), sess, loc)
+	events, err := s.calendarEvents(r.Context(), sess, loc)
 	if err != nil {
 		s.fail(w, r, sess, err)
 		return
@@ -478,7 +478,7 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 	prefs := s.prefsCached(sess)
 	q := r.URL.Query()
 	now := s.now().In(loc)
-	events, err := s.events(r.Context(), sess, loc)
+	events, err := s.calendarEvents(r.Context(), sess, loc)
 	if err != nil {
 		s.fail(w, r, sess, err)
 		return
@@ -533,7 +533,7 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 	case ev == nil:
 		s.fail(w, r, sess, ErrNotFound)
 		return
-	case q.Get("edit") == "1":
+	case q.Get("edit") == "1" && !ev.ReadOnly:
 		cv.Form = s.finishForm(formFromEvent(ev, occ, loc), events, ev.Start)
 		v.Title = "Edit " + ev.Summary
 	default:

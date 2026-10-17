@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if .Message.Subject}}{{.Message.Subject}}{{else}}(no subject){{end}}</title>
+<link rel="stylesheet" href="{{asset "tidewater.css"}}">
+<script src="{{asset "app.js"}}" defer></script>
+</head>
+<body class="print-body" data-print="1">
+{{with .Message}}
+<article class="print">
+  <h1>{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h1>
+  <dl class="details">
+    <dt>From</dt><dd>{{range .From}}{{.Label}} &lt;{{.Email}}&gt; {{end}}</dd>
+    <dt>To</dt><dd>{{addrs .To}}</dd>
+    {{if .Cc}}<dt>Cc</dt><dd>{{addrs .Cc}}</dd>{{end}}
+    <dt>Date</dt><dd>{{longDate $.Loc $.Clock24 .Date}}</dd>
+    {{with .Attachments}}<dt>Attachments</dt><dd>{{range $i, $a := .}}{{if $i}}, {{end}}{{$a.Filename}}{{end}}</dd>{{end}}
+  </dl>
+  <pre class="text-body">{{.Text}}</pre>
+</article>
+{{end}}
+</body>
+</html>

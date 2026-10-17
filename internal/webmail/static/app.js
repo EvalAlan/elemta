@@ -309,6 +309,87 @@
     e.preventDefault();
   });
 
+  // ---- print -------------------------------------------------------------
+  if (body.hasAttribute("data-print")) {
+    window.addEventListener("load", function () { window.print(); });
+  }
+
+  // ---- reminders ---------------------------------------------------------
+  // The server says which reminders are due in the next two hours; each is
+  // shown once, at its time, in the page and (if allowed) as a desktop
+  // notification. Shown keys are remembered for the browser session so a
+  // reload doesn't repeat them.
+  var timers = {};
+  function shownKeys() {
+    try { return JSON.parse(sessionStorage.getItem("reminders-shown") || "{}"); } catch (err) { return {}; }
+  }
+  function markShown(key) {
+    var s = shownKeys();
+    s[key] = Date.now();
+    try { sessionStorage.setItem("reminders-shown", JSON.stringify(s)); } catch (err) { /* storage full or blocked */ }
+  }
+  function toastStack() {
+    var st = $(".toast-stack");
+    if (!st) {
+      st = doc.createElement("div");
+      st.className = "toast-stack";
+      st.setAttribute("role", "status");
+      st.setAttribute("aria-live", "polite");
+      body.appendChild(st);
+    }
+    return st;
+  }
+  function showReminder(r) {
+    if (shownKeys()[r.key]) return;
+    markShown(r.key);
+    var t = doc.createElement("div");
+    t.className = "toast";
+    var a = doc.createElement("a");
+    a.href = r.url;
+    a.textContent = r.title;
+    var p = doc.createElement("span");
+    p.className = "small muted";
+    p.textContent = r.when + (r.where ? " · " + r.where : "");
+    var b = doc.createElement("button");
+    b.className = "button small-button";
+    b.type = "button";
+    b.textContent = "Dismiss";
+    b.addEventListener("click", function () { t.remove(); });
+    t.appendChild(a); t.appendChild(p); t.appendChild(b);
+    toastStack().appendChild(t);
+    if (window.Notification && Notification.permission === "granted") {
+      try {
+        var n = new Notification(r.title, { body: r.when + (r.where ? " · " + r.where : ""), tag: r.key });
+        n.onclick = function () { window.focus(); location.href = r.url; };
+      } catch (err) { /* some browsers only allow notifications from a service worker */ }
+    }
+  }
+  function loadReminders() {
+    fetch("/api/reminders", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (list) {
+        var now = Date.now();
+        list.forEach(function (r) {
+          if (timers[r.key] || shownKeys()[r.key]) return;
+          var wait = r.at * 1000 - now;
+          if (wait <= 0) { showReminder(r); return; }
+          timers[r.key] = setTimeout(function () { showReminder(r); }, wait);
+        });
+      })
+      .catch(function () {});
+  }
+  if (csrf) {
+    loadReminders();
+    setInterval(loadReminders, 10 * 60 * 1000);
+  }
+  var enable = $("[data-enable-notifications]");
+  if (enable && window.Notification && Notification.permission === "default") {
+    enable.hidden = false;
+    enable.addEventListener("click", function () {
+      Notification.requestPermission().then(function () { enable.hidden = true; });
+    });
+  }
+
   // ---- calendar ----------------------------------------------------------
   // Picking a start time moves the end time with it, keeping the duration.
   var start = $("#ev-start-time"), end = $("#ev-end-time");

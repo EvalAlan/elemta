@@ -138,6 +138,9 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 			return err
 		}
 		v.Folders = folders
+		if v.Message != nil {
+			v.Thread = s.conversation(r.Context(), st, v.Message, folders)
+		}
 		p, err := st.List(r.Context(), ls.Folder, lq)
 		if err != nil {
 			return err
@@ -166,6 +169,57 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 		s.decorateMessage(r.Context(), sess, &v)
 	}
 	s.render(w, "mail.html", http.StatusOK, v)
+}
+
+// conversation lists the other messages in the open message's thread, from
+// its own folder and from Sent, so the user sees their replies in line.
+// Failures only cost the list; the message still shows.
+func (s *Server) conversation(ctx context.Context, st Mailstore, m *Message, folders []Folder) []Related {
+	ids := threadIDs(m)
+	if len(ids) == 0 {
+		return nil
+	}
+	search := []string{m.Folder}
+	for _, f := range folders {
+		if (f.Role == RoleSent || f.Role == RoleInbox || f.Role == RoleArchive) && f.Name != m.Folder {
+			search = append(search, f.Name)
+		}
+	}
+	found, err := st.Related(ctx, search, ids)
+	if err != nil {
+		s.log.Debug("webmail: conversation", "error", err)
+		return nil
+	}
+	var out []Related
+	seen := map[string]bool{}
+	for _, r := range found {
+		key := r.Folder + "\x00" + strconv.FormatUint(uint64(r.UID), 10)
+		if seen[key] || (r.Folder == m.Folder && r.UID == m.UID) {
+			continue
+		}
+		seen[key] = true
+		out = append(out, r)
+	}
+	return out
+}
+
+// threadIDs are the Message-IDs that tie a message to its conversation.
+func threadIDs(m *Message) []string {
+	var ids []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id != "" && strings.HasPrefix(id, "<") && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for _, f := range strings.Fields(m.References) {
+		add(f)
+	}
+	add(m.InReplyTo)
+	add(m.MessageID)
+	return ids
 }
 
 // decorateMessage adds what other parts of the webmail know about an open
@@ -258,12 +312,54 @@ func (s *Server) messagePart(w http.ResponseWriter, r *http.Request, sess *Sessi
 	if name == "" {
 		name = fmt.Sprintf("part-%d", part.Index)
 	}
+	if r.URL.Query().Get("inline") == "1" && previewable(part.ContentType) {
+		// Raster images only: they can't carry script. SVG never comes
+		// this way. The response still gets a sandbox CSP in case a
+		// browser is talked into rendering it as a document.
+		w.Header().Set("Content-Type", part.ContentType)
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": name}))
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		// #nosec G705 -- a raster image with its own type, nosniff and a sandbox CSP
+		_, _ = w.Write(body)
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.Header().Set("Cache-Control", "private, no-store")
 	// #nosec G705 -- served as an octet-stream attachment with nosniff, so the browser never renders it
 	_, _ = w.Write(body)
+}
+
+// previewable reports whether an attachment type can be shown inline as an
+// image preview.
+func previewable(ct string) bool {
+	switch strings.ToLower(ct) {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return true
+	}
+	return false
+}
+
+// messagePrint renders a message on a plain page for printing.
+func (s *Server) messagePrint(w http.ResponseWriter, r *http.Request, sess *Session) {
+	folder, uid, raw, err := s.loadMessage(r, sess)
+	if err != nil {
+		s.fail(w, r, sess, err)
+		return
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		s.fail(w, r, sess, err)
+		return
+	}
+	msg.Folder, msg.UID = folder, uid
+	if msg.Text == "" && msg.HTML != "" {
+		msg.Text = htmlToText(msg.HTML)
+	}
+	s.render(w, "print.html", http.StatusOK, view{Title: msg.Subject, Session: sess, Message: msg})
 }
 
 // messageRaw downloads the message source as .eml.
