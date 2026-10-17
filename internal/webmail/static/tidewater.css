@@ -422,7 +422,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
   .folders { flex-direction: row; overflow-x: auto; }
   .folder { white-space: nowrap; }
   .folder[class*="depth-"] { padding-left: 10px; }
-  .manage, .import, .cal-legend, .mini { display: none; }
+  .manage, .import, .cal-legend, .mini, .sidebar h3, .notify-enable { display: none; }
   .message, .event-view { padding: 16px; }
   .compose { margin: 0; border-radius: 0; border-left: 0; border-right: 0; }
   .page { margin: 12px; }
@@ -680,3 +680,10 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .editor blockquote { margin: 0 0 0 4px; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); }
 .editor:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-soft); }
 .to-rich { border-bottom: 0; }
+.toolbar .menu-body { left: 0; right: auto; }
+.menu-body form { display: flex; flex-direction: column; gap: 2px; }
+.menu-item { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; color: var(--ink); }
+.menu-item:hover { background: var(--line-soft); }
+.menu-body select[size] { max-width: none; width: 100%; padding: 4px; }
+.quick-add input { min-width: 0; }
+.quick-add .compact-date { flex: 0 0 auto; width: 140px; }

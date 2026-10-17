@@ -90,21 +90,34 @@
       {{end}}
       <form action="/mail/action" method="post" class="inline">
         <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
-        {{if .Flagged}}<button class="button" name="op" value="unflag" data-key="s">Unflag</button>{{else}}<button class="button" name="op" value="flag" data-key="s">Flag</button>{{end}}
-        <button class="button" name="op" value="unread">Mark unread</button>
         {{if not (isRole .Folder $.Folders "archive")}}<button class="button" name="op" value="archive" data-key="e">Archive</button>{{end}}
-        {{if isRole .Folder $.Folders "junk"}}<button class="button" name="op" value="notjunk">Not junk</button>{{else}}<button class="button" name="op" value="junk">Junk</button>{{end}}
         <button class="button danger" name="op" value="delete" data-key="#" data-confirm="{{if isRole .Folder $.Folders "trash"}}Delete this message for good?{{end}}">Delete</button>
+        {{if .Flagged}}<button class="button" name="op" value="unflag" data-key="s">Unflag</button>{{else}}<button class="button" name="op" value="flag" data-key="s">Flag</button>{{end}}
       </form>
-      <form class="move inline" action="/mail/action" method="post">
-        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="move"><input type="hidden" name="back" value="{{$.List.URL}}">
-        <label class="visually-hidden" for="dest">Move to folder</label>
-        <select id="dest" name="dest" class="compact">
-          {{range $.Folders}}{{if and .Selectable (ne .Name $.Folder)}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
-        </select>
-        <button class="button" type="submit">Move</button>
-      </form>
-      {{if .From}}<a class="button ghost" href="/filters?new=1&amp;from={{(index .From 0).Email}}" title="Make a filter for mail from this sender">Filter…</a>{{end}}
+      <details class="menu">
+        <summary class="button">Move</summary>
+        <form class="menu-body" action="/mail/action" method="post">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="move"><input type="hidden" name="back" value="{{$.List.URL}}">
+          <label class="small muted" for="dest">Move to folder</label>
+          <select id="dest" name="dest" class="compact" size="6">
+            {{range $.Folders}}{{if and .Selectable (ne .Name $.Folder)}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
+          </select>
+          <button class="button" type="submit">Move</button>
+        </form>
+      </details>
+      <details class="menu">
+        <summary class="button">More</summary>
+        <div class="menu-body">
+          <form action="/mail/action" method="post">
+            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+            <button class="menu-item" name="op" value="unread">Mark unread</button>
+            {{if isRole .Folder $.Folders "junk"}}<button class="menu-item" name="op" value="notjunk">Not junk</button>{{else}}<button class="menu-item" name="op" value="junk">Report junk</button>{{end}}
+          </form>
+          {{if .From}}<a href="/filters?new=1&amp;from={{(index .From 0).Email}}">Filter mail like this…</a>{{end}}
+          <a href="{{printURL .Folder .UID}}" target="_blank" rel="noopener">Print</a>
+          <a href="{{rawURL .Folder .UID}}">Download original (.eml)</a>
+        </div>
+      </details>
       <span class="push nav-arrows">
         {{if .Newer}}<a class="button" href="{{$.List.MessageURL .Newer}}" title="Newer (k)" data-key="k">↑</a>{{end}}
         {{if .Older}}<a class="button" href="{{$.List.MessageURL .Older}}" title="Older (j)" data-key="j">↓</a>{{end}}
@@ -180,7 +193,6 @@
       {{else}}
         <pre class="text-body">{{linkify .Text}}</pre>
       {{end}}
-      <p class="small"><a href="{{rawURL .Folder .UID}}">Download original (.eml)</a> · <a href="{{printURL .Folder .UID}}" target="_blank" rel="noopener">Print</a></p>
     </div>
   {{else}}
     <p class="empty reader-empty">Select a message to read it.<br><span class="small">Press <kbd>?</kbd> for keyboard shortcuts.</span></p>

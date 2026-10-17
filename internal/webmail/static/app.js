@@ -39,6 +39,18 @@
     }
   }, true);
 
+  // ---- menus -------------------------------------------------------------
+  // Menus are <details>, so they open without script; this closes them on
+  // a click elsewhere or Escape, as menus are expected to behave.
+  doc.addEventListener("click", function (e) {
+    $$("details.menu[open]").forEach(function (d) {
+      if (!d.contains(e.target)) d.removeAttribute("open");
+    });
+  });
+  doc.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") $$("details.menu[open]").forEach(function (d) { d.removeAttribute("open"); });
+  });
+
   // ---- bulk selection ------------------------------------------------------
   var bulk = $("#bulk");
   if (bulk) {
