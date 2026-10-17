@@ -9,6 +9,7 @@
         <label class="check" title="Select all"><input type="checkbox" data-select-all><span class="visually-hidden">Select all</span></label>
         <h1>{{if .Query}}Results for “{{.Query}}”{{else}}{{folderLabel .Folder .Folders}}{{end}}</h1>
         {{with .Page}}<span class="mono muted">{{.Total}}</span>{{end}}
+        <a class="refresh" href="{{.List.URL}}" title="Check for new mail" aria-label="Check for new mail" data-refresh>{{template "icon-refresh"}}</a>
         <details class="menu push">
           <summary class="button small-button" title="Sort">Sort</summary>
           <div class="menu-body" role="menu">

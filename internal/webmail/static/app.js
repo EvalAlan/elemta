@@ -644,6 +644,13 @@
     e.preventDefault();
   });
 
+  // ---- refresh -----------------------------------------------------------
+  // The refresh link reloads the list (which also checks the server for new
+  // mail); the spin shows it was pressed while the page loads.
+  $$("[data-refresh]").forEach(function (a) {
+    a.addEventListener("click", function () { a.classList.add("spinning"); });
+  });
+
   // ---- message frame -----------------------------------------------------
   // The message body is a sandboxed, script-free frame on our origin. It's
   // sized to its content here, so a long message scrolls with the page

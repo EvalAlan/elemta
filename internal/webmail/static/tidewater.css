@@ -774,3 +774,9 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .editor td, .editor th { border: 1px solid var(--line); padding: 4px 6px; min-width: 40px; }
 .editor pre { background: var(--surface-2); padding: 8px; border-radius: 4px; }
 .body-frame.autosized { min-height: 120px; }
+.refresh { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 6px; color: var(--muted); }
+.refresh:hover { background: var(--line-soft); color: var(--accent-dark); }
+.refresh .icon { width: 16px; height: 16px; }
+.refresh.spinning .icon { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .refresh.spinning .icon { animation: none; } }
