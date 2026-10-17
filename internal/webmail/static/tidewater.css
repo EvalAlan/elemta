@@ -780,3 +780,13 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .refresh.spinning .icon { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .refresh.spinning .icon { animation: none; } }
+.thread-count { font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; line-height: 16px; }
+.thread-note { margin: -8px 0 0; }
+.thread-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.thread-card > summary { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; list-style: none; }
+.thread-card > summary::-webkit-details-marker { display: none; }
+.thread-card[open] > summary { border-bottom: 1px solid var(--line-soft); }
+.tc-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.tc-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.unread-dot { background: var(--accent); }
+.tc-frame { height: 240px; min-height: 120px; }

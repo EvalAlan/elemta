@@ -655,6 +655,13 @@
   // The message body is a sandboxed, script-free frame on our origin. It's
   // sized to its content here, so a long message scrolls with the page
   // instead of inside a box; images that load later resize it again.
+  // Conversation cards load their message when first opened.
+  $$("details.thread-card").forEach(function (card) {
+    card.addEventListener("toggle", function () {
+      var f = $("iframe[data-src]", card);
+      if (card.open && f && !f.getAttribute("src")) f.setAttribute("src", f.getAttribute("data-src"));
+    });
+  });
   $$("iframe[data-autosize]").forEach(function (frame) {
     var fit = function () {
       try {

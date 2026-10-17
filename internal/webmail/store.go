@@ -3,6 +3,8 @@ package webmail
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -49,6 +51,7 @@ func (a Address) Label() string {
 // Summary is one row of a message list.
 type Summary struct {
 	UID           uint32
+	MessageID     string
 	From          []Address
 	To            []Address
 	Subject       string
@@ -77,6 +80,43 @@ type Page struct {
 	Page     int // 1-based
 	PageSize int
 }
+
+// Conversation is one row of a threaded list: the messages of one thread
+// in the folder, oldest first.
+type Conversation struct {
+	UIDs          []uint32
+	Messages      []Summary // the most recent ones, oldest first, for display
+	Latest        Summary
+	Subject       string // the thread's subject, without Re:/Fwd:
+	Participants  []Address
+	Unread        int
+	Flagged       bool
+	HasAttachment bool
+}
+
+// Count is the number of messages in the conversation.
+func (c Conversation) Count() int { return len(c.UIDs) }
+
+// UIDList is the conversation's UIDs as one form value ("12,15,19").
+func (c Conversation) UIDList() string {
+	parts := make([]string, len(c.UIDs))
+	for i, u := range c.UIDs {
+		parts[i] = strconv.FormatUint(uint64(u), 10)
+	}
+	return strings.Join(parts, ",")
+}
+
+// ThreadPage is a window of a folder's conversations.
+type ThreadPage struct {
+	Folder        string
+	Conversations []Conversation
+	Total         int // conversations matching, across all pages
+	Page          int
+	PageSize      int
+}
+
+// Pages is the number of pages Total spans.
+func (p ThreadPage) Pages() int { return Page{Total: p.Total, PageSize: p.PageSize}.Pages() }
 
 // Pages is the number of pages Total spans.
 func (p Page) Pages() int {
@@ -145,6 +185,10 @@ type Mailstore interface {
 	Folders(ctx context.Context) ([]Folder, error)
 	// List returns one page of folder matching q.
 	List(ctx context.Context, folder string, q ListQuery) (Page, error)
+	// ListThreads returns one page of folder's conversations matching q,
+	// most recent activity first. Each conversation lists every matching
+	// message in it.
+	ListThreads(ctx context.Context, folder string, q ListQuery) (ThreadPage, error)
 	// Raw returns the full RFC 5322 source of a message, without marking it
 	// read. maxBytes caps the download; ErrTooLarge reports a bigger message.
 	Raw(ctx context.Context, folder string, uid uint32, maxBytes int64) ([]byte, error)

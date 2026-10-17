@@ -100,6 +100,17 @@ var templateFuncs = template.FuncMap{
 		return "/mail/part?" + url.Values{"f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}, "n": {strconv.Itoa(n)}}.Encode()
 	},
 	"previewable": previewable,
+	"inUIDs": func(u uint32, list []uint32) bool {
+		for _, x := range list {
+			if x == u {
+				return true
+			}
+		}
+		return false
+	},
+	// threadCard pairs a conversation message with the page, for the
+	// thread-card template, which needs both.
+	"threadCard": func(r Related, v view) map[string]any { return map[string]any{"R": r, "V": v} },
 	"sourceURL": func(folder string, uid uint32) string {
 		return "/mail/source?" + url.Values{"f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}}.Encode()
 	},

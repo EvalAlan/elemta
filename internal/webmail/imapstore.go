@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -444,6 +445,9 @@ func toSummary(m *imapclient.FetchMessageBuffer) Summary {
 	sum := Summary{UID: uint32(m.UID), Size: m.RFC822Size, Date: m.InternalDate}
 	if env := m.Envelope; env != nil {
 		sum.Subject = env.Subject
+		if env.MessageID != "" {
+			sum.MessageID = "<" + strings.Trim(env.MessageID, "<>") + ">"
+		}
 		sum.From = toAddresses(env.From)
 		sum.To = toAddresses(env.To)
 		if !env.Date.IsZero() {
@@ -862,4 +866,131 @@ func isConnError(err error) bool {
 	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) ||
 		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, syscall.EPIPE) || errors.As(err, &netErr)
+}
+
+// maxThreadSummaries bounds how many messages of one conversation are
+// fetched to draw its row; the row needs only the latest few.
+const maxThreadSummaries = 20
+
+func (s *imapStore) ListThreads(ctx context.Context, folder string, q ListQuery) (ThreadPage, error) {
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 {
+		q.PageSize = defaultPageSize
+	}
+	result := ThreadPage{Folder: folder, Page: q.Page, PageSize: q.PageSize}
+	if _, err := s.syncFolder(folder); err != nil {
+		return result, err
+	}
+	var threads [][]uint32
+	if hasThreadReferences(s.c.Caps()) {
+		data, err := s.c.UIDThread(&imapclient.ThreadOptions{Algorithm: imap.ThreadReferences, SearchCriteria: searchCriteria(q)}).Wait()
+		if err != nil {
+			return result, fmt.Errorf("webmail: thread %q: %w", folder, err)
+		}
+		for _, t := range data {
+			threads = append(threads, flattenThread(t, nil))
+		}
+	} else {
+		// Without THREAD every message is its own conversation.
+		data, err := s.c.UIDSearch(searchCriteria(q), nil).Wait()
+		if err != nil {
+			return result, fmt.Errorf("webmail: search %q: %w", folder, err)
+		}
+		for _, u := range data.AllUIDs() {
+			threads = append(threads, []uint32{uint32(u)})
+		}
+	}
+	// Most recent activity first. UIDs grow with arrival, so a thread's
+	// highest UID is its latest arrival, with no fetch needed to order.
+	latest := func(t []uint32) uint32 {
+		m := uint32(0)
+		for _, u := range t {
+			m = max(m, u)
+		}
+		return m
+	}
+	sort.Slice(threads, func(i, j int) bool { return (latest(threads[i]) > latest(threads[j])) != q.Reverse })
+	result.Total = len(threads)
+	start := (q.Page - 1) * q.PageSize
+	if start >= len(threads) {
+		return result, nil
+	}
+	threads = threads[start:min(start+q.PageSize, len(threads))]
+
+	set := imap.UIDSet{}
+	for i, t := range threads {
+		sort.Slice(t, func(a, b int) bool { return t[a] < t[b] })
+		threads[i] = t
+		for _, u := range t[max(0, len(t)-maxThreadSummaries):] {
+			set.AddNum(imap.UID(u))
+		}
+	}
+	msgs, err := s.c.Fetch(set, summaryFetch).Collect()
+	if err != nil {
+		return result, fmt.Errorf("webmail: fetch %q: %w", folder, err)
+	}
+	byUID := make(map[uint32]Summary, len(msgs))
+	for _, m := range msgs {
+		byUID[uint32(m.UID)] = toSummary(m)
+	}
+	for _, t := range threads {
+		c := Conversation{UIDs: t}
+		seen := map[string]bool{}
+		for _, u := range t {
+			sum, ok := byUID[u]
+			if !ok {
+				continue
+			}
+			c.Messages = append(c.Messages, sum)
+			if !sum.Seen {
+				c.Unread++
+			}
+			c.Flagged = c.Flagged || sum.Flagged
+			c.HasAttachment = c.HasAttachment || sum.HasAttachment
+			if sum.Date.After(c.Latest.Date) || c.Latest.UID == 0 {
+				c.Latest = sum
+			}
+			for _, a := range sum.From {
+				key := strings.ToLower(a.Email)
+				if !seen[key] && len(c.Participants) < 4 {
+					seen[key] = true
+					c.Participants = append(c.Participants, a)
+				}
+			}
+		}
+		if len(c.Messages) == 0 {
+			continue
+		}
+		c.Subject = baseSubject(c.Messages[0].Subject)
+		result.Conversations = append(result.Conversations, c)
+	}
+	return result, nil
+}
+
+func hasThreadReferences(caps imap.CapSet) bool {
+	for _, a := range caps.ThreadAlgorithms() {
+		if a == imap.ThreadReferences {
+			return true
+		}
+	}
+	return false
+}
+
+// flattenThread lists every UID in a thread tree.
+func flattenThread(t imapclient.ThreadData, out []uint32) []uint32 {
+	out = append(out, t.Chain...)
+	for _, sub := range t.SubThreads {
+		out = flattenThread(sub, out)
+	}
+	return out
+}
+
+var subjectPrefixRE = regexp.MustCompile(`(?i)^\s*((re|fwd?|aw|wg|sv|vs|antw|tr)\s*(\[\d+\])?\s*:\s*)+`)
+
+// baseSubject strips reply and forward prefixes, in the languages mail
+// clients commonly add them in, to give a conversation its title.
+func baseSubject(s string) string {
+	return strings.TrimSpace(subjectPrefixRE.ReplaceAllString(s, ""))
 }

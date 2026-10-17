@@ -29,6 +29,24 @@ type Settings struct {
 	CalendarView string `json:"calendar_view,omitempty"`
 	// Theme is "light" or "dark", or empty to follow the device's setting.
 	Theme string `json:"theme,omitempty"`
+	// Conversations groups the message list by thread; nil means on.
+	Conversations *bool `json:"conversations,omitempty"`
+}
+
+// GroupConversations reports whether lists are grouped by thread.
+func (p Settings) GroupConversations() bool { return p.Conversations == nil || *p.Conversations }
+
+// conversationsSubmit switches the list between conversations and single
+// messages, from the list's own menu.
+func (s *Server) conversationsSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
+	p := s.prefs(r.Context(), sess)
+	on := r.PostFormValue("on") == "1"
+	p.Conversations = &on
+	if err := s.savePrefs(r.Context(), sess, p); err != nil {
+		s.fail(w, r, sess, err)
+		return
+	}
+	redirectLocal(w, r, localBack(r.PostFormValue("back"), "/mail"))
 }
 
 // themeCookie remembers the theme in the browser too, so the sign-in page,
@@ -233,6 +251,8 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		p.PageSize = n
 	}
 	p.Theme = validTheme(r.PostFormValue("theme"))
+	conv := r.PostFormValue("conversations") == "1"
+	p.Conversations = &conv
 	switch v := r.PostFormValue("calendar_view"); v {
 	case "month", "week", "day", "agenda":
 		p.CalendarView = v

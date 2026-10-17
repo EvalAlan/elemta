@@ -21,21 +21,22 @@ import (
 
 // fakeStore is an in-memory Mailstore for handler tests.
 type fakeStore struct {
-	mu        sync.Mutex
-	folders   []Folder
-	messages  map[string][]Summary
-	raw       map[uint32][]byte
-	appended  map[Role][][]byte
-	seen      map[uint32]bool
-	moved     map[uint32]string
-	deleted   []uint32
-	flags     map[uint32]map[string]bool
-	emptied   []string
-	expunged  []uint32
-	allRead   []string
-	objects   map[Collection]map[string]Object
-	lastQuery ListQuery
-	related   []Related
+	mu          sync.Mutex
+	folders     []Folder
+	messages    map[string][]Summary
+	raw         map[uint32][]byte
+	appended    map[Role][][]byte
+	seen        map[uint32]bool
+	moved       map[uint32]string
+	deleted     []uint32
+	flags       map[uint32]map[string]bool
+	emptied     []string
+	expunged    []uint32
+	allRead     []string
+	objects     map[Collection]map[string]Object
+	lastQuery   ListQuery
+	related     []Related
+	threadCalls int
 }
 
 func newFakeStore() *fakeStore {
@@ -62,6 +63,35 @@ func (f *fakeStore) List(_ context.Context, folder string, q ListQuery) (Page, e
 	f.mu.Unlock()
 	msgs := f.messages[folder]
 	return Page{Folder: folder, Messages: msgs, Total: len(msgs), Page: 1, PageSize: q.PageSize}, nil
+}
+func (f *fakeStore) ListThreads(_ context.Context, folder string, q ListQuery) (ThreadPage, error) {
+	f.mu.Lock()
+	f.lastQuery = q
+	f.threadCalls++
+	f.mu.Unlock()
+	// Messages sharing a base subject form one conversation.
+	var out []Conversation
+	idx := map[string]int{}
+	for _, m := range f.messages[folder] {
+		key := baseSubject(m.Subject)
+		i, ok := idx[key]
+		if !ok {
+			i = len(out)
+			idx[key] = i
+			out = append(out, Conversation{Subject: key})
+		}
+		c := &out[i]
+		c.UIDs = append(c.UIDs, m.UID)
+		c.Messages = append(c.Messages, m)
+		if c.Latest.UID == 0 || m.Date.After(c.Latest.Date) {
+			c.Latest = m
+		}
+		if !m.Seen {
+			c.Unread++
+		}
+		c.Participants = append(c.Participants, m.From...)
+	}
+	return ThreadPage{Folder: folder, Conversations: out, Total: len(out), Page: 1, PageSize: q.PageSize}, nil
 }
 func (f *fakeStore) Raw(_ context.Context, _ string, uid uint32, _ int64) ([]byte, error) {
 	if b, ok := f.raw[uid]; ok {

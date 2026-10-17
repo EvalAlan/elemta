@@ -13,6 +13,7 @@
         <details class="menu push">
           <summary class="button small-button" title="Sort">Sort</summary>
           <div class="menu-body" role="menu">
+            <button class="menu-item" form="conv-toggle" name="on" value="{{if $.Threaded}}0{{else}}1{{end}}">{{if $.Threaded}}✓ {{end}}Group by conversation</button>
             {{with .List}}
             <a role="menuitem" href="{{.SortURL ""}}"{{if eq .Sort ""}} aria-current="true"{{end}}>Date{{if eq .Sort ""}}{{if .Reverse}} ↑{{else}} ↓{{end}}{{end}}</a>
             <a role="menuitem" href="{{.SortURL "from"}}"{{if eq .Sort "from"}} aria-current="true"{{end}}>Sender{{if eq .Sort "from"}}{{if .Reverse}} ↓{{else}} ↑{{end}}{{end}}</a>
@@ -37,10 +38,32 @@
         <button class="button" name="op" value="move">Move</button>
       </div>
     {{with .Page}}
-      {{if not .Messages}}
+      {{if and (not .Messages) (not $.Conversations)}}
         <p class="empty">{{if $.Query}}No messages match your search.{{else}}This folder is empty.{{end}}</p>
       {{end}}
       <ol class="messages" data-folder="{{$.Folder}}" data-role="{{roleName $.Folder $.Folders}}" data-back="{{$.List.URL}}">
+      {{if $.Threaded}}
+      {{range $.Conversations}}
+        {{$open := $.List.MessageURL .Latest.UID}}
+        <li class="row-wrap{{if .Unread}} unread{{end}}{{if and $.Message (inUIDs $.Message.UID .UIDs)}} selected{{end}}" data-uid="{{.UIDList}}" data-ctx="message"{{if not .Unread}} data-seen{{end}}{{if .Flagged}} data-flagged{{end}}{{with .Latest.From}} data-from="{{(index . 0).Email}}"{{end}} data-open="{{$open}}" data-count="{{.Count}}">
+          <label class="check"><input type="checkbox" name="uid" value="{{.UIDList}}"><span class="visually-hidden">Select conversation</span></label>
+          <a class="row" href="{{$open}}"{{if and $.Message (inUIDs $.Message.UID .UIDs)}} aria-current="true"{{end}}>
+            <span class="row-top">
+              <span class="dot" aria-hidden="true"></span>
+              <span class="from">{{if or (isRole $.Folder $.Folders "sent")}}{{addrs .Latest.To}}{{else}}{{addrs .Participants}}{{end}}</span>
+              {{if gt .Count 1}}<span class="thread-count" title="{{.Count}} messages">{{.Count}}</span>{{end}}
+              {{if .HasAttachment}}<span class="marker" title="Has attachments">{{template "icon-clip"}}</span>{{end}}
+              {{if .Latest.Answered}}<span class="marker" title="Replied">{{template "icon-reply"}}</span>{{end}}
+              {{if .Flagged}}<span class="flag" aria-label="Flagged">{{template "icon-star"}}</span>{{end}}
+              <time class="mono muted" datetime="{{.Latest.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Latest.Date}}</time>
+            </span>
+            <span class="subject">{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
+            {{if .Latest.Tags}}<span class="tags">{{range .Latest.Tags}}<span class="tag {{tagClass .}}">{{.}}</span>{{end}}</span>{{end}}
+            {{if .Unread}}<span class="visually-hidden">{{.Unread}} unread</span>{{end}}
+          </a>
+        </li>
+      {{end}}
+      {{else}}
       {{range .Messages}}
         <li class="row-wrap{{if not .Seen}} unread{{end}}{{if and $.Message (eq .UID $.Message.UID)}} selected{{end}}" data-uid="{{.UID}}" data-ctx="message"{{if .Seen}} data-seen{{end}}{{if .Flagged}} data-flagged{{end}}{{with .From}} data-from="{{(index . 0).Email}}"{{end}} data-open="{{$.List.MessageURL .UID}}">
           <label class="check"><input type="checkbox" name="uid" value="{{.UID}}"><span class="visually-hidden">Select</span></label>
@@ -60,6 +83,7 @@
           </a>
         </li>
       {{end}}
+      {{end}}
       </ol>
       {{if gt .Pages 1}}
       <nav class="pager" aria-label="Pages">
@@ -69,6 +93,10 @@
       </nav>
       {{end}}
     {{end}}
+    </form>
+    {{/* Outside #bulk: forms can't nest, and an inner </form> would end the bulk form early. */}}
+    <form id="conv-toggle" action="/settings/conversations" method="post" hidden>
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}"><input type="hidden" name="back" value="{{.List.URL}}">
     </form>
     {{if and (or (isRole .Folder .Folders "trash") (isRole .Folder .Folders "junk")) .Page .Page.Total}}
     <form class="empty-folder" action="/mail/action" method="post">
@@ -126,6 +154,8 @@
     </div>
     <div class="message">
       <h2>{{if .HighPriority}}<span class="priority" title="High priority">!</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
+      {{if $.Thread}}<p class="small muted thread-note">{{add (len $.Thread) 1}} messages in this conversation</p>{{end}}
+      {{range $.ThreadBefore}}{{template "thread-card" (threadCard . $)}}{{end}}
       <div class="sender">
         <span class="avatar soft" aria-hidden="true">{{initials .From}}</span>
         <div class="sender-text">
@@ -169,16 +199,6 @@
       </div>
       {{with .Invite}}{{template "invite" .}}{{end}}
       {{if .ReceiptTo}}<p class="banner subtle">The sender asked for a read receipt. Elemta doesn't send them automatically.</p>{{end}}
-      {{with $.Thread}}
-      <details class="thread" open>
-        <summary>Conversation · {{add (len .) 1}} messages</summary>
-        <ol class="thread-list">
-          {{range .}}
-          <li><a href="{{messageURL .Folder .UID 1 ""}}"><span class="strong">{{if eq .Folder $.Message.Folder}}{{addrs .From}}{{else}}{{addrs .From}} <span class="muted small">({{.Folder}})</span>{{end}}</span><span class="subject muted">{{.Subject}}</span><time class="mono muted small">{{shortDate $.Loc $.Clock24 .Date}}</time></a></li>
-          {{end}}
-        </ol>
-      </details>
-      {{end}}
       {{with .Attachments}}
       <ul class="attachments" aria-label="Attachments">
         {{range .}}
@@ -194,10 +214,32 @@
       {{else}}
         <pre class="text-body">{{linkify .Text}}</pre>
       {{end}}
+      {{range $.ThreadAfter}}{{template "thread-card" (threadCard . $)}}{{end}}
     </div>
   {{else}}
     <p class="empty reader-empty">Select a message to read it.<br><span class="small">Press <kbd>?</kbd> for keyboard shortcuts.</span></p>
   {{end}}
   </article>
 </div>
+{{end}}
+{{define "thread-card"}}
+<details class="thread-card" data-ctx="message-card">
+  <summary>
+    <span class="avatar soft small-avatar" aria-hidden="true">{{initials .R.From}}</span>
+    <span class="tc-from strong">{{addrs .R.From}}</span>
+    {{if ne .R.Folder .V.Folder}}<span class="muted small">({{.R.Folder}})</span>{{end}}
+    {{if not .R.Seen}}<span class="dot unread-dot" title="Unread"></span>{{end}}
+    <time class="mono muted small push" datetime="{{.R.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate .V.Loc .V.Clock24 .R.Date}}</time>
+  </summary>
+  <div class="tc-body">
+    <div class="tc-actions">
+      <a class="button small-button" href="{{messageURL .R.Folder .R.UID 1 ""}}">Open</a>
+      <a class="button small-button" href="{{composeURL "reply" .R.Folder .R.UID}}">Reply</a>
+      <a class="button small-button" href="{{composeURL "replyall" .R.Folder .R.UID}}">Reply all</a>
+      <a class="button small-button" href="{{composeURL "forward" .R.Folder .R.UID}}">Forward</a>
+    </div>
+    <iframe class="body-frame tc-frame" title="Message from {{addrs .R.From}}" sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin" data-autosize data-src="{{bodyURL .R.Folder .R.UID false}}"></iframe>
+    <noscript><a href="{{messageURL .R.Folder .R.UID 1 ""}}">Show this message</a></noscript>
+  </div>
+</details>
 {{end}}

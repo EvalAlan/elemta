@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings", s.authed(s.settingsSubmit))
 	mux.HandleFunc("POST /settings/timezone", s.authed(s.timezoneSubmit))
 	mux.HandleFunc("POST /settings/theme", s.authed(s.themeSubmit))
+	mux.HandleFunc("POST /settings/conversations", s.authed(s.conversationsSubmit))
 	mux.HandleFunc("GET /contacts", s.authed(s.contactsPage))
 	mux.HandleFunc("POST /contacts", s.authed(s.contactsSubmit))
 	mux.HandleFunc("GET /contacts/export", s.authed(s.contactsExport))
@@ -224,27 +225,34 @@ type view struct {
 	Session *Session
 	// App is the top-bar section the page belongs to: mail (the default),
 	// calendar, contacts or tasks.
-	App      string
-	Folders  []Folder
-	Folder   string
-	Query    string
-	List     *listState
-	Notice   string
-	Problem  string
-	Page     *Page
-	Message  *Message
-	Body     *sanitizeResult
-	Remote   bool
-	Tags     []string
-	Thread   []Related
-	Source   string
-	Compose  *composeView
-	Settings *settingsView
-	Contacts *contactsView
-	Calendar *calendarView
-	Tasks    *tasksView
-	Filters  *filtersView
-	Status   int
+	App     string
+	Folders []Folder
+	Folder  string
+	Query   string
+	List    *listState
+	Notice  string
+	Problem string
+	Page    *Page
+	Message *Message
+	Body    *sanitizeResult
+	Remote  bool
+	Tags    []string
+	Thread  []Related
+	// Conversations is the threaded list, when the list is grouped.
+	Conversations []Conversation
+	Threaded      bool
+	// ThreadBefore and ThreadAfter are the open message's conversation,
+	// split around it by date.
+	ThreadBefore []Related
+	ThreadAfter  []Related
+	Source       string
+	Compose      *composeView
+	Settings     *settingsView
+	Contacts     *contactsView
+	Calendar     *calendarView
+	Tasks        *tasksView
+	Filters      *filtersView
+	Status       int
 	// Loc and Clock24 control how times are shown.
 	Loc     *time.Location
 	Clock24 bool

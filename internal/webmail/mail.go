@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -140,12 +141,43 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 		v.Folders = folders
 		if v.Message != nil {
 			v.Thread = s.conversation(r.Context(), st, v.Message, folders)
+			for _, rel := range v.Thread {
+				if rel.Date.After(v.Message.Date) {
+					v.ThreadAfter = append(v.ThreadAfter, rel)
+				} else {
+					v.ThreadBefore = append(v.ThreadBefore, rel)
+				}
+			}
 		}
-		p, err := st.List(r.Context(), ls.Folder, lq)
-		if err != nil {
-			return err
+		var p Page
+		// Conversations are ordered by activity, so they apply to the date
+		// order only; Drafts are never grouped.
+		if s.prefsCached(sess).GroupConversations() && ls.Sort == SortDate && !isRoleIn(ls.Folder, folders, RoleDrafts) {
+			tp, err := st.ListThreads(r.Context(), ls.Folder, lq)
+			if err != nil {
+				return err
+			}
+			v.Threaded, v.Conversations = true, tp.Conversations
+			p = Page{Folder: tp.Folder, Total: tp.Total, Page: tp.Page, PageSize: tp.PageSize}
+			// Newer/older navigation walks the conversations' latest messages.
+			for _, c := range tp.Conversations {
+				p.Messages = append(p.Messages, c.Latest)
+			}
+		} else {
+			var err error
+			p, err = st.List(r.Context(), ls.Folder, lq)
+			if err != nil {
+				return err
+			}
 		}
 		v.Page = &p
+		for _, c := range v.Conversations {
+			for _, m := range c.Messages {
+				if v.Message != nil && m.UID == uid {
+					v.Message.Flagged, v.Message.Tags = m.Flagged, m.Tags
+				}
+			}
+		}
 		for i, m := range p.Messages {
 			if v.Message == nil || m.UID != uid {
 				continue
@@ -171,6 +203,15 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	s.render(w, "mail.html", http.StatusOK, v)
 }
 
+func isRoleIn(name string, folders []Folder, role Role) bool {
+	for _, f := range folders {
+		if f.Name == name {
+			return f.Role == role
+		}
+	}
+	return false
+}
+
 // conversation lists the other messages in the open message's thread, from
 // its own folder and from Sent, so the user sees their replies in line.
 // Failures only cost the list; the message still shows.
@@ -190,16 +231,27 @@ func (s *Server) conversation(ctx context.Context, st Mailstore, m *Message, fol
 		s.log.Debug("webmail: conversation", "error", err)
 		return nil
 	}
+	// The same message can be in two folders: a copy sent to oneself is in
+	// Sent and the Inbox. Show each once, preferring the copy in the folder
+	// being read, and never repeat the open message itself.
+	sort.SliceStable(found, func(i, j int) bool { return found[i].Folder == m.Folder && found[j].Folder != m.Folder })
 	var out []Related
 	seen := map[string]bool{}
+	if id := strings.Trim(strings.TrimSpace(m.MessageID), "<>"); id != "" {
+		seen["id:<"+id+">"] = true
+	}
 	for _, r := range found {
 		key := r.Folder + "\x00" + strconv.FormatUint(uint64(r.UID), 10)
-		if seen[key] || (r.Folder == m.Folder && r.UID == m.UID) {
+		if seen[key] || (r.Folder == m.Folder && r.UID == m.UID) || (r.MessageID != "" && seen["id:"+r.MessageID]) {
 			continue
 		}
 		seen[key] = true
+		if r.MessageID != "" {
+			seen["id:"+r.MessageID] = true
+		}
 		out = append(out, r)
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Date.Before(out[j].Date) })
 	return out
 }
 
@@ -266,9 +318,14 @@ func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Sessi
 		return
 	}
 	msg, err := parseMessage(raw)
-	if err != nil || msg.HTML == "" {
-		http.Error(w, "No HTML body.", http.StatusNotFound)
+	if err != nil {
+		http.Error(w, "The message couldn't be read.", http.StatusNotFound)
 		return
+	}
+	if msg.HTML == "" {
+		// Plain-text messages render here too, so a conversation can show
+		// every message the same way, each in its own frame.
+		msg.HTML = `<pre style="white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0">` + string(linkify(msg.Text)) + `</pre>`
 	}
 	remote := r.URL.Query().Get("remote") == "1"
 	res := sanitizeHTML(msg.HTML, sanitizeOptions{
@@ -434,9 +491,12 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 	folder := r.PostFormValue("f")
 	op := r.PostFormValue("op")
 	var uids []uint32
+	// A conversation row posts its messages as one comma-joined value.
 	for _, v := range r.PostForm["uid"] {
-		if u, ok := parseUID(v); ok {
-			uids = append(uids, u)
+		for _, part := range strings.Split(v, ",") {
+			if u, ok := parseUID(strings.TrimSpace(part)); ok {
+				uids = append(uids, u)
+			}
 		}
 	}
 	if folder == "" {

@@ -389,3 +389,29 @@ func TestIMAPStoreMarkAllRead(t *testing.T) {
 		t.Fatalf("unread after mark all read = %d", p.Total)
 	}
 }
+
+func TestIMAPStoreListThreads(t *testing.T) {
+	cfg := startIMAP(t)
+	st := dialTest(t, cfg)
+	ctx := context.Background()
+	appendTo(t, st, "INBOX", []byte("From: a@example.com\r\nSubject: Plan\r\nMessage-Id: <p1@x>\r\nDate: Mon, 19 Oct 2026 09:00:00 +0000\r\n\r\none\r\n"))
+	appendTo(t, st, "INBOX", []byte("From: b@example.com\r\nSubject: Other\r\nMessage-Id: <o1@x>\r\nDate: Mon, 19 Oct 2026 09:05:00 +0000\r\n\r\nx\r\n"))
+	appendTo(t, st, "INBOX", []byte("From: b@example.com\r\nSubject: Re: Plan\r\nMessage-Id: <p2@x>\r\nIn-Reply-To: <p1@x>\r\nReferences: <p1@x>\r\nDate: Mon, 19 Oct 2026 09:10:00 +0000\r\n\r\ntwo\r\n"))
+	tp, err := st.ListThreads(ctx, "INBOX", ListQuery{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The in-memory test server has no THREAD; each message stands alone,
+	// newest first. (Dovecot's REFERENCES threading is checked on the stack.)
+	if tp.Total < 2 || tp.Conversations[0].Latest.Subject != "Re: Plan" || tp.Conversations[0].Subject != "Plan" {
+		t.Fatalf("threads = %+v", tp)
+	}
+}
+
+func TestBaseSubject(t *testing.T) {
+	for in, want := range map[string]string{"Re: Plan": "Plan", "RE: Fwd: AW: Plan": "Plan", "Re[2]: Plan": "Plan", "Plan": "Plan", "Rebate": "Rebate"} {
+		if got := baseSubject(in); got != want {
+			t.Errorf("baseSubject(%q) = %q", in, got)
+		}
+	}
+}

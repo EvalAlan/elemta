@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -340,7 +341,7 @@ func TestConversationAndPrint(t *testing.T) {
 		{Folder: "INBOX", Summary: Summary{UID: 7, Subject: "Signed MSA"}}, // the open message itself
 	}
 	_, page := h.get("/mail?f=INBOX&uid=7")
-	if !strings.Contains(page, "Conversation · 2 messages") || !strings.Contains(page, "Re: Signed MSA") {
+	if !strings.Contains(page, "2 messages in this conversation") || !strings.Contains(page, "dana@example.com (Sent)") && !strings.Contains(page, "(Sent)") {
 		t.Fatalf("conversation missing:\n%s", page)
 	}
 	resp, body := h.get("/mail/print?f=INBOX&uid=7")
@@ -551,5 +552,83 @@ func TestContextMenuHooksAndMarkAllRead(t *testing.T) {
 	resp := h.post("/mail/action", url.Values{"csrf": {csrf}, "f": {"INBOX"}, "op": {"readall"}, "back": {"/mail?f=INBOX"}})
 	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "n=all-read") || len(h.store.allRead) != 1 {
 		t.Fatalf("readall: %d %q %v", resp.StatusCode, resp.Header.Get("Location"), h.store.allRead)
+	}
+}
+
+func TestConversationList(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	now := time.Now()
+	h.store.messages["INBOX"] = append(h.store.messages["INBOX"],
+		Summary{UID: 8, Subject: "Re: Signed MSA", From: []Address{{Name: "Marcus Lee", Email: "marcus@example.com"}}, Date: now.Add(time.Minute)},
+		Summary{UID: 9, Subject: "Lunch?", From: []Address{{Email: "sam@example.com"}}, Date: now, Seen: true},
+	)
+	_, page := h.get("/mail?f=INBOX")
+	if h.store.threadCalls == 0 {
+		t.Fatal("conversations are the default, but the list wasn't threaded")
+	}
+	for _, want := range []string{`value="7,8"`, `class="thread-count"`, "Priya Shah, Marcus Lee", "uid=8"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("threaded list lacks %q", want)
+		}
+	}
+	// Acting on a conversation acts on every message in it.
+	h.post("/mail/action", url.Values{"csrf": {csrf}, "f": {"INBOX"}, "uid": {"7,8"}, "op": {"read"}})
+	if !h.store.seen[7] || !h.store.seen[8] {
+		t.Fatalf("seen = %v", h.store.seen)
+	}
+	// Switching grouping off lists single messages.
+	h.post("/settings/conversations", url.Values{"csrf": {csrf}, "on": {"0"}, "back": {"/mail?f=INBOX"}})
+	before := h.store.threadCalls
+	_, page = h.get("/mail?f=INBOX")
+	if h.store.threadCalls != before || strings.Contains(page, `value="7,8"`) {
+		t.Fatal("grouping still on after switching it off")
+	}
+}
+
+func TestConversationCardsInReader(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.store.related = []Related{
+		{Folder: "Sent", Summary: Summary{UID: 3, Subject: "Re: Signed MSA", From: []Address{{Email: "dana@example.com"}}, Date: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)}},
+		{Folder: "INBOX", Summary: Summary{UID: 5, Subject: "MSA draft", From: []Address{{Email: "priya@northwind.example"}}, Date: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)}},
+	}
+	_, page := h.get("/mail?f=INBOX&uid=7")
+	if strings.Count(page, `class="thread-card"`) != 2 || !strings.Contains(page, "3 messages in this conversation") {
+		t.Fatalf("conversation cards missing")
+	}
+	// Earlier messages come before the open one, later ones after it.
+	open := strings.Index(page, `class="sender"`)
+	if strings.Index(page, "uid=5") > open || strings.LastIndex(page, "uid=3") < open {
+		t.Error("cards not ordered around the open message")
+	}
+	// Plain-text messages render in the body frame too.
+	h.store.raw[11] = []byte("From: a@example.com\r\nSubject: t\r\n\r\nplain <b>text</b> https://example.com\r\n")
+	resp, body := h.get("/mail/body?f=INBOX&uid=11")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "plain &lt;b&gt;text&lt;/b&gt;") || !strings.Contains(body, `href="https://example.com"`) {
+		t.Fatalf("text body frame = %d\n%s", resp.StatusCode, body)
+	}
+}
+
+// TestNoNestedForms guards against a form inside another form: browsers
+// drop the inner <form> tag but honour its </form>, which ends the outer
+// form early and silently detaches its fields.
+func TestNoNestedForms(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	for _, path := range []string{"/mail?f=INBOX", "/mail?f=INBOX&uid=7", "/compose", "/settings", "/contacts", "/calendar", "/tasks", "/folders", "/filters"} {
+		_, page := h.get(path)
+		depth := 0
+		for _, tok := range regexp.MustCompile(`(?i)<(/?)form\b`).FindAllStringSubmatch(page, -1) {
+			if tok[1] == "" {
+				depth++
+			} else {
+				depth--
+			}
+			if depth > 1 {
+				t.Errorf("%s has a form nested inside another form", path)
+				break
+			}
+		}
 	}
 }
