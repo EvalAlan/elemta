@@ -98,14 +98,140 @@
   });
 
   // ---- compose -----------------------------------------------------------
+  var editor = $("[data-editor]");
+  var plainMode = false;
+  try { plainMode = localStorage.getItem("compose-format") === "plain"; } catch (err) { /* blocked storage */ }
+  if (editor && !plainMode) {
+    startRich(false);
+  }
   var bodyField = $("textarea[data-cursor-top]");
-  if (bodyField) {
+  if (editor && !editor.closest("[hidden]") && bodyField) {
+    editor.focus();
+    placeCaretAtStart(editor);
+  } else if (bodyField) {
     bodyField.focus();
     bodyField.setSelectionRange(0, 0);
     bodyField.scrollTop = 0;
   } else if ($("form.compose")) {
     var to = $("#to");
     if (to && !to.value) to.focus();
+  }
+
+  function placeCaretAtStart(el) {
+    var range = doc.createRange();
+    range.setStart(el, 0);
+    range.collapse(true);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    el.scrollTop = 0;
+  }
+
+  // textToHTML mirrors the server's: escaped text, line breaks, and "> "
+  // quoted lines as blockquotes.
+  function textToHTML(text) {
+    var out = "", depth = 0;
+    text.replace(/\r\n/g, "\n").split("\n").forEach(function (line) {
+      var d = 0;
+      while (line.charAt(0) === ">") { d++; line = line.replace(/^> ?/, ""); }
+      while (depth < d) { out += "<blockquote>"; depth++; }
+      while (depth > d) { out += "</blockquote>"; depth--; }
+      var div = doc.createElement("div");
+      div.textContent = line;
+      out += div.innerHTML + "<br>";
+    });
+    while (depth-- > 0) out += "</blockquote>";
+    return out;
+  }
+
+  // htmlToText renders the editor as plain text for the text/plain part:
+  // block elements become lines, quotes get "> ", list items get bullets
+  // and links keep their address.
+  function htmlToText(node) {
+    var out = [];
+    var line = "";
+    function flush(prefix) { out.push(prefix + line); line = ""; }
+    function walk(n, prefix) {
+      if (n.nodeType === 3) { line += n.nodeValue.replace(/\s+/g, " "); return; }
+      if (n.nodeType !== 1) return;
+      var tag = n.tagName;
+      if (tag === "BR") { flush(prefix); return; }
+      var block = /^(P|DIV|LI|BLOCKQUOTE|H1|H2|H3|PRE|UL|OL|HR)$/.test(tag);
+      if (block && line) flush(prefix);
+      var p = tag === "BLOCKQUOTE" ? prefix + "> " : prefix;
+      if (tag === "LI") line += (n.parentNode && n.parentNode.tagName === "OL" ? (Array.prototype.indexOf.call(n.parentNode.children, n) + 1) + ". " : "• ");
+      if (tag === "HR") { line = "----------"; flush(prefix); return; }
+      Array.prototype.forEach.call(n.childNodes, function (c) { walk(c, p); });
+      if (tag === "A" && n.getAttribute("href") && n.textContent !== n.getAttribute("href")) line += " <" + n.getAttribute("href") + ">";
+      if (block && line) flush(p);
+    }
+    walk(node, "");
+    if (line) flush("");
+    return out.join("\n").replace(/\n{3,}/g, "\n\n");
+  }
+
+  function startRich(fromPlain) {
+    var wrap = $("[data-editor-wrap]"), ta = $("#body");
+    if (!wrap || !ta) return;
+    if (fromPlain || !editor.innerHTML.trim()) editor.innerHTML = textToHTML(ta.value);
+    wrap.hidden = false;
+    ta.hidden = true;
+    ta.removeAttribute("required");
+    $("[data-format]").value = "html";
+    var r = $("[data-to-rich-wrap]");
+    if (r) r.hidden = true;
+  }
+  function startPlain() {
+    var wrap = $("[data-editor-wrap]"), ta = $("#body");
+    ta.value = htmlToText(editor);
+    wrap.hidden = true;
+    ta.hidden = false;
+    $("[data-format]").value = "text";
+    var r = $("[data-to-rich-wrap]");
+    if (r) r.hidden = false;
+  }
+  if (editor) {
+    var form = editor.closest("form");
+    if (plainMode) { var rw = $("[data-to-rich-wrap]"); if (rw) rw.hidden = false; }
+    form.addEventListener("submit", function () {
+      if ($("[data-format]").value === "html") {
+        $("[data-html]").value = editor.innerHTML;
+        $("#body").value = htmlToText(editor);
+      }
+    });
+    $$(".editor-toolbar [data-cmd]").forEach(function (b) {
+      b.addEventListener("mousedown", function (e) { e.preventDefault(); }); // keep the selection
+      b.addEventListener("click", function () {
+        var cmd = b.getAttribute("data-cmd"), arg = b.getAttribute("data-arg");
+        if (cmd === "createLink") {
+          arg = window.prompt("Link address (https://…)", "https://");
+          if (!arg || !/^(https?:\/\/|mailto:)/i.test(arg)) return;
+        }
+        editor.focus();
+        doc.execCommand(cmd, false, arg || null);
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    });
+    var toPlain = $("[data-to-plain]");
+    if (toPlain) toPlain.addEventListener("click", function () {
+      if (editor.querySelector("b,strong,i,em,u,s,ul,ol,a,h1,h2,h3") && !window.confirm("Switch to plain text? Formatting will be removed.")) return;
+      startPlain();
+      try { localStorage.setItem("compose-format", "plain"); } catch (err) { /* blocked storage */ }
+    });
+    var toRich = $("[data-to-rich]");
+    if (toRich) toRich.addEventListener("click", function () {
+      startRich(true);
+      try { localStorage.removeItem("compose-format"); } catch (err) { /* blocked storage */ }
+      editor.focus();
+    });
+    // Paste as plain text: pasted web pages bring styles, scripts' leftovers
+    // and layout the sanitiser would strip anyway.
+    editor.addEventListener("paste", function (e) {
+      var text = (e.clipboardData || window.clipboardData).getData("text/plain");
+      if (!text) return;
+      e.preventDefault();
+      doc.execCommand("insertHTML", false, textToHTML(text).replace(/<br>$/, ""));
+    });
   }
   // Ctrl+Enter or Cmd+Enter sends.
   var sendBtn = $("[data-submit-key]");

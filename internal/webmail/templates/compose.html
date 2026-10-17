@@ -19,8 +19,27 @@
     <div class="field"><label class="field-label" for="bcc">Bcc</label><input id="bcc" name="bcc" type="text" value="{{.Bcc}}" autocomplete="off" data-addresses></div>
   </details>
   <div class="field"><label class="field-label" for="subject">Subject</label><input id="subject" name="subject" type="text" value="{{.Subject}}"></div>
+  <input type="hidden" name="format" value="text" data-format>
+  <input type="hidden" name="html" value="" data-html>
+  <div class="editor-wrap" hidden data-editor-wrap>
+    <div class="editor-toolbar" role="toolbar" aria-label="Formatting">
+      <button type="button" class="tb" data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+      <button type="button" class="tb" data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+      <button type="button" class="tb" data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+      <button type="button" class="tb" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+      <span class="tb-sep" aria-hidden="true"></span>
+      <button type="button" class="tb" data-cmd="insertUnorderedList" title="Bulleted list">• List</button>
+      <button type="button" class="tb" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+      <button type="button" class="tb" data-cmd="formatBlock" data-arg="blockquote" title="Quote">❝ Quote</button>
+      <button type="button" class="tb" data-cmd="createLink" title="Link">Link</button>
+      <button type="button" class="tb" data-cmd="removeFormat" title="Clear formatting">Clear</button>
+      <button type="button" class="tb push" data-to-plain>Plain text</button>
+    </div>
+    <div class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message" data-editor>{{.HTML}}</div>
+  </div>
   <label class="visually-hidden" for="body">Message</label>
   <textarea id="body" name="body" rows="18"{{if eq .Mode "reply" "replyall" "forward"}} data-cursor-top{{end}}>{{.Text}}</textarea>
+  <div class="field to-rich" hidden data-to-rich-wrap><button type="button" class="link-inline" data-to-rich>Switch to rich text</button></div>
   {{with .Forwarded}}
   <fieldset class="field forwarded">
     <legend class="field-label">Attachments from the original</legend>

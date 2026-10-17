@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"net/mail"
@@ -35,6 +36,9 @@ type composeView struct {
 	From Address
 	// Suggestions are addresses offered as the user types a recipient.
 	Suggestions []Address
+	// HTML is the editor's starting content, already sanitised; empty
+	// means the editor starts from Text.
+	HTML template.HTML
 }
 
 func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Session) {
@@ -65,6 +69,10 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 		if cv.Mode == "draft" {
 			prefillDraft(cv, orig)
 			cv.DraftUID = uid
+			if orig.HTML != "" {
+				// #nosec G203 -- sanitised by the strict compose policy
+				cv.HTML = template.HTML(sanitizeCompose(orig.HTML))
+			}
 			return nil
 		}
 		cv.OrigFolder, cv.OrigUID = q.Get("f"), uid
@@ -79,6 +87,12 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 		return
 	}
 	cv.Suggestions = s.addressSuggestions(r.Context(), sess)
+	if cv.HTML == "" {
+		// The editor starts from the same text the plain textarea holds,
+		// rendered on the server so both views agree.
+		// #nosec G203 -- textToHTML escapes all text; its only markup is br and blockquote
+		cv.HTML = template.HTML(textToHTML(cv.Text))
+	}
 	s.render(w, "compose.html", http.StatusOK, v)
 }
 
@@ -252,6 +266,16 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	d := &Draft{
 		From: cv.From, Subject: cv.Subject, Text: cv.Text, InReplyTo: cv.InReplyTo, References: cv.References,
 		HighPriority: cv.HighPriority,
+	}
+	// The rich-text editor posts its HTML alongside a plain-text rendering
+	// in body; both go out, as multipart/alternative.
+	if h := sanitizeCompose(r.PostFormValue("html")); h != "" && r.PostFormValue("format") == "html" {
+		d.HTML = wrapHTMLBody(h)
+		// #nosec G203 -- sanitised by the strict compose policy
+		cv.HTML = template.HTML(h)
+		if strings.TrimSpace(d.Text) == "" {
+			d.Text = htmlToText(h)
+		}
 	}
 	if cv.Receipt {
 		d.ReceiptTo = sess.Address

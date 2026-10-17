@@ -114,3 +114,61 @@ func htmlToText(in string) string {
 	out := html.UnescapeString(bluemonday.StrictPolicy().Sanitize(in))
 	return strings.TrimSpace(blankLinesRE.ReplaceAllString(out, "\n\n"))
 }
+
+// composePolicy is what the rich-text editor may send: basic formatting,
+// lists, quotes and web or mail links. No styles, images, tables or
+// classes, so a message composed here looks the same in every client and
+// the editor can't be used to smuggle markup.
+var composePolicy = func() *bluemonday.Policy {
+	p := bluemonday.NewPolicy()
+	p.AllowElements("p", "br", "div", "b", "strong", "i", "em", "u", "s", "strike", "ul", "ol", "li", "blockquote", "pre", "code", "h1", "h2", "h3", "hr")
+	p.AllowAttrs("href").OnElements("a")
+	p.AllowURLSchemes("http", "https", "mailto")
+	p.RequireParseableURLs(true)
+	p.RequireNoReferrerOnLinks(true)
+	p.AddTargetBlankToFullyQualifiedLinks(true)
+	return p
+}()
+
+// sanitizeCompose cleans HTML from the editor.
+func sanitizeCompose(in string) string {
+	return strings.TrimSpace(composePolicy.Sanitize(in))
+}
+
+// textToHTML turns plain text into the editor's HTML: escaped, line
+// breaks kept, and "> " quoted lines as blockquotes.
+func textToHTML(text string) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	var b strings.Builder
+	depth := 0
+	for _, l := range lines {
+		d := 0
+		for strings.HasPrefix(l, ">") {
+			d++
+			l = strings.TrimPrefix(strings.TrimPrefix(l, ">"), " ")
+		}
+		for depth < d {
+			b.WriteString("<blockquote>")
+			depth++
+		}
+		for depth > d {
+			b.WriteString("</blockquote>")
+			depth--
+		}
+		b.WriteString(html.EscapeString(l))
+		b.WriteString("<br>")
+	}
+	for ; depth > 0; depth-- {
+		b.WriteString("</blockquote>")
+	}
+	return b.String()
+}
+
+// wrapHTMLBody gives a composed fragment the document shell and the light
+// styling (quote bar, readable font) mail clients expect.
+func wrapHTMLBody(fragment string) string {
+	return `<!doctype html><html><head><meta charset="utf-8"><style>` +
+		`body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5}` +
+		`blockquote{margin:0 0 0 .8ex;border-left:2px solid #ccc;padding-left:1ex}` +
+		`</style></head><body>` + fragment + `</body></html>`
+}

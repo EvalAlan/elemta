@@ -413,3 +413,46 @@ func firstContactID(t *testing.T, h *harness) string {
 	}
 	return objs[0].ID
 }
+
+func TestRichTextCompose(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	resp := sendForm(t, h, csrf, map[string]string{
+		"op": "send", "to": "priya@northwind.example", "subject": "Formatted", "format": "html",
+		"body": "Hello *world*",
+		"html": `<p>Hello <b>world</b> <a href="https://example.com">site</a> <a href="javascript:alert(1)">bad</a></p><script>alert(1)</script><img src="https://tracker.example/p.gif"><p style="color:red" onclick="x()">styled</p>`,
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("send = %d", resp.StatusCode)
+	}
+	msg, err := parseMessage(h.sub.raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Text != "Hello *world*" {
+		t.Errorf("text part = %q", msg.Text)
+	}
+	for _, want := range []string{"<b>world</b>", `href="https://example.com"`, "styled"} {
+		if !strings.Contains(msg.HTML, want) {
+			t.Errorf("HTML lacks %q:\n%s", want, msg.HTML)
+		}
+	}
+	for _, bad := range []string{"<script", "javascript:", "tracker.example", "onclick", "color:red"} {
+		if strings.Contains(msg.HTML, bad) {
+			t.Errorf("HTML kept %q:\n%s", bad, msg.HTML)
+		}
+	}
+	// Without format=html the HTML field is ignored.
+	sendForm(t, h, csrf, map[string]string{"op": "send", "to": "priya@northwind.example", "body": "plain", "html": "<b>x</b>"})
+	if msg, _ := parseMessage(h.sub.raw); msg.HTML != "" {
+		t.Errorf("plain message got an HTML part")
+	}
+}
+
+func TestTextToHTML(t *testing.T) {
+	got := textToHTML("Hi <there>\n> quoted\n>> deeper\nback")
+	want := "Hi &lt;there&gt;<br><blockquote>quoted<br><blockquote>deeper<br></blockquote></blockquote>back<br>"
+	if got != want {
+		t.Fatalf("textToHTML = %q", got)
+	}
+}
