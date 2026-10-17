@@ -178,6 +178,10 @@ func startServer() {
 		os.Exit(1)
 	}
 
+	if resolved, err := config.FindConfigFile(configPath); err == nil {
+		server.SetDirectoryGenerationFile(resolved + ".provision-generation")
+	}
+
 	// Start SMTP server
 	slog.Info("Starting SMTP server")
 	if err := server.Start(); err != nil {

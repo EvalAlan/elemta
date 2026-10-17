@@ -49,9 +49,11 @@ type recipientVerifier struct {
 	// dial is replaced in tests.
 	dial func(ctx context.Context, network, address string) (net.Conn, error)
 
-	mu    sync.Mutex
-	cache map[string]cachedVerdict
-	now   func() time.Time
+	mu               sync.Mutex
+	cache            map[string]cachedVerdict
+	generation       func() string
+	cachedGeneration string
+	now              func() time.Time
 	// unavailableUntil skips probing for a while after one fails, so a
 	// mailbox server outage does not add the probe timeout to every RCPT.
 	unavailableUntil time.Time
@@ -85,8 +87,17 @@ func newRecipientVerifier(addr, heloName string, logger *slog.Logger) *recipient
 func (v *recipientVerifier) Verify(ctx context.Context, rcpt string) (rcptVerdict, string) {
 	key := strings.ToLower(rcpt)
 	now := v.now()
-
+	generation := ""
+	if v.generation != nil {
+		generation = v.generation()
+	}
 	v.mu.Lock()
+	if generation != v.cachedGeneration {
+		v.cache = make(map[string]cachedVerdict)
+		v.unavailableUntil = time.Time{}
+		v.cachedGeneration = generation
+	}
+
 	if c, ok := v.cache[key]; ok && now.Before(c.expires) {
 		v.mu.Unlock()
 		return c.verdict, c.reply
@@ -111,8 +122,16 @@ func (v *recipientVerifier) Verify(ctx context.Context, rcpt string) (rcptVerdic
 	if verdict == rcptRejected {
 		ttl = rcptCacheRejected
 	}
+	if v.generation != nil && v.generation() != generation {
+		return verdict, reply
+	}
 	if verdict != rcptUnknown {
 		v.mu.Lock()
+		if v.cachedGeneration != generation {
+			v.mu.Unlock()
+			return verdict, reply
+		}
+
 		if len(v.cache) >= rcptCacheMaxSize {
 			for k, c := range v.cache {
 				if now.After(c.expires) {

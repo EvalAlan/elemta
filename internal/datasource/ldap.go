@@ -175,6 +175,7 @@ func (l *LDAP) Authenticate(ctx context.Context, username, password string) (boo
 		searchFilter = fmt.Sprintf("(uid=%s)", ldap.EscapeFilter(username))
 	}
 
+	searchFilter = "(&" + searchFilter + "(|(!(accountStatus=*))(accountStatus=active)))"
 	searchRequest := ldap.NewSearchRequest(
 		l.userDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 5, false,
@@ -237,7 +238,7 @@ func (l *LDAP) GetUser(ctx context.Context, username string) (User, error) {
 		l.userDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		fmt.Sprintf("(uid=%s)", ldap.EscapeFilter(username)),
-		[]string{"uid", "cn", "mail", "objectClass", "createTimestamp", "modifyTimestamp", "shadowLastChange"},
+		[]string{"uid", "cn", "mail", "objectClass", "createTimestamp", "modifyTimestamp", "shadowLastChange", "accountStatus"},
 		nil,
 	)
 
@@ -261,7 +262,7 @@ func (l *LDAP) GetUser(ctx context.Context, username string) (User, error) {
 		Username:   entry.GetAttributeValue("uid"),
 		FullName:   entry.GetAttributeValue("cn"),
 		Email:      entry.GetAttributeValue("mail"),
-		IsActive:   true, // Assume active unless specified otherwise
+		IsActive:   entry.GetAttributeValue("accountStatus") == "" || entry.GetAttributeValue("accountStatus") == "active",
 		Attributes: make(map[string]interface{}),
 	}
 
@@ -347,7 +348,7 @@ func (l *LDAP) ListUsers(ctx context.Context, filter map[string]interface{}, lim
 		l.userDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		ldapFilter,
-		[]string{"uid", "cn", "mail", "objectClass", "createTimestamp", "modifyTimestamp", "shadowLastChange"},
+		[]string{"uid", "cn", "mail", "objectClass", "createTimestamp", "modifyTimestamp", "shadowLastChange", "accountStatus"},
 		nil,
 	)
 
@@ -379,7 +380,7 @@ func (l *LDAP) ListUsers(ctx context.Context, filter map[string]interface{}, lim
 			Username:   entry.GetAttributeValue("uid"),
 			FullName:   entry.GetAttributeValue("cn"),
 			Email:      entry.GetAttributeValue("mail"),
-			IsActive:   true, // Assume active unless specified otherwise
+			IsActive:   entry.GetAttributeValue("accountStatus") == "" || entry.GetAttributeValue("accountStatus") == "active",
 			Attributes: make(map[string]interface{}),
 		}
 

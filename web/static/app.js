@@ -164,6 +164,7 @@ function switchView(viewName) {
         tracing: 'Tracing',
         campaigns: 'Mass Mailer',
         logs: 'Logs',
+        'mail-admin': 'Mail Administration',
         settings: 'Settings'
     };
     document.getElementById('page-title').textContent = titles[viewName] || viewName;
@@ -183,6 +184,9 @@ function switchView(viewName) {
         case 'dashboard':
             refreshAllData();
             refreshHealth();
+            break;
+        case 'mail-admin':
+            refreshMailAdmin();
             break;
         case 'health':
             refreshHealth();
@@ -1704,6 +1708,8 @@ function updateUserUI() {
     // There are no accounts to manage when the dashboard runs without login.
     const usersTab = document.getElementById('settings-tab-users');
     if (usersTab) usersTab.style.display = authState.isLoggedIn ? '' : 'none';
+    const mailAdminNav = document.getElementById('nav-mailadmin');
+    if (mailAdminNav) mailAdminNav.hidden = !authState.isLoggedIn || !(authState.permissions || []).includes('system:admin');
 
     if (authState.isLoggedIn) {
         userDisplay.textContent = authState.username || 'User';

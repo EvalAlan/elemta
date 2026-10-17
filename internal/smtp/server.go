@@ -1582,3 +1582,19 @@ func (s *Server) Wait() error {
 }
 
 // ... existing code ...
+
+// SetDirectoryGenerationFile connects the local provisioning service to the
+// recipient cache without holding a directory connection in the SMTP path.
+// Call before Start; workers share this verifier and its generation checks.
+func (s *Server) SetDirectoryGenerationFile(path string) {
+	if s.rcptVerifier == nil {
+		return
+	}
+	s.rcptVerifier.generation = func() string {
+		info, err := os.Stat(path)
+		if err != nil {
+			return ""
+		}
+		return fmt.Sprintf("%d:%d", info.ModTime().UnixNano(), info.Size())
+	}
+}

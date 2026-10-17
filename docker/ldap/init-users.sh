@@ -3,6 +3,10 @@
 
 set -e
 
+if ! ldapsearch -LLL -o ldif-wrap=no -Y EXTERNAL -H ldapi:/// -b cn=schema,cn=config '(objectClass=olcSchemaConfig)' olcAttributeTypes 2>/dev/null | grep -q "NAME 'mailAlternateAddress'"; then
+    ldapadd -Y EXTERNAL -H ldapi:/// -f /docker-entrypoint-initdb.d/10-mail-schema.ldif
+fi
+
 # Only run if users don't exist yet
 if ldapsearch -x -H ldap://localhost -b "ou=people,dc=example,dc=com" "(uid=demo)" | grep -q "uid: demo"; then
     echo "Users already exist, skipping initialization"

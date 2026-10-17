@@ -434,3 +434,54 @@ func (s *Server) sendResetLink(user string, rec recoveryAddress) {
 		}
 	}()
 }
+
+// AdminRevokeAccount prevents a disabled or removed mailbox from continuing in
+// an existing webmail session or being reclaimed through an older reset link.
+func (s *Server) AdminRevokeAccount(ctx context.Context, user string) error {
+	return s.adminRevokeAccount(ctx, user, false)
+}
+
+// AdminRemoveAccount clears recovery ownership before an address can be reused.
+func (s *Server) AdminRemoveAccount(ctx context.Context, user string) error {
+	return s.adminRevokeAccount(ctx, user, true)
+}
+
+func (s *Server) adminRevokeAccount(ctx context.Context, user string, remove bool) error {
+	address := s.recoveryAccount(user)
+	store := s.recovery
+	if store == nil {
+		if v, ok := s.sessions.shared.(*valkeySessions); ok {
+			store = valkeyRecovery{client: v.client}
+		}
+	}
+	if store == nil {
+		return errors.New("webmail: account revocation requires shared Valkey sessions")
+	}
+	// Do not mutate the server's recovery feature flag when only the admin
+	// command needs access to its underlying shared records.
+	helper := &Server{recovery: store}
+	unlock, err := helper.lockRecovery(ctx, address)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	version, err := randomToken(24)
+	if err != nil {
+		return err
+	}
+	rec, err := helper.recoveryRecord(ctx, address)
+	if err != nil {
+		return err
+	}
+	rec.Version = version
+	if remove {
+		rec.Email = ""
+	}
+	if err = helper.saveRecovery(ctx, address, rec); err != nil {
+		return err
+	}
+	if _, err = store.Take(ctx, "pending:"+accountKey(address)); err != nil {
+		return err
+	}
+	return s.sessions.RevokeUser(ctx, address)
+}

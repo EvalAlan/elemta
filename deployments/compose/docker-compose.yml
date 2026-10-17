@@ -132,6 +132,11 @@ services:
       - ELEMTA_DEMO_DATA=${ELEMTA_DEMO_DATA:-true}
       - ELEMTA_DEV_CERT_DAYS=${ELEMTA_DEV_CERT_DAYS:-7}
       - NODE_ID=web
+      # Mail administration uses the same shared sessions and privileged
+      # mailbox directory credentials as the webmail service (dev defaults).
+      - ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD=${ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD:-admin}
+      - ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD=${ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD:-admin}
+      - ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=${ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD:-password}
       - VALKEY_ADDR=elemta-valkey:6379
     # Security configuration for the container
     security_opt:

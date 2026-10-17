@@ -261,3 +261,46 @@ func TestRecoveryDirectoryFailureConsumesLinks(t *testing.T) {
 		t.Fatal("failed reset link reused")
 	}
 }
+
+func TestAdminRevocationPreservesOrClearsRecoveryOwnership(t *testing.T) {
+	for _, remove := range []bool{false, true} {
+		h, store, _ := setupRecovery(t)
+		h.login()
+		ctx := context.Background()
+		err := h.server.saveRecovery(ctx, "dana@example.com", recoveryAddress{Email: "backup@elsewhere.example", Version: "before"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = store.Put(ctx, "pending:"+accountKey("dana@example.com"), "pending", recoveryTTL); err != nil {
+			t.Fatal(err)
+		}
+		if remove {
+			err = h.server.AdminRemoveAccount(ctx, "dana@example.com")
+		} else {
+			err = h.server.AdminRevokeAccount(ctx, "dana@example.com")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, err := h.server.recoveryRecord(ctx, "dana@example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Version == "before" {
+			t.Fatal("old reset links remain valid")
+		}
+		if remove && rec.Email != "" {
+			t.Fatal("removed address retained recovery ownership")
+		}
+		if !remove && rec.Email != "backup@elsewhere.example" {
+			t.Fatal("disabled account lost recovery email")
+		}
+		pending, err := store.Get(ctx, "pending:"+accountKey("dana@example.com"))
+		if err != nil || pending != "" {
+			t.Fatal("pending verification survived revocation")
+		}
+		if response, _ := h.get("/mail"); response.StatusCode != http.StatusFound {
+			t.Fatal("old session survived revocation")
+		}
+	}
+}

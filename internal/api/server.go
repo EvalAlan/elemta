@@ -26,6 +26,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/config"
 	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/metrics"
+	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/EvalAlan/elemta/internal/runtimepaths"
 	"github.com/EvalAlan/elemta/internal/suppression"
@@ -218,7 +219,8 @@ type Server struct {
 	// directory lists accounts for campaign recipient import. Nil when the
 	// deployment authenticates against something with no listable directory,
 	// which the import endpoint reports rather than treating as an error.
-	directory DirectoryLister
+	directory   DirectoryLister
+	provisioner *provision.Service
 }
 
 type serverLifecycleState uint8
@@ -651,6 +653,7 @@ func (s *Server) Start() error {
 
 	// API routes
 	api := r.PathPrefix("/api").Subrouter()
+	s.provisionRoutes(api)
 
 	// User management. Only meaningful with authentication on: without it
 	// there are no accounts to manage.
@@ -2369,6 +2372,14 @@ func (s *Server) persistConfig() error {
 		return fmt.Errorf("no config file path is known")
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	unlock, err := (provision.FileDomains{Path: s.configPath}).Lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	doc, err := os.ReadFile(s.configPath) // #nosec G304 -- operator-configured path
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
@@ -2385,9 +2396,8 @@ func (s *Server) persistConfig() error {
 		{"", "max_size", s.mainConfig.MaxSize},
 		{"", "failed_queue_retention_hours", s.mainConfig.FailedQueueRetentionHours},
 	}
-	if len(s.mainConfig.LocalDomains) > 0 {
-		edits = append(edits, edit{"", "local_domains", s.mainConfig.LocalDomains})
-	}
+	// Domain provisioning owns local_domains. Saving an unrelated dashboard
+	// setting must not overwrite changes made by a concurrent provisioning CLI.
 	// Written only when the operator has expressed a preference, so an untouched
 	// config file does not gain a key nobody asked for.
 	if v := s.mainConfig.QueueRetainTombstoneBody; v != nil {
