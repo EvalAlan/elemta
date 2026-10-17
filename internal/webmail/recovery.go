@@ -15,6 +15,12 @@ import (
 )
 
 const recoveryTTL = 15 * time.Minute
+
+// Forgot-password requests allowed per client address per window.
+const (
+	recoveryIPBudget = 20
+	recoveryIPWindow = 10 * time.Minute
+)
 const recoveryNotice = "If this account has a verified recovery address, a reset link has been sent."
 
 type recoveryAddress struct{ Email, Version string }
@@ -118,15 +124,18 @@ func (s *Server) forgotSubmit(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	user := s.recoveryAccount(r.PostFormValue("user"))
-	// Shared cooldowns prevent one browser or pod from bypassing the limits.
-	ipOK, ipErr := s.recovery.Claim(ctx, "request-ip:"+accountKey(clientIP(r)), "1", time.Minute)
+	// Shared limits, so a second browser or pod can't bypass them: one
+	// request a minute per account, and a budget per client address that
+	// allows for many people behind one NAT or proxy (a one-a-minute limit
+	// per address let one person's request block everyone else's).
+	ipCount, ipErr := s.recovery.Count(ctx, "request-ip:"+accountKey(s.clientIP(r)), recoveryIPWindow)
 	userOK, userErr := s.recovery.Claim(ctx, "request-user:"+accountKey(user), "1", time.Minute)
 	if ipErr != nil || userErr != nil {
 		s.log.Error("webmail: recovery rate limit unavailable")
 		http.Error(w, "Try again later.", http.StatusServiceUnavailable)
 		return
 	}
-	if ipOK && userOK {
+	if ipCount <= recoveryIPBudget && userOK {
 		rec, err := s.recoveryRecord(ctx, user)
 		if err == nil && rec.Email != "" {
 			s.sendResetLink(user, rec)

@@ -116,6 +116,13 @@ type Config struct {
 	RecoverySMTPUser     string `toml:"recovery_smtp_user"`
 	RecoverySMTPPassword string `toml:"recovery_smtp_password"`
 
+	// TrustedProxies are the addresses (CIDRs) of reverse proxies in front
+	// of the webmail. A request from one of them is attributed to the client
+	// named in X-Forwarded-For, so sign-in and recovery limits apply per
+	// person rather than to everyone behind the proxy. Never list addresses
+	// that clients can connect from directly.
+	TrustedProxies []string `toml:"trusted_proxies"`
+
 	// SessionKeyFile holds the key that seals passwords in shared sessions,
 	// base64 encoded. It is created if missing. Every pod must read the
 	// same file, and it must not be stored in Valkey.
@@ -196,6 +203,11 @@ func (c Config) Validate() error {
 	if c.SieveAddr != "" {
 		if _, _, err := net.SplitHostPort(c.SieveAddr); err != nil {
 			errs = append(errs, fmt.Errorf("webmail: sieve_addr %q: %w", c.SieveAddr, err))
+		}
+	}
+	for _, p := range c.TrustedProxies {
+		if _, _, err := net.ParseCIDR(p); err != nil && net.ParseIP(p) == nil {
+			errs = append(errs, fmt.Errorf("webmail: trusted_proxies entry %q is not an address or CIDR", p))
 		}
 	}
 	switch c.SessionStore {

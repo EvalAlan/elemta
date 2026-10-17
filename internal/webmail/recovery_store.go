@@ -16,6 +16,9 @@ type RecoveryStore interface {
 	Put(context.Context, string, string, time.Duration) error
 	Take(context.Context, string) (string, error)
 	Claim(context.Context, string, string, time.Duration) (bool, error)
+	// Count adds one to a counter that expires ttl after its first use,
+	// and returns the new value.
+	Count(context.Context, string, time.Duration) (int64, error)
 }
 
 type valkeyRecovery struct{ client valkey.Client }
@@ -53,4 +56,19 @@ func (v valkeyRecovery) Claim(ctx context.Context, key, value string, ttl time.D
 		return false, nil
 	}
 	return err == nil, err
+}
+
+func (v valkeyRecovery) Count(ctx context.Context, key string, ttl time.Duration) (int64, error) {
+	k := recoveryKey(key)
+	n, err := v.client.Do(ctx, v.client.B().Incr().Key(k).Build()).AsInt64()
+	if err != nil {
+		return 0, err
+	}
+	if n == 1 {
+		// The window starts with the first request; later ones don't extend it.
+		if err := v.client.Do(ctx, v.client.B().Expire().Key(k).Seconds(int64(ttl.Seconds())).Build()).Error(); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }

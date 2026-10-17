@@ -443,12 +443,50 @@ func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int,
 	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Theme: themeFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
 }
 
-func clientIP(r *http.Request) string {
+func remoteHost(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// clientIP is the address a request came from. Behind a trusted proxy it
+// is the right-most X-Forwarded-For address that isn't itself a trusted
+// proxy: entries further left were written by the client and can't be
+// believed.
+func (s *Server) clientIP(r *http.Request) string {
+	ip := remoteHost(r)
+	if !s.trusted(ip) {
+		return ip
+	}
+	hops := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		hop := strings.TrimSpace(hops[i])
+		if net.ParseIP(hop) == nil {
+			break
+		}
+		if !s.trusted(hop) {
+			return hop
+		}
+	}
+	return ip
+}
+
+func (s *Server) trusted(ip string) bool {
+	addr := net.ParseIP(ip)
+	if addr == nil {
+		return false
+	}
+	for _, p := range s.cfg.TrustedProxies {
+		if _, n, err := net.ParseCIDR(p); err == nil && n.Contains(addr) {
+			return true
+		}
+		if t := net.ParseIP(p); t != nil && t.Equal(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -460,7 +498,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		s.renderLogin(w, r, http.StatusForbidden, user, "", "The sign-in form expired. Try again.")
 		return
 	}
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	userKey := "user:" + strings.ToLower(user)
 	if s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser) {
 		s.renderLogin(w, r, http.StatusTooManyRequests, user, "", "Too many sign-in attempts. Wait a few minutes and try again.")

@@ -542,3 +542,27 @@ func TestSuccessfulSignInsAreNotThrottled(t *testing.T) {
 		t.Fatalf("after %d failures the right password got %d, want 429", maxFailuresPerUser, resp.StatusCode)
 	}
 }
+
+func TestClientIPBehindTrustedProxy(t *testing.T) {
+	s := &Server{cfg: Config{TrustedProxies: []string{"10.0.0.0/8", "192.0.2.7"}}}
+	req := func(remote, xff string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = remote + ":5555"
+		if xff != "" {
+			r.Header.Set("X-Forwarded-For", xff)
+		}
+		return r
+	}
+	cases := []struct{ remote, xff, want string }{
+		{"203.0.113.9", "1.2.3.4", "203.0.113.9"},                       // untrusted peer: header ignored
+		{"10.1.2.3", "198.51.100.5", "198.51.100.5"},                    // trusted proxy: client from header
+		{"10.1.2.3", "6.6.6.6, 198.51.100.5, 10.9.9.9", "198.51.100.5"}, // spoofed left entry skipped
+		{"192.0.2.7", "", "192.0.2.7"},                                  // proxy without header
+		{"10.1.2.3", "not-an-ip", "10.1.2.3"},
+	}
+	for _, c := range cases {
+		if got := s.clientIP(req(c.remote, c.xff)); got != c.want {
+			t.Errorf("clientIP(%s, %q) = %s, want %s", c.remote, c.xff, got, c.want)
+		}
+	}
+}

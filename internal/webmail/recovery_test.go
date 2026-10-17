@@ -3,6 +3,7 @@ package webmail
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -63,6 +64,22 @@ func (m *memoryRecovery) Claim(_ context.Context, key, value string, ttl time.Du
 	}
 	m.entries[key] = recoveryValue{value, m.now.Add(ttl)}
 	return true, nil
+}
+
+func (m *memoryRecovery) Count(_ context.Context, key string, ttl time.Duration) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := int64(0)
+	if v := m.live(key); v != "" {
+		_, _ = fmt.Sscan(v, &n)
+	}
+	n++
+	exp := m.entries[key].expires
+	if n == 1 {
+		exp = m.now.Add(ttl)
+	}
+	m.entries[key] = recoveryValue{fmt.Sprint(n), exp}
+	return n, nil
 }
 
 type fakeResetter struct {
@@ -302,5 +319,19 @@ func TestAdminRevocationPreservesOrClearsRecoveryOwnership(t *testing.T) {
 		if response, _ := h.get("/mail"); response.StatusCode != http.StatusFound {
 			t.Fatal("old session survived revocation")
 		}
+	}
+}
+
+func TestForgotPasswordAddressBudget(t *testing.T) {
+	store := newMemoryRecovery()
+	for i := 1; i <= recoveryIPBudget+1; i++ {
+		n, _ := store.Count(context.Background(), "request-ip:x", recoveryIPWindow)
+		if int(n) != i {
+			t.Fatalf("count %d = %d", i, n)
+		}
+	}
+	store.now = store.now.Add(recoveryIPWindow + time.Second)
+	if n, _ := store.Count(context.Background(), "request-ip:x", recoveryIPWindow); n != 1 {
+		t.Fatalf("window didn't reset: %d", n)
 	}
 }

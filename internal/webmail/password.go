@@ -165,7 +165,7 @@ func (s *Server) passwordSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	if err := s.sessions.UpdatePassword(sess, next); err != nil {
 		s.log.Warn("webmail: reseal session password", "user", sess.User, "error", err)
 	}
-	s.log.Info("webmail: password changed", "user", sess.User, "ip", clientIP(r))
+	s.log.Info("webmail: password changed", "user", sess.User, "ip", s.clientIP(r))
 	http.Redirect(w, r, "/settings?n=password-changed", http.StatusSeeOther)
 }
 
