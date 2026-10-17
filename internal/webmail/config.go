@@ -109,12 +109,19 @@ type Config struct {
 
 	// RecoveryURL is the public origin used in emailed links. Enabling recovery
 	// requires shared Valkey sessions and a separate privileged directory bind.
-	RecoveryURL          string `toml:"recovery_url"`
-	LDAPResetDN          string `toml:"ldap_reset_dn"`
-	LDAPResetPassword    string `toml:"ldap_reset_password"`
-	RecoverySender       string `toml:"recovery_sender"`
-	RecoverySMTPUser     string `toml:"recovery_smtp_user"`
-	RecoverySMTPPassword string `toml:"recovery_smtp_password"`
+	RecoveryURL string `toml:"recovery_url"`
+	// LDAPProvisionDN is the account mail administration (the console and
+	// `elemta provision`) binds as, with write access to mailbox entries
+	// and address claims only. Its password is ldap_provision_password or
+	// ELEMTA_LDAP_PROVISION_PASSWORD. Unset, administration falls back to
+	// the reset account, as before.
+	LDAPProvisionDN       string `toml:"ldap_provision_dn"`
+	LDAPProvisionPassword string `toml:"ldap_provision_password"`
+	LDAPResetDN           string `toml:"ldap_reset_dn"`
+	LDAPResetPassword     string `toml:"ldap_reset_password"`
+	RecoverySender        string `toml:"recovery_sender"`
+	RecoverySMTPUser      string `toml:"recovery_smtp_user"`
+	RecoverySMTPPassword  string `toml:"recovery_smtp_password"`
 
 	// TrustedProxies are the addresses (CIDRs) of reverse proxies in front
 	// of the webmail. A request from one of them is attributed to the client

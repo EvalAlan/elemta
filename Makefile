@@ -1,4 +1,4 @@
-.PHONY: all help gotchas dovecot-index build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
+.PHONY: all help gotchas dovecot-index ensure-dev-secrets ldap-service-accounts build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
 	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
@@ -355,6 +355,16 @@ ensure-dev-certs:
 		echo "ℹ️  Using existing TLS certificate (expires $$(openssl x509 -enddate -noout -in config/test.crt | cut -d= -f2))"; \
 	fi
 
+# Per-service LDAP credentials for the dev stack (deployments/compose/.secrets/,
+# never committed). Generated once; existing ones are kept.
+ensure-dev-secrets:
+	@./scripts/dev-secrets.sh
+
+# Create or re-sync the least-privilege LDAP service accounts and access
+# rules (also run by every install-dev target via init-ldap-if-needed.sh).
+ldap-service-accounts:
+	@./scripts/ldap-service-accounts.sh
+
 ensure-dev-env:
 	@if [ ! -f $(DEV_ENV_FILE) ]; then \
 		echo "📝 Creating $(DEV_ENV_FILE) for development..."; \
@@ -503,7 +513,7 @@ help:
 	@echo "                    delivery, cert expiry, what [logging] ignores). Worth reading"
 	@echo "                    once; HANDOFF.md has the same traps in depth."
 
-install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+install-dev: check-tools ensure-dev-secrets docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Minimal)"
 	@echo "======================================"
 	@$(MAKE) stop-mailauth-services
@@ -527,7 +537,7 @@ install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-de
 # Separate from install-dev-full rather than a flag on it, because "mail is
 # thrown away" is not a detail to bury in an option. Anyone running this has
 # said so.
-install-dev-bench: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+install-dev-bench: check-tools ensure-dev-secrets docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Benchmarking)"
 	@echo "=========================================="
 	@$(MAKE) stop-mailauth-services
@@ -596,7 +606,7 @@ install-dev-postgres:
 	@echo "   DSN: $(QUEUE_POSTGRES_DSN)"
 	@echo "   Verify: docker exec -it $(POSTGRES_CONTAINER_NAME) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
 
-install-dev-full: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+install-dev-full: check-tools ensure-dev-secrets docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Full)"
 	@echo "=================================="
 	@$(MAKE) stop-mailauth-services
@@ -620,7 +630,7 @@ install-dev-full: check-tools docker-build ensure-dev-certs ensure-dev-env refre
 #
 # Switching back is just running another install-dev target; they remove these
 # services for you.
-install-dev-mailauth: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+install-dev-mailauth: check-tools ensure-dev-secrets docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🔐 Elemta Development Setup (Mail Authentication)"
 	@echo "================================================="
 	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
@@ -1084,7 +1094,7 @@ k8s-reseed:
 
 # What every k8s-install-dev* target does, for one overlay: build, configure,
 # apply, re-seed, then accounts.
-k8s-install: check-tools k8s-check ensure-dev-certs
+k8s-install: check-tools k8s-check ensure-dev-certs ensure-dev-secrets
 	@if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx elemta-node0; then \
 		echo "❌ The Compose dev stack is running and holds the same ports. 'make down' first."; \
 		exit 1; \

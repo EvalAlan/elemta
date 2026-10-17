@@ -48,6 +48,18 @@ configMapGenerator:
 # rather than in the pod so that `make ensure-dev-certs` can replace it when
 # it lapses, which it does every CERT_DAYS.
 secretGenerator:
+  # Each container's LDAP service-account credentials, from the same files
+  # the compose stack uses (scripts/dev-secrets.sh; k8s-install generates
+  # them). One Secret per component, so each sees only its own.
+  - name: elemta-ldap-smtp
+    envs:
+      - ../../../compose/.secrets/elemta.env
+  - name: elemta-ldap-web
+    envs:
+      - ../../../compose/.secrets/web.env
+  - name: elemta-ldap-dovecot
+    envs:
+      - ../../../compose/.secrets/dovecot.env
   - name: elemta-dev-tls
     type: kubernetes.io/tls
     files:
@@ -67,6 +79,36 @@ images:
 
 patches:
   - path: patches.yaml
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: elemta
+      spec:
+        template:
+          spec:
+            containers:
+              - name: smtp
+                envFrom:
+                  - secretRef:
+                      name: elemta-ldap-smtp
+              - name: web
+                envFrom:
+                  - secretRef:
+                      name: elemta-ldap-web
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: elemta-dovecot
+      spec:
+        template:
+          spec:
+            containers:
+              - name: dovecot
+                envFrom:
+                  - secretRef:
+                      name: elemta-ldap-dovecot
   - target:
       kind: Deployment
       name: elemta

@@ -40,6 +40,10 @@ if ! "${LDAP_EXEC[@]}" ldapsearch -LLL -o ldif-wrap=no -Y EXTERNAL -H ldapi:/// 
         < "$(dirname "${BASH_SOURCE[0]}")/../docker/ldap/10-mail-schema.ldif"
 fi
 
+# Every service binds as its own least-privilege account; create them (and
+# the access rules) before anything needs them. Idempotent.
+"$(dirname "${BASH_SOURCE[0]}")/ldap-service-accounts.sh"
+
 # Whether the users are already there.
 #
 # This and the verification below used to combine -x (simple authentication)

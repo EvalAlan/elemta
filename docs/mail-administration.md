@@ -80,9 +80,10 @@ for newly added addresses, and stale acceptance of deleted recipients.
 
 ## Directory and mailbox configuration
 
-Administration uses `[webmail] ldap_url`, `ldap_base`, `ldap_reset_dn` and
-`ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD`, together with the existing shared Valkey
-session configuration. The directory bind needs account creation, attribute
+Administration uses `[webmail] ldap_url`, `ldap_base`, `ldap_provision_dn` and
+`ELEMTA_LDAP_PROVISION_PASSWORD`, together with the existing shared Valkey
+session configuration. Older configurations without `ldap_provision_dn` fall
+back to `ldap_reset_dn` and `ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD`. The directory bind needs account creation, attribute
 updates, password modification and deletion permissions under the mailbox
 base, plus access to `ou=mail-addresses` beside it. That subtree reserves
 addresses atomically across CLI and dashboard processes. Keep this service
@@ -108,6 +109,38 @@ count quota backend. External mailbox servers need equivalent mappings; see
 [quota configuration](https://doc.dovecot.org/2.4.1/core/plugins/quota.html), and
 [default values in variable expansion](https://doc.dovecot.org/2.4.1/core/settings/variables.html).
 The SMTP LDAP authenticator applies the same active-status rule.
+
+## LDAP service accounts
+
+Each service binds to the directory with its own account under
+`ou=services`, so a leaked credential only grants what that service needs.
+No service uses the directory administrator.
+
+| Account | Used by | Access |
+|---|---|---|
+| `cn=dovecot` | Dovecot user and password lookups | read people and mail addresses |
+| `cn=elemta-smtp` | SMTP AUTH and group lookups | read people, mail addresses and groups |
+| `cn=webmail` | webmail user lookups | read people, not password hashes |
+| `cn=webmail-reset` | password recovery and the reset CLI | read people, write `userPassword` |
+| `cn=provisioner` | provisioning CLI and admin console | write people and mail addresses |
+
+Users can still bind and change their own password; anonymous binds see
+nothing. `scripts/ldap-service-accounts.sh` creates the accounts, sets their
+passwords and installs the matching ACLs. It is idempotent and runs from
+`scripts/init-ldap-if-needed.sh`; `make ldap-service-accounts` reruns it.
+
+The dev passwords are random and live in `deployments/compose/.secrets/`
+(git-ignored). `make ensure-dev-secrets` creates them once and every install
+target depends on it. Compose loads each service's file with `env_file`, and
+the Kubernetes dev overlay builds Secrets from the same files. The
+environment variables are `LDAP_DOVECOT_PASSWORD`, `ELEMTA_AUTH_DATASOURCE_PASS`,
+`ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD`, `ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD` and
+`ELEMTA_LDAP_PROVISION_PASSWORD`. If Dovecot starts without its password it
+logs a warning and falls back to the dev administrator, so a bare
+`docker compose up` still works.
+
+In production, create equivalent accounts in your directory, grant them the
+same scopes and supply their passwords from your secret store.
 
 ## Admin API and permissions
 

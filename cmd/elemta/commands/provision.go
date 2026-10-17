@@ -23,11 +23,19 @@ func openProvision(c *config.Config, path string) (*provision.Service, error) {
 	if wc.SessionStore != "valkey" {
 		return nil, fmt.Errorf("mail administration requires shared Valkey sessions")
 	}
-	password := wc.LDAPResetPassword
-	if v := os.Getenv("ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD"); v != "" {
+	// Administration binds as its own account when one is configured, so the
+	// reset account needs no right to create or delete mailboxes.
+	bindDN, password := wc.LDAPProvisionDN, wc.LDAPProvisionPassword
+	if v := os.Getenv("ELEMTA_LDAP_PROVISION_PASSWORD"); v != "" {
 		password = v
 	}
-	directory, err := provision.NewLDAP(provision.LDAPConfig{URL: wc.LDAPURL, Base: wc.LDAPBase, BindDN: wc.LDAPResetDN, Password: password, SkipVerify: wc.InsecureSkipVerify})
+	if bindDN == "" {
+		bindDN, password = wc.LDAPResetDN, wc.LDAPResetPassword
+		if v := os.Getenv("ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD"); v != "" {
+			password = v
+		}
+	}
+	directory, err := provision.NewLDAP(provision.LDAPConfig{URL: wc.LDAPURL, Base: wc.LDAPBase, BindDN: bindDN, Password: password, SkipVerify: wc.InsecureSkipVerify})
 	if err != nil {
 		return nil, err
 	}

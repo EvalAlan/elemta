@@ -9,6 +9,22 @@
 # layout once and removes the state files that are recreated on demand.
 set -eu
 
+# The LDAP lookup account. Its password arrives in the environment (one env
+# file per service in the compose stack) and is written where only Dovecot
+# can read it. A stack set up without the service accounts falls back to
+# the directory admin, loudly, so a plain `docker compose up` still works.
+umask 077
+if [ -n "${LDAP_DOVECOT_PASSWORD:-}" ]; then
+    printf 'ldap_auth_dn = cn=dovecot,ou=services,dc=example,dc=com\nldap_auth_dn_password = %s\n' "$LDAP_DOVECOT_PASSWORD" >/etc/dovecot/ldap-auth.conf
+else
+    echo "entrypoint: WARNING: LDAP_DOVECOT_PASSWORD unset; binding as the directory admin. Run 'make ensure-dev-secrets ldap-service-accounts'." >&2
+    printf 'ldap_auth_dn = cn=admin,dc=example,dc=com\nldap_auth_dn_password = admin\n' >/etc/dovecot/ldap-auth.conf
+fi
+chown root:dovecot /etc/dovecot/ldap-auth.conf
+chmod 0640 /etc/dovecot/ldap-auth.conf
+umask 022
+unset LDAP_DOVECOT_PASSWORD
+
 mkdir -p /var/mail/home
 chown vmail:vmail /var/mail/home
 chmod 700 /var/mail/home

@@ -47,11 +47,20 @@ dedicated SMTP service account that mailbox users cannot reset themselves.
 `recovery_url` is a fixed public origin, never derived from an HTTP Host header.
 HTTPS is required unless `secure_cookies = false` is explicitly set for local
 HTTP development. An empty `recovery_url` hides self-service recovery. The local
-compose configuration enables recovery on `http://localhost:8027` using its test
-LDAP administrator and the existing test sender mailbox; those defaults are for
-development only. Change the origin if opening the stack from another machine.
+compose configuration enables recovery on `http://localhost:8027` using the
+`cn=webmail-reset,ou=services` service account and the existing test sender
+mailbox. Their passwords come from `deployments/compose/.secrets/webmail.env`,
+which `make ensure-dev-secrets` generates (see "LDAP service accounts" in
+`mail-administration.md`). Change the origin if opening the stack from another
+machine.
 
-The public request endpoint has shared per-address and per-IP cooldowns. A
+The public request endpoint allows one link per address per minute and a
+budget of 20 requests per client IP every 10 minutes, both shared through the
+recovery store. Behind a reverse proxy or NAT every client shares the proxy's
+address, so list the proxy in `[webmail] trusted_proxies` (IPs or CIDRs); the
+webmail then takes the right-most untrusted `X-Forwarded-For` hop as the client
+address. Without it, forwarded headers are ignored because clients can forge
+them. A
 recovery store outage prevents resets rather than bypassing revocation. If the
 directory rejects the new password, request another link and choose a stronger
 password. If email delivery fails, the public response stays generic; operators
