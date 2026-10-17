@@ -228,6 +228,31 @@
         $("#body").value = htmlToText(editor);
       }
     });
+    // The selection is saved whenever it changes inside the editor, so
+    // controls that take focus (the colour pickers, the selects) can put
+    // it back before they act.
+    var savedRange = null;
+    doc.addEventListener("selectionchange", function () {
+      var sel = window.getSelection();
+      if (sel.rangeCount && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) savedRange = sel.getRangeAt(0).cloneRange();
+    });
+    function restoreSelection() {
+      editor.focus();
+      if (savedRange) {
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+      }
+    }
+    function exec(cmd, arg) {
+      restoreSelection();
+      doc.execCommand(cmd, false, arg === undefined ? null : arg);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    // Colours and highlights as CSS spans, which every client renders;
+    // the compose sanitiser keeps only the style properties it allows.
+    try { doc.execCommand("styleWithCSS", false, true); } catch (err) { /* old browser */ }
+
     $$(".editor-toolbar [data-cmd]").forEach(function (b) {
       b.addEventListener("mousedown", function (e) { e.preventDefault(); }); // keep the selection
       b.addEventListener("click", function () {
@@ -236,11 +261,125 @@
           arg = window.prompt("Link address (https://…)", "https://");
           if (!arg || !/^(https?:\/\/|mailto:)/i.test(arg)) return;
         }
-        editor.focus();
-        doc.execCommand(cmd, false, arg || null);
+        exec(cmd, arg || undefined);
+      });
+    });
+    var blockSel = $("[data-block]"), fontSel = $("[data-font]"), sizeSel = $("[data-size]");
+    if (blockSel) blockSel.addEventListener("change", function () { exec("formatBlock", "<" + blockSel.value + ">"); blockSel.value = "p"; });
+    if (fontSel) fontSel.addEventListener("change", function () { if (fontSel.value) exec("fontName", fontSel.value); fontSel.value = ""; });
+    if (sizeSel) sizeSel.addEventListener("change", function () { if (sizeSel.value) exec("fontSize", sizeSel.value); sizeSel.value = ""; });
+    $$("[data-color]").forEach(function (inp) {
+      inp.addEventListener("input", function () {
+        var cmd = inp.getAttribute("data-color");
+        restoreSelection();
+        if (!doc.execCommand(cmd, false, inp.value) && cmd === "hiliteColor") doc.execCommand("backColor", false, inp.value);
         editor.dispatchEvent(new Event("input", { bubbles: true }));
       });
     });
+
+    // ---- pictures ----
+    // Pictures are embedded as data: URIs while editing; the server turns
+    // them into inline attachments (cid:) when the message is sent. Large
+    // photos are scaled down first, so a phone picture doesn't make a
+    // 10 MB message.
+    var MAX_SIDE = 2000, MAX_BYTES = 1500000;
+    function readImage(file) {
+      return new Promise(function (resolve, reject) {
+        var r = new FileReader();
+        r.onerror = reject;
+        r.onload = function () {
+          var url = r.result;
+          if (file.size <= MAX_BYTES || file.type === "image/gif") { resolve(url); return; }
+          var img = new Image();
+          img.onerror = function () { resolve(url); };
+          img.onload = function () {
+            var scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+            var c = doc.createElement("canvas");
+            c.width = Math.round(img.naturalWidth * scale);
+            c.height = Math.round(img.naturalHeight * scale);
+            c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+            resolve(c.toDataURL(file.type === "image/png" && file.size < 4 * MAX_BYTES ? "image/png" : "image/jpeg", 0.85));
+          };
+          img.src = url;
+        };
+        r.readAsDataURL(file);
+      });
+    }
+    function insertImages(files) {
+      files = Array.prototype.filter.call(files, function (f) { return /^image\//.test(f.type); });
+      return Promise.all(files.map(readImage)).then(function (urls) {
+        urls.forEach(function (u) {
+          var div = doc.createElement("div");
+          var img = doc.createElement("img");
+          img.src = u;
+          img.alt = "";
+          div.appendChild(img);
+          exec("insertHTML", div.innerHTML + "<br>");
+        });
+      });
+    }
+    var imageInput = $("[data-image-input]");
+    var imageBtn = $("[data-insert-image]");
+    if (imageBtn && imageInput) {
+      imageBtn.addEventListener("mousedown", function (e) { e.preventDefault(); });
+      imageBtn.addEventListener("click", function () { imageInput.click(); });
+      imageInput.addEventListener("change", function () { insertImages(imageInput.files); imageInput.value = ""; });
+    }
+    // Files dropped on the editor: pictures go into the text, anything
+    // else is added to the message's attachments.
+    editor.addEventListener("dragover", function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, "Files") >= 0) e.preventDefault(); });
+    editor.addEventListener("drop", function (e) {
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      e.preventDefault();
+      var others = Array.prototype.filter.call(files, function (f) { return !/^image\//.test(f.type); });
+      insertImages(files);
+      var att = $("#attachments");
+      if (others.length && att && window.DataTransfer) {
+        var dt = new DataTransfer();
+        Array.prototype.forEach.call(att.files, function (f) { dt.items.add(f); });
+        others.forEach(function (f) { dt.items.add(f); });
+        att.files = dt.files;
+        att.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+
+    // Clicking a picture offers sizes and removal.
+    var imageBar = $("[data-image-bar]"), activeImg = null;
+    editor.addEventListener("click", function (e) {
+      activeImg = e.target.tagName === "IMG" ? e.target : null;
+      if (imageBar) imageBar.hidden = !activeImg;
+    });
+    $$("[data-img-size]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        if (!activeImg) return;
+        var v = b.getAttribute("data-img-size");
+        if (v === "0") activeImg.removeAttribute("width"); else activeImg.setAttribute("width", v + "%");
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    });
+    var imgRemove = $("[data-img-remove]");
+    if (imgRemove) imgRemove.addEventListener("click", function () {
+      if (activeImg) { activeImg.remove(); activeImg = null; imageBar.hidden = true; editor.dispatchEvent(new Event("input", { bubbles: true })); }
+    });
+
+    var tableBtn = $("[data-insert-table]");
+    if (tableBtn) {
+      tableBtn.addEventListener("mousedown", function (e) { e.preventDefault(); });
+      tableBtn.addEventListener("click", function () {
+        var spec = window.prompt("Table size (columns × rows)", "3 x 3");
+        var m = spec && spec.match(/(\d+)\s*[x×*,]\s*(\d+)/i);
+        if (!m) return;
+        var cols = Math.min(+m[1], 12), rows = Math.min(+m[2], 50), html = '<table border="1" cellpadding="6" cellspacing="0">';
+        for (var r = 0; r < rows; r++) {
+          html += "<tr>";
+          for (var c = 0; c < cols; c++) html += "<td><br></td>";
+          html += "</tr>";
+        }
+        exec("insertHTML", html + "</table><br>");
+      });
+    }
+
     var toPlain = $("[data-to-plain]");
     if (toPlain) toPlain.addEventListener("click", function () {
       if (editor.querySelector("b,strong,i,em,u,s,ul,ol,a,h1,h2,h3") && !window.confirm("Switch to plain text? Formatting will be removed.")) return;
@@ -253,13 +392,54 @@
       try { localStorage.removeItem("compose-format"); } catch (err) { /* blocked storage */ }
       editor.focus();
     });
-    // Paste as plain text: pasted web pages bring styles, scripts' leftovers
-    // and layout the sanitiser would strip anyway.
+    // Paste keeps formatting from other apps (documents, web pages, other
+    // mail) after cleaning it down to what the compose sanitiser allows,
+    // so what the user sees is what will be sent. Pasted pictures (a
+    // screenshot, an image copied from a page) are embedded. Ctrl+Shift+V
+    // pastes plain text, as everywhere else.
+    var ALLOWED = /^(P|BR|DIV|SPAN|B|STRONG|I|EM|U|S|STRIKE|SUB|SUP|UL|OL|LI|BLOCKQUOTE|PRE|CODE|H1|H2|H3|H4|HR|TABLE|THEAD|TBODY|TR|TD|TH|A|IMG|FONT)$/;
+    var STYLES = ["color", "background-color", "font-family", "font-size", "font-weight", "font-style", "text-decoration", "text-align", "margin-left", "padding-left"];
+    function cleanNode(node) {
+      Array.prototype.slice.call(node.childNodes).forEach(function (n) {
+        if (n.nodeType === 8) { n.remove(); return; }
+        if (n.nodeType !== 1) return;
+        if (/^(SCRIPT|STYLE|META|LINK|TITLE|HEAD|IFRAME|OBJECT|EMBED|svg|SVG|FORM|INPUT|BUTTON|SELECT|TEXTAREA)$/.test(n.tagName)) { n.remove(); return; }
+        cleanNode(n);
+        if (!ALLOWED.test(n.tagName)) {
+          while (n.firstChild) n.parentNode.insertBefore(n.firstChild, n);
+          n.remove();
+          return;
+        }
+        var keep = {};
+        STYLES.forEach(function (p) { var v = n.style.getPropertyValue(p); if (v && !/url\(/i.test(v)) keep[p] = v; });
+        Array.prototype.slice.call(n.attributes).forEach(function (a) {
+          var name = a.name.toLowerCase();
+          var ok = (name === "href" && n.tagName === "A" && /^(https?:|mailto:)/i.test(a.value)) ||
+            (name === "src" && n.tagName === "IMG" && /^data:image\//i.test(a.value)) ||
+            (/^(align|colspan|rowspan|border|cellpadding|cellspacing|width|alt|color|face|size)$/.test(name));
+          if (!ok) n.removeAttribute(a.name);
+        });
+        Object.keys(keep).forEach(function (p) { n.style.setProperty(p, keep[p]); });
+        if (n.tagName === "IMG" && !n.getAttribute("src")) n.remove();
+      });
+    }
+    var plainPaste = false;
+    editor.addEventListener("keydown", function (e) { plainPaste = e.shiftKey && (e.ctrlKey || e.metaKey) && (e.key === "V" || e.key === "v"); });
     editor.addEventListener("paste", function (e) {
-      var text = (e.clipboardData || window.clipboardData).getData("text/plain");
-      if (!text) return;
+      var cd = e.clipboardData || window.clipboardData;
+      if (!cd) return;
+      var images = Array.prototype.filter.call(cd.files || [], function (f) { return /^image\//.test(f.type); });
+      var html = cd.getData("text/html"), text = cd.getData("text/plain");
       e.preventDefault();
-      doc.execCommand("insertHTML", false, textToHTML(text).replace(/<br>$/, ""));
+      if (images.length && !text) { insertImages(images); return; }
+      if (html && !plainPaste) {
+        var parsed = new DOMParser().parseFromString(html, "text/html");
+        cleanNode(parsed.body);
+        exec("insertHTML", parsed.body.innerHTML);
+        return;
+      }
+      if (text) exec("insertHTML", textToHTML(text).replace(/<br>$/, ""));
+      else if (images.length) insertImages(images);
     });
   }
   // Ctrl+Enter or Cmd+Enter sends.

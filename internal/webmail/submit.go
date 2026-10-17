@@ -7,12 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/smtp"
 	"strings"
 	"time"
 
+	"github.com/emersion/go-message"
 	"github.com/emersion/go-message/mail"
+	"github.com/emersion/go-message/textproto"
 )
 
 // Draft is a message being composed.
@@ -28,6 +31,9 @@ type Draft struct {
 	InReplyTo   string
 	References  string
 	Attachments []Attachment
+	// Inline are images shown in the HTML body (pasted or inserted in the
+	// editor), sent in a multipart/related with the HTML.
+	Inline []Attachment
 	// HighPriority marks the message important for clients that show it.
 	HighPriority bool
 	// ReceiptTo asks the recipient's client for a read receipt (RFC 8098).
@@ -48,6 +54,8 @@ type Attachment struct {
 	Filename    string
 	ContentType string
 	Data        []byte
+	// ContentID names an inline image the HTML refers to as cid:<id>.
+	ContentID string
 }
 
 // Recipients returns every envelope recipient, Bcc included.
@@ -127,128 +135,131 @@ func (d *Draft) Build(now time.Time) ([]byte, error) {
 	}
 	h.Set("User-Agent", "Elemta Webmail")
 
-	text := normaliseNewlines(d.Text)
+	root := d.bodyTree()
+	root.header.Header = mergeHeaders(h.Header.Header, root.header.Header)
 	var buf bytes.Buffer
-	if len(d.Attachments) == 0 && d.HTML == "" && d.Calendar == nil {
-		h.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
-		w, err := mail.CreateSingleInlineWriter(&buf, h)
-		if err != nil {
-			return nil, fmt.Errorf("webmail: build message: %w", err)
-		}
-		if _, err := io.WriteString(w, text); err != nil {
-			return nil, err
-		}
-		if err := w.Close(); err != nil {
-			return nil, err
-		}
-		return buf.Bytes(), nil
-	}
-
-	var bodyParts []struct {
-		ct     string
-		params map[string]string
-		data   string
-	}
-	add := func(ct string, params map[string]string, data string) {
-		bodyParts = append(bodyParts, struct {
-			ct     string
-			params map[string]string
-			data   string
-		}{ct, params, data})
-	}
-	add("text/plain", map[string]string{"charset": "utf-8"}, text)
-	if d.HTML != "" {
-		add("text/html", map[string]string{"charset": "utf-8"}, normaliseNewlines(d.HTML))
-	}
-	if d.Calendar != nil {
-		add("text/calendar", map[string]string{"charset": "utf-8", "method": d.Calendar.Method}, normaliseNewlines(string(d.Calendar.Data)))
-	}
-
-	writeBody := func(create func(mail.InlineHeader) (io.WriteCloser, error)) error {
-		for _, p := range bodyParts {
-			var ih mail.InlineHeader
-			ih.SetContentType(p.ct, p.params)
-			pw, err := create(ih)
-			if err != nil {
-				return err
-			}
-			if _, err := io.WriteString(pw, p.data); err != nil {
-				return err
-			}
-			if err := pw.Close(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	if len(d.Attachments) == 0 {
-		// multipart/alternative at the top level.
-		w, err := mail.CreateInlineWriter(&buf, h)
-		if err != nil {
-			return nil, fmt.Errorf("webmail: build message: %w", err)
-		}
-		if err := writeBody(w.CreatePart); err != nil {
-			return nil, err
-		}
-		if err := w.Close(); err != nil {
-			return nil, err
-		}
-		return buf.Bytes(), nil
-	}
-
-	w, err := mail.CreateWriter(&buf, h)
-	if err != nil {
+	if err := root.write(&buf); err != nil {
 		return nil, fmt.Errorf("webmail: build message: %w", err)
 	}
-	if len(bodyParts) == 1 {
-		var ih mail.InlineHeader
-		ih.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
-		tw, err := w.CreateSingleInline(ih)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := io.WriteString(tw, text); err != nil {
-			return nil, err
-		}
-		if err := tw.Close(); err != nil {
-			return nil, err
-		}
-	} else {
-		iw, err := w.CreateInline()
-		if err != nil {
-			return nil, err
-		}
-		if err := writeBody(iw.CreatePart); err != nil {
-			return nil, err
-		}
-		if err := iw.Close(); err != nil {
-			return nil, err
-		}
-	}
-	for _, a := range d.Attachments {
-		var ah mail.AttachmentHeader
-		ct := a.ContentType
-		if ct == "" {
-			ct = "application/octet-stream"
-		}
-		ah.SetContentType(ct, nil)
-		ah.SetFilename(a.Filename)
-		aw, err := w.CreateAttachment(ah)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := aw.Write(a.Data); err != nil {
-			return nil, err
-		}
-		if err := aw.Close(); err != nil {
-			return nil, err
-		}
-	}
-	if err := w.Close(); err != nil {
-		return nil, err
-	}
 	return buf.Bytes(), nil
+}
+
+// mimePart is one node of the message being built: a leaf with a body, or
+// a multipart container with children.
+type mimePart struct {
+	header   message.Header
+	body     []byte
+	children []*mimePart
+}
+
+func leaf(ct string, params map[string]string, cte string, body []byte) *mimePart {
+	p := &mimePart{body: body}
+	p.header.SetContentType(ct, params)
+	p.header.Set("Content-Transfer-Encoding", cte)
+	return p
+}
+
+func container(kind string, children ...*mimePart) *mimePart {
+	p := &mimePart{children: children}
+	p.header.SetContentType("multipart/"+kind, map[string]string{})
+	return p
+}
+
+// bodyTree lays out the body. Only what is present gets a part:
+//
+//	multipart/mixed                 when there are attachments
+//	  multipart/alternative         when there is more than plain text
+//	    text/plain
+//	    multipart/related           when the HTML has inline images
+//	      text/html
+//	      image/* (Content-ID)
+//	    text/calendar               for invitations
+//	  attachments
+func (d *Draft) bodyTree() *mimePart {
+	utf8 := func() map[string]string { return map[string]string{"charset": "utf-8"} }
+	alts := []*mimePart{leaf("text/plain", utf8(), "quoted-printable", []byte(normaliseNewlines(d.Text)))}
+	if d.HTML != "" {
+		html := leaf("text/html", utf8(), "quoted-printable", []byte(normaliseNewlines(d.HTML)))
+		if len(d.Inline) > 0 {
+			rel := container("related", html)
+			for _, img := range d.Inline {
+				p := leaf(orDefault(img.ContentType, "application/octet-stream"), nil, "base64", img.Data)
+				p.header.Set("Content-ID", "<"+img.ContentID+">")
+				p.header.Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": img.Filename}))
+				rel.children = append(rel.children, p)
+			}
+			html = rel
+		}
+		alts = append(alts, html)
+	}
+	if d.Calendar != nil {
+		params := utf8()
+		params["method"] = d.Calendar.Method
+		alts = append(alts, leaf("text/calendar", params, "quoted-printable", []byte(normaliseNewlines(string(d.Calendar.Data)))))
+	}
+	body := alts[0]
+	if len(alts) > 1 {
+		body = container("alternative", alts...)
+	}
+	if len(d.Attachments) == 0 {
+		return body
+	}
+	mixed := container("mixed", body)
+	for _, a := range d.Attachments {
+		p := leaf(orDefault(a.ContentType, "application/octet-stream"), nil, "base64", a.Data)
+		p.header.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": a.Filename}))
+		mixed.children = append(mixed.children, p)
+	}
+	return mixed
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// mergeHeaders puts the message headers above the root part's own
+// (Content-Type and friends).
+func mergeHeaders(top, part textproto.Header) textproto.Header {
+	fields := part.Fields()
+	for fields.Next() {
+		top.Add(fields.Key(), fields.Value())
+	}
+	return top
+}
+
+// write renders p as a whole message (p being the root part).
+func (p *mimePart) write(w io.Writer) error {
+	mw, err := message.CreateWriter(w, p.header)
+	if err != nil {
+		return err
+	}
+	if err := p.fill(mw); err != nil {
+		return err
+	}
+	return mw.Close()
+}
+
+func (p *mimePart) fill(mw *message.Writer) error {
+	if len(p.children) == 0 {
+		_, err := mw.Write(p.body)
+		return err
+	}
+	for _, c := range p.children {
+		cw, err := mw.CreatePart(c.header)
+		if err != nil {
+			return err
+		}
+		if err := c.fill(cw); err != nil {
+			return err
+		}
+		if err := cw.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // normaliseNewlines turns browser line endings into CRLF, which SMTP

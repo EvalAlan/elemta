@@ -3,6 +3,7 @@ package webmail
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -417,13 +418,22 @@ func firstContactID(t *testing.T, h *harness) string {
 func TestRichTextCompose(t *testing.T) {
 	h := newHarness(t)
 	csrf := h.login()
+	png := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\nfake"))
 	resp := sendForm(t, h, csrf, map[string]string{
 		"op": "send", "to": "priya@northwind.example", "subject": "Formatted", "format": "html",
 		"body": "Hello *world*",
-		"html": `<p>Hello <b>world</b> <a href="https://example.com">site</a> <a href="javascript:alert(1)">bad</a></p><script>alert(1)</script><img src="https://tracker.example/p.gif"><p style="color:red" onclick="x()">styled</p>`,
+		"html": `<p>Hello <b>world</b> <a href="https://example.com">site</a> <a href="javascript:alert(1)">bad</a></p>` +
+			`<script>alert(1)</script><img src="https://tracker.example/p.gif">` +
+			`<p style="color: red; position: fixed; background-image: url(https://x.example/a)" onclick="x()">styled</p>` +
+			`<img src="data:image/png;base64,` + png + `" width="50%">` +
+			`<table border="1"><tr><td>cell</td></tr></table>`,
 	})
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("send = %d", resp.StatusCode)
+	}
+	raw := string(h.sub.raw)
+	if !strings.Contains(raw, "multipart/related") {
+		t.Fatalf("no multipart/related for the inline picture:\n%s", raw)
 	}
 	msg, err := parseMessage(h.sub.raw)
 	if err != nil {
@@ -432,20 +442,46 @@ func TestRichTextCompose(t *testing.T) {
 	if msg.Text != "Hello *world*" {
 		t.Errorf("text part = %q", msg.Text)
 	}
-	for _, want := range []string{"<b>world</b>", `href="https://example.com"`, "styled"} {
+	for _, want := range []string{"<b>world</b>", `href="https://example.com"`, "color: red", `src="cid:`, `width="50%"`, "<td>cell</td>"} {
 		if !strings.Contains(msg.HTML, want) {
 			t.Errorf("HTML lacks %q:\n%s", want, msg.HTML)
 		}
 	}
-	for _, bad := range []string{"<script", "javascript:", "tracker.example", "onclick", "color:red"} {
+	for _, bad := range []string{"<script", "javascript:", "tracker.example", "onclick", "position", "url(", "data:image"} {
 		if strings.Contains(msg.HTML, bad) {
 			t.Errorf("HTML kept %q:\n%s", bad, msg.HTML)
 		}
+	}
+	var inline *Part
+	for i := range msg.Parts {
+		if msg.Parts[i].ContentID != "" {
+			inline = &msg.Parts[i]
+		}
+	}
+	if inline == nil || inline.ContentType != "image/png" || !strings.Contains(msg.HTML, "cid:"+inline.ContentID) {
+		t.Fatalf("inline picture part = %+v", inline)
 	}
 	// Without format=html the HTML field is ignored.
 	sendForm(t, h, csrf, map[string]string{"op": "send", "to": "priya@northwind.example", "body": "plain", "html": "<b>x</b>"})
 	if msg, _ := parseMessage(h.sub.raw); msg.HTML != "" {
 		t.Errorf("plain message got an HTML part")
+	}
+}
+
+func TestInlinePicturesCountTowardsLimit(t *testing.T) {
+	big := base64.StdEncoding.EncodeToString(make([]byte, 3000))
+	html, parts, over := extractInlineImages(`<img src="data:image/png;base64,`+big+`">`, "example.com", 1000)
+	if !over || len(parts) != 0 || strings.Contains(html, "data:") {
+		t.Fatalf("over budget: over=%v parts=%d html=%q", over, len(parts), html)
+	}
+}
+
+func TestReplyQuotesHTMLWithPictures(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	_, page := h.get("/compose?mode=reply&f=INBOX&uid=7")
+	if !strings.Contains(page, "<blockquote>") || !strings.Contains(page, "data:image/png;base64,") {
+		t.Fatalf("reply editor lacks the quoted HTML with its inline image")
 	}
 }
 

@@ -1,6 +1,8 @@
 package webmail
 
 import (
+	"encoding/base64"
+	"fmt"
 	"html"
 	"net/url"
 	"regexp"
@@ -115,15 +117,46 @@ func htmlToText(in string) string {
 	return strings.TrimSpace(blankLinesRE.ReplaceAllString(out, "\n\n"))
 }
 
-// composePolicy is what the rich-text editor may send: basic formatting,
-// lists, quotes and web or mail links. No styles, images, tables or
-// classes, so a message composed here looks the same in every client and
-// the editor can't be used to smuggle markup.
+// composeStyles are the inline CSS properties the editor may produce:
+// fonts, colours, alignment and indent. Bluemonday checks each value
+// against the property's grammar, so nothing that loads a URL gets through.
+var composeStyles = []string{
+	"color", "background-color", "font-family", "font-size", "font-weight", "font-style",
+	"text-decoration", "text-align", "margin-left", "padding-left",
+}
+
+// composePolicy is what the rich-text editor may send: formatting, fonts
+// and colours, alignment, lists, quotes, tables, links and images that are
+// part of the message (data: URIs, turned into inline attachments, or cid:
+// references to them). No scripts, classes, forms or remote images.
 var composePolicy = func() *bluemonday.Policy {
 	p := bluemonday.NewPolicy()
-	p.AllowElements("p", "br", "div", "b", "strong", "i", "em", "u", "s", "strike", "ul", "ol", "li", "blockquote", "pre", "code", "h1", "h2", "h3", "hr")
+	p.AllowElements("p", "br", "div", "span", "b", "strong", "i", "em", "u", "s", "strike", "sub", "sup",
+		"ul", "ol", "li", "blockquote", "pre", "code", "h1", "h2", "h3", "h4", "hr",
+		"table", "thead", "tbody", "tr", "td", "th", "font")
 	p.AllowAttrs("href").OnElements("a")
-	p.AllowURLSchemes("http", "https", "mailto")
+	p.AllowAttrs("align").OnElements("p", "div", "h1", "h2", "h3", "h4", "td", "th", "table")
+	p.AllowAttrs("border", "cellpadding", "cellspacing", "width").OnElements("table")
+	p.AllowAttrs("colspan", "rowspan", "width").OnElements("td", "th")
+	p.AllowAttrs("color", "face", "size").OnElements("font")
+	p.AllowStyles(composeStyles...).Globally()
+	p.AllowImages()
+	p.AllowDataURIImages()
+	p.AllowAttrs("alt", "width", "height").OnElements("img")
+	p.AllowURLSchemes("http", "https", "mailto", "cid", "data")
+	p.RewriteSrc(func(u *url.URL) {
+		// Images must travel with the message; a remote image would be a
+		// tracking pixel in the user's own mail.
+		switch strings.ToLower(u.Scheme) {
+		case "cid":
+		case "data":
+			if !strings.HasPrefix(strings.ToLower(u.Opaque), "image/") {
+				replaceURL(u, spacerImage)
+			}
+		default:
+			replaceURL(u, spacerImage)
+		}
+	})
 	p.RequireParseableURLs(true)
 	p.RequireNoReferrerOnLinks(true)
 	p.AddTargetBlankToFullyQualifiedLinks(true)
@@ -133,6 +166,55 @@ var composePolicy = func() *bluemonday.Policy {
 // sanitizeCompose cleans HTML from the editor.
 func sanitizeCompose(in string) string {
 	return strings.TrimSpace(composePolicy.Sanitize(in))
+}
+
+// dataImageRE matches an image the editor embedded as a data: URI.
+var dataImageRE = regexp.MustCompile(`src="data:(image/(?:png|jpeg|gif|webp|bmp));base64,([A-Za-z0-9+/=\s]+)"`)
+
+// extractInlineImages turns the data: images in composed HTML into inline
+// attachments referenced by cid:, which is how mail clients expect
+// pictures in a message body. budget caps their total size; what doesn't
+// fit is dropped from the HTML and reported.
+func extractInlineImages(html, domain string, budget int) (string, []Attachment, bool) {
+	var parts []Attachment
+	over := false
+	n := 0
+	out := dataImageRE.ReplaceAllStringFunc(html, func(m string) string {
+		sub := dataImageRE.FindStringSubmatch(m)
+		data, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(sub[2]), ""))
+		if err != nil {
+			return `src=""`
+		}
+		if len(data) > budget {
+			over = true
+			return `src=""`
+		}
+		budget -= len(data)
+		n++
+		id := newObjectID() + "@" + domain
+		ext := strings.TrimPrefix(sub[1], "image/")
+		if ext == "jpeg" {
+			ext = "jpg"
+		}
+		parts = append(parts, Attachment{Filename: fmt.Sprintf("image%d.%s", n, ext), ContentType: sub[1], Data: data, ContentID: id})
+		return `src="cid:` + id + `"`
+	})
+	return out, parts, over
+}
+
+var cidSrcRE = regexp.MustCompile(`src="cid:([^"]+)"`)
+
+// inlineCIDs turns cid: images back into data: URIs, for reopening a
+// draft or quoting a message in the editor.
+func inlineCIDs(html string, raw []byte) string {
+	return cidSrcRE.ReplaceAllStringFunc(html, func(m string) string {
+		cid := cidSrcRE.FindStringSubmatch(m)[1]
+		part, body, err := findPart(raw, 0, cid)
+		if err != nil || len(body) > maxInlineImage || !strings.HasPrefix(part.ContentType, "image/") {
+			return `src=""`
+		}
+		return `src="data:` + part.ContentType + ";base64," + base64.StdEncoding.EncodeToString(body) + `"`
+	})
 }
 
 // textToHTML turns plain text into the editor's HTML: escaped, line

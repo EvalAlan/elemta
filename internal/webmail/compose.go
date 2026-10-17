@@ -70,8 +70,8 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 			prefillDraft(cv, orig)
 			cv.DraftUID = uid
 			if orig.HTML != "" {
-				// #nosec G203 -- sanitised by the strict compose policy
-				cv.HTML = template.HTML(sanitizeCompose(orig.HTML))
+				// #nosec G203 -- sanitised by the compose policy
+				cv.HTML = template.HTML(sanitizeCompose(inlineCIDs(orig.HTML, raw)))
 			}
 			return nil
 		}
@@ -79,6 +79,10 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 		prefillReply(cv, orig, sess.Address, prefs)
 		if cv.Mode == "forward" {
 			cv.Forwarded = orig.Attachments()
+		}
+		if orig.HTML != "" {
+			// #nosec G203 -- built from escaped text and HTML sanitised by the compose policy
+			cv.HTML = template.HTML(quotedHTML(cv.Mode, orig, raw, prefs))
 		}
 		return nil
 	})
@@ -93,7 +97,41 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 		// #nosec G203 -- textToHTML escapes all text; its only markup is br and blockquote
 		cv.HTML = template.HTML(textToHTML(cv.Text))
 	}
+	composeCSP(w)
 	s.render(w, "compose.html", http.StatusOK, v)
+}
+
+// composeCSP relaxes the page policy on the compose page in one way: the
+// editor's formatting (colours, fonts, alignment) is inline style
+// attributes, which style-src 'self' would stop from showing. Style
+// attributes can't run script, the editor's content is the user's own or
+// passed through the compose sanitiser, and every other page keeps the
+// strict policy.
+func composeCSP(w http.ResponseWriter) {
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; style-src-attr 'unsafe-inline'; script-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+}
+
+// quotedHTML is the editor's starting content for a reply or forward of
+// an HTML message: the signature, then the original with its formatting
+// and inline images, quoted.
+func quotedHTML(mode string, orig *Message, raw []byte, prefs Settings) string {
+	esc := template.HTMLEscapeString
+	body := sanitizeCompose(inlineCIDs(orig.HTML, raw))
+	sig := ""
+	if strings.TrimSpace(prefs.Signature) != "" {
+		sig = "<br>-- <br>" + strings.ReplaceAll(esc(prefs.Signature), "\n", "<br>")
+	}
+	when := orig.Date.Format("Mon, Jan 2, 2006 at 15:04")
+	if mode == "forward" {
+		return "<br>" + sig + "<br><br>---------- Forwarded message ----------<br>" +
+			"From: " + esc(formatList(orig.From)) + "<br>Date: " + esc(when) + "<br>Subject: " + esc(orig.Subject) +
+			"<br>To: " + esc(formatList(orig.To)) + "<br><br>" + body
+	}
+	quote := "On " + esc(when) + ", " + esc(formatList(orig.From)) + " wrote:<br><blockquote>" + body + "</blockquote>"
+	if prefs.SignatureAbove {
+		return "<br>" + sig + "<br><br>" + quote
+	}
+	return "<br><br>" + quote + sig
 }
 
 // signatureBlock is the signature as it goes into a new message, with the
@@ -260,6 +298,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		})
 		cv.Suggestions = s.addressSuggestions(r.Context(), sess)
 		v.Problem = problem
+		composeCSP(w)
 		s.render(w, "compose.html", status, v)
 	}
 
@@ -269,9 +308,10 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	}
 	// The rich-text editor posts its HTML alongside a plain-text rendering
 	// in body; both go out, as multipart/alternative.
+	richHTML := ""
 	if h := sanitizeCompose(r.PostFormValue("html")); h != "" && r.PostFormValue("format") == "html" {
-		d.HTML = wrapHTMLBody(h)
-		// #nosec G203 -- sanitised by the strict compose policy
+		richHTML = h
+		// #nosec G203 -- sanitised by the compose policy
 		cv.HTML = template.HTML(h)
 		if strings.TrimSpace(d.Text) == "" {
 			d.Text = htmlToText(h)
@@ -317,6 +357,19 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 			}
 			d.Attachments = append(d.Attachments, Attachment{Filename: fh.Filename, ContentType: fh.Header.Get("Content-Type"), Data: data})
 		}
+	}
+	// Pictures pasted or inserted in the editor become inline attachments,
+	// counted against the same size limit as files.
+	if richHTML != "" {
+		html, inline, over := extractInlineImages(richHTML, domainOf(sess.Address), s.cfg.MaxUploadMB<<20-total)
+		if over {
+			again(http.StatusRequestEntityTooLarge, fmt.Sprintf("Pictures and attachments are limited to %d MB in total.", s.cfg.MaxUploadMB))
+			return
+		}
+		for _, p := range inline {
+			total += len(p.Data)
+		}
+		d.HTML, d.Inline = wrapHTMLBody(html), inline
 	}
 	// Forwarding carries the original's attachments that are still ticked.
 	if cv.Mode == "forward" && cv.OrigFolder != "" && cv.OrigUID != 0 && len(r.PostForm["fwd_part"]) > 0 {
