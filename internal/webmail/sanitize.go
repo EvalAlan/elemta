@@ -42,6 +42,10 @@ type sanitizeOptions struct {
 type sanitizeResult struct {
 	HTML          string
 	BlockedImages int
+	// CSS is the message's own stylesheets (<style> blocks), cleaned, for
+	// the frame's head. Much mail is styled by class from a <style> block
+	// rather than inline, and looks broken without it.
+	CSS string
 }
 
 var spacerImage = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
@@ -51,8 +55,20 @@ var spacerImage = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAE
 // allowed, and links that open in a new tab without a referrer.
 func sanitizeHTML(in string, opts sanitizeOptions) sanitizeResult {
 	var blocked atomic.Int64
+	css, cssBlocked := extractCSS(in, opts.AllowRemote)
+	blocked.Add(int64(cssBlocked))
+	in = wrapBody(in)
 	p := bluemonday.UGCPolicy()
 	p.AllowStyles(safeStyleProperties...).Globally()
+	// The background shorthand carries a colour in most mail ("Confirm"
+	// buttons are background:#1F4FA8;color:#fff). It's kept only when it
+	// loads nothing; images come through img, where they can be blocked.
+	p.AllowStyles("background").MatchingHandler(func(v string) bool {
+		return !strings.Contains(strings.ToLower(v), "url(") && !strings.ContainsAny(v, "\\<>")
+	}).Globally()
+	// Classes and IDs, so the message's own stylesheet (above) applies.
+	p.AllowAttrs("class").Matching(bluemonday.SpaceSeparatedTokens).Globally()
+	p.AllowAttrs("id").Matching(regexp.MustCompile(`^[A-Za-z][\w-]{0,63}$`)).Globally()
 	p.AllowAttrs("bgcolor", "align", "valign", "width", "height", "border", "cellpadding", "cellspacing").Globally()
 	p.AllowElements("center", "font")
 	p.AllowAttrs("color", "face", "size").OnElements("font")
@@ -86,7 +102,92 @@ func sanitizeHTML(in string, opts sanitizeOptions) sanitizeResult {
 	// way to smuggle a document into a new tab.
 	out := p.Sanitize(in)
 	out = dataHrefRE.ReplaceAllString(out, `href="#"`)
-	return sanitizeResult{HTML: out, BlockedImages: int(blocked.Load())}
+	return sanitizeResult{HTML: out, BlockedImages: int(blocked.Load()), CSS: css}
+}
+
+var (
+	styleBlockRE = regexp.MustCompile(`(?is)<style[^>]*>(.*?)</style\s*>`)
+	cssCommentRE = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	cssImportRE  = regexp.MustCompile(`(?i)@import[^;]*;?`)
+	cssURLRE     = regexp.MustCompile(`(?i)url\(\s*(['"]?)([^'")]*)(['"]?)\s*\)`)
+	cssDangerRE  = regexp.MustCompile(`(?i)(expression\s*\(|behavior\s*:|-moz-binding|javascript:|vbscript:)`)
+	bodyTagRE    = regexp.MustCompile(`(?is)<body([^>]*)>`)
+	bodyAttrRE   = regexp.MustCompile(`(?is)\b(style|bgcolor|text)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+)
+
+// maxCSS caps the stylesheet carried into the frame.
+const maxCSS = 256 << 10
+
+// extractCSS collects a message's <style> blocks and makes them safe to put
+// in the frame: no imports, no script-bearing constructs, nothing that can
+// close the style element, and no remote url() unless remote content is
+// allowed. The frame's CSP is the second line: it loads no remote style
+// sheets or fonts in any case, and remote images only when allowed.
+func extractCSS(in string, allowRemote bool) (string, int) {
+	var b strings.Builder
+	blocked := 0
+	for _, m := range styleBlockRE.FindAllStringSubmatch(in, -1) {
+		css := m[1]
+		css = strings.NewReplacer("<!--", "", "-->", "").Replace(css)
+		css = cssCommentRE.ReplaceAllString(css, "")
+		css = cssImportRE.ReplaceAllString(css, "")
+		css = cssDangerRE.ReplaceAllString(css, "")
+		css = cssURLRE.ReplaceAllStringFunc(css, func(u string) string {
+			target := strings.ToLower(strings.TrimSpace(cssURLRE.FindStringSubmatch(u)[2]))
+			switch {
+			case strings.HasPrefix(target, "data:image/"):
+				return u
+			case (strings.HasPrefix(target, "https:") || strings.HasPrefix(target, "http:")) && allowRemote:
+				return u
+			case strings.HasPrefix(target, "http"):
+				blocked++
+			}
+			return "none"
+		})
+		// Nothing in CSS needs "<"; removing it means the text can never
+		// end the <style> element it's placed in.
+		css = strings.ReplaceAll(css, "<", "")
+		b.WriteString(css)
+		b.WriteString("\n")
+		if b.Len() > maxCSS {
+			break
+		}
+	}
+	out := b.String()
+	if len(out) > maxCSS {
+		out = out[:maxCSS]
+	}
+	return out, blocked
+}
+
+// wrapBody keeps the <body> element's background and colours, which the
+// sanitiser would drop with the body tag itself, by moving them onto a
+// wrapper div around the content.
+func wrapBody(in string) string {
+	loc := bodyTagRE.FindStringSubmatchIndex(in)
+	if loc == nil {
+		return in
+	}
+	attrs := in[loc[2]:loc[3]]
+	var styles []string
+	bgcolor := ""
+	for _, a := range bodyAttrRE.FindAllStringSubmatch(attrs, -1) {
+		val := strings.Trim(a[2], `"'`)
+		switch strings.ToLower(a[1]) {
+		case "style":
+			styles = append(styles, val)
+		case "text":
+			styles = append(styles, "color:"+val)
+		case "bgcolor":
+			bgcolor = val
+		}
+	}
+	open := `<div class="elemta-body" style="` + html.EscapeString(strings.Join(styles, ";")) + `" bgcolor="` + html.EscapeString(bgcolor) + `">`
+	rest := in[loc[1]:]
+	if i := strings.LastIndex(strings.ToLower(rest), "</body"); i >= 0 {
+		rest = rest[:i]
+	}
+	return in[:loc[0]] + open + rest + "</div>"
 }
 
 var dataHrefRE = regexp.MustCompile(`(?i)href="data:[^"]*"`)

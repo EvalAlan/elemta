@@ -644,6 +644,36 @@
     e.preventDefault();
   });
 
+  // ---- message frame -----------------------------------------------------
+  // The message body is a sandboxed, script-free frame on our origin. It's
+  // sized to its content here, so a long message scrolls with the page
+  // instead of inside a box; images that load later resize it again.
+  $$("iframe[data-autosize]").forEach(function (frame) {
+    var fit = function () {
+      try {
+        var d = frame.contentDocument;
+        if (!d || !d.documentElement) return;
+        // The body's height is the content's; the document's is never less
+        // than the frame, so measuring it could only ever grow the frame.
+        var b = d.body || d.documentElement;
+        var cs = frame.contentWindow.getComputedStyle(b);
+        var h = b.getBoundingClientRect().height + parseFloat(cs.marginTop || 0) + parseFloat(cs.marginBottom || 0);
+        frame.style.height = Math.ceil(Math.max(120, h, b.scrollHeight)) + 2 + "px";
+        // Sized to fit, the frame needs no scrollbar of its own.
+        d.documentElement.style.overflowY = "hidden";
+      } catch (err) { /* not same-origin (an old cached page): keep the fixed height */ }
+    };
+    frame.addEventListener("load", function () {
+      frame.classList.add("autosized");
+      fit();
+      try {
+        if (window.ResizeObserver) new ResizeObserver(fit).observe(frame.contentDocument.body || frame.contentDocument.documentElement);
+        Array.prototype.forEach.call(frame.contentDocument.images, function (img) { img.addEventListener("load", fit); });
+      } catch (err) { /* see above */ }
+    });
+    if (frame.contentDocument && frame.contentDocument.readyState === "complete") fit();
+  });
+
   // ---- print -------------------------------------------------------------
   if (body.hasAttribute("data-print")) {
     window.addEventListener("load", function () { window.print(); });

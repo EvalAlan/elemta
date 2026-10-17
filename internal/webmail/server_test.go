@@ -317,7 +317,7 @@ func TestMailPageShowsMessageAndMarksSeen(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d\n%s", resp.StatusCode, body)
 	}
-	for _, want := range []string{"Signed MSA", "Priya Shah", "MSA countersigned.pdf", "DKIM pass", `sandbox="allow-popups allow-popups-to-escape-sandbox"`, "dana@example.com"} {
+	for _, want := range []string{"Signed MSA", "Priya Shah", "MSA countersigned.pdf", "DKIM pass", `sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"`, "dana@example.com"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}
@@ -338,7 +338,8 @@ func TestMessageBodyIsSandboxed(t *testing.T) {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	csp := resp.Header.Get("Content-Security-Policy")
-	if !strings.HasPrefix(csp, "sandbox ") || strings.Contains(csp, "allow-scripts") || strings.Contains(csp, "allow-same-origin") {
+	// Same-origin is allowed (for sizing) only because scripts never are.
+	if !strings.HasPrefix(csp, "sandbox ") || strings.Contains(csp, "allow-scripts") || !strings.Contains(csp, "script-src 'none'") {
 		t.Errorf("body CSP = %q", csp)
 	}
 	if !strings.Contains(body, "data:image/png;base64,") || strings.Contains(body, "cid:") {

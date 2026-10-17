@@ -189,7 +189,7 @@
         {{if $.Body.BlockedImages}}
         <p class="banner">Remote images are hidden to protect your privacy. <a href="{{$.List.MessageURL .UID}}&amp;remote=1">Show images</a></p>
         {{end}}
-        <iframe class="body-frame" title="Message body" sandbox="allow-popups allow-popups-to-escape-sandbox" src="{{bodyURL .Folder .UID $.Remote}}"></iframe>
+        <iframe class="body-frame" title="Message body" sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin" data-autosize src="{{bodyURL .Folder .UID $.Remote}}"></iframe>
       {{else}}
         <pre class="text-body">{{linkify .Text}}</pre>
       {{end}}

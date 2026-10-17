@@ -286,11 +286,16 @@ func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Sessi
 		imgSrc = "data: https: http:"
 	}
 	h := w.Header()
-	h.Set("Content-Security-Policy", "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src "+imgSrc+"; style-src 'unsafe-inline'; font-src data:; frame-ancestors 'self'")
+	// The frame is same-origin so the reading pane can size it to the
+	// message (no inner scrollbar), and it can run no script at all: the
+	// sandbox omits allow-scripts and the policy's default-src 'none'
+	// covers scripts. It's the combination of allow-same-origin with
+	// allow-scripts that would be dangerous, and that is never granted.
+	h.Set("Content-Security-Policy", "sandbox allow-popups allow-popups-to-escape-sandbox allow-same-origin; default-src 'none'; script-src 'none'; img-src "+imgSrc+"; style-src 'unsafe-inline'; font-src data:; form-action 'none'; frame-ancestors 'self'")
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Cache-Control", "private, no-store")
-	_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>body{margin:0;padding:16px 20px;font:15px/1.6 system-ui,sans-serif;color:#0E1726;background:#FFFFFF;word-wrap:break-word}img{max-width:100%%;height:auto}</style></head><body>%s</body></html>`, res.HTML)
+	_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>body{margin:0;padding:16px 20px;font:15px/1.6 system-ui,sans-serif;color:#0E1726;background:#FFFFFF;word-wrap:break-word}img{max-width:100%%;height:auto}</style><style>%s</style></head><body>%s</body></html>`, res.CSS, res.HTML)
 }
 
 // messagePart downloads one attachment. It is always served as an

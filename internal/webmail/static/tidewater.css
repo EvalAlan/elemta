@@ -773,3 +773,4 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .editor table { border-collapse: collapse; }
 .editor td, .editor th { border: 1px solid var(--line); padding: 4px 6px; min-width: 40px; }
 .editor pre { background: var(--surface-2); padding: 8px; border-radius: 4px; }
+.body-frame.autosized { min-height: 120px; }
