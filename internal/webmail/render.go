@@ -113,18 +113,57 @@ var templateFuncs = template.FuncMap{
 		return "/compose?" + url.Values{"mode": {mode}, "f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}}.Encode()
 	},
 	"contactsURL": contactsURL,
-	"add":         func(a, b int) int { return a + b },
-	"initials":    initials,
-	"addrOf":      func(email string) []Address { return []Address{{Email: email}} },
-	"formatAddr":  func(name, email string) string { return formatAddress(Address{Name: name, Email: email}) },
-	"authChecks":  parseAuthResults,
-	"depthClass":  func(depth int) string { return "depth-" + strconv.Itoa(min(depth, 5)) },
-	"tagClass":    tagClass,
-	"join":        strings.Join,
-	"linkify":     linkify,
-	"pageSizes":   func() []int { return []int{25, 50, 100, 200} },
-	"countable":   countable,
-	"showCount":   func(f Folder) bool { return f.Unread > 0 && countable(f) },
+	"tasksURL":    tasksURL,
+	"calURL":      calURL,
+	"calClass":    calClass,
+	"evURL":       func(o Occurrence) string { return eventURL(o.Event.UID, o.Start) },
+	"newEventAt":  func(d time.Time, hour int) string { return newEventURL(d, hour) },
+	"hourLabel": func(h24 bool, h int) string {
+		return clock(h24, time.Date(2000, 1, 1, h, 0, 0, 0, time.UTC))
+	},
+	"whenOf": func(o Occurrence, loc *time.Location, h24 bool) string {
+		e := *o.Event
+		e.Start, e.End = o.Start, o.End
+		return describeWhen(e, loc, h24)
+	},
+	"reminders": func() any { return reminderChoices },
+	"reminderLabel": func(m int) string {
+		for _, c := range reminderChoices {
+			if c.Minutes == m {
+				return c.Label
+			}
+		}
+		return strconv.Itoa(m) + " minutes before"
+	},
+	"statusLabel": func(s string) string { return Attendee{Status: s}.StatusLabel() },
+	"statusClass": func(s string) string { return Attendee{Status: s}.StatusClass() },
+	"dueLabel": func(due, today time.Time) string {
+		switch days := int(due.Sub(today).Hours() / 24); {
+		case days == 0:
+			return "today"
+		case days == 1:
+			return "tomorrow"
+		case days == -1:
+			return "yesterday"
+		case days > 1 && days < 7:
+			return due.Format("Monday")
+		case due.Year() == today.Year():
+			return due.Format("Jan 2")
+		}
+		return due.Format("Jan 2, 2006")
+	},
+	"add":        func(a, b int) int { return a + b },
+	"initials":   initials,
+	"addrOf":     func(email string) []Address { return []Address{{Email: email}} },
+	"formatAddr": func(name, email string) string { return formatAddress(Address{Name: name, Email: email}) },
+	"authChecks": parseAuthResults,
+	"depthClass": func(depth int) string { return "depth-" + strconv.Itoa(min(depth, 5)) },
+	"tagClass":   tagClass,
+	"join":       strings.Join,
+	"linkify":    linkify,
+	"pageSizes":  func() []int { return []int{25, 50, 100, 200} },
+	"countable":  countable,
+	"showCount":  func(f Folder) bool { return f.Unread > 0 && countable(f) },
 	"isRole": func(name string, folders []Folder, role string) bool {
 		for _, f := range folders {
 			if f.Name == name {

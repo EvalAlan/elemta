@@ -1,1 +1,31 @@
-{{define "invite"}}{{end}}
+{{define "invite"}}
+<section class="invite" aria-label="Invitation">
+  {{if eq .Method "REQUEST"}}<p class="strong">{{if gt .Event.Sequence 0}}Updated invitation{{else}}Invitation{{end}}: {{.Event.Summary}}</p>
+  {{else if eq .Method "REPLY"}}<p class="strong">Reply to your invitation: {{.Event.Summary}}</p>
+  {{else if eq .Method "CANCEL"}}<p class="strong">Cancelled: {{.Event.Summary}}</p>
+  {{else}}<p class="strong">Event: {{.Event.Summary}}</p>{{end}}
+  <p class="when">{{.When}}</p>
+  {{if .Repeat}}<p class="small muted">{{.Repeat}}</p>{{end}}
+  {{if .Event.Location}}<p class="small">{{.Event.Location}}</p>{{end}}
+  {{with .Event.Organizer}}<p class="small muted">Organizer: {{.Label}}</p>{{end}}
+  {{with .Conflicts}}<p class="small rsvp-pending">Conflicts with {{range $i, $c := .}}{{if $i}}, {{end}}{{$c.Event.Summary}}{{end}}</p>{{end}}
+  {{if .Outdated}}<p class="small muted">Your calendar has a newer version of this event.</p>{{end}}
+  <form action="/calendar/rsvp" method="post" class="actions">
+    <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{.Back}}">
+    {{if eq .Method "REQUEST"}}
+      {{if .MyStatus}}<span class="small">Your answer: <span class="{{statusClass .MyStatus}}">{{statusLabel .MyStatus}}</span></span>{{end}}
+      <button class="button{{if eq .MyStatus "ACCEPTED"}} primary-soft{{end}}" name="op" value="ACCEPTED">Yes</button>
+      <button class="button{{if eq .MyStatus "TENTATIVE"}} primary-soft{{end}}" name="op" value="TENTATIVE">Maybe</button>
+      <button class="button{{if eq .MyStatus "DECLINED"}} primary-soft{{end}}" name="op" value="DECLINED">No</button>
+    {{else if eq .Method "REPLY"}}
+      {{with .Reply}}<span>{{.Label}}: <span class="{{.StatusClass}}">{{.StatusLabel}}</span></span>{{end}}
+      {{if .InCalendar}}<button class="button" name="op" value="apply-reply">Record in my calendar</button>{{end}}
+    {{else if eq .Method "CANCEL"}}
+      {{if .InCalendar}}<button class="button danger" name="op" value="apply-cancel">Remove from my calendar</button>{{else}}<span class="small muted">It isn't in your calendar.</span>{{end}}
+    {{else}}
+      {{if .InCalendar}}<span class="small muted">This event is in your calendar.</span>{{else}}<button class="button" name="op" value="add">Add to my calendar</button>{{end}}
+    {{end}}
+    {{if .InCalendar}}<a class="button ghost" href="/calendar/event?uid={{.Event.UID}}">Open in calendar</a>{{end}}
+  </form>
+</section>
+{{end}}

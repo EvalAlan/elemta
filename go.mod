@@ -5,6 +5,7 @@ go 1.26.9
 require (
 	blitiri.com.ar/go/spf v1.6.0
 	github.com/BurntSushi/toml v1.6.0
+	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-msgauth v0.7.0
@@ -22,6 +23,7 @@ require (
 	github.com/sony/gobreaker v1.0.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
+	github.com/teambition/rrule-go v1.8.2
 	github.com/valkey-io/valkey-go v1.0.78
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.60.0

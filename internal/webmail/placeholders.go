@@ -1,9 +1,5 @@
 package webmail
 
-// Placeholders for the calendar, tasks and filters views, which land in the
-// commits that follow. Each is replaced by its real definition there.
-
-type calendarView struct{}
-type tasksView struct{}
+// Placeholder for the filters view, which lands in the commit that follows
+// and replaces it with its real definition there.
 type filtersView struct{}
-type inviteView struct{}

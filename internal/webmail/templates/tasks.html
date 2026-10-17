@@ -1,0 +1,88 @@
+{{define "search"}}<div class="search-spacer"></div>{{end}}
+{{define "sidebar"}}
+  {{with .Tasks}}
+  <nav aria-label="Task lists">
+    <ul class="folders">
+      <li><a class="folder" href="{{tasksURL "" .Show ""}}"{{if eq .List ""}} aria-current="page"{{end}}><span class="folder-name">All tasks</span>{{with index .Counts ""}}<span class="count">{{.}}</span>{{end}}</a></li>
+      {{range .Lists}}
+      <li><a class="folder" href="{{tasksURL . $.Tasks.Show ""}}"{{if eq . $.Tasks.List}} aria-current="page"{{end}}><span class="folder-name">{{.}}</span>{{with index $.Tasks.Counts .}}<span class="count">{{.}}</span>{{end}}</a></li>
+      {{end}}
+    </ul>
+  </nav>
+  {{end}}
+{{end}}
+{{define "content"}}
+{{with .Tasks}}
+<div class="panes{{if .Selected}} has-message{{end}}">
+  <section class="list" aria-label="Tasks">
+    <div class="list-head">
+      <h1>{{if .List}}{{.List}}{{else}}All tasks{{end}}</h1>
+      <nav class="segmented push" aria-label="Show">
+        <a href="{{tasksURL .List "open" ""}}"{{if eq .Show "open"}} aria-current="page"{{end}}>Open</a>
+        <a href="{{tasksURL .List "done" ""}}"{{if eq .Show "done"}} aria-current="page"{{end}}>Done</a>
+        <a href="{{tasksURL .List "all" ""}}"{{if eq .Show "all"}} aria-current="page"{{end}}>All</a>
+      </nav>
+    </div>
+    <form class="quick-add" action="/tasks" method="post">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="add"><input type="hidden" name="list_filter" value="{{.List}}"><input type="hidden" name="show" value="{{.Show}}">
+      <label class="visually-hidden" for="new-task">New task</label>
+      <input id="new-task" name="summary" type="text" placeholder="Add a task" maxlength="500" required autofocus>
+      <label class="visually-hidden" for="new-due">Due date</label>
+      <input id="new-due" name="due" type="date" class="compact-date">
+      <button class="button primary-soft" type="submit">Add</button>
+    </form>
+    {{if not .Shown}}<p class="empty">{{if eq .Show "done"}}No finished tasks.{{else}}Nothing to do. Add a task above.{{end}}</p>{{end}}
+    <ul class="task-list">
+    {{range .Shown}}
+      <li class="task{{if .Done}} done{{end}}">
+        <form action="/tasks" method="post" class="inline">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="toggle"><input type="hidden" name="id" value="{{.UID}}"><input type="hidden" name="list_filter" value="{{$.Tasks.List}}"><input type="hidden" name="show" value="{{$.Tasks.Show}}">
+          <button class="task-check" title="{{if .Done}}Mark not done{{else}}Mark done{{end}}"><span class="visually-hidden">{{if .Done}}Mark not done{{else}}Mark done{{end}}: {{.Summary}}</span></button>
+        </form>
+        <a class="task-main" href="{{tasksURL $.Tasks.List $.Tasks.Show .UID}}">
+          <span class="task-title">{{if eq .Priority "high"}}<span class="prio-high" title="High priority">!</span> {{end}}{{.Summary}}</span>
+          <span class="due{{if .Overdue $.Tasks.Today}} overdue{{end}}">{{if not .Due.IsZero}}Due {{dueLabel .Due $.Tasks.Today}}{{end}}{{if and (not $.Tasks.List) (ne .List "Tasks")}}{{if not .Due.IsZero}} · {{end}}{{.List}}{{end}}</span>
+        </a>
+      </li>
+    {{end}}
+    </ul>
+    {{if ne .Show "open"}}
+    <form class="empty-folder" action="/tasks" method="post">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="clear-done"><input type="hidden" name="list_filter" value="{{.List}}"><input type="hidden" name="show" value="{{.Show}}">
+      <button class="button ghost danger" data-confirm="Delete every finished task{{if .List}} in {{.List}}{{end}}?">Clear finished tasks</button>
+    </form>
+    {{end}}
+  </section>
+  <article class="reader" aria-label="Task">
+  {{with .Selected}}
+    <form class="card form-grid" action="/tasks" method="post" data-unsaved-warning>
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="save"><input type="hidden" name="id" value="{{.UID}}"><input type="hidden" name="list_filter" value="{{$.Tasks.List}}"><input type="hidden" name="show" value="{{$.Tasks.Show}}">
+      <h2 class="card-title">Task</h2>
+      <label for="t-summary">Title</label><input id="t-summary" name="summary" type="text" value="{{.Summary}}" maxlength="500" required>
+      <label for="t-due">Due</label><input id="t-due" name="due" type="date" value="{{if not .Due.IsZero}}{{.Due.Format "2006-01-02"}}{{end}}">
+      <label for="t-prio">Priority</label>
+      <select id="t-prio" name="priority">
+        <option value="high"{{if eq .Priority "high"}} selected{{end}}>High</option>
+        <option value="normal"{{if eq .Priority "normal"}} selected{{end}}>Normal</option>
+        <option value="low"{{if eq .Priority "low"}} selected{{end}}>Low</option>
+      </select>
+      <label for="t-list">List</label>
+      <span><input id="t-list" name="list" type="text" value="{{.List}}" list="task-lists" maxlength="60"><datalist id="task-lists">{{range $.Tasks.Lists}}<option value="{{.}}">{{end}}</datalist></span>
+      <label for="t-notes">Notes</label><textarea id="t-notes" name="notes" rows="6">{{.Notes}}</textarea>
+      {{if .Done}}<span class="label">Finished</span><span>{{longDate $.Loc $.Clock24 .Completed}}</span>{{end}}
+      <div class="form-actions">
+        <button class="button primary" type="submit">Save task</button>
+        <a class="button ghost" href="{{tasksURL $.Tasks.List $.Tasks.Show ""}}">Close</a>
+      </div>
+    </form>
+    <form action="/tasks" method="post" class="task-delete">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.UID}}"><input type="hidden" name="list_filter" value="{{$.Tasks.List}}"><input type="hidden" name="show" value="{{$.Tasks.Show}}">
+      <button class="button ghost danger" data-confirm="Delete this task?">Delete task</button>
+    </form>
+  {{else}}
+    <p class="empty reader-empty">Select a task to see its details.</p>
+  {{end}}
+  </article>
+</div>
+{{end}}
+{{end}}

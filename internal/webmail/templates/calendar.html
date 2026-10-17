@@ -1,0 +1,215 @@
+{{define "search"}}<div class="search-spacer"></div>{{end}}
+{{define "sidebar"}}
+  {{with .Calendar}}
+  <a class="button primary block" href="/calendar/event?new=1&amp;date={{.Date.Format "2006-01-02"}}">{{template "icon-plus"}}New event</a>
+  <table class="mini">
+    <caption>{{.Mini.Title}}</caption>
+    <thead><tr>{{range .Weekdays}}<th scope="col" abbr="{{.}}">{{slice . 0 1}}</th>{{end}}</tr></thead>
+    <tbody>
+    {{range .Mini.Weeks}}<tr>{{range .}}<td class="{{if .Other}}other {{end}}{{if .Today}}today {{end}}{{if .Chosen}}chosen{{end}}"><a href="{{.URL}}">{{.Day}}</a></td>{{end}}</tr>{{end}}
+    </tbody>
+  </table>
+  <h3 class="small muted">Calendars</h3>
+  <ul class="cal-legend">
+    {{range .Calendars}}<li><span class="swatch {{calClass .}}"></span>{{.}}</li>{{end}}
+  </ul>
+  <form class="import" action="/calendar/import" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <label class="small" for="ics">Import an .ics file</label>
+    <input id="ics" name="file" type="file" accept=".ics,text/calendar" required>
+    <button class="button" type="submit">Import</button>
+  </form>
+  <a class="small manage" href="/calendar/export">Export calendar (.ics)</a>
+  {{end}}
+{{end}}
+{{define "content"}}
+{{with .Calendar}}
+<div class="cal-head">
+  <a class="button" href="{{.TodayURL}}">Today</a>
+  {{if not (or .Event .Form)}}
+  <a class="button" href="{{.PrevURL}}" title="Previous" data-key="k">{{template "icon-left"}}<span class="visually-hidden">Previous</span></a>
+  <a class="button" href="{{.NextURL}}" title="Next" data-key="j">{{template "icon-right"}}<span class="visually-hidden">Next</span></a>
+  <h1>{{.Title}}</h1>
+  {{else}}
+  <a class="button" href="{{.PrevURL}}">{{template "icon-back"}}<span>Back to calendar</span></a>
+  {{end}}
+  <nav class="segmented push" aria-label="Calendar view">
+    <a href="{{calURL "day" .Date}}"{{if and (eq .View "day") (not .Event) (not .Form)}} aria-current="page"{{end}}>Day</a>
+    <a href="{{calURL "week" .Date}}"{{if and (eq .View "week") (not .Event) (not .Form)}} aria-current="page"{{end}}>Week</a>
+    <a href="{{calURL "month" .Date}}"{{if and (eq .View "month") (not .Event) (not .Form)}} aria-current="page"{{end}}>Month</a>
+    <a href="{{calURL "agenda" .Date}}"{{if and (eq .View "agenda") (not .Event) (not .Form)}} aria-current="page"{{end}}>Agenda</a>
+  </nav>
+</div>
+<div class="cal-body">
+{{if .Form}}{{template "event-form" $}}
+{{else if .Event}}{{template "event-detail" $}}
+{{else if eq .View "month"}}
+  <div class="month" role="grid" aria-label="{{.Title}}">
+    {{range .Weekdays}}<div class="dow" role="columnheader">{{.}}</div>{{end}}
+    {{range .Weeks}}{{range .}}
+    <div class="day{{if .Other}} other{{end}}{{if .Today}} today{{end}}" role="gridcell">
+      <a class="daynum" href="{{.URL}}">{{.Date.Day}}</a>
+      {{range .AllDay}}
+        <a class="chip-ev {{.Class}}{{if not .Occ.Event.AllDay}} timed{{end}}" href="{{.URL}}" title="{{.Occ.Event.Summary}}">{{if .TimeLabel}}<span class="t">{{.TimeLabel}}</span>{{end}}{{.Occ.Event.Summary}}</a>
+      {{end}}
+      {{if .More}}<a class="more" href="{{.URL}}">+{{.More}} more</a>{{end}}
+    </div>
+    {{end}}{{end}}
+  </div>
+{{else if eq .View "agenda"}}
+  <div class="agenda">
+    {{if not .Agenda}}<p class="empty">Nothing scheduled in these 30 days.</p>{{end}}
+    {{range .Agenda}}
+      <h2{{if .Today}} class="today"{{end}}><a href="{{.URL}}">{{.Date.Format "Monday, January 2"}}</a>{{if .Today}} · Today{{end}}</h2>
+      {{range .AllDay}}
+      <a class="agenda-item" href="{{.URL}}">
+        <span class="mono muted">{{if .Occ.Event.AllDay}}All day{{else}}{{.TimeLabel}} – {{clock $.Clock24 (.Occ.End.In $.Loc)}}{{end}}</span>
+        <span class="swatch {{.Class}}" aria-hidden="true"></span>
+        <span><span class="strong">{{.Occ.Event.Summary}}</span>{{if .Occ.Event.Location}} <span class="muted">· {{.Occ.Event.Location}}</span>{{end}}{{if .Occ.Event.Recurring}} <span class="marker" title="Repeats">{{template "icon-repeat"}}</span>{{end}}</span>
+      </a>
+      {{end}}
+    {{end}}
+  </div>
+{{else}}
+  <div class="time-grid" data-scroll-hour="{{.ScrollTo}}">
+    <div class="grid-top">
+    <div class="week-head cols-{{len .Days}}">
+      <div class="gutter"></div>
+      {{range .Days}}<div class="colhead{{if .Today}} today{{end}}">{{.Date.Format "Mon"}}<a href="{{.URL}}">{{.Date.Day}}</a></div>{{end}}
+    </div>
+    <div class="allday-row cols-{{len .Days}}">
+      <div class="gutter">all day</div>
+      {{range .Days}}<div class="cell">{{range .AllDay}}<a class="chip-ev {{.Class}}" href="{{.URL}}" title="{{.Occ.Event.Summary}}">{{.Occ.Event.Summary}}</a>{{end}}</div>{{end}}
+    </div>
+    </div>
+    <div class="hours cols-{{len .Days}}">
+      <div class="gutter">{{range $.Calendar.Hours}}<div class="hour-label" data-hour="{{.}}">{{if .}}{{hourLabel $.Clock24 .}}{{end}}</div>{{end}}</div>
+      {{range .Days}}
+      {{$day := .}}
+      <div class="daycol{{if .Today}} today{{end}}">
+        {{range $.Calendar.Hours}}<a class="slot" href="{{newEventAt $day.Date .}}" data-hour="{{.}}" aria-label="New event at {{hourLabel $.Clock24 .}}"></a>{{end}}
+        {{range .Timed}}
+        <a class="ev {{.Class}} {{.PosClass}}" href="{{.URL}}" title="{{.Occ.Event.Summary}}"><span class="t">{{.TimeLabel}}</span><strong>{{.Occ.Event.Summary}}</strong>{{if .Occ.Event.Location}}<br><span>{{.Occ.Event.Location}}</span>{{end}}</a>
+        {{end}}
+        {{if .Today}}<div class="now-line q{{$.Calendar.NowQ}}" aria-hidden="true"></div>{{end}}
+      </div>
+      {{end}}
+    </div>
+  </div>
+{{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "event-detail"}}
+{{with .Calendar.Event}}
+<div class="toolbar" role="toolbar" aria-label="Event actions">
+  <a class="button" href="/calendar/event?uid={{.Event.UID}}&amp;occ={{.Occ.Start.Unix}}&amp;edit=1">Edit</a>
+  <a class="button" href="{{.ICSURL}}">Download .ics</a>
+  {{if .Event.Recurring}}
+  <form action="/calendar/event" method="post" class="inline">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="delete-occurrence"><input type="hidden" name="uid" value="{{.Event.UID}}"><input type="hidden" name="occ" value="{{.Occ.Start.Unix}}">
+    <button class="button danger" data-confirm="Delete only this occurrence?">Delete this one</button>
+  </form>
+  {{end}}
+  <form action="/calendar/event" method="post" class="inline">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="uid" value="{{.Event.UID}}">
+    {{if and .Event.HasAttendees .Organizer}}<input type="hidden" name="notify" value="1">{{end}}
+    <button class="button danger" data-confirm="{{if .Event.Recurring}}Delete every occurrence of this event?{{else}}Delete this event?{{end}}{{if and .Event.HasAttendees .Organizer}} Guests will be told it is cancelled.{{end}}">{{if .Event.Recurring}}Delete series{{else}}Delete{{end}}</button>
+  </form>
+</div>
+<div class="event-view">
+  <h2><span class="swatch-inline {{.Class}}"></span>{{.Event.Summary}}</h2>
+  <p class="when">{{whenOf .Occ $.Loc $.Clock24}}</p>
+  {{if .Repeat}}<p class="muted">{{template "icon-repeat"}} {{.Repeat}}</p>{{end}}
+  {{if .Event.Location}}<p>{{template "icon-pin"}} {{.Event.Location}}</p>{{end}}
+  {{if .Event.URL}}<p><a href="{{.Event.URL}}" rel="noopener noreferrer" target="_blank">{{.Event.URL}}</a></p>{{end}}
+  {{with .Conflicts}}<p class="banner">Overlaps with {{range $i, $c := .}}{{if $i}}, {{end}}<a href="{{evURL $c}}">{{$c.Event.Summary}}</a>{{end}}.</p>{{end}}
+  <dl class="details">
+    <dt>Calendar</dt><dd>{{.Event.Calendar}}</dd>
+    <dt>Show as</dt><dd>{{if .Event.Busy}}Busy{{else}}Free{{end}}</dd>
+    {{if ge .Event.Reminder 0}}<dt>Reminder</dt><dd>{{reminderLabel .Event.Reminder}}</dd>{{end}}
+    {{with .Event.Organizer}}<dt>Organizer</dt><dd>{{.Label}}{{if .Name}} <span class="mono muted">{{.Email}}</span>{{end}}</dd>{{end}}
+    {{if .Event.Attendees}}
+    <dt>{{template "icon-people"}} Guests</dt>
+    <dd><ul class="attendees">{{range .Event.Attendees}}<li>{{.Label}} <span class="small {{.StatusClass}}">· {{.StatusLabel}}</span>{{if .Optional}} <span class="muted small">(optional)</span>{{end}}</li>{{end}}</ul></dd>
+    {{end}}
+  </dl>
+  {{if .Event.Description}}<div class="text-body">{{linkify .Event.Description}}</div>{{end}}
+  {{if .Event.HasAttendees}}{{if not .Organizer}}
+  <p class="small muted">You were invited to this event. Your answer: <span class="{{statusClass .MyStatus}}">{{statusLabel .MyStatus}}</span>. Answer from the invitation email to tell the organizer.</p>
+  {{end}}{{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "event-form"}}
+{{with .Calendar.Form}}
+<form class="card form-grid event-form" action="/calendar/event" method="post" data-unsaved-warning>
+  <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="save">
+  <input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="occ" value="{{.Occ}}">{{if .Recurring}}<input type="hidden" name="recurring" value="1">{{end}}
+  <h2 class="card-title">{{if .UID}}Edit event{{else}}New event{{end}}</h2>
+  {{if .Problem}}<p class="problem form-wide" role="alert">{{.Problem}}</p>{{end}}
+  <label for="ev-title">Title</label><input id="ev-title" name="summary" type="text" value="{{.Summary}}" maxlength="500" autofocus required>
+  <span class="label">When</span>
+  <span class="inline-fields">
+    <label class="visually-hidden" for="ev-start-date">Start date</label><input id="ev-start-date" name="start_date" type="date" value="{{.StartDate}}" required>
+    <span class="time-field"><label class="visually-hidden" for="ev-start-time">Start time</label><input id="ev-start-time" name="start_time" type="time" value="{{.StartTime}}" step="300"></span>
+    <span>to</span>
+    <span class="time-field"><label class="visually-hidden" for="ev-end-time">End time</label><input id="ev-end-time" name="end_time" type="time" value="{{.EndTime}}" step="300"></span>
+    <label class="visually-hidden" for="ev-end-date">End date</label><input id="ev-end-date" name="end_date" type="date" value="{{.EndDate}}">
+  </span>
+  <span></span>
+  <label class="checkline"><input id="ev-allday" type="checkbox" name="allday" value="1"{{if .AllDay}} checked{{end}}> All day</label>
+  {{if .Recurring}}
+  <span class="label">Change</span>
+  <span class="inline-fields">
+    <label class="checkline"><input type="radio" name="scope" value="all" checked> Every occurrence</label>
+    <label class="checkline"><input type="radio" name="scope" value="this"> Only this one</label>
+  </span>
+  {{end}}
+  <label for="ev-repeat">Repeat</label>
+  <span class="inline-fields">
+    <select id="ev-repeat" name="repeat">
+      <option value=""{{if eq .Repeat ""}} selected{{end}}>Doesn't repeat</option>
+      <option value="daily"{{if eq .Repeat "daily"}} selected{{end}}>Daily</option>
+      <option value="weekdays"{{if eq .Repeat "weekdays"}} selected{{end}}>Every weekday (Mon–Fri)</option>
+      <option value="weekly"{{if eq .Repeat "weekly"}} selected{{end}}>Weekly</option>
+      <option value="monthly"{{if eq .Repeat "monthly"}} selected{{end}}>Monthly</option>
+      <option value="yearly"{{if eq .Repeat "yearly"}} selected{{end}}>Yearly</option>
+      {{if .CustomRule}}<option value="custom"{{if eq .Repeat "custom"}} selected{{end}}>Custom (kept as imported)</option>{{end}}
+    </select>
+    <span class="repeat-detail">every <label class="visually-hidden" for="ev-interval">Interval</label><input id="ev-interval" name="interval" type="number" min="1" max="99" value="{{.Interval}}" class="narrow"></span>
+  </span>
+  <span class="label repeat-detail">On</span>
+  <span class="inline-fields repeat-detail">{{range .WeekdayOpts}}<label class="checkline"><input type="checkbox" name="byday" value="{{.Value}}"{{if .Checked}} checked{{end}}> {{.Label}}</label>{{end}}</span>
+  <span class="label repeat-detail">Ends</span>
+  <span class="inline-fields repeat-detail">
+    <label class="checkline"><input type="radio" name="ends" value="never"{{if eq .Ends "never"}} checked{{end}}> Never</label>
+    <label class="checkline"><input type="radio" name="ends" value="until"{{if eq .Ends "until"}} checked{{end}}> On</label>
+    <label class="visually-hidden" for="ev-until">End date</label><input id="ev-until" name="until" type="date" value="{{.Until}}">
+    <label class="checkline"><input type="radio" name="ends" value="count"{{if eq .Ends "count"}} checked{{end}}> After</label>
+    <label class="visually-hidden" for="ev-count">Occurrences</label><input id="ev-count" name="count" type="number" min="1" max="1000" value="{{if .Count}}{{.Count}}{{else}}10{{end}}" class="narrow"> times
+  </span>
+  {{if .CustomRule}}<input type="hidden" name="custom_rule" value="{{.CustomRule}}">{{end}}
+  <label for="ev-location">Location</label><input id="ev-location" name="location" type="text" value="{{.Location}}">
+  <label for="ev-url">Link</label><input id="ev-url" name="url" type="url" value="{{.URL}}" placeholder="https://… (a video call, for example)">
+  <label for="ev-guests">Guests</label><input id="ev-guests" name="attendees" type="text" value="{{.Attendees}}" autocomplete="off" data-addresses placeholder="Email addresses, separated by commas">
+  <span></span>
+  <label class="checkline"><input type="checkbox" name="notify" value="1"{{if or .Notify (not .UID)}} checked{{end}}> Email invitations (and updates) to guests</label>
+  <label for="ev-cal">Calendar</label>
+  <span><input id="ev-cal" name="calendar" type="text" value="{{.Calendar}}" list="cal-list" maxlength="60"><datalist id="cal-list">{{range .Calendars}}<option value="{{.}}">{{end}}</datalist></span>
+  <label for="ev-reminder">Reminder</label>
+  <select id="ev-reminder" name="reminder">
+    {{$r := .Reminder}}{{range reminders}}<option value="{{.Minutes}}"{{if eq .Minutes $r}} selected{{end}}>{{.Label}}</option>{{end}}
+  </select>
+  <label for="ev-busy">Show as</label>
+  <select id="ev-busy" name="busy"><option value="busy"{{if .Busy}} selected{{end}}>Busy</option><option value="free"{{if not .Busy}} selected{{end}}>Free</option></select>
+  <label for="ev-desc">Description</label><textarea id="ev-desc" name="description" rows="5">{{.Description}}</textarea>
+  <div class="form-actions">
+    <button class="button primary" type="submit">Save event</button>
+    <a class="button ghost" href="{{if .UID}}/calendar/event?uid={{.UID}}{{else}}/calendar{{end}}">Cancel</a>
+  </div>
+</form>
+{{end}}
+{{end}}

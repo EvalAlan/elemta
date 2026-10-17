@@ -245,6 +245,25 @@ func (s *imapStore) selectFolder(folder string) (uint32, error) {
 	if mb := s.c.Mailbox(); mb != nil && mb.Name == folder {
 		return mb.NumMessages, nil
 	}
+	return s.reselect(folder)
+}
+
+// syncFolder selects folder and makes sure the connection has seen every
+// message delivered since it last looked. Servers only announce new mail
+// (EXISTS) in a command's response, so a connection that sat idle with the
+// folder selected would otherwise list a stale count. A NOOP is the
+// cheapest command that collects the announcements.
+func (s *imapStore) syncFolder(folder string) (uint32, error) {
+	if mb := s.c.Mailbox(); mb != nil && mb.Name == folder {
+		if err := s.c.Noop().Wait(); err != nil {
+			return 0, fmt.Errorf("webmail: noop: %w", err)
+		}
+		return s.c.Mailbox().NumMessages, nil
+	}
+	return s.reselect(folder)
+}
+
+func (s *imapStore) reselect(folder string) (uint32, error) {
 	data, err := s.c.Select(folder, nil).Wait()
 	if err != nil {
 		if isNo(err) {
@@ -323,7 +342,7 @@ func (s *imapStore) List(ctx context.Context, folder string, q ListQuery) (Page,
 		q.PageSize = defaultPageSize
 	}
 	result := Page{Folder: folder, Page: q.Page, PageSize: q.PageSize}
-	total, err := s.selectFolder(folder)
+	total, err := s.syncFolder(folder)
 	if err != nil {
 		return result, err
 	}
