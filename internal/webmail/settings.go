@@ -207,11 +207,14 @@ var commonZones = []string{
 type settingsView struct {
 	Prefs Settings
 	Zones []string
+	// CanChangePassword shows the password form.
+	CanChangePassword bool
+	MinPasswordLength int
 }
 
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, sess *Session) {
 	p := s.prefs(r.Context(), sess)
-	v := view{Title: "Settings", Session: sess, Notice: notices[r.URL.Query().Get("n")], Settings: &settingsView{Prefs: p, Zones: commonZones}}
+	v := view{Title: "Settings", Session: sess, Notice: notices[r.URL.Query().Get("n")], Settings: &settingsView{Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength}}
 	s.withFolders(r, sess, &v)
 	s.render(w, "settings.html", http.StatusOK, v)
 }
@@ -258,7 +261,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		p.CalendarView = v
 	}
 	if problem != "" {
-		v := view{Title: "Settings", Session: sess, Problem: problem, Settings: &settingsView{Prefs: p, Zones: commonZones}}
+		v := view{Title: "Settings", Session: sess, Problem: problem, Settings: &settingsView{Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength}}
 		s.withFolders(r, sess, &v)
 		s.render(w, "settings.html", http.StatusBadRequest, v)
 		return

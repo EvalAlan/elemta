@@ -178,6 +178,9 @@ services:
       # Sessions are kept in Valkey, so a restart or a second webmail
       # container doesn't sign anyone out ([webmail] session_store).
       - VALKEY_ADDR=elemta-valkey:6379
+      # Dev only: the LDAP lookup account for password changes (the dev
+      # directory's admin, as Dovecot uses). See [webmail] ldap_* settings.
+      - ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD=${ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD:-admin}
     security_opt:
       - no-new-privileges:true
     user: "1001:1001"

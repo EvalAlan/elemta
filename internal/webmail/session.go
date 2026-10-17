@@ -294,6 +294,26 @@ func (m *SessionManager) password(s *Session) (string, error) {
 	return string(pw), nil
 }
 
+// UpdatePassword reseals a session's password after the user changed it,
+// so the session's mail connection can still be redialled.
+func (m *SessionManager) UpdatePassword(s *Session, password string) error {
+	nonce := make([]byte, m.aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	s.nonce = nonce
+	s.sealed = m.aead.Seal(nil, nonce, []byte(password), []byte(s.ID))
+	rec := s.record()
+	m.mu.Unlock()
+	if m.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return m.shared.Save(ctx, rec, m.ttl)
+	}
+	return nil
+}
+
 // CheckCSRF reports whether token matches the session's CSRF token.
 func (s *Session) CheckCSRF(token string) bool {
 	return token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.CSRF)) == 1

@@ -89,6 +89,23 @@ type Config struct {
 	// ValkeyAddr is host:port of Valkey for session_store = "valkey".
 	// Empty uses the VALKEY_ADDR environment variable.
 	ValkeyAddr string `toml:"valkey_addr"`
+	// LDAPURL turns on self-service password changes: the directory the
+	// mailbox passwords live in (ldap:// or ldaps://). Empty hides the
+	// feature.
+	LDAPURL string `toml:"ldap_url"`
+	// LDAPBase and LDAPUserFilter find a user's entry; %s in the filter is
+	// replaced by the (escaped) sign-in name.
+	LDAPBase       string `toml:"ldap_base"`
+	LDAPUserFilter string `toml:"ldap_user_filter"`
+	// LDAPSearchDN and LDAPSearchPassword are an account that may look up
+	// user entries. It needs read access to DNs only; the change itself is
+	// made bound as the user. The password can also come from the
+	// ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD environment variable.
+	LDAPSearchDN       string `toml:"ldap_search_dn"`
+	LDAPSearchPassword string `toml:"ldap_search_password"`
+	// MinPasswordLength is the shortest new password accepted (10).
+	MinPasswordLength int `toml:"min_password_length"`
+
 	// SessionKeyFile holds the key that seals passwords in shared sessions,
 	// base64 encoded. It is created if missing. Every pod must read the
 	// same file, and it must not be stored in Valkey.
@@ -123,6 +140,12 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.SessionStore == "" {
 		c.SessionStore = "memory"
+	}
+	if c.LDAPUserFilter == "" {
+		c.LDAPUserFilter = "(mail=%s)"
+	}
+	if c.MinPasswordLength <= 0 {
+		c.MinPasswordLength = 10
 	}
 	if c.SessionTTL == "" {
 		c.SessionTTL = defaultSessionTTL.String()

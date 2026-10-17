@@ -60,6 +60,18 @@
     <div class="form-actions"><button class="button primary" type="submit">Save settings</button></div>
   </form>
   {{end}}
+  {{if .Settings.CanChangePassword}}
+  <form class="card form-grid" action="/settings/password" method="post" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <h2 class="card-title">Password</h2>
+    <input type="text" name="username" value="{{.Session.Address}}" autocomplete="username" hidden>
+    <label for="pw-current">Current password</label><input id="pw-current" name="current" type="password" autocomplete="current-password" required>
+    <label for="pw-new">New password</label><input id="pw-new" name="new" type="password" autocomplete="new-password" minlength="{{.Settings.MinPasswordLength}}" required>
+    <label for="pw-confirm">Repeat new password</label><input id="pw-confirm" name="confirm" type="password" autocomplete="new-password" minlength="{{.Settings.MinPasswordLength}}" required>
+    <span></span><span class="small muted">At least {{.Settings.MinPasswordLength}} characters. The new password works at once for webmail, phone and desktop mail apps; they will ask for it again.</span>
+    <div class="form-actions"><button class="button primary" type="submit">Change password</button></div>
+  </form>
+  {{end}}
   <div class="card links-card">
     <h2 class="card-title">More</h2>
     <ul class="link-list">

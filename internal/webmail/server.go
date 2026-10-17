@@ -28,11 +28,13 @@ type Server struct {
 	submit   Submitter
 	// sieve reaches the ManageSieve server for filters; nil when none is
 	// configured, which hides the feature.
-	sieve   SieveDialer
-	tmpl    map[string]*template.Template
-	log     *slog.Logger
-	limiter *loginLimiter
-	now     func() time.Time
+	sieve SieveDialer
+	// passwords changes users' passwords; nil hides the feature.
+	passwords PasswordChanger
+	tmpl      map[string]*template.Template
+	log       *slog.Logger
+	limiter   *loginLimiter
+	now       func() time.Time
 	// defaultLoc is the time zone for users who haven't chosen one and
 	// whose browser hasn't reported one yet.
 	defaultLoc *time.Location
@@ -66,8 +68,17 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 	if cfg.SieveAddr != "" {
 		sieve = ManageSieveDialer(cfg.SieveAddr, cfg.SieveTLS, cfg.InsecureSkipVerify)
 	}
+	var passwords PasswordChanger
+	if cfg.LDAPURL != "" {
+		pw := cfg.LDAPSearchPassword
+		if env := os.Getenv("ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD"); env != "" {
+			pw = env
+		}
+		passwords = ldapPasswords{url: cfg.LDAPURL, base: cfg.LDAPBase, filter: cfg.LDAPUserFilter, searchDN: cfg.LDAPSearchDN, searchPassword: pw, insecureSkipVerify: cfg.InsecureSkipVerify}
+	}
 	return &Server{
-		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
+		passwords: passwords,
+		cfg:       cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
 		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now,
 		defaultLoc: cfg.location(),
 	}, nil
@@ -125,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/timezone", s.authed(s.timezoneSubmit))
 	mux.HandleFunc("POST /settings/theme", s.authed(s.themeSubmit))
 	mux.HandleFunc("POST /settings/conversations", s.authed(s.conversationsSubmit))
+	mux.HandleFunc("POST /settings/password", s.authed(s.passwordSubmit))
 	mux.HandleFunc("GET /contacts", s.authed(s.contactsPage))
 	mux.HandleFunc("POST /contacts", s.authed(s.contactsSubmit))
 	mux.HandleFunc("GET /contacts/export", s.authed(s.contactsExport))
@@ -337,6 +349,7 @@ var notices = map[string]string{
 	"folder-renamed":    "Folder renamed.",
 	"folder-deleted":    "Folder deleted.",
 	"settings-saved":    "Settings saved.",
+	"password-changed":  "Your password was changed. Use the new one everywhere you read mail.",
 	"contact-saved":     "Contact saved.",
 	"contact-exists":    "That sender is already in your contacts.",
 	"contact-deleted":   "Contact deleted.",

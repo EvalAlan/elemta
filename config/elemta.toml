@@ -512,6 +512,15 @@ session_ttl = "8h"
 # sign anyone out. The key that seals the stored passwords is kept apart
 # from Valkey, on the volume the services share; it is created on first start.
 session_store = "valkey"
+# Users change their own password in Settings. The change is made in LDAP,
+# bound as the user; the lookup account only finds their entry. Its
+# password comes from ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD (the compose file
+# sets the dev one), so no secret sits in this file. In production use a
+# read-only account here, not the directory admin.
+ldap_url = "ldap://elemta-ldap:389"
+ldap_base = "ou=people,dc=example,dc=com"
+ldap_user_filter = "(&(objectClass=posixAccount)(mail=%s))"
+ldap_search_dn = "cn=admin,dc=example,dc=com"
 session_key_file = "/app/runtime-config/webmail-session.key"
 max_upload_mb = 25
 page_size = 50

@@ -790,3 +790,5 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .tc-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .unread-dot { background: var(--accent); }
 .tc-frame { height: 240px; min-height: 120px; }
+.form-grid input[type="password"] { min-height: 38px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; width: 100%; max-width: 520px; }
+.form-grid input[type="password"] { min-height: 38px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; width: 100%; max-width: 520px; }
