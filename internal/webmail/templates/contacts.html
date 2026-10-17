@@ -1,0 +1,116 @@
+{{define "search"}}
+  <form class="search" role="search" action="/contacts" method="get">
+    {{with .Contacts}}{{if .Group}}<input type="hidden" name="g" value="{{.Group}}">{{end}}{{end}}
+    <label class="visually-hidden" for="q">Search contacts</label>
+    {{template "icon-search"}}
+    <input id="q" type="search" name="q" value="{{.Contacts.Query}}" placeholder="Search contacts" accesskey="/">
+  </form>
+{{end}}
+{{define "sidebar"}}
+  {{with .Contacts}}
+  <a class="button primary block" href="{{contactsURL "" .Group "new" "1"}}">{{template "icon-plus"}}New contact</a>
+  <nav aria-label="Groups">
+    <ul class="folders">
+      <li><a class="folder" href="/contacts"{{if and (eq .Group "") (eq .Query "")}} aria-current="page"{{end}}><span class="folder-name">All contacts</span></a></li>
+      {{range .Groups}}
+      <li><a class="folder" href="{{contactsURL "" .}}"{{if eq . $.Contacts.Group}} aria-current="page"{{end}}><span class="folder-name">{{.}}</span></a></li>
+      {{end}}
+    </ul>
+  </nav>
+  <form class="import" action="/contacts/import" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <label class="small" for="vcf">Import a .vcf file</label>
+    <input id="vcf" name="file" type="file" accept=".vcf,text/vcard" required>
+    <button class="button" type="submit">Import</button>
+  </form>
+  <a class="small manage" href="/contacts/export{{if .Group}}?g={{.Group}}{{end}}">Export {{if .Group}}{{.Group}}{{else}}all{{end}} (.vcf)</a>
+  {{end}}
+{{end}}
+{{define "content"}}
+{{with .Contacts}}
+<div class="panes{{if or .Selected .Edit}} has-message{{end}}">
+  <section class="list" aria-label="Contacts">
+    <div class="list-head">
+      <h1>{{if .Query}}Results for “{{.Query}}”{{else if .Group}}{{.Group}}{{else}}Contacts{{end}}</h1>
+      <span class="mono muted">{{len .Shown}}</span>
+    </div>
+    {{if not .Shown}}<p class="empty">{{if .Query}}No contacts match.{{else}}No contacts yet. Add one, import a .vcf file, or just write to someone: people you email are remembered under “Emailed”.{{end}}</p>{{end}}
+    <ol class="messages">
+    {{range .Shown}}
+      <li class="row-wrap{{if and $.Contacts.Selected (eq .ID $.Contacts.Selected.ID)}} selected{{end}}">
+        <a class="row contact-row" href="{{contactsURL .ID $.Contacts.Group}}">
+          <span class="avatar soft small-avatar" aria-hidden="true">{{initials (addrOf .Display)}}</span>
+          <span class="contact-text">
+            <span class="from">{{.Display}}</span>
+            <span class="subject muted">{{if .Org}}{{.Org}}{{else}}{{.Email}}{{end}}</span>
+          </span>
+        </a>
+      </li>
+    {{end}}
+    </ol>
+  </section>
+  <article class="reader" aria-label="Contact">
+  {{if .Edit}}
+    {{with .Edit}}
+    <form class="card form-grid contact-form" action="/contacts" method="post" data-unsaved-warning>
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="save">
+      <input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="g" value="{{$.Contacts.Group}}"><input type="hidden" name="back" value="{{$.Contacts.Back}}">
+      <h2 class="card-title">{{if .ID}}Edit contact{{else}}New contact{{end}}</h2>
+      <label for="c-name">Name</label><input id="c-name" name="name" type="text" value="{{.Name}}" autofocus>
+      {{range $i, $e := $.Contacts.EmailRows}}
+      <label for="c-email-{{$i}}">{{if eq $i 0}}Email{{else}}<span class="visually-hidden">Another email</span>{{end}}</label>
+      <span class="pair"><input id="c-email-{{$i}}" name="email" type="email" value="{{$e.Value}}"><select name="email_label" aria-label="Kind" class="compact">{{template "labelopts" $e.Label}}</select></span>
+      {{end}}
+      {{range $i, $p := $.Contacts.PhoneRows}}
+      <label for="c-phone-{{$i}}">{{if eq $i 0}}Phone{{else}}<span class="visually-hidden">Another phone</span>{{end}}</label>
+      <span class="pair"><input id="c-phone-{{$i}}" name="phone" type="tel" value="{{$p.Value}}"><select name="phone_label" aria-label="Kind" class="compact">{{template "labelopts" $p.Label}}</select></span>
+      {{end}}
+      <label for="c-org">Company</label><input id="c-org" name="org" type="text" value="{{.Org}}">
+      <label for="c-title">Job title</label><input id="c-title" name="title" type="text" value="{{.Title}}">
+      <label for="c-address">Address</label><textarea id="c-address" name="address" rows="3">{{.Address}}</textarea>
+      <label for="c-bday">Birthday</label><input id="c-bday" name="birthday" type="text" value="{{.Birthday}}" placeholder="YYYY-MM-DD">
+      <label for="c-web">Website</label><input id="c-web" name="website" type="url" value="{{.Website}}">
+      <label for="c-groups">Groups</label><input id="c-groups" name="groups" type="text" value="{{join .Groups ", "}}" placeholder="Comma-separated, e.g. Team, Family">
+      <label for="c-notes">Notes</label><textarea id="c-notes" name="notes" rows="3">{{.Notes}}</textarea>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Save contact</button>
+        <a class="button ghost" href="{{contactsURL .ID $.Contacts.Group}}">Cancel</a>
+      </div>
+    </form>
+    {{end}}
+  {{else if .Selected}}
+    {{with .Selected}}
+    <div class="toolbar" role="toolbar" aria-label="Contact actions">
+      <a class="button back" href="{{contactsURL "" $.Contacts.Group}}">{{template "icon-back"}}<span>Back</span></a>
+      {{if .Email}}<a class="button primary-soft" href="/compose?to={{formatAddr .Name .Email}}">Write email</a>{{end}}
+      <a class="button" href="{{contactsURL .ID $.Contacts.Group "edit" "1"}}">Edit</a>
+      {{if .Email}}<a class="button" href="/mail?f=INBOX&amp;q=from:{{.Email}}">Find emails</a>{{end}}
+      <form action="/contacts" method="post" class="inline">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="g" value="{{$.Contacts.Group}}">
+        <button class="button danger" data-confirm="Delete {{.Display}} from your contacts?">Delete</button>
+      </form>
+    </div>
+    <div class="message contact-card">
+      <div class="sender">
+        <span class="avatar soft big-avatar" aria-hidden="true">{{initials (addrOf .Display)}}</span>
+        <div><h2>{{.Display}}</h2>{{if or .Title .Org}}<p class="muted">{{.Title}}{{if and .Title .Org}}, {{end}}{{.Org}}</p>{{end}}</div>
+      </div>
+      <dl class="details">
+        {{range .Emails}}<dt>Email{{if .Label}} <span class="muted">({{.Label}})</span>{{end}}</dt><dd><a href="/compose?to={{.Value}}">{{.Value}}</a></dd>{{end}}
+        {{range .Phones}}<dt>Phone{{if .Label}} <span class="muted">({{.Label}})</span>{{end}}</dt><dd><a href="tel:{{.Value}}">{{.Value}}</a></dd>{{end}}
+        {{if .Address}}<dt>Address</dt><dd class="pre">{{.Address}}</dd>{{end}}
+        {{if .Birthday}}<dt>Birthday</dt><dd>{{.Birthday}}</dd>{{end}}
+        {{if .Website}}<dt>Website</dt><dd><a href="{{.Website}}" rel="noopener noreferrer" target="_blank">{{.Website}}</a></dd>{{end}}
+        {{if .Groups}}<dt>Groups</dt><dd>{{join .Groups ", "}}</dd>{{end}}
+        {{if .Notes}}<dt>Notes</dt><dd class="pre">{{.Notes}}</dd>{{end}}
+      </dl>
+    </div>
+    {{end}}
+  {{else}}
+    <p class="empty reader-empty">Select a contact.</p>
+  {{end}}
+  </article>
+</div>
+{{end}}
+{{end}}
+{{define "labelopts"}}<option value=""{{if eq . ""}} selected{{end}}>—</option><option value="work"{{if eq . "work"}} selected{{end}}>Work</option><option value="home"{{if eq . "home"}} selected{{end}}>Home</option><option value="mobile"{{if eq . "mobile"}} selected{{end}}>Mobile</option>{{end}}

@@ -106,14 +106,14 @@ func TestIMAPStoreFoldersAndPaging(t *testing.T) {
 		t.Fatalf("nested folder = %+v", sub)
 	}
 
-	p, err := st.List(ctx, "INBOX", "", 1, 3)
+	p, err := st.List(ctx, "INBOX", ListQuery{Page: 1, PageSize: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if p.Total != 7 || p.Pages() != 3 || len(p.Messages) != 3 || p.Messages[0].Subject != "Message 7" {
 		t.Fatalf("page 1 = total %d pages %d first %+v", p.Total, p.Pages(), p.Messages)
 	}
-	p, err = st.List(ctx, "INBOX", "", 3, 3)
+	p, err = st.List(ctx, "INBOX", ListQuery{Page: 3, PageSize: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestIMAPStoreFoldersAndPaging(t *testing.T) {
 		t.Fatalf("from = %+v", got)
 	}
 
-	p, err = st.List(ctx, "INBOX", "number 4", 1, 10)
+	p, err = st.List(ctx, "INBOX", ListQuery{Text: "number 4", Page: 1, PageSize: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestIMAPStoreReadFlagMoveDelete(t *testing.T) {
 	st := dialTest(t, cfg)
 	ctx := context.Background()
 	appendTo(t, st, "INBOX", testMessage(1, "Hello"))
-	p, err := st.List(ctx, "INBOX", "", 1, 10)
+	p, err := st.List(ctx, "INBOX", ListQuery{Page: 1, PageSize: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,41 +158,41 @@ func TestIMAPStoreReadFlagMoveDelete(t *testing.T) {
 		t.Fatalf("missing uid err = %v, want ErrNotFound", err)
 	}
 	// Raw peeks; reading must not have marked it.
-	p, _ = st.List(ctx, "INBOX", "", 1, 10)
+	p, _ = st.List(ctx, "INBOX", ListQuery{Page: 1, PageSize: 10})
 	if p.Messages[0].Seen {
 		t.Fatal("Raw marked the message seen")
 	}
-	if err := st.SetSeen(ctx, "INBOX", uid, true); err != nil {
+	if err := st.SetFlags(ctx, "INBOX", []uint32{uid}, []string{FlagSeen}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetFlagged(ctx, "INBOX", uid, true); err != nil {
+	if err := st.SetFlags(ctx, "INBOX", []uint32{uid}, []string{FlagFlagged}, true); err != nil {
 		t.Fatal(err)
 	}
-	p, _ = st.List(ctx, "INBOX", "", 1, 10)
+	p, _ = st.List(ctx, "INBOX", ListQuery{Page: 1, PageSize: 10})
 	if !p.Messages[0].Seen || !p.Messages[0].Flagged {
 		t.Fatalf("flags = %+v", p.Messages[0])
 	}
 
-	if err := st.Move(ctx, "INBOX", uid, "Projects"); err != nil {
+	if err := st.Move(ctx, "INBOX", []uint32{uid}, "Projects"); err != nil {
 		t.Fatal(err)
 	}
-	p, _ = st.List(ctx, "Projects", "", 1, 10)
+	p, _ = st.List(ctx, "Projects", ListQuery{Page: 1, PageSize: 10})
 	if len(p.Messages) != 1 {
 		t.Fatalf("Projects after move = %+v", p.Messages)
 	}
 
 	// Delete outside Trash moves to Trash; inside Trash it's permanent.
-	if err := st.Delete(ctx, "Projects", p.Messages[0].UID); err != nil {
+	if err := st.Delete(ctx, "Projects", []uint32{p.Messages[0].UID}); err != nil {
 		t.Fatal(err)
 	}
-	trash, _ := st.List(ctx, "Trash", "", 1, 10)
+	trash, _ := st.List(ctx, "Trash", ListQuery{Page: 1, PageSize: 10})
 	if len(trash.Messages) != 1 {
 		t.Fatalf("Trash = %+v", trash.Messages)
 	}
-	if err := st.Delete(ctx, "Trash", trash.Messages[0].UID); err != nil {
+	if err := st.Delete(ctx, "Trash", []uint32{trash.Messages[0].UID}); err != nil {
 		t.Fatal(err)
 	}
-	trash, _ = st.List(ctx, "Trash", "", 1, 10)
+	trash, _ = st.List(ctx, "Trash", ListQuery{Page: 1, PageSize: 10})
 	if len(trash.Messages) != 0 {
 		t.Fatalf("Trash after permanent delete = %+v", trash.Messages)
 	}
@@ -209,14 +209,14 @@ func TestIMAPStoreAppendCreatesRoleFolder(t *testing.T) {
 	if err := st.Append(ctx, RoleDrafts, testMessage(2, "Draft"), true, true); err != nil {
 		t.Fatal(err)
 	}
-	p, err := st.List(ctx, "Drafts", "", 1, 10)
+	p, err := st.List(ctx, "Drafts", ListQuery{Page: 1, PageSize: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(p.Messages) != 1 || !p.Messages[0].Draft || !p.Messages[0].Seen {
 		t.Fatalf("Drafts = %+v", p.Messages)
 	}
-	p, _ = st.List(ctx, "Sent", "", 1, 10)
+	p, _ = st.List(ctx, "Sent", ListQuery{Page: 1, PageSize: 10})
 	if len(p.Messages) != 1 || p.Messages[0].Subject != "Sent copy" {
 		t.Fatalf("Sent = %+v", p.Messages)
 	}
@@ -237,6 +237,116 @@ func TestRoleOf(t *testing.T) {
 	for _, c := range cases {
 		if got := roleOf(c.name, c.attrs); got != c.want {
 			t.Errorf("roleOf(%q) = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestIMAPObjectStore(t *testing.T) {
+	cfg := startIMAP(t)
+	st := dialTest(t, cfg)
+	ctx := context.Background()
+
+	objs, err := st.Objects(ctx, CollContacts)
+	if err != nil || len(objs) != 0 {
+		t.Fatalf("empty collection = %v, %v", objs, err)
+	}
+	if err := st.PutObject(ctx, CollContacts, Object{ID: "a", Title: "Priya", ContentType: "text/vcard", Data: []byte("v1 ✓\r\n")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutObject(ctx, CollContacts, Object{ID: "b", ContentType: "text/vcard", Data: []byte("other")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutObject(ctx, CollContacts, Object{ID: "a", Title: "Priya", ContentType: "text/vcard", Data: []byte("v2")}); err != nil {
+		t.Fatal(err)
+	}
+	objs, err = st.Objects(ctx, CollContacts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, o := range objs {
+		got[o.ID] = string(o.Data)
+	}
+	if len(objs) != 2 || got["a"] != "v2" || got["b"] != "other" {
+		t.Fatalf("objects = %v", got)
+	}
+	if err := st.DeleteObject(ctx, CollContacts, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if objs, _ = st.Objects(ctx, CollContacts); len(objs) != 1 {
+		t.Fatalf("after delete = %+v", objs)
+	}
+	// A long, odd ID round-trips through its hashed form.
+	long := strings.Repeat("x", 300) + "\r\nInjected: header"
+	if err := st.PutObject(ctx, CollContacts, Object{ID: long, Data: []byte("z")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteObject(ctx, CollContacts, long); err != nil {
+		t.Fatal(err)
+	}
+	if objs, _ = st.Objects(ctx, CollContacts); len(objs) != 1 {
+		t.Fatalf("hashed id not deleted: %+v", objs)
+	}
+	// The object folder stays out of the mail folder tree.
+	folders, _ := st.Folders(ctx)
+	for _, f := range folders {
+		if f.Name == "Contacts" {
+			t.Fatal("Contacts folder listed as mail")
+		}
+	}
+}
+
+func TestIMAPStoreFolderManagementAndTags(t *testing.T) {
+	cfg := startIMAP(t)
+	st := dialTest(t, cfg)
+	ctx := context.Background()
+	if err := st.CreateFolder(ctx, "Receipts"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateFolder(ctx, "Receipts"); !errors.Is(err, ErrExists) {
+		t.Fatalf("duplicate create = %v", err)
+	}
+	appendTo(t, st, "Receipts", testMessage(1, "Invoice"))
+	if err := st.RenameFolder(ctx, "Receipts", "Bills"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := st.List(ctx, "Bills", ListQuery{Page: 1, PageSize: 10})
+	if err != nil || len(p.Messages) != 1 {
+		t.Fatalf("renamed folder = %+v, %v", p, err)
+	}
+	uid := p.Messages[0].UID
+	if err := st.SetFlags(ctx, "Bills", []uint32{uid}, []string{"invoices", FlagFlagged}, true); err != nil {
+		t.Fatal(err)
+	}
+	p, _ = st.List(ctx, "Bills", ListQuery{Tag: "invoices", Page: 1, PageSize: 10})
+	if len(p.Messages) != 1 || len(p.Messages[0].Tags) != 1 || p.Messages[0].Tags[0] != "invoices" || !p.Messages[0].Flagged {
+		t.Fatalf("tagged = %+v", p.Messages)
+	}
+	if err := st.EmptyFolder(ctx, "Bills"); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ = st.List(ctx, "Bills", ListQuery{Page: 1, PageSize: 10}); p.Total != 0 {
+		t.Fatalf("after empty = %+v", p)
+	}
+	if err := st.DeleteFolder(ctx, "Bills"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.List(ctx, "Bills", ListQuery{}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted folder list = %v", err)
+	}
+}
+
+func TestPageRange(t *testing.T) {
+	cases := []struct {
+		total, page, size, lo, hi int
+		oldest                    bool
+	}{
+		{7, 1, 3, 5, 7, false}, {7, 3, 3, 1, 1, false}, {7, 1, 3, 1, 3, true}, {7, 3, 3, 7, 7, true}, {0, 1, 3, 1, 0, false},
+	}
+	for _, c := range cases {
+		lo, hi := pageRange(c.total, c.page, c.size, c.oldest)
+		if lo != c.lo || hi != c.hi {
+			t.Errorf("pageRange(%d,%d,%d,%v) = %d,%d want %d,%d", c.total, c.page, c.size, c.oldest, lo, hi, c.lo, c.hi)
 		}
 	}
 }

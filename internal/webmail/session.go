@@ -35,6 +35,10 @@ type Session struct {
 	// selected mailbox is connection state.
 	mu    sync.Mutex
 	store Mailstore
+
+	// prefs caches the user's settings, read once per session.
+	prefsMu sync.Mutex
+	prefs   *Settings
 }
 
 // SessionManager creates, finds and expires sessions.

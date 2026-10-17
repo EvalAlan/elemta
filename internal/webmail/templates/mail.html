@@ -1,25 +1,60 @@
 {{define "content"}}
 <div class="panes{{if .Message}} has-message{{end}}">
   <section class="list" aria-label="Messages">
-    <div class="list-head">
-      <h1>{{if .Query}}Results for “{{.Query}}”{{else}}{{.Folder}}{{end}}</h1>
-      {{with .Page}}<span class="mono muted">{{.Total}}</span>{{end}}
-    </div>
+    <form id="bulk" class="bulk" action="/mail/action" method="post">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <input type="hidden" name="f" value="{{.Folder}}">
+      <input type="hidden" name="back" value="{{.List.URL}}">
+      <div class="list-head">
+        <label class="check" title="Select all"><input type="checkbox" data-select-all><span class="visually-hidden">Select all</span></label>
+        <h1>{{if .Query}}Results for “{{.Query}}”{{else}}{{folderLabel .Folder .Folders}}{{end}}</h1>
+        {{with .Page}}<span class="mono muted">{{.Total}}</span>{{end}}
+        <details class="menu push">
+          <summary class="button small-button" title="Sort">Sort</summary>
+          <div class="menu-body" role="menu">
+            {{with .List}}
+            <a role="menuitem" href="{{.SortURL ""}}"{{if eq .Sort ""}} aria-current="true"{{end}}>Date{{if eq .Sort ""}}{{if .Reverse}} ↑{{else}} ↓{{end}}{{end}}</a>
+            <a role="menuitem" href="{{.SortURL "from"}}"{{if eq .Sort "from"}} aria-current="true"{{end}}>Sender{{if eq .Sort "from"}}{{if .Reverse}} ↓{{else}} ↑{{end}}{{end}}</a>
+            <a role="menuitem" href="{{.SortURL "subject"}}"{{if eq .Sort "subject"}} aria-current="true"{{end}}>Subject{{if eq .Sort "subject"}}{{if .Reverse}} ↓{{else}} ↑{{end}}{{end}}</a>
+            <a role="menuitem" href="{{.SortURL "size"}}"{{if eq .Sort "size"}} aria-current="true"{{end}}>Size{{if eq .Sort "size"}}{{if .Reverse}} ↑{{else}} ↓{{end}}{{end}}</a>
+            {{end}}
+          </div>
+        </details>
+      </div>
+      <div class="bulk-bar" role="toolbar" aria-label="Selected messages">
+        <button class="button" name="op" value="read">Mark read</button>
+        <button class="button" name="op" value="unread">Mark unread</button>
+        <button class="button" name="op" value="flag">Flag</button>
+        {{if isRole .Folder .Folders "junk"}}<button class="button" name="op" value="notjunk">Not junk</button>{{else}}<button class="button" name="op" value="junk">Junk</button>{{end}}
+        {{if not (isRole .Folder .Folders "archive")}}<button class="button" name="op" value="archive">Archive</button>{{end}}
+        <button class="button danger" name="op" value="delete" data-confirm="{{if isRole .Folder .Folders "trash"}}Delete the selected messages for good?{{end}}">Delete</button>
+        <label class="visually-hidden" for="bulk-dest">Move selected to</label>
+        <select id="bulk-dest" name="dest" class="compact">
+          <option value="">Move to…</option>
+          {{range $.Folders}}{{if and .Selectable (ne .Name $.Folder)}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
+        </select>
+        <button class="button" name="op" value="move">Move</button>
+      </div>
     {{with .Page}}
       {{if not .Messages}}
         <p class="empty">{{if $.Query}}No messages match your search.{{else}}This folder is empty.{{end}}</p>
       {{end}}
       <ol class="messages">
       {{range .Messages}}
-        <li>
-          <a class="row{{if not .Seen}} unread{{end}}{{if and $.Message (eq .UID $.Message.UID)}} selected{{end}}" href="{{messageURL $.Folder .UID $.Page.Page $.Query}}"{{if and $.Message (eq .UID $.Message.UID)}} aria-current="true"{{end}}>
+        <li class="row-wrap{{if not .Seen}} unread{{end}}{{if and $.Message (eq .UID $.Message.UID)}} selected{{end}}" data-uid="{{.UID}}">
+          <label class="check"><input type="checkbox" name="uid" value="{{.UID}}"><span class="visually-hidden">Select</span></label>
+          <a class="row" href="{{$.List.MessageURL .UID}}"{{if and $.Message (eq .UID $.Message.UID)}} aria-current="true"{{end}}>
             <span class="row-top">
               <span class="dot" aria-hidden="true"></span>
-              <span class="from">{{if eq $.Folder "Sent"}}{{addrs .To}}{{else}}{{addrs .From}}{{end}}</span>
+              <span class="from">{{if or (isRole $.Folder $.Folders "sent") (isRole $.Folder $.Folders "drafts")}}{{addrs .To}}{{else}}{{addrs .From}}{{end}}</span>
+              {{if .HasAttachment}}<span class="marker" title="Has attachments">{{template "icon-clip"}}</span>{{end}}
+              {{if .Answered}}<span class="marker" title="Replied">{{template "icon-reply"}}</span>{{end}}
+              {{if .Forwarded}}<span class="marker" title="Forwarded">{{template "icon-forward"}}</span>{{end}}
               {{if .Flagged}}<span class="flag" aria-label="Flagged">{{template "icon-star"}}</span>{{end}}
-              <time class="mono muted" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate .Date}}</time>
+              <time class="mono muted" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Date}}</time>
             </span>
-            <span class="subject">{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
+            <span class="subject">{{if .Draft}}<span class="draft-mark">Draft</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
+            {{if .Tags}}<span class="tags">{{range .Tags}}<span class="tag {{tagClass .}}">{{.}}</span>{{end}}</span>{{end}}
             {{if not .Seen}}<span class="visually-hidden">Unread</span>{{end}}
           </a>
         </li>
@@ -27,54 +62,98 @@
       </ol>
       {{if gt .Pages 1}}
       <nav class="pager" aria-label="Pages">
-        {{if gt .Page 1}}<a class="button" href="{{folderURL $.Folder (add .Page -1) $.Query}}">Newer</a>{{end}}
+        {{if gt .Page 1}}<a class="button" href="{{$.List.PageURL (add .Page -1)}}" data-key="newer-page">Newer</a>{{end}}
         <span class="muted">Page {{.Page}} of {{.Pages}}</span>
-        {{if lt .Page .Pages}}<a class="button" href="{{folderURL $.Folder (add .Page 1) $.Query}}">Older</a>{{end}}
+        {{if lt .Page .Pages}}<a class="button" href="{{$.List.PageURL (add .Page 1)}}" data-key="older-page">Older</a>{{end}}
       </nav>
       {{end}}
+    {{end}}
+    </form>
+    {{if and (or (isRole .Folder .Folders "trash") (isRole .Folder .Folders "junk")) .Page .Page.Total}}
+    <form class="empty-folder" action="/mail/action" method="post">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="op" value="empty">
+      <button class="button ghost danger" data-confirm="Delete every message in {{.Folder}} for good? This can't be undone.">Empty {{.Folder}}</button>
+    </form>
     {{end}}
   </section>
 
   <article class="reader" aria-label="Message">
   {{with .Message}}
     <div class="toolbar" role="toolbar" aria-label="Message actions">
-      <a class="button back" href="{{folderURL $.Folder 1 $.Query}}">{{template "icon-back"}}<span>Back</span></a>
-      <a class="button" href="{{composeURL "reply" .Folder .UID}}">Reply</a>
-      <a class="button" href="{{composeURL "replyall" .Folder .UID}}">Reply all</a>
-      <a class="button" href="{{composeURL "forward" .Folder .UID}}">Forward</a>
-      <form action="/mail/action" method="post">
-        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}">
-        {{if .Flagged}}<button class="button" name="op" value="unflag">Unflag</button>{{else}}<button class="button" name="op" value="flag">Flag</button>{{end}}
+      <a class="button back" href="{{$.List.URL}}" data-key="u">{{template "icon-back"}}<span>Back</span></a>
+      {{if isRole .Folder $.Folders "drafts"}}
+      <a class="button primary-soft" href="{{composeURL "draft" .Folder .UID}}" data-key="r">Edit draft</a>
+      {{else}}
+      <a class="button" href="{{composeURL "reply" .Folder .UID}}" data-key="r">Reply</a>
+      <a class="button" href="{{composeURL "replyall" .Folder .UID}}" data-key="a">Reply all</a>
+      <a class="button" href="{{composeURL "forward" .Folder .UID}}" data-key="f">Forward</a>
+      {{end}}
+      <form action="/mail/action" method="post" class="inline">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+        {{if .Flagged}}<button class="button" name="op" value="unflag" data-key="s">Unflag</button>{{else}}<button class="button" name="op" value="flag" data-key="s">Flag</button>{{end}}
         <button class="button" name="op" value="unread">Mark unread</button>
-        <button class="button" name="op" value="junk">Junk</button>
-        <button class="button danger" name="op" value="delete">Delete</button>
+        {{if not (isRole .Folder $.Folders "archive")}}<button class="button" name="op" value="archive" data-key="e">Archive</button>{{end}}
+        {{if isRole .Folder $.Folders "junk"}}<button class="button" name="op" value="notjunk">Not junk</button>{{else}}<button class="button" name="op" value="junk">Junk</button>{{end}}
+        <button class="button danger" name="op" value="delete" data-key="#" data-confirm="{{if isRole .Folder $.Folders "trash"}}Delete this message for good?{{end}}">Delete</button>
       </form>
-      <form class="move" action="/mail/action" method="post">
-        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="move">
+      <form class="move inline" action="/mail/action" method="post">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="move"><input type="hidden" name="back" value="{{$.List.URL}}">
         <label class="visually-hidden" for="dest">Move to folder</label>
-        <select id="dest" name="dest">
+        <select id="dest" name="dest" class="compact">
           {{range $.Folders}}{{if and .Selectable (ne .Name $.Folder)}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
         </select>
         <button class="button" type="submit">Move</button>
       </form>
+      <span class="push nav-arrows">
+        {{if .Newer}}<a class="button" href="{{$.List.MessageURL .Newer}}" title="Newer (k)" data-key="k">↑</a>{{end}}
+        {{if .Older}}<a class="button" href="{{$.List.MessageURL .Older}}" title="Older (j)" data-key="j">↓</a>{{end}}
+      </span>
     </div>
     <div class="message">
-      <h2>{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
+      <h2>{{if .HighPriority}}<span class="priority" title="High priority">!</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
       <div class="sender">
         <span class="avatar soft" aria-hidden="true">{{initials .From}}</span>
         <div class="sender-text">
           <div class="sender-line">
             {{range .From}}<span class="strong">{{.Label}}</span> {{if .Name}}<span class="mono muted">{{.Email}}</span>{{end}}{{end}}
-            <time class="mono muted push" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate .Date}}</time>
+            {{if and .From (not .SenderContact)}}
+            <form action="/contacts" method="post" class="inline">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="add-sender">
+              <input type="hidden" name="name" value="{{(index .From 0).Name}}"><input type="hidden" name="email" value="{{(index .From 0).Email}}">
+              <input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+              <button class="link-inline" type="submit">Add to contacts</button>
+            </form>
+            {{end}}
+            <time class="mono muted push" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate $.Loc $.Clock24 .Date}}</time>
           </div>
           <div class="muted small">To {{addrs .To}}{{if .Cc}} · Cc {{addrs .Cc}}{{end}}</div>
         </div>
       </div>
-      {{with authChecks .AuthResults}}
-      <ul class="chips" aria-label="Sender checks">
-        {{range .}}<li class="chip{{if .Pass}} pass{{end}}">{{.Method}} {{.Result}}</li>{{end}}
-      </ul>
-      {{end}}
+      <div class="meta-row">
+        {{with authChecks .AuthResults}}
+        <ul class="chips" aria-label="Sender checks">
+          {{range .}}<li class="chip{{if .Pass}} pass{{end}}">{{.Method}} {{.Result}}</li>{{end}}
+        </ul>
+        {{end}}
+        <ul class="tags" aria-label="Tags">
+          {{range .Tags}}
+          <li class="tag {{tagClass .}}">{{.}}
+            <form action="/mail/action" method="post" class="inline">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{$.Message.Folder}}"><input type="hidden" name="uid" value="{{$.Message.UID}}"><input type="hidden" name="op" value="untag"><input type="hidden" name="tag" value="{{.}}"><input type="hidden" name="back" value="{{$.List.MessageURL $.Message.UID}}">
+              <button class="tag-x" title="Remove tag {{.}}">×<span class="visually-hidden">Remove tag {{.}}</span></button>
+            </form>
+          </li>
+          {{end}}
+        </ul>
+        <form action="/mail/action" method="post" class="add-tag">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="tag"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+          <label class="visually-hidden" for="tag">Add a tag</label>
+          <input id="tag" name="tag" list="tag-list" placeholder="Add tag" maxlength="40" required>
+          <datalist id="tag-list">{{range $.Tags}}<option value="{{.}}">{{end}}</datalist>
+        </form>
+      </div>
+      {{with .Invite}}{{template "invite" .}}{{end}}
+      {{if .ReceiptTo}}<p class="banner subtle">The sender asked for a read receipt. Elemta doesn't send them automatically.</p>{{end}}
       {{with .Attachments}}
       <ul class="attachments" aria-label="Attachments">
         {{range .}}
@@ -84,16 +163,16 @@
       {{end}}
       {{if $.Body}}
         {{if $.Body.BlockedImages}}
-        <p class="banner">Remote images are hidden to protect your privacy. <a href="{{messageURL $.Folder .UID 1 $.Query}}&amp;remote=1">Show images</a></p>
+        <p class="banner">Remote images are hidden to protect your privacy. <a href="{{$.List.MessageURL .UID}}&amp;remote=1">Show images</a></p>
         {{end}}
         <iframe class="body-frame" title="Message body" sandbox="allow-popups allow-popups-to-escape-sandbox" src="{{bodyURL .Folder .UID $.Remote}}"></iframe>
       {{else}}
-        <pre class="text-body">{{.Text}}</pre>
+        <pre class="text-body">{{linkify .Text}}</pre>
       {{end}}
       <p class="small"><a href="{{rawURL .Folder .UID}}">Download original (.eml)</a></p>
     </div>
   {{else}}
-    <p class="empty reader-empty">Select a message to read it.</p>
+    <p class="empty reader-empty">Select a message to read it.<br><span class="small">Press <kbd>?</kbd> for keyboard shortcuts.</span></p>
   {{end}}
   </article>
 </div>

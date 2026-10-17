@@ -1,8 +1,11 @@
 package webmail
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"html/template"
 	"io/fs"
 	"net/url"
@@ -27,30 +30,68 @@ func staticFiles() fs.FS {
 	return sub
 }
 
-// pages are the templates rendered inside layout.html. login.html stands
-// alone because it has no folder tree.
-var pages = []string{"mail.html", "compose.html", "error.html"}
+// assetVersions maps each static file to a short hash of its content.
+// Asset URLs carry it (/static/app.js?v=…), so a deploy changes the URL and
+// browsers never run new pages against a cached old script or stylesheet.
+var assetVersions = func() map[string]string {
+	out := map[string]string{}
+	_ = fs.WalkDir(staticFS, "static", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := staticFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(b)
+		out[strings.TrimPrefix(path, "static/")] = hex.EncodeToString(sum[:6])
+		return nil
+	})
+	return out
+}()
 
+func assetURL(name string) string {
+	return "/static/" + name + "?v=" + assetVersions[name]
+}
+
+// partials are parsed into every page: icons and shared fragments.
+var partials = []string{"templates/layout.html", "templates/icons.html", "templates/partials.html"}
+
+// loadTemplates parses each page in templates/ together with the layout and
+// partials. login.html stands alone because it has no app shell.
 func loadTemplates() (map[string]*template.Template, error) {
+	names, err := fs.Glob(templateFS, "templates/*.html")
+	if err != nil {
+		return nil, err
+	}
 	out := map[string]*template.Template{}
-	for _, p := range pages {
-		t, err := template.New("layout.html").Funcs(templateFuncs).ParseFS(templateFS, "templates/layout.html", "templates/icons.html", "templates/"+p)
+	for _, path := range names {
+		p := strings.TrimPrefix(path, "templates/")
+		switch p {
+		case "layout.html", "icons.html", "partials.html":
+			continue
+		case "login.html":
+			t, err := template.New(p).Funcs(templateFuncs).ParseFS(templateFS, path, "templates/icons.html")
+			if err != nil {
+				return nil, fmt.Errorf("webmail: template %s: %w", p, err)
+			}
+			out[p] = t
+			continue
+		}
+		t, err := template.New("layout.html").Funcs(templateFuncs).ParseFS(templateFS, append(append([]string{}, partials...), path)...)
 		if err != nil {
 			return nil, fmt.Errorf("webmail: template %s: %w", p, err)
 		}
 		out[p] = t
 	}
-	t, err := template.New("login.html").Funcs(templateFuncs).ParseFS(templateFS, "templates/login.html", "templates/icons.html")
-	if err != nil {
-		return nil, fmt.Errorf("webmail: template login.html: %w", err)
-	}
-	out["login.html"] = t
 	return out, nil
 }
 
 var templateFuncs = template.FuncMap{
+	"asset":      assetURL,
 	"shortDate":  shortDate,
-	"longDate":   func(t time.Time) string { return t.Local().Format("Mon Jan 2, 2006 15:04") },
+	"longDate":   longDate,
+	"clock":      clock,
 	"humanSize":  humanSize,
 	"addrs":      joinAddresses,
 	"folderURL":  folderURL,
@@ -71,11 +112,69 @@ var templateFuncs = template.FuncMap{
 	"composeURL": func(mode, folder string, uid uint32) string {
 		return "/compose?" + url.Values{"mode": {mode}, "f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}}.Encode()
 	},
-	"add":        func(a, b int) int { return a + b },
-	"initials":   initials,
-	"addrOf":     func(email string) []Address { return []Address{{Email: email}} },
-	"authChecks": parseAuthResults,
-	"depthClass": func(depth int) string { return "depth-" + strconv.Itoa(min(depth, 5)) },
+	"contactsURL": contactsURL,
+	"add":         func(a, b int) int { return a + b },
+	"initials":    initials,
+	"addrOf":      func(email string) []Address { return []Address{{Email: email}} },
+	"formatAddr":  func(name, email string) string { return formatAddress(Address{Name: name, Email: email}) },
+	"authChecks":  parseAuthResults,
+	"depthClass":  func(depth int) string { return "depth-" + strconv.Itoa(min(depth, 5)) },
+	"tagClass":    tagClass,
+	"join":        strings.Join,
+	"linkify":     linkify,
+	"pageSizes":   func() []int { return []int{25, 50, 100, 200} },
+	"countable":   countable,
+	"showCount":   func(f Folder) bool { return f.Unread > 0 && countable(f) },
+	"isRole": func(name string, folders []Folder, role string) bool {
+		for _, f := range folders {
+			if f.Name == name {
+				return string(f.Role) == role
+			}
+		}
+		return false
+	},
+	"folderLabel": func(name string, folders []Folder) string {
+		for _, f := range folders {
+			if f.Name == name {
+				return f.Display
+			}
+		}
+		return name
+	},
+}
+
+// countable reports whether a folder's unread count means anything to the
+// user. Unread mail in Sent, Drafts, Junk or Trash isn't waiting for them.
+func countable(f Folder) bool {
+	return f.Role != RoleSent && f.Role != RoleTrash && f.Role != RoleDrafts && f.Role != RoleJunk
+}
+
+// tagClass gives each tag one of eight colours, the same one everywhere it
+// appears, derived from its name.
+func tagClass(tag string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(strings.ToLower(tag)))
+	return "tag-" + strconv.Itoa(int(h.Sum32()%8))
+}
+
+var linkRE = regexp.MustCompile(`https?://[^\s<>"']+[^\s<>"'.,;:!?)\]]`)
+
+// linkify escapes plain text and turns the web links in it into anchors that
+// open in a new tab without a referrer. Only http and https are linked, so a
+// message can't plant a javascript: link.
+func linkify(text string) template.HTML {
+	var b strings.Builder
+	last := 0
+	for _, m := range linkRE.FindAllStringIndex(text, -1) {
+		b.WriteString(template.HTMLEscapeString(text[last:m[0]]))
+		u := text[m[0]:m[1]]
+		esc := template.HTMLEscapeString(u)
+		b.WriteString(`<a href="` + esc + `" rel="noopener noreferrer" target="_blank">` + esc + `</a>`)
+		last = m[1]
+	}
+	b.WriteString(template.HTMLEscapeString(text[last:]))
+	// #nosec G203 -- every piece of text is escaped above; only the anchors are markup
+	return template.HTML(b.String())
 }
 
 func folderURL(folder string, page int, query string) string {
@@ -94,21 +193,40 @@ func messageURL(folder string, uid uint32, page int, query string) string {
 }
 
 // shortDate is the message-list date: a time for today, a day for this
-// year, a full date for anything older.
-func shortDate(t time.Time) string {
+// year, a full date for anything older, all in the user's time zone.
+func shortDate(loc *time.Location, h24 bool, t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	t = t.Local()
-	now := time.Now()
+	if loc == nil {
+		loc = time.UTC
+	}
+	t = t.In(loc)
+	now := time.Now().In(loc)
 	switch {
 	case t.Year() == now.Year() && t.YearDay() == now.YearDay():
-		return t.Format("15:04")
+		return clock(h24, t)
 	case t.Year() == now.Year():
 		return t.Format("Jan 2")
 	default:
 		return t.Format("2006-01-02")
 	}
+}
+
+func longDate(loc *time.Location, h24 bool, t time.Time) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	t = t.In(loc)
+	return t.Format("Mon Jan 2, 2006") + " " + clock(h24, t)
+}
+
+// clock formats a time of day as 15:04 or 3:04 PM.
+func clock(h24 bool, t time.Time) string {
+	if h24 {
+		return t.Format("15:04")
+	}
+	return t.Format("3:04 PM")
 }
 
 func humanSize(n int64) string {

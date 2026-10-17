@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,14 +21,19 @@ import (
 
 // fakeStore is an in-memory Mailstore for handler tests.
 type fakeStore struct {
-	mu       sync.Mutex
-	folders  []Folder
-	messages map[string][]Summary
-	raw      map[uint32][]byte
-	appended map[Role][][]byte
-	seen     map[uint32]bool
-	moved    map[uint32]string
-	deleted  []uint32
+	mu        sync.Mutex
+	folders   []Folder
+	messages  map[string][]Summary
+	raw       map[uint32][]byte
+	appended  map[Role][][]byte
+	seen      map[uint32]bool
+	moved     map[uint32]string
+	deleted   []uint32
+	flags     map[uint32]map[string]bool
+	emptied   []string
+	expunged  []uint32
+	objects   map[Collection]map[string]Object
+	lastQuery ListQuery
 }
 
 func newFakeStore() *fakeStore {
@@ -42,13 +48,18 @@ func newFakeStore() *fakeStore {
 		appended: map[Role][][]byte{},
 		seen:     map[uint32]bool{},
 		moved:    map[uint32]string{},
+		flags:    map[uint32]map[string]bool{},
+		objects:  map[Collection]map[string]Object{},
 	}
 }
 
 func (f *fakeStore) Folders(context.Context) ([]Folder, error) { return f.folders, nil }
-func (f *fakeStore) List(_ context.Context, folder, query string, page, size int) (Page, error) {
+func (f *fakeStore) List(_ context.Context, folder string, q ListQuery) (Page, error) {
+	f.mu.Lock()
+	f.lastQuery = q
+	f.mu.Unlock()
 	msgs := f.messages[folder]
-	return Page{Folder: folder, Messages: msgs, Total: len(msgs), Page: 1, PageSize: size}, nil
+	return Page{Folder: folder, Messages: msgs, Total: len(msgs), Page: 1, PageSize: q.PageSize}, nil
 }
 func (f *fakeStore) Raw(_ context.Context, _ string, uid uint32, _ int64) ([]byte, error) {
 	if b, ok := f.raw[uid]; ok {
@@ -56,25 +67,98 @@ func (f *fakeStore) Raw(_ context.Context, _ string, uid uint32, _ int64) ([]byt
 	}
 	return nil, ErrNotFound
 }
-func (f *fakeStore) SetSeen(_ context.Context, _ string, uid uint32, seen bool) error {
+func (f *fakeStore) SetFlags(_ context.Context, _ string, uids []uint32, flags []string, on bool) error {
 	f.mu.Lock()
-	f.seen[uid] = seen
-	f.mu.Unlock()
+	defer f.mu.Unlock()
+	for _, u := range uids {
+		for _, fl := range flags {
+			if fl == FlagSeen {
+				f.seen[u] = on
+			}
+			if f.flags[u] == nil {
+				f.flags[u] = map[string]bool{}
+			}
+			f.flags[u][fl] = on
+		}
+	}
 	return nil
 }
-func (f *fakeStore) SetFlagged(context.Context, string, uint32, bool) error { return nil }
-func (f *fakeStore) Move(_ context.Context, _ string, uid uint32, dest string) error {
-	f.moved[uid] = dest
+func (f *fakeStore) Move(_ context.Context, _ string, uids []uint32, dest string) error {
+	for _, u := range uids {
+		f.moved[u] = dest
+	}
 	return nil
 }
-func (f *fakeStore) Delete(_ context.Context, _ string, uid uint32) error {
-	f.deleted = append(f.deleted, uid)
+func (f *fakeStore) Delete(_ context.Context, _ string, uids []uint32) error {
+	f.deleted = append(f.deleted, uids...)
+	return nil
+}
+func (f *fakeStore) Expunge(_ context.Context, _ string, uids []uint32) error {
+	f.expunged = append(f.expunged, uids...)
 	return nil
 }
 func (f *fakeStore) Append(_ context.Context, role Role, raw []byte, _, _ bool) error {
 	f.mu.Lock()
 	f.appended[role] = append(f.appended[role], raw)
 	f.mu.Unlock()
+	return nil
+}
+func (f *fakeStore) CreateFolder(_ context.Context, name string) error {
+	for _, x := range f.folders {
+		if x.Name == name {
+			return ErrExists
+		}
+	}
+	f.folders = append(f.folders, Folder{Name: name, Display: name, Selectable: true})
+	return nil
+}
+func (f *fakeStore) RenameFolder(_ context.Context, from, to string) error {
+	for i := range f.folders {
+		if f.folders[i].Name == from {
+			f.folders[i].Name, f.folders[i].Display = to, to
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+func (f *fakeStore) DeleteFolder(_ context.Context, name string) error {
+	for i := range f.folders {
+		if f.folders[i].Name == name {
+			f.folders = append(f.folders[:i], f.folders[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+func (f *fakeStore) EmptyFolder(_ context.Context, folder string) error {
+	f.emptied = append(f.emptied, folder)
+	return nil
+}
+func (f *fakeStore) Delimiter(context.Context) (string, error)      { return "/", nil }
+func (f *fakeStore) Tags(context.Context, string) ([]string, error) { return []string{"invoices"}, nil }
+func (f *fakeStore) Objects(_ context.Context, c Collection) ([]Object, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []Object
+	for _, o := range f.objects[c] {
+		out = append(out, o)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+func (f *fakeStore) PutObject(_ context.Context, c Collection, obj Object) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.objects[c] == nil {
+		f.objects[c] = map[string]Object{}
+	}
+	f.objects[c][objectID(obj.ID)] = obj
+	return nil
+}
+func (f *fakeStore) DeleteObject(_ context.Context, c Collection, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.objects[c], id)
 	return nil
 }
 func (f *fakeStore) Close() error { return nil }

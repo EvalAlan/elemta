@@ -24,6 +24,11 @@ type imapStore struct {
 	// folders caches the folder list so role lookups (where is Trash?) don't
 	// cost a LIST per action. Folders() refreshes it.
 	folders []Folder
+	delim   string
+
+	// objects caches each collection's parsed objects, keyed by the folder
+	// state they were read at (see objects.go).
+	objects map[Collection]*objectCache
 }
 
 // IMAPDialer returns a Dialer that connects to the IMAP server in cfg.
@@ -71,7 +76,7 @@ func dialIMAP(ctx context.Context, cfg Config, username, password string) (*imap
 		}
 		return nil, fmt.Errorf("webmail: IMAP login: %w", err)
 	}
-	return &imapStore{c: c}, nil
+	return &imapStore{c: c, objects: map[Collection]*objectCache{}}, nil
 }
 
 func (s *imapStore) Close() error {
@@ -99,11 +104,20 @@ func (s *imapStore) Folders(ctx context.Context) ([]Folder, error) {
 
 	folders := make([]Folder, 0, len(list))
 	for _, mb := range list {
+		if mb.Delim != 0 {
+			s.delim = string(mb.Delim)
+		}
+		// The object folders hold calendars, contacts and settings, not
+		// mail; they stay out of the mail folder tree.
+		if isObjectFolder(mb.Mailbox) {
+			continue
+		}
 		f := Folder{Name: mb.Mailbox, Display: mb.Mailbox, Selectable: true}
 		if mb.Delim != 0 {
 			parts := strings.Split(mb.Mailbox, string(mb.Delim))
 			f.Display = parts[len(parts)-1]
 			f.Depth = len(parts) - 1
+			f.Parent = strings.Join(parts[:len(parts)-1], string(mb.Delim))
 		}
 		for _, attr := range mb.Attrs {
 			switch attr {
@@ -132,6 +146,18 @@ func (s *imapStore) Folders(ctx context.Context) ([]Folder, error) {
 	sortFolders(folders)
 	s.folders = folders
 	return folders, nil
+}
+
+func (s *imapStore) Delimiter(ctx context.Context) (string, error) {
+	if s.delim == "" {
+		if _, err := s.Folders(ctx); err != nil {
+			return "", err
+		}
+	}
+	if s.delim == "" {
+		return "/", nil
+	}
+	return s.delim, nil
 }
 
 // roleOf prefers the server's special-use attribute and falls back to the
@@ -172,13 +198,25 @@ func roleOf(name string, attrs []imap.MailboxAttr) Role {
 var roleOrder = map[Role]int{RoleInbox: 0, RoleDrafts: 1, RoleSent: 2, RoleArchive: 3, RoleJunk: 4, RoleTrash: 5}
 
 // sortFolders puts the special folders first in a fixed order, then the rest
-// by name, which keeps a parent directly above its children.
+// by name, which keeps a parent directly above its children. Children of a
+// special folder (INBOX/Receipts) sort straight after it.
 func sortFolders(folders []Folder) {
+	top := func(f Folder) Role {
+		if f.Depth == 0 {
+			return f.Role
+		}
+		for _, g := range folders {
+			if g.Depth == 0 && strings.HasPrefix(f.Name, g.Name) && len(f.Name) > len(g.Name) {
+				return g.Role
+			}
+		}
+		return RoleNone
+	}
 	sort.SliceStable(folders, func(i, j int) bool {
-		ri, iok := roleOrder[folders[i].Role]
-		rj, jok := roleOrder[folders[j].Role]
+		ri, iok := roleOrder[top(folders[i])]
+		rj, jok := roleOrder[top(folders[j])]
 		switch {
-		case iok && jok:
+		case iok && jok && ri != rj:
 			return ri < rj
 		case iok != jok:
 			return iok
@@ -209,8 +247,7 @@ func (s *imapStore) selectFolder(folder string) (uint32, error) {
 	}
 	data, err := s.c.Select(folder, nil).Wait()
 	if err != nil {
-		var imapErr *imap.Error
-		if errors.As(err, &imapErr) && imapErr.Type == imap.StatusResponseTypeNo {
+		if isNo(err) {
 			return 0, ErrNotFound
 		}
 		return 0, fmt.Errorf("webmail: select %q: %w", folder, err)
@@ -218,69 +255,163 @@ func (s *imapStore) selectFolder(folder string) (uint32, error) {
 	return data.NumMessages, nil
 }
 
-var summaryFetch = &imap.FetchOptions{
-	UID:          true,
-	Flags:        true,
-	Envelope:     true,
-	InternalDate: true,
-	RFC822Size:   true,
+// unselect drops the selected folder, which a rename or delete of that
+// folder needs first.
+func (s *imapStore) unselect() {
+	if s.c.Mailbox() != nil {
+		_ = s.c.Unselect().Wait()
+	}
 }
 
-func (s *imapStore) List(ctx context.Context, folder, query string, page, pageSize int) (Page, error) {
-	if page < 1 {
-		page = 1
+func isNo(err error) bool {
+	var imapErr *imap.Error
+	return errors.As(err, &imapErr) && imapErr.Type == imap.StatusResponseTypeNo
+}
+
+var summaryFetch = &imap.FetchOptions{
+	UID:           true,
+	Flags:         true,
+	Envelope:      true,
+	InternalDate:  true,
+	RFC822Size:    true,
+	BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
+}
+
+// searchCriteria turns a ListQuery's filters into IMAP SEARCH criteria.
+func searchCriteria(q ListQuery) *imap.SearchCriteria {
+	c := &imap.SearchCriteria{}
+	if q.Text != "" {
+		c.Text = []string{q.Text}
 	}
-	result := Page{Folder: folder, Page: page, PageSize: pageSize}
+	if q.From != "" {
+		c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "From", Value: q.From})
+	}
+	if q.To != "" {
+		c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "To", Value: q.To})
+	}
+	if q.Subject != "" {
+		c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "Subject", Value: q.Subject})
+	}
+	if q.Unread {
+		c.NotFlag = append(c.NotFlag, imap.FlagSeen)
+	}
+	if q.Flagged {
+		c.Flag = append(c.Flag, imap.FlagFlagged)
+	}
+	if q.Answered {
+		c.Flag = append(c.Flag, imap.FlagAnswered)
+	}
+	if q.Tag != "" {
+		c.Flag = append(c.Flag, imap.Flag(q.Tag))
+	}
+	if q.HasAttachment {
+		// IMAP has no attachment criterion. A multipart/mixed top level is
+		// what almost every client produces for a message with files, so it
+		// is the usual approximation.
+		c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "Content-Type", Value: "multipart/mixed"})
+	}
+	c.Since = q.Since
+	c.Before = q.Before
+	return c
+}
+
+func (s *imapStore) List(ctx context.Context, folder string, q ListQuery) (Page, error) {
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 {
+		q.PageSize = defaultPageSize
+	}
+	result := Page{Folder: folder, Page: q.Page, PageSize: q.PageSize}
 	total, err := s.selectFolder(folder)
 	if err != nil {
 		return result, err
 	}
 
+	caps := s.c.Caps()
+	canSort := caps.Has(imap.Cap("SORT"))
 	var msgs []*imapclient.FetchMessageBuffer
-	if query == "" {
+	var order []uint32 // UIDs in display order, when the server ordered them
+
+	switch {
+	case !q.Filtered() && (q.Sort == SortDate || !canSort):
 		result.Total = int(total)
-		// Sequence numbers are in arrival order, so the newest page is the
-		// top of the range. That needs no SEARCH or SORT round trip.
-		hi := int(total) - (page-1)*pageSize
-		if hi < 1 {
+		// Sequence numbers are in arrival order, so a date-ordered page is
+		// a slice of the range. That needs no SEARCH or SORT round trip.
+		lo, hi := pageRange(int(total), q.Page, q.PageSize, q.Reverse)
+		if hi < lo {
 			return result, nil
-		}
-		lo := hi - pageSize + 1
-		if lo < 1 {
-			lo = 1
 		}
 		var set imap.SeqSet
 		set.AddRange(uint32(lo), uint32(hi)) // #nosec G115 -- bounded by the mailbox's uint32 message count
 		msgs, err = s.c.Fetch(set, summaryFetch).Collect()
-	} else {
-		var data *imap.SearchData
-		data, err = s.c.UIDSearch(&imap.SearchCriteria{Text: []string{query}}, nil).Wait()
-		if err != nil {
-			return result, fmt.Errorf("webmail: search %q: %w", folder, err)
+	default:
+		var uids []uint32
+		if canSort {
+			key := map[Sort]imapclient.SortKey{SortDate: imapclient.SortKeyArrival, SortFrom: imapclient.SortKeyFrom, SortSubject: imapclient.SortKeySubject, SortSize: imapclient.SortKeySize}[q.Sort]
+			// Date and size read newest/largest first by default; names A to Z.
+			reverse := q.Sort == SortDate || q.Sort == SortSize
+			if q.Reverse {
+				reverse = !reverse
+			}
+			uids, err = s.c.UIDSort(&imapclient.SortOptions{
+				SearchCriteria: searchCriteria(q),
+				SortCriteria:   []imapclient.SortCriterion{{Key: key, Reverse: reverse}},
+			}).Wait()
+			if err != nil {
+				return result, fmt.Errorf("webmail: sort %q: %w", folder, err)
+			}
+		} else {
+			data, err := s.c.UIDSearch(searchCriteria(q), nil).Wait()
+			if err != nil {
+				return result, fmt.Errorf("webmail: search %q: %w", folder, err)
+			}
+			for _, u := range data.AllUIDs() {
+				uids = append(uids, uint32(u))
+			}
+			sort.Slice(uids, func(i, j int) bool { return (uids[i] > uids[j]) != q.Reverse })
 		}
-		uids := data.AllUIDs()
-		sort.Slice(uids, func(i, j int) bool { return uids[i] > uids[j] })
 		result.Total = len(uids)
-		start := (page - 1) * pageSize
+		start := (q.Page - 1) * q.PageSize
 		if start >= len(uids) {
 			return result, nil
 		}
-		end := start + pageSize
-		if end > len(uids) {
-			end = len(uids)
+		order = uids[start:min(start+q.PageSize, len(uids))]
+		set := imap.UIDSet{}
+		for _, u := range order {
+			set.AddNum(imap.UID(u))
 		}
-		msgs, err = s.c.Fetch(imap.UIDSetNum(uids[start:end]...), summaryFetch).Collect()
+		msgs, err = s.c.Fetch(set, summaryFetch).Collect()
 	}
 	if err != nil {
 		return result, fmt.Errorf("webmail: fetch %q: %w", folder, err)
 	}
 
-	sort.Slice(msgs, func(i, j int) bool { return msgs[i].UID > msgs[j].UID })
+	if order != nil {
+		rank := make(map[uint32]int, len(order))
+		for i, u := range order {
+			rank[u] = i
+		}
+		sort.Slice(msgs, func(i, j int) bool { return rank[uint32(msgs[i].UID)] < rank[uint32(msgs[j].UID)] })
+	} else {
+		sort.Slice(msgs, func(i, j int) bool { return (msgs[i].UID > msgs[j].UID) != q.Reverse })
+	}
 	result.Messages = make([]Summary, 0, len(msgs))
 	for _, m := range msgs {
 		result.Messages = append(result.Messages, toSummary(m))
 	}
 	return result, nil
+}
+
+// pageRange returns the sequence numbers [lo, hi] of one page of a folder
+// holding total messages, newest first unless oldestFirst.
+func pageRange(total, page, size int, oldestFirst bool) (int, int) {
+	if oldestFirst {
+		lo := (page-1)*size + 1
+		return lo, min(lo+size-1, total)
+	}
+	hi := total - (page-1)*size
+	return max(hi-size+1, 1), hi
 }
 
 func toSummary(m *imapclient.FetchMessageBuffer) Summary {
@@ -294,18 +425,53 @@ func toSummary(m *imapclient.FetchMessageBuffer) Summary {
 		}
 	}
 	for _, f := range m.Flags {
-		switch f {
-		case imap.FlagSeen:
+		switch {
+		case f == imap.FlagSeen:
 			sum.Seen = true
-		case imap.FlagFlagged:
+		case f == imap.FlagFlagged:
 			sum.Flagged = true
-		case imap.FlagAnswered:
+		case f == imap.FlagAnswered:
 			sum.Answered = true
-		case imap.FlagDraft:
+		case f == imap.FlagDraft:
 			sum.Draft = true
+		case strings.EqualFold(string(f), FlagForwarded):
+			sum.Forwarded = true
+		case isTagKeyword(string(f)):
+			sum.Tags = append(sum.Tags, string(f))
 		}
 	}
+	sort.Strings(sum.Tags)
+	if m.BodyStructure != nil {
+		sum.HasAttachment = hasAttachment(m.BodyStructure)
+	}
 	return sum
+}
+
+// hasAttachment reports whether a body structure carries a file a user
+// would call an attachment, as opposed to the text, HTML and cid: images of
+// the body itself.
+func hasAttachment(bs imap.BodyStructure) bool {
+	found := false
+	bs.Walk(func(_ []int, part imap.BodyStructure) bool {
+		single, ok := part.(*imap.BodyStructureSinglePart)
+		if !ok {
+			return true
+		}
+		if d := single.Disposition(); d != nil && strings.EqualFold(d.Value, "attachment") {
+			found = true
+		} else if single.Filename() != "" && !strings.EqualFold(single.Type, "image") && !strings.EqualFold(single.Type, "text") {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// isTagKeyword reports whether an IMAP keyword is a user tag. System flags
+// start with a backslash, and $-prefixed keywords are protocol markers
+// ($Forwarded, $MDNSent, $Junk) that the UI shows another way or not at all.
+func isTagKeyword(k string) bool {
+	return k != "" && k[0] != '\\' && k[0] != '$' && k != "NonJunk" && k != "Junk" && k != "*"
 }
 
 func toAddresses(in []imap.Address) []Address {
@@ -347,7 +513,18 @@ func (s *imapStore) Raw(ctx context.Context, folder string, uid uint32, maxBytes
 	return msgs[0].FindBodySection(section), nil
 }
 
-func (s *imapStore) storeFlag(folder string, uid uint32, flag imap.Flag, on bool) error {
+func uidSet(uids []uint32) imap.UIDSet {
+	set := imap.UIDSet{}
+	for _, u := range uids {
+		set.AddNum(imap.UID(u))
+	}
+	return set
+}
+
+func (s *imapStore) SetFlags(ctx context.Context, folder string, uids []uint32, flags []string, on bool) error {
+	if len(uids) == 0 || len(flags) == 0 {
+		return nil
+	}
 	if _, err := s.selectFolder(folder); err != nil {
 		return err
 	}
@@ -355,41 +532,60 @@ func (s *imapStore) storeFlag(folder string, uid uint32, flag imap.Flag, on bool
 	if on {
 		op = imap.StoreFlagsAdd
 	}
-	return s.c.Store(imap.UIDSetNum(imap.UID(uid)), &imap.StoreFlags{Op: op, Silent: true, Flags: []imap.Flag{flag}}, nil).Close()
+	fl := make([]imap.Flag, 0, len(flags))
+	for _, f := range flags {
+		fl = append(fl, imap.Flag(f))
+	}
+	if err := s.c.Store(uidSet(uids), &imap.StoreFlags{Op: op, Silent: true, Flags: fl}, nil).Close(); err != nil {
+		return fmt.Errorf("webmail: store flags: %w", err)
+	}
+	return nil
 }
 
-func (s *imapStore) SetSeen(ctx context.Context, folder string, uid uint32, seen bool) error {
-	return s.storeFlag(folder, uid, imap.FlagSeen, seen)
-}
-
-func (s *imapStore) SetFlagged(ctx context.Context, folder string, uid uint32, flagged bool) error {
-	return s.storeFlag(folder, uid, imap.FlagFlagged, flagged)
-}
-
-func (s *imapStore) Move(ctx context.Context, folder string, uid uint32, dest string) error {
+func (s *imapStore) Move(ctx context.Context, folder string, uids []uint32, dest string) error {
+	if len(uids) == 0 {
+		return nil
+	}
 	if _, err := s.selectFolder(folder); err != nil {
 		return err
 	}
-	if _, err := s.c.Move(imap.UIDSetNum(imap.UID(uid)), dest).Wait(); err != nil {
+	if _, err := s.c.Move(uidSet(uids), dest).Wait(); err != nil {
+		if isNo(err) {
+			return ErrNotFound
+		}
 		return fmt.Errorf("webmail: move to %q: %w", dest, err)
 	}
 	return nil
 }
 
-func (s *imapStore) Delete(ctx context.Context, folder string, uid uint32) error {
+func (s *imapStore) Delete(ctx context.Context, folder string, uids []uint32) error {
+	if len(uids) == 0 {
+		return nil
+	}
 	trash, err := s.roleFolder(ctx, RoleTrash)
 	if err != nil {
 		return err
 	}
 	if trash != "" && trash != folder {
-		return s.Move(ctx, folder, uid, trash)
+		return s.Move(ctx, folder, uids, trash)
 	}
-	if err := s.storeFlag(folder, uid, imap.FlagDeleted, true); err != nil {
+	return s.expunge(folder, uids)
+}
+
+func (s *imapStore) Expunge(ctx context.Context, folder string, uids []uint32) error {
+	if len(uids) == 0 {
+		return nil
+	}
+	return s.expunge(folder, uids)
+}
+
+// expunge removes messages for good.
+func (s *imapStore) expunge(folder string, uids []uint32) error {
+	if err := s.SetFlags(context.Background(), folder, uids, []string{string(imap.FlagDeleted)}, true); err != nil {
 		return err
 	}
-	set := imap.UIDSetNum(imap.UID(uid))
 	if s.c.Caps().Has(imap.CapUIDPlus) || s.c.Caps().Has(imap.CapIMAP4rev2) {
-		return s.c.UIDExpunge(set).Close()
+		return s.c.UIDExpunge(uidSet(uids)).Close()
 	}
 	// Without UIDPLUS a plain EXPUNGE would also remove anything else the
 	// user (or another client) had flagged \Deleted. That's the documented
@@ -397,8 +593,81 @@ func (s *imapStore) Delete(ctx context.Context, folder string, uid uint32) error
 	return s.c.Expunge().Close()
 }
 
+func (s *imapStore) EmptyFolder(ctx context.Context, folder string) error {
+	n, err := s.selectFolder(folder)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	var all imap.SeqSet
+	all.AddRange(1, 0) // 1:*
+	if err := s.c.Store(all, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Silent: true, Flags: []imap.Flag{imap.FlagDeleted}}, nil).Close(); err != nil {
+		return fmt.Errorf("webmail: empty %q: %w", folder, err)
+	}
+	return s.c.Expunge().Close()
+}
+
+func (s *imapStore) CreateFolder(ctx context.Context, name string) error {
+	if err := s.c.Create(name, nil).Wait(); err != nil {
+		if isNo(err) {
+			return ErrExists
+		}
+		return fmt.Errorf("webmail: create %q: %w", name, err)
+	}
+	// Subscribe so other clients, which mostly list subscribed folders
+	// only, show it too.
+	_ = s.c.Subscribe(name).Wait()
+	s.folders = nil
+	return nil
+}
+
+func (s *imapStore) RenameFolder(ctx context.Context, from, to string) error {
+	s.unselect()
+	if err := s.c.Rename(from, to, nil).Wait(); err != nil {
+		if isNo(err) {
+			return ErrExists
+		}
+		return fmt.Errorf("webmail: rename %q: %w", from, err)
+	}
+	_ = s.c.Unsubscribe(from).Wait()
+	_ = s.c.Subscribe(to).Wait()
+	s.folders = nil
+	return nil
+}
+
+func (s *imapStore) DeleteFolder(ctx context.Context, name string) error {
+	s.unselect()
+	if err := s.c.Delete(name).Wait(); err != nil {
+		if isNo(err) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("webmail: delete %q: %w", name, err)
+	}
+	_ = s.c.Unsubscribe(name).Wait()
+	s.folders = nil
+	return nil
+}
+
+func (s *imapStore) Tags(ctx context.Context, folder string) ([]string, error) {
+	if _, err := s.selectFolder(folder); err != nil {
+		return nil, err
+	}
+	var out []string
+	if mb := s.c.Mailbox(); mb != nil {
+		for _, f := range mb.Flags {
+			if isTagKeyword(string(f)) {
+				out = append(out, string(f))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // defaultRoleNames are the folders Append creates when an account has none.
-var defaultRoleNames = map[Role]string{RoleSent: "Sent", RoleDrafts: "Drafts", RoleTrash: "Trash", RoleJunk: "Junk"}
+var defaultRoleNames = map[Role]string{RoleSent: "Sent", RoleDrafts: "Drafts", RoleTrash: "Trash", RoleJunk: "Junk", RoleArchive: "Archive"}
 
 func (s *imapStore) Append(ctx context.Context, role Role, raw []byte, seen, draft bool) error {
 	name, err := s.roleFolder(ctx, role)
@@ -410,13 +679,8 @@ func (s *imapStore) Append(ctx context.Context, role Role, raw []byte, seen, dra
 		if name == "" {
 			return fmt.Errorf("webmail: no folder for role %q", role)
 		}
-		if err := s.c.Create(name, nil).Wait(); err != nil {
-			var imapErr *imap.Error
-			// ALREADYEXISTS (or a bare NO from older servers) means another
-			// client created it since we listed; carry on and append.
-			if !errors.As(err, &imapErr) || imapErr.Type != imap.StatusResponseTypeNo {
-				return fmt.Errorf("webmail: create %q: %w", name, err)
-			}
+		if err := s.ensureFolder(name); err != nil {
+			return err
 		}
 		s.folders = nil
 	}
@@ -427,18 +691,38 @@ func (s *imapStore) Append(ctx context.Context, role Role, raw []byte, seen, dra
 	if draft {
 		flags = append(flags, imap.FlagDraft)
 	}
-	cmd := s.c.Append(name, int64(len(raw)), &imap.AppendOptions{Flags: flags, Time: time.Now()})
-	if _, err := bytes.NewReader(raw).WriteTo(cmd); err != nil {
-		_ = cmd.Close()
-		return fmt.Errorf("webmail: append to %q: %w", name, err)
-	}
-	if err := cmd.Close(); err != nil {
-		return fmt.Errorf("webmail: append to %q: %w", name, err)
-	}
-	if _, err := cmd.Wait(); err != nil {
-		return fmt.Errorf("webmail: append to %q: %w", name, err)
+	_, err = s.appendRaw(name, raw, flags)
+	return err
+}
+
+// ensureFolder creates name if it doesn't exist.
+func (s *imapStore) ensureFolder(name string) error {
+	if err := s.c.Create(name, nil).Wait(); err != nil {
+		// ALREADYEXISTS (or a bare NO from older servers) means it exists,
+		// perhaps created by another client since we listed; carry on.
+		if !isNo(err) {
+			return fmt.Errorf("webmail: create %q: %w", name, err)
+		}
 	}
 	return nil
+}
+
+// appendRaw appends a message and returns its UID when the server reports
+// it (UIDPLUS), or 0.
+func (s *imapStore) appendRaw(folder string, raw []byte, flags []imap.Flag) (uint32, error) {
+	cmd := s.c.Append(folder, int64(len(raw)), &imap.AppendOptions{Flags: flags, Time: time.Now()})
+	if _, err := bytes.NewReader(raw).WriteTo(cmd); err != nil {
+		_ = cmd.Close()
+		return 0, fmt.Errorf("webmail: append to %q: %w", folder, err)
+	}
+	if err := cmd.Close(); err != nil {
+		return 0, fmt.Errorf("webmail: append to %q: %w", folder, err)
+	}
+	data, err := cmd.Wait()
+	if err != nil {
+		return 0, fmt.Errorf("webmail: append to %q: %w", folder, err)
+	}
+	return uint32(data.UID), nil
 }
 
 // isConnError reports whether err means the IMAP connection itself is gone,

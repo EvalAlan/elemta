@@ -70,6 +70,17 @@ type Config struct {
 	// MaxMessageMB caps the size of a message the webmail will download from
 	// IMAP to display. Larger messages show their headers and a download link.
 	MaxMessageMB int `toml:"max_message_mb"`
+
+	// DefaultTimezone is the IANA zone dates are shown in until a user's
+	// browser reports theirs or they pick one in Settings ("UTC" by default).
+	DefaultTimezone string `toml:"default_timezone"`
+
+	// SieveAddr is host:port of the ManageSieve server (RFC 5804) that
+	// mail filters and the out-of-office reply are stored on. Empty turns
+	// those features off.
+	SieveAddr string `toml:"sieve_addr"`
+	// SieveTLS is "starttls" (default), "tls" or "none".
+	SieveTLS string `toml:"sieve_tls"`
 }
 
 // Defaults applied by WithDefaults.
@@ -92,6 +103,12 @@ func (c Config) WithDefaults() Config {
 	if c.SubmissionTLS == "" {
 		c.SubmissionTLS = TLSModeStartTLS
 	}
+	if c.SieveTLS == "" {
+		c.SieveTLS = TLSModeStartTLS
+	}
+	if c.DefaultTimezone == "" {
+		c.DefaultTimezone = "UTC"
+	}
 	if c.SessionTTL == "" {
 		c.SessionTTL = defaultSessionTTL.String()
 	}
@@ -110,6 +127,7 @@ func (c Config) WithDefaults() Config {
 	}
 	c.IMAPTLS = strings.ToLower(c.IMAPTLS)
 	c.SubmissionTLS = strings.ToLower(c.SubmissionTLS)
+	c.SieveTLS = strings.ToLower(c.SieveTLS)
 	return c
 }
 
@@ -127,7 +145,15 @@ func (c Config) Validate() error {
 	} else if _, _, err := net.SplitHostPort(c.SubmissionAddr); err != nil {
 		errs = append(errs, fmt.Errorf("webmail: submission_addr %q: %w", c.SubmissionAddr, err))
 	}
-	for name, mode := range map[string]string{"imap_tls": c.IMAPTLS, "submission_tls": c.SubmissionTLS} {
+	if c.SieveAddr != "" {
+		if _, _, err := net.SplitHostPort(c.SieveAddr); err != nil {
+			errs = append(errs, fmt.Errorf("webmail: sieve_addr %q: %w", c.SieveAddr, err))
+		}
+	}
+	if _, err := time.LoadLocation(c.DefaultTimezone); err != nil {
+		errs = append(errs, fmt.Errorf("webmail: default_timezone %q: %w", c.DefaultTimezone, err))
+	}
+	for name, mode := range map[string]string{"imap_tls": c.IMAPTLS, "submission_tls": c.SubmissionTLS, "sieve_tls": c.SieveTLS} {
 		switch mode {
 		case TLSModeStartTLS, TLSModeImplicit, TLSModeNone:
 		default:
@@ -147,6 +173,14 @@ func (c Config) sessionTTL() time.Duration {
 		return defaultSessionTTL
 	}
 	return d
+}
+
+// location is the default time zone; Validate guarantees it loads.
+func (c Config) location() *time.Location {
+	if l, err := time.LoadLocation(c.DefaultTimezone); err == nil {
+		return l
+	}
+	return time.UTC
 }
 
 // address turns a login name into the mailbox address it sends as.

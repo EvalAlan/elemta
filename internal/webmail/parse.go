@@ -37,6 +37,21 @@ type Message struct {
 	Parts      []Part // every part that isn't the displayed body
 	Seen       bool
 	Flagged    bool
+	Tags       []string
+	// HighPriority is set for messages marked important (Importance: high
+	// or X-Priority 1 or 2).
+	HighPriority bool
+	// ReceiptTo is where the sender asked for a read receipt, if anywhere.
+	ReceiptTo string
+	// Newer and Older are the neighbouring messages in the list, for
+	// next/previous navigation; 0 when there is none on this page.
+	Newer, Older uint32
+	// SenderContact is the contact ID of the sender, if they are one.
+	SenderContact string
+	// Calendar holds the iCalendar part of an invitation or a reply to one.
+	Calendar []byte
+	// Invite is the parsed invitation, set by the calendar decorator.
+	Invite *inviteView
 	// AuthResults is the topmost Authentication-Results header, which on a
 	// mailbox fed by Elemta is the one Elemta itself added.
 	AuthResults string
@@ -72,6 +87,12 @@ func parseMessage(raw []byte) (*Message, error) {
 	msg.ReplyTo = headerAddresses(h, "Reply-To")
 	msg.To = headerAddresses(h, "To")
 	msg.Cc = headerAddresses(h, "Cc")
+	imp := strings.ToLower(h.Get("Importance"))
+	prio := strings.TrimSpace(h.Get("X-Priority"))
+	msg.HighPriority = imp == "high" || strings.HasPrefix(prio, "1") || strings.HasPrefix(prio, "2")
+	if dnt := headerAddresses(h, "Disposition-Notification-To"); len(dnt) > 0 {
+		msg.ReceiptTo = dnt[0].Email
+	}
 
 	index := 0
 	for {
@@ -100,11 +121,25 @@ func parseMessage(raw []byte) (*Message, error) {
 				msg.HTML = readLimited(p.Body)
 				continue
 			}
+			if ct == "text/calendar" && msg.Calendar == nil {
+				// Invitations carry the event as an inline calendar part.
+				// It is kept for the calendar to read, and also listed as
+				// an attachment so it can be saved as an .ics file.
+				msg.Calendar = []byte(readLimited(p.Body))
+				msg.Parts = append(msg.Parts, Part{Index: index, ContentType: ct, Size: int64(len(msg.Calendar)), Filename: "invite.ics"})
+				continue
+			}
 			n, _ := io.Copy(io.Discard, p.Body)
 			msg.Parts = append(msg.Parts, Part{Index: index, ContentType: ct, ContentID: cid, Inline: true, Size: n, Filename: inlineName(ph)})
 		case *mail.AttachmentHeader:
 			ct, _, _ := ph.ContentType()
 			name, _ := ph.Filename()
+			if (ct == "text/calendar" || ct == "application/ics") && msg.Calendar == nil {
+				body := readLimited(p.Body)
+				msg.Calendar = []byte(body)
+				msg.Parts = append(msg.Parts, Part{Index: index, Filename: name, ContentType: ct, Size: int64(len(body))})
+				continue
+			}
 			n, _ := io.Copy(io.Discard, p.Body)
 			cid := strings.Trim(ph.Get("Content-Id"), "<>")
 			// go-message files every non-text part under attachments. A part

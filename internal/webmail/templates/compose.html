@@ -1,29 +1,41 @@
 {{define "content"}}
-<form class="compose" action="/compose" method="post" enctype="multipart/form-data">
+<form class="compose" action="/compose" method="post" enctype="multipart/form-data" data-unsaved-warning>
   <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
   {{with .Compose}}
   <input type="hidden" name="in_reply_to" value="{{.InReplyTo}}">
   <input type="hidden" name="references" value="{{.References}}">
   <input type="hidden" name="mode" value="{{.Mode}}">
+  {{if .OrigUID}}<input type="hidden" name="orig_f" value="{{.OrigFolder}}"><input type="hidden" name="orig_uid" value="{{.OrigUID}}">{{end}}
+  {{if .DraftUID}}<input type="hidden" name="draft_uid" value="{{.DraftUID}}">{{end}}
   <div class="compose-head">
-    <h1>{{if eq .Mode "reply" "replyall"}}Reply{{else if eq .Mode "forward"}}Forward{{else}}New message{{end}}</h1>
+    <h1>{{if eq .Mode "reply" "replyall"}}Reply{{else if eq .Mode "forward"}}Forward{{else if eq .Mode "draft"}}Draft{{else}}New message{{end}}</h1>
   </div>
   {{if $.Problem}}<p class="problem" role="alert">{{$.Problem}}</p>{{end}}
-  <div class="field"><span class="field-label">From</span><span class="mono">{{$.Session.Address}}</span></div>
-  <div class="field"><label class="field-label" for="to">To</label><input id="to" name="to" type="text" value="{{.To}}" autocomplete="email" multiple></div>
+  <div class="field"><span class="field-label">From</span><span>{{if .From.Name}}{{.From.Name}} <span class="mono muted">&lt;{{.From.Email}}&gt;</span>{{else}}<span class="mono">{{.From.Email}}</span>{{end}}</span><a class="small push" href="/settings">Change name or signature</a></div>
+  <div class="field"><label class="field-label" for="to">To</label><input id="to" name="to" type="text" value="{{.To}}" autocomplete="off" data-addresses></div>
   <details class="field-group"{{if .ShowCc}} open{{end}}>
     <summary>Cc and Bcc</summary>
-    <div class="field"><label class="field-label" for="cc">Cc</label><input id="cc" name="cc" type="text" value="{{.Cc}}"></div>
-    <div class="field"><label class="field-label" for="bcc">Bcc</label><input id="bcc" name="bcc" type="text" value="{{.Bcc}}"></div>
+    <div class="field"><label class="field-label" for="cc">Cc</label><input id="cc" name="cc" type="text" value="{{.Cc}}" autocomplete="off" data-addresses></div>
+    <div class="field"><label class="field-label" for="bcc">Bcc</label><input id="bcc" name="bcc" type="text" value="{{.Bcc}}" autocomplete="off" data-addresses></div>
   </details>
   <div class="field"><label class="field-label" for="subject">Subject</label><input id="subject" name="subject" type="text" value="{{.Subject}}"></div>
   <label class="visually-hidden" for="body">Message</label>
-  <textarea id="body" name="body" rows="18">{{.Text}}</textarea>
+  <textarea id="body" name="body" rows="18"{{if eq .Mode "reply" "replyall" "forward"}} data-cursor-top{{end}}>{{.Text}}</textarea>
+  {{with .Forwarded}}
+  <fieldset class="field forwarded">
+    <legend class="field-label">Attachments from the original</legend>
+    {{range .}}<label class="checkline"><input type="checkbox" name="fwd_part" value="{{.Index}}" checked> {{.Filename}} <span class="mono muted small">{{humanSize .Size}}</span></label>{{end}}
+  </fieldset>
+  {{end}}
   <div class="field attach"><label class="field-label" for="attachments">{{template "icon-clip"}}Attach files</label><input id="attachments" name="attachments" type="file" multiple></div>
+  <div class="field options">
+    <label class="checkline"><input type="checkbox" name="priority" value="high"{{if .HighPriority}} checked{{end}}> High priority</label>
+    <label class="checkline"><input type="checkbox" name="receipt" value="1"{{if .Receipt}} checked{{end}}> Request a read receipt</label>
+  </div>
   <div class="actions">
-    <button class="button primary" type="submit" name="op" value="send">Send</button>
+    <button class="button primary" type="submit" name="op" value="send" data-submit-key>Send</button>
     <button class="button" type="submit" name="op" value="save" formnovalidate>Save draft</button>
-    <a class="button ghost danger push" href="/mail">Discard</a>
+    <a class="button ghost danger push" href="/mail" data-discard>Discard</a>
   </div>
   {{end}}
 </form>

@@ -18,14 +18,29 @@ import (
 // Draft is a message being composed.
 type Draft struct {
 	From        Address
+	ReplyTo     []Address
 	To          []Address
 	Cc          []Address
 	Bcc         []Address
 	Subject     string
 	Text        string
+	HTML        string // optional HTML alternative, already sanitised
 	InReplyTo   string
 	References  string
 	Attachments []Attachment
+	// HighPriority marks the message important for clients that show it.
+	HighPriority bool
+	// ReceiptTo asks the recipient's client for a read receipt (RFC 8098).
+	ReceiptTo string
+	// Calendar is an iCalendar part sent alongside the text, which is how
+	// invitations and replies to them travel (iMIP, RFC 6047).
+	Calendar *CalendarPart
+}
+
+// CalendarPart is an iMIP payload.
+type CalendarPart struct {
+	Method string // REQUEST, REPLY or CANCEL
+	Data   []byte
 }
 
 // Attachment is a file added to a draft.
@@ -75,10 +90,17 @@ func newMessageID(from string) (string, error) {
 
 // Build renders the draft as an RFC 5322 message. Bcc is left out of the
 // headers on purpose: it belongs only in the envelope.
+//
+// The body is text/plain alone when that is all there is, otherwise a
+// multipart/alternative of the text, the HTML and the calendar part, wrapped
+// in multipart/mixed when there are attachments.
 func (d *Draft) Build(now time.Time) ([]byte, error) {
 	var h mail.Header
 	h.SetDate(now)
 	h.SetAddressList("From", mailAddresses([]Address{d.From}))
+	if len(d.ReplyTo) > 0 {
+		h.SetAddressList("Reply-To", mailAddresses(d.ReplyTo))
+	}
 	if len(d.To) > 0 {
 		h.SetAddressList("To", mailAddresses(d.To))
 	}
@@ -96,17 +118,77 @@ func (d *Draft) Build(now time.Time) ([]byte, error) {
 		refs := strings.TrimSpace(d.References + " " + d.InReplyTo)
 		h.Set("References", refs)
 	}
+	if d.HighPriority {
+		h.Set("Importance", "high")
+		h.Set("X-Priority", "1 (Highest)")
+	}
+	if d.ReceiptTo != "" {
+		h.SetAddressList("Disposition-Notification-To", []*mail.Address{{Address: d.ReceiptTo}})
+	}
 	h.Set("User-Agent", "Elemta Webmail")
 
+	text := normaliseNewlines(d.Text)
 	var buf bytes.Buffer
-	body := normaliseNewlines(d.Text)
-	if len(d.Attachments) == 0 {
+	if len(d.Attachments) == 0 && d.HTML == "" && d.Calendar == nil {
 		h.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
 		w, err := mail.CreateSingleInlineWriter(&buf, h)
 		if err != nil {
 			return nil, fmt.Errorf("webmail: build message: %w", err)
 		}
-		if _, err := io.WriteString(w, body); err != nil {
+		if _, err := io.WriteString(w, text); err != nil {
+			return nil, err
+		}
+		if err := w.Close(); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+
+	var bodyParts []struct {
+		ct     string
+		params map[string]string
+		data   string
+	}
+	add := func(ct string, params map[string]string, data string) {
+		bodyParts = append(bodyParts, struct {
+			ct     string
+			params map[string]string
+			data   string
+		}{ct, params, data})
+	}
+	add("text/plain", map[string]string{"charset": "utf-8"}, text)
+	if d.HTML != "" {
+		add("text/html", map[string]string{"charset": "utf-8"}, normaliseNewlines(d.HTML))
+	}
+	if d.Calendar != nil {
+		add("text/calendar", map[string]string{"charset": "utf-8", "method": d.Calendar.Method}, normaliseNewlines(string(d.Calendar.Data)))
+	}
+
+	writeBody := func(create func(mail.InlineHeader) (io.WriteCloser, error)) error {
+		for _, p := range bodyParts {
+			var ih mail.InlineHeader
+			ih.SetContentType(p.ct, p.params)
+			pw, err := create(ih)
+			if err != nil {
+				return err
+			}
+			if _, err := io.WriteString(pw, p.data); err != nil {
+				return err
+			}
+			if err := pw.Close(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if len(d.Attachments) == 0 {
+		// multipart/alternative at the top level.
+		w, err := mail.CreateInlineWriter(&buf, h)
+		if err != nil {
+			return nil, fmt.Errorf("webmail: build message: %w", err)
+		}
+		if err := writeBody(w.CreatePart); err != nil {
 			return nil, err
 		}
 		if err := w.Close(); err != nil {
@@ -119,17 +201,30 @@ func (d *Draft) Build(now time.Time) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("webmail: build message: %w", err)
 	}
-	var ih mail.InlineHeader
-	ih.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
-	tw, err := w.CreateSingleInline(ih)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := io.WriteString(tw, body); err != nil {
-		return nil, err
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
+	if len(bodyParts) == 1 {
+		var ih mail.InlineHeader
+		ih.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
+		tw, err := w.CreateSingleInline(ih)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.WriteString(tw, text); err != nil {
+			return nil, err
+		}
+		if err := tw.Close(); err != nil {
+			return nil, err
+		}
+	} else {
+		iw, err := w.CreateInline()
+		if err != nil {
+			return nil, err
+		}
+		if err := writeBody(iw.CreatePart); err != nil {
+			return nil, err
+		}
+		if err := iw.Close(); err != nil {
+			return nil, err
+		}
 	}
 	for _, a := range d.Attachments {
 		var ah mail.AttachmentHeader

@@ -24,6 +24,7 @@ const (
 type Folder struct {
 	Name       string // full IMAP name, used as the folder's identifier
 	Display    string // last path segment, shown in the tree
+	Parent     string // full name of the parent folder, "" at the top level
 	Depth      int    // nesting level, 0 for top-level folders
 	Role       Role
 	Total      uint32
@@ -47,16 +48,19 @@ func (a Address) Label() string {
 
 // Summary is one row of a message list.
 type Summary struct {
-	UID      uint32
-	From     []Address
-	To       []Address
-	Subject  string
-	Date     time.Time
-	Size     int64
-	Seen     bool
-	Flagged  bool
-	Answered bool
-	Draft    bool
+	UID           uint32
+	From          []Address
+	To            []Address
+	Subject       string
+	Date          time.Time
+	Size          int64
+	Seen          bool
+	Flagged       bool
+	Answered      bool
+	Forwarded     bool
+	Draft         bool
+	HasAttachment bool
+	Tags          []string // user keywords, see isTagKeyword
 }
 
 // Page is a window of a folder's messages, newest first.
@@ -76,6 +80,55 @@ func (p Page) Pages() int {
 	return (p.Total + p.PageSize - 1) / p.PageSize
 }
 
+// Sort orders a message list. The zero value is newest first.
+type Sort string
+
+// Sort orders the list supports. Every one but date needs the server's SORT
+// extension; without it the list falls back to arrival order.
+const (
+	SortDate    Sort = ""
+	SortFrom    Sort = "from"
+	SortSubject Sort = "subject"
+	SortSize    Sort = "size"
+)
+
+// ListQuery selects and orders the messages of one folder. The zero value
+// lists everything, newest first.
+type ListQuery struct {
+	Text          string // full-text match on headers and body
+	From          string
+	To            string
+	Subject       string
+	Unread        bool
+	Flagged       bool
+	Answered      bool
+	HasAttachment bool
+	Tag           string
+	Since         time.Time // on or after this day
+	Before        time.Time // before this day
+	Sort          Sort
+	Reverse       bool // oldest first, or Z to A
+	Page          int  // 1-based
+	PageSize      int
+}
+
+// Filtered reports whether q restricts the folder at all, as opposed to
+// only paging and ordering it.
+func (q ListQuery) Filtered() bool {
+	return q.Text != "" || q.From != "" || q.To != "" || q.Subject != "" || q.Unread || q.Flagged ||
+		q.Answered || q.HasAttachment || q.Tag != "" || !q.Since.IsZero() || !q.Before.IsZero()
+}
+
+// Flags the UI sets and clears. Tags are stored as IMAP keywords alongside them.
+const (
+	FlagSeen     = `\Seen`
+	FlagFlagged  = `\Flagged`
+	FlagAnswered = `\Answered`
+	// FlagForwarded is the keyword most clients use to mark a forwarded
+	// message (RFC 5788 registry).
+	FlagForwarded = "$Forwarded"
+)
+
 // Mailstore is the webmail's view of one user's mailboxes. The IMAP
 // implementation is the real one; handlers depend on this interface so they
 // can be tested without a server.
@@ -84,21 +137,34 @@ func (p Page) Pages() int {
 // is per connection, so callers serialise access (see Session.withStore).
 type Mailstore interface {
 	Folders(ctx context.Context) ([]Folder, error)
-	// List returns page (1-based) of folder, newest first. A non-empty
-	// query restricts it to messages whose text matches.
-	List(ctx context.Context, folder, query string, page, pageSize int) (Page, error)
+	// List returns one page of folder matching q.
+	List(ctx context.Context, folder string, q ListQuery) (Page, error)
 	// Raw returns the full RFC 5322 source of a message, without marking it
 	// read. maxBytes caps the download; ErrTooLarge reports a bigger message.
 	Raw(ctx context.Context, folder string, uid uint32, maxBytes int64) ([]byte, error)
-	SetSeen(ctx context.Context, folder string, uid uint32, seen bool) error
-	SetFlagged(ctx context.Context, folder string, uid uint32, flagged bool) error
-	Move(ctx context.Context, folder string, uid uint32, dest string) error
-	// Delete moves a message to Trash, or removes it for good when it is
-	// already in Trash (or there is no Trash folder).
-	Delete(ctx context.Context, folder string, uid uint32) error
+	// SetFlags adds (on) or removes flags and tags on messages.
+	SetFlags(ctx context.Context, folder string, uids []uint32, flags []string, on bool) error
+	Move(ctx context.Context, folder string, uids []uint32, dest string) error
+	// Delete moves messages to Trash, or removes them for good when they are
+	// already in Trash or Junk (or there is no Trash folder).
+	Delete(ctx context.Context, folder string, uids []uint32) error
+	// Expunge removes messages for good, wherever they are.
+	Expunge(ctx context.Context, folder string, uids []uint32) error
 	// Append stores a message (a sent copy or a draft) in the folder with the
 	// given role, creating that folder if the account has none.
 	Append(ctx context.Context, role Role, raw []byte, seen, draft bool) error
+
+	CreateFolder(ctx context.Context, name string) error
+	RenameFolder(ctx context.Context, from, to string) error
+	DeleteFolder(ctx context.Context, name string) error
+	// EmptyFolder removes every message in folder for good.
+	EmptyFolder(ctx context.Context, folder string) error
+	// Delimiter is the hierarchy separator of folder names ("/" or ".").
+	Delimiter(ctx context.Context) (string, error)
+	// Tags lists the user keywords in use in folder, for suggestions.
+	Tags(ctx context.Context, folder string) ([]string, error)
+
+	ObjectStore
 	Close() error
 }
 
@@ -107,6 +173,7 @@ var (
 	ErrAuthFailed = errors.New("webmail: authentication failed")
 	ErrNotFound   = errors.New("webmail: message or folder not found")
 	ErrTooLarge   = errors.New("webmail: message too large to display")
+	ErrExists     = errors.New("webmail: a folder with that name already exists")
 )
 
 // Dialer opens a Mailstore authenticated as one user.

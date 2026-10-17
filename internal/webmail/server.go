@@ -3,18 +3,12 @@ package webmail
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
-	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
-	"mime"
 	"net"
 	"net/http"
-	"net/mail"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +29,9 @@ type Server struct {
 	log      *slog.Logger
 	limiter  *loginLimiter
 	now      func() time.Time
+	// defaultLoc is the time zone for users who haven't chosen one and
+	// whose browser hasn't reported one yet.
+	defaultLoc *time.Location
 }
 
 // NewServer builds the webmail from a validated config. dial and submit may
@@ -64,6 +61,7 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 	return &Server{
 		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl,
 		log: log, limiter: newLoginLimiter(10, 15*time.Minute), now: time.Now,
+		defaultLoc: cfg.location(),
 	}, nil
 }
 
@@ -86,6 +84,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /mail/action", s.authed(s.messageAction))
 	mux.HandleFunc("GET /compose", s.authed(s.composePage))
 	mux.HandleFunc("POST /compose", s.authed(s.composeSubmit))
+	mux.HandleFunc("GET /folders", s.authed(s.foldersPage))
+	mux.HandleFunc("POST /folders", s.authed(s.foldersSubmit))
+	mux.HandleFunc("GET /settings", s.authed(s.settingsPage))
+	mux.HandleFunc("POST /settings", s.authed(s.settingsSubmit))
+	mux.HandleFunc("POST /settings/timezone", s.authed(s.timezoneSubmit))
+	mux.HandleFunc("GET /contacts", s.authed(s.contactsPage))
+	mux.HandleFunc("POST /contacts", s.authed(s.contactsSubmit))
+	mux.HandleFunc("GET /contacts/export", s.authed(s.contactsExport))
+	mux.HandleFunc("POST /contacts/import", s.authed(s.contactsImport))
+	mux.HandleFunc("GET /api/counts", s.authed(s.countsAPI))
+	mux.HandleFunc("GET /api/addresses", s.authed(s.addressesAPI))
 	return securityHeaders(mux)
 }
 
@@ -105,7 +114,12 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func cacheStatic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		// Asset URLs are versioned by content hash, so they never change.
+		if r.URL.Query().Get("v") != "" {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -122,7 +136,7 @@ func (s *Server) authed(next func(http.ResponseWriter, *http.Request, *Session))
 			sess, _ = s.sessions.Get(c.Value)
 		}
 		if sess == nil {
-			if r.Method == http.MethodGet && (r.URL.Path == "/mail" || r.URL.Path == "/compose") {
+			if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/mail/") {
 				http.Redirect(w, r, "/login", http.StatusFound)
 				return
 			}
@@ -152,6 +166,9 @@ func (s *Server) authed(next func(http.ResponseWriter, *http.Request, *Session))
 				return
 			}
 		}
+		// Settings shape every page (time zone, clock, page size); they
+		// are read once per session and cached after that.
+		s.prefs(r.Context(), sess)
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, sess)), sess)
 	}
 }
@@ -160,20 +177,48 @@ func (s *Server) authed(next func(http.ResponseWriter, *http.Request, *Session))
 type view struct {
 	Title   string
 	Session *Session
-	Folders []Folder
-	Folder  string
-	Query   string
-	Notice  string
-	Problem string
-	Page    *Page
-	Message *Message
-	Body    *sanitizeResult
-	Remote  bool
-	Compose *composeView
-	Status  int
+	// App is the top-bar section the page belongs to: mail (the default),
+	// calendar, contacts or tasks.
+	App      string
+	Folders  []Folder
+	Folder   string
+	Query    string
+	List     *listState
+	Notice   string
+	Problem  string
+	Page     *Page
+	Message  *Message
+	Body     *sanitizeResult
+	Remote   bool
+	Tags     []string
+	Compose  *composeView
+	Settings *settingsView
+	Contacts *contactsView
+	Calendar *calendarView
+	Tasks    *tasksView
+	Filters  *filtersView
+	Status   int
+	// Loc and Clock24 control how times are shown.
+	Loc     *time.Location
+	Clock24 bool
+	// TZSet is false until the user has a time zone, which tells the page
+	// to report the browser's.
+	TZSet bool
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
+	if pv, ok := v.(view); ok && pv.Session != nil {
+		if pv.Loc == nil {
+			pv.Loc = s.loc(pv.Session)
+		}
+		cached := s.prefsCached(pv.Session)
+		pv.Clock24 = cached.Uses24h()
+		pv.TZSet = cached.Timezone != ""
+		if pv.App == "" {
+			pv.App = "mail"
+		}
+		v = pv
+	}
 	t, ok := s.tmpl[name]
 	if !ok {
 		http.Error(w, "template missing", http.StatusInternalServerError)
@@ -210,15 +255,45 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, sess *Session, err
 	s.render(w, "error.html", status, view{Title: "Problem", Session: sess, Problem: msg, Status: status})
 }
 
+// renderProblem shows a validation message the user can act on.
+func (s *Server) renderProblem(w http.ResponseWriter, r *http.Request, sess *Session, status int, msg string) {
+	s.render(w, "error.html", status, view{Title: "Problem", Session: sess, Problem: msg, Status: status})
+}
+
 // notices maps the codes redirects carry to their text, so a crafted link
 // can't put arbitrary words on the page.
 var notices = map[string]string{
-	"sent":        "Message sent.",
-	"sent-nocopy": "Message sent, but a copy couldn't be saved to Sent.",
-	"saved":       "Draft saved.",
-	"deleted":     "Message deleted.",
-	"moved":       "Message moved.",
-	"loggedout":   "You've signed out.",
+	"sent":              "Message sent.",
+	"sent-nocopy":       "Message sent, but a copy couldn't be saved to Sent.",
+	"saved":             "Draft saved.",
+	"deleted":           "Message deleted.",
+	"deleted-many":      "Messages deleted.",
+	"moved":             "Message moved.",
+	"moved-many":        "Messages moved.",
+	"archived":          "Message archived.",
+	"archived-many":     "Messages archived.",
+	"emptied":           "Folder emptied.",
+	"loggedout":         "You've signed out.",
+	"folder-created":    "Folder created.",
+	"folder-renamed":    "Folder renamed.",
+	"folder-deleted":    "Folder deleted.",
+	"settings-saved":    "Settings saved.",
+	"contact-saved":     "Contact saved.",
+	"contact-exists":    "That sender is already in your contacts.",
+	"contact-deleted":   "Contact deleted.",
+	"contacts-imported": "Contacts imported.",
+	"event-saved":       "Event saved.",
+	"event-deleted":     "Event deleted.",
+	"events-imported":   "Events imported.",
+	"invites-sent":      "Event saved and invitations sent.",
+	"invite-failed":     "Event saved, but the invitations couldn't be sent.",
+	"rsvp-sent":         "Your reply was sent and the event is in your calendar.",
+	"rsvp-saved":        "The event is in your calendar. The organizer couldn't be told; try again later.",
+	"rsvp-updated":      "The attendee's reply was recorded in your calendar.",
+	"task-saved":        "Task saved.",
+	"task-deleted":      "Task deleted.",
+	"filters-saved":     "Filters saved.",
+	"vacation-saved":    "Out-of-office reply saved.",
 }
 
 // ---- login -----------------------------------------------------------------
@@ -361,477 +436,4 @@ func (l *loginLimiter) reset(key string) {
 	l.mu.Lock()
 	delete(l.hits, key)
 	l.mu.Unlock()
-}
-
-// ---- mail ------------------------------------------------------------------
-
-func parseUID(v string) (uint32, bool) {
-	n, err := strconv.ParseUint(v, 10, 32)
-	if err != nil || n == 0 {
-		return 0, false
-	}
-	return uint32(n), true
-}
-
-func (s *Server) maxMessage() int64 { return int64(s.cfg.MaxMessageMB) << 20 }
-
-func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session) {
-	q := r.URL.Query()
-	folder := q.Get("f")
-	if folder == "" {
-		folder = "INBOX"
-	}
-	page, _ := strconv.Atoi(q.Get("page"))
-	query := strings.TrimSpace(q.Get("q"))
-	uid, hasUID := parseUID(q.Get("uid"))
-	remote := q.Get("remote") == "1"
-
-	v := view{Title: folder, Session: sess, Folder: folder, Query: query, Notice: notices[q.Get("n")], Remote: remote}
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-		if hasUID {
-			raw, err := st.Raw(r.Context(), folder, uid, s.maxMessage())
-			if err != nil {
-				return err
-			}
-			msg, err := parseMessage(raw)
-			if err != nil {
-				return err
-			}
-			msg.UID, msg.Folder = uid, folder
-			// Opening a message is what marks it read; fetching it peeks.
-			if err := st.SetSeen(r.Context(), folder, uid, true); err != nil {
-				return err
-			}
-			msg.Seen = true
-			v.Message = msg
-			if msg.HTML != "" {
-				res := sanitizeHTML(msg.HTML, sanitizeOptions{AllowRemote: remote})
-				v.Body = &res
-			}
-			v.Title = msg.Subject
-		}
-		folders, err := st.Folders(r.Context())
-		if err != nil {
-			return err
-		}
-		v.Folders = folders
-		p, err := st.List(r.Context(), folder, query, page, s.cfg.PageSize)
-		if err != nil {
-			return err
-		}
-		v.Page = &p
-		for _, m := range p.Messages {
-			if m.UID == uid && v.Message != nil {
-				v.Message.Flagged = m.Flagged
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		s.fail(w, r, sess, err)
-		return
-	}
-	s.render(w, "mail.html", http.StatusOK, v)
-}
-
-// loadMessage fetches and parses one message for the body/part handlers.
-func (s *Server) loadMessage(r *http.Request, sess *Session) (string, uint32, []byte, error) {
-	folder := r.URL.Query().Get("f")
-	uid, ok := parseUID(r.URL.Query().Get("uid"))
-	if folder == "" || !ok {
-		return "", 0, nil, ErrNotFound
-	}
-	var raw []byte
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-		var err error
-		raw, err = st.Raw(r.Context(), folder, uid, s.maxMessage())
-		return err
-	})
-	return folder, uid, raw, err
-}
-
-// maxInlineImage caps a cid: image embedded into the body as a data: URI.
-const maxInlineImage = 4 << 20
-
-// messageBody serves sanitised message HTML for the reading pane's frame.
-//
-// It runs under its own CSP: a sandbox with no scripts and a unique origin,
-// so even HTML that got past the sanitiser can't reach the webmail's cookies
-// or DOM. cid: images are embedded as data: URIs rather than linked, because
-// requests from a sandboxed (opaque-origin) frame don't carry the session
-// cookie.
-func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Session) {
-	_, _, raw, err := s.loadMessage(r, sess)
-	if err != nil {
-		s.fail(w, r, sess, err)
-		return
-	}
-	msg, err := parseMessage(raw)
-	if err != nil || msg.HTML == "" {
-		http.Error(w, "No HTML body.", http.StatusNotFound)
-		return
-	}
-	remote := r.URL.Query().Get("remote") == "1"
-	res := sanitizeHTML(msg.HTML, sanitizeOptions{
-		AllowRemote: remote,
-		CIDURL: func(cid string) string {
-			part, body, err := findPart(raw, 0, cid)
-			if err != nil || len(body) > maxInlineImage || !strings.HasPrefix(part.ContentType, "image/") {
-				return ""
-			}
-			return "data:" + part.ContentType + ";base64," + base64.StdEncoding.EncodeToString(body)
-		},
-	})
-	imgSrc := "data:"
-	if remote {
-		imgSrc = "data: https: http:"
-	}
-	h := w.Header()
-	h.Set("Content-Security-Policy", "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src "+imgSrc+"; style-src 'unsafe-inline'; font-src data:; frame-ancestors 'self'")
-	h.Set("X-Frame-Options", "SAMEORIGIN")
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Cache-Control", "private, no-store")
-	_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>body{margin:0;padding:16px 20px;font:15px/1.6 system-ui,sans-serif;color:#0E1726;word-wrap:break-word}img{max-width:100%%;height:auto}</style></head><body>%s</body></html>`, res.HTML)
-}
-
-// messagePart downloads one attachment. It is always served as an
-// attachment with nosniff, never rendered inline, so an HTML or SVG
-// "attachment" can't run as a page on the webmail's origin.
-func (s *Server) messagePart(w http.ResponseWriter, r *http.Request, sess *Session) {
-	_, _, raw, err := s.loadMessage(r, sess)
-	if err != nil {
-		s.fail(w, r, sess, err)
-		return
-	}
-	n, _ := strconv.Atoi(r.URL.Query().Get("n"))
-	part, body, err := findPart(raw, n, "")
-	if err != nil {
-		s.fail(w, r, sess, err)
-		return
-	}
-	name := part.Filename
-	if name == "" {
-		name = fmt.Sprintf("part-%d", part.Index)
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
-	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-	w.Header().Set("Cache-Control", "private, no-store")
-	// #nosec G705 -- served as an octet-stream attachment with nosniff, so the browser never renders it
-	_, _ = w.Write(body)
-}
-
-// messageRaw downloads the message source as .eml.
-func (s *Server) messageRaw(w http.ResponseWriter, r *http.Request, sess *Session) {
-	_, uid, raw, err := s.loadMessage(r, sess)
-	if err != nil {
-		s.fail(w, r, sess, err)
-		return
-	}
-	w.Header().Set("Content-Type", "message/rfc822")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fmt.Sprintf("message-%d.eml", uid)}))
-	w.Header().Set("Cache-Control", "private, no-store")
-	// #nosec G705 -- served as a message/rfc822 attachment with nosniff, so the browser never renders it
-	_, _ = w.Write(raw)
-}
-
-func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Session) {
-	folder := r.PostFormValue("f")
-	uid, ok := parseUID(r.PostFormValue("uid"))
-	op := r.PostFormValue("op")
-	if folder == "" || !ok {
-		s.fail(w, r, sess, ErrNotFound)
-		return
-	}
-	back := folderURL(folder, 1, "")
-	notice := ""
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-		switch op {
-		case "unread":
-			return st.SetSeen(r.Context(), folder, uid, false)
-		case "flag":
-			back = messageURL(folder, uid, 1, "")
-			return st.SetFlagged(r.Context(), folder, uid, true)
-		case "unflag":
-			back = messageURL(folder, uid, 1, "")
-			return st.SetFlagged(r.Context(), folder, uid, false)
-		case "delete":
-			notice = "deleted"
-			return st.Delete(r.Context(), folder, uid)
-		case "move":
-			dest := r.PostFormValue("dest")
-			if dest == "" || dest == folder {
-				return nil
-			}
-			notice = "moved"
-			return st.Move(r.Context(), folder, uid, dest)
-		case "junk":
-			notice = "moved"
-			return moveToRole(r.Context(), st, folder, uid, RoleJunk)
-		}
-		return fmt.Errorf("webmail: unknown action %q", op)
-	})
-	if err != nil {
-		s.fail(w, r, sess, err)
-		return
-	}
-	if notice != "" {
-		back += "&n=" + notice
-	}
-	http.Redirect(w, r, back, http.StatusSeeOther)
-}
-
-// moveToRole moves a message to the folder with role, if the account has one.
-func moveToRole(ctx context.Context, st Mailstore, folder string, uid uint32, role Role) error {
-	folders, err := st.Folders(ctx)
-	if err != nil {
-		return err
-	}
-	for _, f := range folders {
-		if f.Role == role {
-			return st.Move(ctx, folder, uid, f.Name)
-		}
-	}
-	return ErrNotFound
-}
-
-// ---- compose ---------------------------------------------------------------
-
-type composeView struct {
-	To, Cc, Bcc string
-	Subject     string
-	Text        string
-	InReplyTo   string
-	References  string
-	Mode        string
-	ShowCc      bool
-}
-
-func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Session) {
-	q := r.URL.Query()
-	cv := &composeView{Mode: q.Get("mode"), To: q.Get("to")}
-	v := view{Title: "New message", Session: sess, Folder: q.Get("f"), Compose: cv}
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-		folders, err := st.Folders(r.Context())
-		if err != nil {
-			return err
-		}
-		v.Folders = folders
-		uid, ok := parseUID(q.Get("uid"))
-		if cv.Mode == "" || !ok {
-			return nil
-		}
-		raw, err := st.Raw(r.Context(), q.Get("f"), uid, s.maxMessage())
-		if err != nil {
-			return err
-		}
-		orig, err := parseMessage(raw)
-		if err != nil {
-			return err
-		}
-		prefillReply(cv, orig, sess.Address)
-		return nil
-	})
-	if err != nil {
-		s.fail(w, r, sess, err)
-		return
-	}
-	s.render(w, "compose.html", http.StatusOK, v)
-}
-
-// prefillReply fills a reply, reply-all or forward from the original.
-func prefillReply(cv *composeView, orig *Message, self string) {
-	quoted := quoteText(orig)
-	switch cv.Mode {
-	case "forward":
-		cv.Subject = prefixSubject("Fwd: ", orig.Subject)
-		cv.Text = "\n\n---------- Forwarded message ----------\nFrom: " + formatList(orig.From) +
-			"\nDate: " + orig.Date.Format("Mon, Jan 2, 2006 at 15:04") + "\nSubject: " + orig.Subject +
-			"\nTo: " + formatList(orig.To) + "\n\n" + orig.Text
-	case "reply", "replyall":
-		cv.Subject = prefixSubject("Re: ", orig.Subject)
-		to := orig.ReplyTo
-		if len(to) == 0 {
-			to = orig.From
-		}
-		cv.To = formatList(to)
-		if cv.Mode == "replyall" {
-			var cc []Address
-			skip := map[string]bool{strings.ToLower(self): true}
-			for _, a := range to {
-				skip[strings.ToLower(a.Email)] = true
-			}
-			for _, a := range append(append([]Address{}, orig.To...), orig.Cc...) {
-				if !skip[strings.ToLower(a.Email)] {
-					skip[strings.ToLower(a.Email)] = true
-					cc = append(cc, a)
-				}
-			}
-			cv.Cc = formatList(cc)
-			cv.ShowCc = len(cc) > 0
-		}
-		cv.InReplyTo = orig.MessageID
-		cv.References = orig.References
-		cv.Text = "\n\nOn " + orig.Date.Format("Mon, Jan 2, 2006 at 15:04") + ", " + formatList(orig.From) + " wrote:\n" + quoted
-	}
-}
-
-func prefixSubject(prefix, subject string) string {
-	if strings.HasPrefix(strings.ToLower(subject), strings.ToLower(prefix)) {
-		return subject
-	}
-	return prefix + subject
-}
-
-func quoteText(m *Message) string {
-	body := m.Text
-	if body == "" && m.HTML != "" {
-		body = htmlToText(m.HTML)
-	}
-	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
-	for i, l := range lines {
-		lines[i] = "> " + l
-	}
-	return strings.Join(lines, "\n")
-}
-
-// plainNameRE matches display names that need no quoting in an address field.
-var plainNameRE = regexp.MustCompile(`^[\p{L}\p{N} .'-]+$`)
-
-func formatList(list []Address) string {
-	out := make([]string, 0, len(list))
-	for _, a := range list {
-		if a.Email == "" {
-			continue
-		}
-		switch {
-		case a.Name == "":
-			out = append(out, a.Email)
-		case plainNameRE.MatchString(a.Name):
-			out = append(out, a.Name+" <"+a.Email+">")
-		default:
-			// Quotes, commas or non-ASCII in the name need RFC 5322 quoting
-			// or encoding to survive being parsed back from the To field.
-			out = append(out, (&mail.Address{Name: a.Name, Address: a.Email}).String())
-		}
-	}
-	return strings.Join(out, ", ")
-}
-
-func parseList(field string) ([]Address, error) {
-	field = strings.TrimSpace(field)
-	if field == "" {
-		return nil, nil
-	}
-	// People separate addresses with semicolons as often as commas.
-	list, err := mail.ParseAddressList(strings.ReplaceAll(field, ";", ","))
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Address, 0, len(list))
-	for _, a := range list {
-		out = append(out, Address{Name: a.Name, Email: a.Address})
-	}
-	return out, nil
-}
-
-func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
-	cv := &composeView{
-		To: r.PostFormValue("to"), Cc: r.PostFormValue("cc"), Bcc: r.PostFormValue("bcc"),
-		Subject: r.PostFormValue("subject"), Text: r.PostFormValue("body"),
-		InReplyTo: r.PostFormValue("in_reply_to"), References: r.PostFormValue("references"),
-		Mode: r.PostFormValue("mode"),
-	}
-	cv.ShowCc = cv.Cc != "" || cv.Bcc != ""
-	saveDraft := r.PostFormValue("op") == "save"
-	v := view{Title: "New message", Session: sess, Compose: cv}
-
-	again := func(status int, problem string) {
-		_ = s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-			v.Folders, _ = st.Folders(r.Context())
-			return nil
-		})
-		v.Problem = problem
-		s.render(w, "compose.html", status, v)
-	}
-
-	d := &Draft{From: Address{Email: sess.Address}, Subject: cv.Subject, Text: cv.Text, InReplyTo: cv.InReplyTo, References: cv.References}
-	var err error
-	for _, f := range []struct {
-		label string
-		value string
-		dst   *[]Address
-	}{{"To", cv.To, &d.To}, {"Cc", cv.Cc, &d.Cc}, {"Bcc", cv.Bcc, &d.Bcc}} {
-		if *f.dst, err = parseList(f.value); err != nil {
-			again(http.StatusBadRequest, "Check the addresses in "+f.label+". Separate them with commas.")
-			return
-		}
-	}
-	if !saveDraft && len(d.Recipients()) == 0 {
-		again(http.StatusBadRequest, "Add at least one recipient.")
-		return
-	}
-	if r.MultipartForm != nil {
-		total := 0
-		for _, fh := range r.MultipartForm.File["attachments"] {
-			f, err := fh.Open()
-			if err != nil {
-				again(http.StatusBadRequest, "An attachment couldn't be read. Attach it again.")
-				return
-			}
-			data, err := io.ReadAll(io.LimitReader(f, int64(s.cfg.MaxUploadMB)<<20+1))
-			_ = f.Close()
-			total += len(data)
-			if err != nil || total > s.cfg.MaxUploadMB<<20 {
-				again(http.StatusRequestEntityTooLarge, fmt.Sprintf("Attachments are limited to %d MB in total.", s.cfg.MaxUploadMB))
-				return
-			}
-			d.Attachments = append(d.Attachments, Attachment{Filename: fh.Filename, ContentType: fh.Header.Get("Content-Type"), Data: data})
-		}
-	}
-	raw, err := d.Build(s.now())
-	if err != nil {
-		s.log.Error("webmail: build message", "error", err)
-		again(http.StatusInternalServerError, "The message couldn't be prepared. Try again.")
-		return
-	}
-
-	if saveDraft {
-		err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-			return st.Append(r.Context(), RoleDrafts, raw, true, true)
-		})
-		if err != nil {
-			s.log.Warn("webmail: save draft", "user", sess.User, "error", err)
-			again(http.StatusBadGateway, "The draft couldn't be saved. Try again.")
-			return
-		}
-		http.Redirect(w, r, folderURL("INBOX", 1, "")+"&n=saved", http.StatusSeeOther)
-		return
-	}
-
-	pw, err := s.sessions.password(sess)
-	if err != nil {
-		s.sessions.Destroy(sess.ID)
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-	if err := s.submit.Submit(ctx, sess.User, pw, sess.Address, d.Recipients(), raw); err != nil {
-		s.log.Warn("webmail: submit", "user", sess.User, "error", err)
-		if errors.Is(err, ErrRejected) {
-			again(http.StatusBadRequest, "The mail server refused this message: "+strings.TrimPrefix(err.Error(), ErrRejected.Error()+": "))
-			return
-		}
-		again(http.StatusBadGateway, "The message couldn't be sent. It hasn't been lost: try Send again.")
-		return
-	}
-	notice := "sent"
-	if err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-		return st.Append(r.Context(), RoleSent, raw, true, false)
-	}); err != nil {
-		s.log.Warn("webmail: save sent copy", "user", sess.User, "error", err)
-		notice = "sent-nocopy"
-	}
-	http.Redirect(w, r, folderURL("INBOX", 1, "")+"&n="+notice, http.StatusSeeOther)
 }
