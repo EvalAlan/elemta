@@ -115,7 +115,7 @@
           </form>
           {{if .From}}<a href="/filters?new=1&amp;from={{(index .From 0).Email}}">Filter mail like this…</a>{{end}}
           <a href="{{printURL .Folder .UID}}" target="_blank" rel="noopener">Print</a>
-          <a href="{{rawURL .Folder .UID}}">Download original (.eml)</a>
+          <a href="{{sourceURL .Folder .UID}}" target="_blank" rel="noopener">View original</a>
         </div>
       </details>
       <span class="push nav-arrows">

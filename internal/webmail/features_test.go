@@ -488,3 +488,16 @@ func TestThemeChoice(t *testing.T) {
 		t.Fatal("sign-in page ignores the chosen theme")
 	}
 }
+
+func TestViewOriginal(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.store.raw[8] = []byte("From: x@example.com\r\nSubject: <script>alert(1)</script>\r\nX-Spam: yes\r\n\r\n<b>hi</b>\r\n")
+	resp, body := h.get("/mail/source?f=INBOX&uid=8")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "X-Spam: yes") || !strings.Contains(body, "/mail/raw?") {
+		t.Fatalf("source page = %d\n%s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, "<script>alert") || strings.Contains(body, "<b>hi</b>") {
+		t.Fatal("source not escaped")
+	}
+}

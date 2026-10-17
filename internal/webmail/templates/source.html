@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"{{with .Theme}} data-theme="{{.}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="{{asset "tidewater.css"}}">
+</head>
+<body>
+{{with .Message}}
+<article class="source-page">
+  <header class="source-head">
+    <h1>Original message</h1>
+    <span class="muted">{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
+    <a class="button push" href="{{rawURL .Folder .UID}}">Download .eml</a>
+  </header>
+  <pre class="source">{{$.Source}}</pre>
+</article>
+{{end}}
+</body>
+</html>

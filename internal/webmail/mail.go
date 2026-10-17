@@ -362,6 +362,25 @@ func (s *Server) messagePrint(w http.ResponseWriter, r *http.Request, sess *Sess
 	s.render(w, "print.html", http.StatusOK, view{Title: msg.Subject, Session: sess, Message: msg})
 }
 
+// messageSource shows the message exactly as stored, headers and all,
+// for checking where it came from or why it was filtered. The source is
+// only ever text in a <pre>, escaped by the template, so nothing in it can
+// render or run.
+func (s *Server) messageSource(w http.ResponseWriter, r *http.Request, sess *Session) {
+	folder, uid, raw, err := s.loadMessage(r, sess)
+	if err != nil {
+		s.fail(w, r, sess, err)
+		return
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		msg = &Message{}
+	}
+	msg.Folder, msg.UID = folder, uid
+	src := strings.ToValidUTF8(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\uFFFD")
+	s.render(w, "source.html", http.StatusOK, view{Title: "Original of " + msg.Subject, Session: sess, Message: msg, Source: src})
+}
+
 // messageRaw downloads the message source as .eml.
 func (s *Server) messageRaw(w http.ResponseWriter, r *http.Request, sess *Session) {
 	_, uid, raw, err := s.loadMessage(r, sess)

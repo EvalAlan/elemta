@@ -749,3 +749,6 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
   :root:not([data-theme="light"]) .theme-toggle .icon-sun { display: inline; }
   :root:not([data-theme="light"]) .theme-toggle .icon-moon { display: none; }
 }
+.source-page { max-width: 1100px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.source-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.source { margin: 0; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
