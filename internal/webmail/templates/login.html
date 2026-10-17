@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Elemta Mail</title>
 <link rel="stylesheet" href="{{asset "tidewater.css"}}">
+<script src="{{asset "login.js"}}" defer></script>
 </head>
 <body class="login-body">
 <main class="login">
@@ -12,7 +13,7 @@
   <h1>Sign in to your mail</h1>
   {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
   {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
-  <form action="/login" method="post">
+  <form action="/login" method="post" data-login>
     <input type="hidden" name="token" value="{{.Token}}">
     <label for="user">Email address</label>
     <input id="user" name="user" type="text" value="{{.User}}" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus>

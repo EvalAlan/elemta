@@ -77,6 +77,13 @@ secret.
 
 ## Instant mail updates
 
+Push starts automatically when the mail page opens. On sign-in, browsers that
+support desktop notifications ask for permission if no Allow or Block decision
+is saved. This uses the Sign in action, as required by browser permission rules.
+Blocking notifications does not disable instant mail updates or prevent login.
+Desktop notification permission requires HTTPS or a trustworthy local origin
+such as localhost.
+
 The browser opens `/api/events`, an authenticated Server-Sent Events stream.
 Independent read-only IMAP connections run IDLE on INBOX and the currently
 viewed folder. Arrivals, expunges and flag changes trigger the existing unread

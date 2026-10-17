@@ -867,15 +867,6 @@
     loadReminders();
     setInterval(loadReminders, 10 * 60 * 1000);
   }
-  $$("[data-enable-notifications]").forEach(function (enable) {
-    if (!window.Notification || Notification.permission !== "default") return;
-    enable.hidden = false;
-    enable.addEventListener("click", function () {
-      Notification.requestPermission().then(function () {
-        $$("[data-enable-notifications]").forEach(function (b) { b.hidden = true; });
-      });
-    });
-  });
 
   // ---- calendar ----------------------------------------------------------
   // Picking a start time moves the end time with it, keeping the duration.
