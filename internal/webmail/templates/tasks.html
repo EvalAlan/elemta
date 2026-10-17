@@ -34,7 +34,7 @@
     {{if not .Shown}}<p class="empty">{{if eq .Show "done"}}No finished tasks.{{else}}Nothing to do. Add a task above.{{end}}</p>{{end}}
     <ul class="task-list">
     {{range .Shown}}
-      <li class="task{{if .Done}} done{{end}}">
+      <li class="task{{if .Done}} done{{end}}" data-ctx="task" data-id="{{.UID}}"{{if .Done}} data-done{{end}} data-open="{{tasksURL $.Tasks.List $.Tasks.Show .UID}}" data-list="{{$.Tasks.List}}" data-show="{{$.Tasks.Show}}">
         <form action="/tasks" method="post" class="inline">
           <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="toggle"><input type="hidden" name="id" value="{{.UID}}"><input type="hidden" name="list_filter" value="{{$.Tasks.List}}"><input type="hidden" name="show" value="{{$.Tasks.Show}}">
           <button class="task-check" title="{{if .Done}}Mark not done{{else}}Mark done{{end}}"><span class="visually-hidden">{{if .Done}}Mark not done{{else}}Mark done{{end}}: {{.Summary}}</span></button>

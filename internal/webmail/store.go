@@ -166,6 +166,8 @@ type Mailstore interface {
 	EnsureFolders(ctx context.Context, roles []Role) error
 	RenameFolder(ctx context.Context, from, to string) error
 	DeleteFolder(ctx context.Context, name string) error
+	// MarkAllRead marks every message in folder read.
+	MarkAllRead(ctx context.Context, folder string) error
 	// EmptyFolder removes every message in folder for good.
 	EmptyFolder(ctx context.Context, folder string) error
 	// Delimiter is the hierarchy separator of folder names ("/" or ".").

@@ -187,6 +187,14 @@ var templateFuncs = template.FuncMap{
 	"pageSizes":  func() []int { return []int{25, 50, 100, 200} },
 	"countable":  countable,
 	"showCount":  func(f Folder) bool { return f.Unread > 0 && countable(f) },
+	"roleName": func(name string, folders []Folder) string {
+		for _, f := range folders {
+			if f.Name == name {
+				return string(f.Role)
+			}
+		}
+		return ""
+	},
 	"isRole": func(name string, folders []Folder, role string) bool {
 		for _, f := range folders {
 			if f.Name == name {

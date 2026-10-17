@@ -323,6 +323,7 @@ var notices = map[string]string{
 	"archived":          "Message archived.",
 	"archived-many":     "Messages archived.",
 	"emptied":           "Folder emptied.",
+	"all-read":          "All messages marked read.",
 	"loggedout":         "You've signed out.",
 	"folder-created":    "Folder created.",
 	"folder-renamed":    "Folder renamed.",

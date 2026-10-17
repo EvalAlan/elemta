@@ -39,9 +39,9 @@
       {{if not .Messages}}
         <p class="empty">{{if $.Query}}No messages match your search.{{else}}This folder is empty.{{end}}</p>
       {{end}}
-      <ol class="messages">
+      <ol class="messages" data-folder="{{$.Folder}}" data-role="{{roleName $.Folder $.Folders}}" data-back="{{$.List.URL}}">
       {{range .Messages}}
-        <li class="row-wrap{{if not .Seen}} unread{{end}}{{if and $.Message (eq .UID $.Message.UID)}} selected{{end}}" data-uid="{{.UID}}">
+        <li class="row-wrap{{if not .Seen}} unread{{end}}{{if and $.Message (eq .UID $.Message.UID)}} selected{{end}}" data-uid="{{.UID}}" data-ctx="message"{{if .Seen}} data-seen{{end}}{{if .Flagged}} data-flagged{{end}}{{with .From}} data-from="{{(index . 0).Email}}"{{end}} data-open="{{$.List.MessageURL .UID}}">
           <label class="check"><input type="checkbox" name="uid" value="{{.UID}}"><span class="visually-hidden">Select</span></label>
           <a class="row" href="{{$.List.MessageURL .UID}}"{{if and $.Message (eq .UID $.Message.UID)}} aria-current="true"{{end}}>
             <span class="row-top">

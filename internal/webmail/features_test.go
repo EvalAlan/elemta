@@ -501,3 +501,19 @@ func TestViewOriginal(t *testing.T) {
 		t.Fatal("source not escaped")
 	}
 }
+
+func TestContextMenuHooksAndMarkAllRead(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	_, page := h.get("/mail?f=INBOX")
+	for _, want := range []string{`data-ctx="message"`, `data-ctx="folder"`, `data-role="inbox"`, `data-from="priya@northwind.example"`, `data-back="/mail?f=INBOX"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("mail page lacks %s", want)
+		}
+	}
+	// Mark all read needs no selection.
+	resp := h.post("/mail/action", url.Values{"csrf": {csrf}, "f": {"INBOX"}, "op": {"readall"}, "back": {"/mail?f=INBOX"}})
+	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "n=all-read") || len(h.store.allRead) != 1 {
+		t.Fatalf("readall: %d %q %v", resp.StatusCode, resp.Header.Get("Location"), h.store.allRead)
+	}
+}

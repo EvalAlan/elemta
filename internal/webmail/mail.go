@@ -439,7 +439,7 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 		return
 	}
 	back := localBack(r.PostFormValue("back"), folderURL(folder, 1, ""))
-	if len(uids) == 0 && op != "empty" {
+	if len(uids) == 0 && op != "empty" && op != "readall" {
 		redirectLocal(w, r, back)
 		return
 	}
@@ -493,6 +493,9 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 		case "empty":
 			notice = "emptied"
 			return st.EmptyFolder(ctx, folder)
+		case "readall":
+			notice = "all-read"
+			return st.MarkAllRead(ctx, folder)
 		}
 		return fmt.Errorf("webmail: unknown action %q", op)
 	})

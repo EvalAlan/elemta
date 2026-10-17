@@ -32,6 +32,7 @@ type fakeStore struct {
 	flags     map[uint32]map[string]bool
 	emptied   []string
 	expunged  []uint32
+	allRead   []string
 	objects   map[Collection]map[string]Object
 	lastQuery ListQuery
 	related   []Related
@@ -147,6 +148,12 @@ func (f *fakeStore) DeleteFolder(_ context.Context, name string) error {
 		}
 	}
 	return ErrNotFound
+}
+func (f *fakeStore) MarkAllRead(_ context.Context, folder string) error {
+	f.mu.Lock()
+	f.allRead = append(f.allRead, folder)
+	f.mu.Unlock()
+	return nil
 }
 func (f *fakeStore) EmptyFolder(_ context.Context, folder string) error {
 	f.emptied = append(f.emptied, folder)

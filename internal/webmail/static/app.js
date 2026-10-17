@@ -581,4 +581,254 @@
     var slot = $('[data-hour="' + grid.getAttribute("data-scroll-hour") + '"]', grid);
     if (slot) grid.scrollTop = slot.offsetTop - 8;
   }
+  // ---- context menus -----------------------------------------------------
+  // Right-click (or the Menu key, or Shift+F10) on a message, folder,
+  // event, contact or task opens a menu of what can be done to it. Every
+  // item uses the same endpoints as the page's own buttons and forms, so
+  // the menus add no new server behaviour. Holding Shift, or right-clicking
+  // where nothing has a menu, keeps the browser's own menu.
+  var ctxMenu = null;
+
+  function submitPost(action, fields) {
+    var f = doc.createElement("form");
+    f.method = "post";
+    f.action = action;
+    f.hidden = true;
+    var add = function (k, v) {
+      var i = doc.createElement("input");
+      i.type = "hidden"; i.name = k; i.value = v;
+      f.appendChild(i);
+    };
+    add("csrf", csrf);
+    Object.keys(fields).forEach(function (k) {
+      var v = fields[k];
+      if (Array.isArray(v)) v.forEach(function (x) { add(k, x); }); else add(k, v);
+    });
+    body.appendChild(f);
+    f.submit();
+  }
+
+  function closeCtx() {
+    if (ctxMenu) { ctxMenu.remove(); ctxMenu = null; }
+  }
+
+  // openCtx shows items at (x, y). An item is {label, run, danger, sub}
+  // or "-" for a separator; sub is a function returning more items.
+  function openCtx(items, x, y, title) {
+    closeCtx();
+    var m = doc.createElement("div");
+    m.className = "ctx-menu";
+    m.setAttribute("role", "menu");
+    if (title) m.setAttribute("aria-label", title);
+    var render = function (list) {
+      m.textContent = "";
+      list.forEach(function (it) {
+        if (it === "-") {
+          var hr = doc.createElement("div");
+          hr.className = "ctx-sep";
+          hr.setAttribute("role", "separator");
+          m.appendChild(hr);
+          return;
+        }
+        var b = doc.createElement("button");
+        b.type = "button";
+        b.className = "ctx-item" + (it.danger ? " danger" : "") + (it.sub ? " has-sub" : "");
+        b.setAttribute("role", "menuitem");
+        b.textContent = it.label + (it.sub ? " ›" : "");
+        b.addEventListener("click", function (e) {
+          e.stopPropagation();
+          if (it.sub) { render(it.sub()); focusFirst(); return; }
+          closeCtx();
+          it.run();
+        });
+        m.appendChild(b);
+      });
+    };
+    var focusFirst = function () { var f = $(".ctx-item", m); if (f) f.focus(); };
+    render(items);
+    body.appendChild(m);
+    var r = m.getBoundingClientRect();
+    m.style.left = Math.max(4, Math.min(x, window.innerWidth - r.width - 4)) + "px";
+    m.style.top = Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) + "px";
+    ctxMenu = m;
+    focusFirst();
+    m.addEventListener("keydown", function (e) {
+      var all = $$(".ctx-item", m), i = all.indexOf(doc.activeElement);
+      if (e.key === "ArrowDown") { all[(i + 1) % all.length].focus(); e.preventDefault(); }
+      else if (e.key === "ArrowUp") { all[(i - 1 + all.length) % all.length].focus(); e.preventDefault(); }
+      else if (e.key === "Escape") { closeCtx(); e.preventDefault(); }
+      e.stopPropagation();
+    });
+  }
+
+  doc.addEventListener("click", function (e) { if (ctxMenu && !ctxMenu.contains(e.target)) closeCtx(); });
+  window.addEventListener("scroll", closeCtx, true);
+  window.addEventListener("resize", closeCtx);
+
+  function folderTargets(exclude) {
+    return $$("a.folder[data-folder]").map(function (a) { return a.getAttribute("data-folder"); })
+      .filter(function (n) { return n !== exclude; });
+  }
+
+  function messageMenu(row) {
+    var list = row.closest("ol.messages");
+    var folder = list.getAttribute("data-folder"), role = list.getAttribute("data-role");
+    var back = list.getAttribute("data-back");
+    var box = $('input[name="uid"]', row);
+    // Acting on a selected row acts on the whole selection, as in a
+    // desktop client; acting on an unselected one acts on it alone.
+    var uids = [row.getAttribute("data-uid")];
+    if (box && box.checked) {
+      uids = $$('ol.messages input[name="uid"]:checked').map(function (b) { return b.value; });
+    }
+    var one = uids.length === 1, uid = uids[0];
+    var act = function (op, extra) {
+      var f = { f: folder, uid: uids, op: op, back: back };
+      Object.keys(extra || {}).forEach(function (k) { f[k] = extra[k]; });
+      return function () { submitPost("/mail/action", f); };
+    };
+    var compose = function (mode) { return function () { location.href = "/compose?" + new URLSearchParams({ mode: mode, f: folder, uid: uid }); }; };
+    var items = [];
+    if (one) {
+      items.push({ label: "Open", run: function () { location.href = row.getAttribute("data-open"); } });
+      if (role === "drafts") {
+        items.push({ label: "Edit draft", run: compose("draft") });
+      } else {
+        items.push({ label: "Reply", run: compose("reply") }, { label: "Reply all", run: compose("replyall") }, { label: "Forward", run: compose("forward") });
+      }
+      items.push("-");
+    }
+    var seen = one ? row.hasAttribute("data-seen") : false;
+    var flagged = one ? row.hasAttribute("data-flagged") : false;
+    items.push(seen ? { label: "Mark unread", run: act("unread") } : { label: one ? "Mark read" : "Mark read (" + uids.length + ")", run: act("read") });
+    if (!one) items.push({ label: "Mark unread", run: act("unread") });
+    items.push(flagged ? { label: "Unflag", run: act("unflag") } : { label: "Flag", run: act("flag") });
+    if (!one) items.push({ label: "Unflag", run: act("unflag") });
+    items.push({ label: "Tag…", run: function () {
+      var t = window.prompt("Tag" + (one ? "" : " " + uids.length + " messages") + " as:");
+      if (t) act("tag", { tag: t.trim() })();
+    } });
+    items.push("-");
+    items.push({ label: "Move to", sub: function () {
+      return folderTargets(folder).map(function (n) { return { label: n, run: act("move", { dest: n }) }; });
+    } });
+    if (role !== "archive") items.push({ label: "Archive", run: act("archive") });
+    items.push(role === "junk" ? { label: "Not junk", run: act("notjunk") } : { label: "Report junk", run: act("junk") });
+    items.push({ label: role === "trash" ? "Delete for good" : "Delete", danger: true, run: function () {
+      if (role === "trash" && !window.confirm("Delete " + (one ? "this message" : uids.length + " messages") + " for good?")) return;
+      act("delete")();
+    } });
+    if (one) {
+      items.push("-");
+      var from = row.getAttribute("data-from");
+      if (from) items.push({ label: "Filter mail like this…", run: function () { location.href = "/filters?" + new URLSearchParams({ "new": "1", from: from }); } });
+      items.push({ label: "View original", run: function () { window.open("/mail/source?" + new URLSearchParams({ f: folder, uid: uid }), "_blank", "noopener"); } });
+      items.push({ label: "Print", run: function () { window.open("/mail/print?" + new URLSearchParams({ f: folder, uid: uid }), "_blank", "noopener"); } });
+    }
+    return items;
+  }
+
+  function folderMenu(a) {
+    var name = a.getAttribute("data-folder"), role = a.getAttribute("data-role"), display = a.getAttribute("data-display");
+    var items = [
+      { label: "Open", run: function () { location.href = a.href; } },
+      { label: "Mark all read", run: function () { submitPost("/mail/action", { f: name, op: "readall", back: location.pathname === "/mail" ? location.pathname + location.search : "/mail?f=" + encodeURIComponent(name) }); } },
+      "-",
+      { label: "New folder inside…", run: function () {
+        var n = window.prompt("Name of the new folder inside " + display + ":");
+        if (n) submitPost("/folders", { op: "create", name: n.trim(), parent: name });
+      } }
+    ];
+    if (!role) {
+      items.push({ label: "Rename…", run: function () {
+        var n = window.prompt("Rename " + display + " to:", display);
+        if (n && n.trim() !== display) submitPost("/folders", { op: "rename", folder: name, name: n.trim() });
+      } });
+      items.push({ label: "Delete folder", danger: true, run: function () {
+        if (window.confirm("Delete the folder " + name + " and every message in it?")) submitPost("/folders", { op: "delete", folder: name });
+      } });
+    }
+    if (role === "trash" || role === "junk") {
+      items.push("-", { label: "Empty " + display, danger: true, run: function () {
+        if (window.confirm("Delete every message in " + display + " for good? This can't be undone.")) submitPost("/mail/action", { f: name, op: "empty", back: "/mail?f=" + encodeURIComponent(name) });
+      } });
+    }
+    return items;
+  }
+
+  function eventMenu(a) {
+    var uid = a.getAttribute("data-uid"), occ = a.getAttribute("data-occ");
+    var q = function (extra) { return "/calendar/event?" + new URLSearchParams(Object.assign({ uid: uid, occ: occ }, extra || {})); };
+    var items = [{ label: "Open", run: function () { location.href = a.href; } }];
+    if (a.hasAttribute("data-readonly")) return items;
+    items.push({ label: "Edit", run: function () { location.href = q({ edit: "1" }); } });
+    items.push({ label: "Download .ics", run: function () { location.href = "/calendar/export?" + new URLSearchParams({ uid: uid }); } });
+    items.push("-");
+    if (a.hasAttribute("data-recurring")) {
+      items.push({ label: "Delete this occurrence", danger: true, run: function () {
+        if (window.confirm("Delete only this occurrence?")) submitPost("/calendar/event", { op: "delete-occurrence", uid: uid, occ: occ });
+      } });
+    }
+    items.push({ label: a.hasAttribute("data-recurring") ? "Delete series" : "Delete", danger: true, run: function () {
+      if (window.confirm(a.hasAttribute("data-recurring") ? "Delete every occurrence of this event?" : "Delete this event?")) submitPost("/calendar/event", { op: "delete", uid: uid, notify: "1" });
+    } });
+    return items;
+  }
+
+  function contactMenu(a) {
+    var id = a.getAttribute("data-id"), email = a.getAttribute("data-email"), name = a.getAttribute("data-name"), group = a.getAttribute("data-group");
+    var items = [{ label: "Open", run: function () { location.href = a.href; } }];
+    if (email) {
+      items.push({ label: "Write email", run: function () { location.href = "/compose?" + new URLSearchParams({ to: name ? name + " <" + email + ">" : email }); } });
+      items.push({ label: "Find emails", run: function () { location.href = "/mail?" + new URLSearchParams({ f: "INBOX", q: "from:" + email }); } });
+    }
+    items.push({ label: "Edit", run: function () { location.href = "/contacts?" + new URLSearchParams({ id: id, g: group, edit: "1" }); } });
+    items.push("-", { label: "Delete", danger: true, run: function () {
+      if (window.confirm("Delete " + (name || email) + " from your contacts?")) submitPost("/contacts", { op: "delete", id: id, g: group });
+    } });
+    return items;
+  }
+
+  function taskMenu(li) {
+    var id = li.getAttribute("data-id"), list = li.getAttribute("data-list"), show = li.getAttribute("data-show");
+    return [
+      { label: "Open", run: function () { location.href = li.getAttribute("data-open"); } },
+      { label: li.hasAttribute("data-done") ? "Mark not done" : "Mark done", run: function () { submitPost("/tasks", { op: "toggle", id: id, list_filter: list, show: show }); } },
+      "-",
+      { label: "Delete", danger: true, run: function () {
+        if (window.confirm("Delete this task?")) submitPost("/tasks", { op: "delete", id: id, list_filter: list, show: show });
+      } }
+    ];
+  }
+
+  function menuFor(el) {
+    var t = el.closest("[data-ctx]");
+    if (!t) return null;
+    switch (t.getAttribute("data-ctx")) {
+      case "message": return { items: messageMenu(t), title: "Message actions", el: t };
+      case "folder": return { items: folderMenu(t), title: "Folder actions", el: t };
+      case "event": return { items: eventMenu(t), title: "Event actions", el: t };
+      case "contact": return { items: contactMenu(t), title: "Contact actions", el: t };
+      case "task": return { items: taskMenu(t), title: "Task actions", el: t };
+    }
+    return null;
+  }
+
+  doc.addEventListener("contextmenu", function (e) {
+    if (e.shiftKey || !csrf) return;
+    var m = menuFor(e.target);
+    if (!m) { closeCtx(); return; }
+    e.preventDefault();
+    openCtx(m.items, e.clientX, e.clientY, m.title);
+  });
+  // The keyboard way in: the Menu key or Shift+F10 on a focused item.
+  doc.addEventListener("keydown", function (e) {
+    if (!(e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))) return;
+    var m = menuFor(doc.activeElement || body);
+    if (!m) return;
+    e.preventDefault();
+    var r = m.el.getBoundingClientRect();
+    openCtx(m.items, r.left + 16, r.top + r.height / 2, m.title);
+  });
+
 })();

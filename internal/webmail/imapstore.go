@@ -612,6 +612,19 @@ func (s *imapStore) expunge(folder string, uids []uint32) error {
 	return s.c.Expunge().Close()
 }
 
+func (s *imapStore) MarkAllRead(ctx context.Context, folder string) error {
+	n, err := s.syncFolder(folder)
+	if err != nil || n == 0 {
+		return err
+	}
+	var all imap.SeqSet
+	all.AddRange(1, 0) // 1:*
+	if err := s.c.Store(all, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Silent: true, Flags: []imap.Flag{imap.FlagSeen}}, nil).Close(); err != nil {
+		return fmt.Errorf("webmail: mark %q read: %w", folder, err)
+	}
+	return nil
+}
+
 func (s *imapStore) EmptyFolder(ctx context.Context, folder string) error {
 	n, err := s.selectFolder(folder)
 	if err != nil {

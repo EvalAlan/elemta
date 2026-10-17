@@ -373,3 +373,19 @@ func TestIMAPStoreEnsureFolders(t *testing.T) {
 		}
 	}
 }
+
+func TestIMAPStoreMarkAllRead(t *testing.T) {
+	cfg := startIMAP(t)
+	st := dialTest(t, cfg)
+	ctx := context.Background()
+	for i := 1; i <= 3; i++ {
+		appendTo(t, st, "INBOX", testMessage(i, "m"))
+	}
+	if err := st.MarkAllRead(ctx, "INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := st.List(ctx, "INBOX", ListQuery{Unread: true, Page: 1, PageSize: 10})
+	if p.Total != 0 {
+		t.Fatalf("unread after mark all read = %d", p.Total)
+	}
+}

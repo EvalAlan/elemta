@@ -38,7 +38,7 @@
     <ol class="messages">
     {{range .Shown}}
       <li class="row-wrap{{if and $.Contacts.Selected (eq .ID $.Contacts.Selected.ID)}} selected{{end}}">
-        <a class="row contact-row" href="{{contactsURL .ID $.Contacts.Group}}">
+        <a class="row contact-row" href="{{contactsURL .ID $.Contacts.Group}}" data-ctx="contact" data-id="{{.ID}}" data-email="{{.Email}}" data-name="{{.Name}}" data-group="{{$.Contacts.Group}}">
           <span class="avatar soft small-avatar" aria-hidden="true">{{initials (addrOf .Display)}}</span>
           <span class="contact-text">
             <span class="from">{{.Display}}</span>

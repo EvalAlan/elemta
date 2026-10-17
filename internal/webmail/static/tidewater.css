@@ -752,3 +752,12 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .source-page { max-width: 1100px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .source-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .source { margin: 0; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Context menus (right-click). Positioned by script with left/top, which
+   the CSP allows: it forbids style attributes in markup, not CSSOM writes. */
+.ctx-menu { position: fixed; z-index: 70; min-width: 200px; max-height: 70vh; overflow-y: auto; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.ctx-item { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--ink); padding: 7px 12px; border-radius: 6px; cursor: pointer; font: inherit; white-space: nowrap; }
+.ctx-item:hover, .ctx-item:focus { background: var(--accent-soft); color: var(--accent-dark); outline: none; }
+.ctx-item.danger { color: var(--danger); }
+.ctx-item.danger:hover, .ctx-item.danger:focus { background: var(--danger-soft); color: var(--danger); }
+.ctx-sep { height: 1px; background: var(--line-soft); margin: 4px 6px; }
