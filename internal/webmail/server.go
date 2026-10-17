@@ -122,6 +122,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /settings", s.authed(s.settingsPage))
 	mux.HandleFunc("POST /settings", s.authed(s.settingsSubmit))
 	mux.HandleFunc("POST /settings/timezone", s.authed(s.timezoneSubmit))
+	mux.HandleFunc("POST /settings/theme", s.authed(s.themeSubmit))
 	mux.HandleFunc("GET /contacts", s.authed(s.contactsPage))
 	mux.HandleFunc("POST /contacts", s.authed(s.contactsSubmit))
 	mux.HandleFunc("GET /contacts/export", s.authed(s.contactsExport))
@@ -248,6 +249,8 @@ type view struct {
 	// TZSet is false until the user has a time zone, which tells the page
 	// to report the browser's.
 	TZSet bool
+	// Theme is "light", "dark" or empty for the device's setting.
+	Theme string
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
@@ -258,6 +261,7 @@ func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
 		cached := s.prefsCached(pv.Session)
 		pv.Clock24 = cached.Uses24h()
 		pv.TZSet = cached.Timezone != ""
+		pv.Theme = cached.Theme
 		if pv.App == "" {
 			pv.App = "mail"
 		}
@@ -343,6 +347,7 @@ var notices = map[string]string{
 // ---- login -----------------------------------------------------------------
 
 type loginView struct {
+	Theme   string
 	Token   string
 	User    string
 	Problem string
@@ -364,20 +369,20 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.renderLogin(w, http.StatusOK, "", notices[r.URL.Query().Get("n")], "")
+	s.renderLogin(w, r, http.StatusOK, "", notices[r.URL.Query().Get("n")], "")
 }
 
 // renderLogin issues a fresh pre-login token. The login form carries it back
 // and must match the cookie (double submit), which stops another site from
 // signing a victim in to an account of the attacker's choosing.
-func (s *Server) renderLogin(w http.ResponseWriter, status int, user, notice, problem string) {
+func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int, user, notice, problem string) {
 	token, err := randomToken(24)
 	if err != nil {
 		http.Error(w, "Something went wrong.", http.StatusInternalServerError)
 		return
 	}
 	s.setCookie(w, preLoginCookie, token, 600)
-	s.render(w, "login.html", status, loginView{Token: token, User: user, Notice: notice, Problem: problem})
+	s.render(w, "login.html", status, loginView{Theme: themeFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
 }
 
 func clientIP(r *http.Request) string {
@@ -394,16 +399,16 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	password := r.PostFormValue("password")
 	pre, err := r.Cookie(preLoginCookie)
 	if err != nil || pre.Value == "" || pre.Value != r.PostFormValue("token") {
-		s.renderLogin(w, http.StatusForbidden, user, "", "The sign-in form expired. Try again.")
+		s.renderLogin(w, r, http.StatusForbidden, user, "", "The sign-in form expired. Try again.")
 		return
 	}
 	ip := clientIP(r)
 	if !s.limiter.allow(ip) || !s.limiter.allow("user:"+strings.ToLower(user)) {
-		s.renderLogin(w, http.StatusTooManyRequests, user, "", "Too many sign-in attempts. Wait a few minutes and try again.")
+		s.renderLogin(w, r, http.StatusTooManyRequests, user, "", "Too many sign-in attempts. Wait a few minutes and try again.")
 		return
 	}
 	if user == "" || password == "" {
-		s.renderLogin(w, http.StatusBadRequest, user, "", "Enter your email address and password.")
+		s.renderLogin(w, r, http.StatusBadRequest, user, "", "Enter your email address and password.")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
@@ -412,11 +417,11 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrAuthFailed) {
 			s.log.Info("webmail: login failed", "user", user, "ip", ip)
-			s.renderLogin(w, http.StatusUnauthorized, user, "", "That email address and password don't match.")
+			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
 			return
 		}
 		s.log.Warn("webmail: login could not reach mail server", "error", err)
-		s.renderLogin(w, http.StatusBadGateway, user, "", "The mail server didn't respond. Try again in a moment.")
+		s.renderLogin(w, r, http.StatusBadGateway, user, "", "The mail server didn't respond. Try again in a moment.")
 		return
 	}
 	sess, err := s.sessions.Create(user, s.cfg.address(user), password, store)
@@ -428,6 +433,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	s.limiter.reset("user:" + strings.ToLower(user))
 	s.setCookie(w, preLoginCookie, "", -1)
 	s.setCookie(w, sessionCookie, sess.ID, 0)
+	s.setThemeCookie(w, s.prefs(ctx, sess).Theme)
 	s.log.Info("webmail: login", "user", user, "ip", ip)
 	http.Redirect(w, r, "/mail", http.StatusSeeOther)
 }

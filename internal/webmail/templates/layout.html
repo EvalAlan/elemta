@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en"{{with .Theme}} data-theme="{{.}}"{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -26,6 +26,10 @@
   </form>
   {{end}}
   <div class="account">
+    <form action="/settings/theme" method="post" class="inline">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <button class="icon-link theme-toggle" type="submit" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}" title="Switch between light and dark" data-theme-toggle>{{template "icon-moon"}}{{template "icon-sun"}}<span class="visually-hidden">Switch between light and dark</span></button>
+    </form>
     <a class="icon-link" href="/settings" title="Settings"{{if eq .App "settings"}} aria-current="page"{{end}}>{{template "icon-gear"}}<span class="visually-hidden">Settings</span></a>
     <span class="avatar" title="{{.Session.Address}}">{{initials (addrOf .Session.Address)}}</span>
     <form action="/logout" method="post">

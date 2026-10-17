@@ -1,5 +1,5 @@
 /* Tidewater: Elemta Webmail's visual system.
-   Cool grey ground, deep ink header, one teal accent, IBM Plex.
+   Cool grey ground, one teal accent, IBM Plex; light and dark themes.
    Pages ship no inline styles (the CSP forbids them), so every visual
    decision lives here, including the calendar's event positions, which are
    classes generated at the end of this file. */
@@ -10,17 +10,22 @@
   --surface-2: #F9FAFB;
   --ink: #0E1726;
   --muted: #4B5565;
-  --on-dark: #C5CDD8;
-  /* The top bar keeps its own tokens: it is dark in both schemes, while
-     --ink flips to a light text colour in dark mode. */
-  --chrome: #0E1726;
-  --chrome-2: #1E2A3B;
+  /* The top bar has its own tokens, so it can differ from the page:
+     white with dark text in the light theme, near-black in the dark one. */
+  --chrome: #FFFFFF;
+  --chrome-2: #EEF1F4;
+  --chrome-fg: #0E1726;
+  --chrome-muted: #4B5565;
+  --chrome-strong: #0E1726;
+  --chrome-line: #DDE2E8;
+  --chrome-accent: #0B6E66;
+  --chrome-placeholder: #6B7685;
   --line: #DDE2E8;
   --line-soft: #EEF1F4;
   --accent: #0B6E66;
   --accent-dark: #08524C;
   --accent-soft: #E3F1EF;
-  --accent-on-dark: #5FD3C4;
+  --on-accent: #FFFFFF;
   --danger: #A1271D;
   --danger-soft: #FBE9E7;
   --pass-fg: #0B5A2E;
@@ -45,16 +50,63 @@
   color-scheme: light;
 }
 
+/* The dark theme applies when the user chose it, or when they left the
+   choice to the system and the system is dark. */
+:root[data-theme="dark"] {
+  --ground: #0B111B;
+  --surface: #121A27;
+  --surface-2: #0F1622;
+  --ink: #E6EAF0;
+  --muted: #9AA5B4;
+  --chrome: #070B12;
+  --chrome-2: #1B2536;
+  --chrome-fg: #F4F6F8;
+  --chrome-muted: #C5CDD8;
+  --chrome-strong: #FFFFFF;
+  --chrome-line: #070B12;
+  --chrome-accent: #5FD3C4;
+  --chrome-placeholder: #8894A5;
+  --on-accent: #04110F;
+  --line: #253145;
+  --line-soft: #1B2536;
+  --accent: #2BA597;
+  --accent-dark: #5FD3C4;
+  --accent-soft: #10302D;
+  --danger: #F08A80;
+  --danger-soft: #3A1714;
+  --pass-fg: #8FD9AE;
+  --pass-bg: #12301F;
+  --warn-fg: #F2C879;
+  --warn-bg: #33270F;
+  --flag: #F2C879;
+  --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  --c0-bg: #10302D; --c0-fg: #7FE0D2;
+  --c1-bg: #16264A; --c1-fg: #9DBBF5;
+  --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+  --c3-bg: #3A1714; --c3-fg: #F5A49B;
+  --c4-bg: #33270F; --c4-fg: #F2C879;
+  --c5-bg: #12301F; --c5-fg: #8FD9AE;
+  --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+  --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+  color-scheme: dark;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --ground: #0B111B;
     --surface: #121A27;
     --surface-2: #0F1622;
     --ink: #E6EAF0;
     --muted: #9AA5B4;
-    --on-dark: #C5CDD8;
     --chrome: #070B12;
     --chrome-2: #1B2536;
+    --chrome-fg: #F4F6F8;
+    --chrome-muted: #C5CDD8;
+    --chrome-strong: #FFFFFF;
+    --chrome-line: #070B12;
+    --chrome-accent: #5FD3C4;
+    --chrome-placeholder: #8894A5;
+    --on-accent: #04110F;
     --line: #253145;
     --line-soft: #1B2536;
     --accent: #2BA597;
@@ -109,35 +161,34 @@ kbd { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); 
 /* Buttons */
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); text-decoration: none; cursor: pointer; white-space: nowrap; }
 .button:hover { color: var(--ink); border-color: var(--muted); }
-.button.primary { background: var(--accent); border-color: var(--accent); color: #FFFFFF; font-weight: 600; min-height: 44px; }
-.button.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: #FFFFFF; }
-@media (prefers-color-scheme: dark) { .button.primary, .button.primary:hover { color: #04110F; } }
+.button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; min-height: 44px; }
+.button.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: var(--on-accent); }
 .button.primary-soft { background: var(--accent-soft); border-color: transparent; color: var(--accent-dark); font-weight: 600; }
 .button.danger { color: var(--danger); }
 .button.ghost { border-color: transparent; background: transparent; }
 .button.block { display: flex; width: 100%; }
 .button.small-button { min-height: 30px; padding: 0 10px; font-size: 13px; }
-.link-button { background: none; border: 0; color: var(--on-dark); cursor: pointer; min-height: 44px; padding: 0 8px; }
-.link-button:hover { color: #FFFFFF; text-decoration: underline; }
+.link-button { background: none; border: 0; color: var(--chrome-muted); cursor: pointer; min-height: 44px; padding: 0 8px; }
+.link-button:hover { color: var(--chrome-strong); text-decoration: underline; }
 .link-inline { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font-size: 13px; text-decoration: underline; }
 select.compact { min-height: 36px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; max-width: 200px; }
 
 /* Top bar */
-.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 8px 20px; background: var(--chrome); color: #F4F6F8; }
-.brand { display: flex; align-items: center; gap: 10px; color: #FFFFFF; text-decoration: none; font-weight: 600; font-size: 16px; }
-.brand:hover { color: #FFFFFF; }
-.brand .icon { width: 22px; height: 22px; stroke: var(--accent-on-dark); }
+.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 8px 20px; background: var(--chrome); color: var(--chrome-fg); border-bottom: 1px solid var(--chrome-line); }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--chrome-strong); text-decoration: none; font-weight: 600; font-size: 16px; }
+.brand:hover { color: var(--chrome-strong); }
+.brand .icon { width: 22px; height: 22px; stroke: var(--chrome-accent); }
 .brand.dark { color: var(--ink); }
 .apps { display: flex; gap: 4px; }
-.apps a { color: var(--on-dark); text-decoration: none; padding: 8px 12px; border-radius: 6px; }
-.apps a:hover { color: #FFFFFF; }
-.apps a[aria-current="page"] { background: var(--chrome-2); color: #FFFFFF; font-weight: 500; }
-.search { flex: 1 1 280px; display: flex; align-items: center; gap: 8px; background: var(--chrome-2); border-radius: var(--radius); padding: 0 12px; color: var(--on-dark); }
-.search input { flex: 1; min-width: 0; min-height: 40px; background: transparent; border: 0; color: #FFFFFF; outline: none; }
-.search input::placeholder { color: #8894A5; }
+.apps a { color: var(--chrome-muted); text-decoration: none; padding: 8px 12px; border-radius: 6px; }
+.apps a:hover { color: var(--chrome-strong); }
+.apps a[aria-current="page"] { background: var(--chrome-2); color: var(--chrome-strong); font-weight: 500; }
+.search { flex: 1 1 280px; display: flex; align-items: center; gap: 8px; background: var(--chrome-2); border-radius: var(--radius); padding: 0 12px; color: var(--chrome-muted); }
+.search input { flex: 1; min-width: 0; min-height: 40px; background: transparent; border: 0; color: var(--chrome-strong); outline: none; }
+.search input::placeholder { color: var(--chrome-placeholder); }
 .account { display: flex; align-items: center; gap: 8px; }
-.icon-link { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 6px; color: var(--on-dark); }
-.icon-link:hover, .icon-link[aria-current="page"] { color: #FFFFFF; background: var(--chrome-2); }
+.icon-link { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 6px; color: var(--chrome-muted); }
+.icon-link:hover, .icon-link[aria-current="page"] { color: var(--chrome-strong); background: var(--chrome-2); }
 .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #FFFFFF; display: inline-flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px; flex: 0 0 auto; }
 .avatar.soft { width: 40px; height: 40px; background: var(--c1-bg); color: var(--c1-fg); }
 .avatar.small-avatar { width: 32px; height: 32px; font-size: 12px; }
@@ -687,3 +738,14 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .menu-body select[size] { max-width: none; width: 100%; padding: 4px; }
 .quick-add input { min-width: 0; }
 .quick-add .compact-date { flex: 0 0 auto; width: 140px; }
+
+/* Theme toggle: shows a moon in the light theme (go dark) and a sun in the
+   dark one (go light), whichever way the theme was chosen. */
+.theme-toggle { border: 0; background: none; cursor: pointer; padding: 0; }
+.theme-toggle .icon-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-sun { display: inline; }
+:root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-toggle .icon-sun { display: inline; }
+  :root:not([data-theme="light"]) .theme-toggle .icon-moon { display: none; }
+}

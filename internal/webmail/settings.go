@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,56 @@ type Settings struct {
 	PageSize       int    `json:"page_size,omitempty"`
 	// CalendarView is the view the calendar opens in: month, week, day or agenda.
 	CalendarView string `json:"calendar_view,omitempty"`
+	// Theme is "light" or "dark", or empty to follow the device's setting.
+	Theme string `json:"theme,omitempty"`
+}
+
+// themeCookie remembers the theme in the browser too, so the sign-in page,
+// which has no session to read settings from, matches the rest.
+const themeCookie = "elemta_theme"
+
+func themeFromCookie(r *http.Request) string {
+	if c, err := r.Cookie(themeCookie); err == nil {
+		return validTheme(c.Value)
+	}
+	return ""
+}
+
+func validTheme(t string) string {
+	if t == "light" || t == "dark" {
+		return t
+	}
+	return ""
+}
+
+func (s *Server) setThemeCookie(w http.ResponseWriter, theme string) {
+	if theme == "" {
+		s.setCookie(w, themeCookie, "", -1)
+		return
+	}
+	s.setCookie(w, themeCookie, theme, 400*24*3600)
+}
+
+// themeSubmit switches the theme from the top bar's toggle. Script posts it
+// in the background and changes the page at once; without script the form
+// posts and the page reloads where it was.
+func (s *Server) themeSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
+	p := s.prefs(r.Context(), sess)
+	p.Theme = validTheme(r.PostFormValue("theme"))
+	if err := s.savePrefs(r.Context(), sess, p); err != nil {
+		s.fail(w, r, sess, err)
+		return
+	}
+	s.setThemeCookie(w, p.Theme)
+	if r.Header.Get("X-CSRF-Token") != "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	back := "/mail"
+	if ref, err := url.Parse(r.Referer()); err == nil && ref.Host == r.Host && strings.HasPrefix(ref.Path, "/") {
+		back = (&url.URL{Path: ref.Path, RawQuery: ref.RawQuery}).String()
+	}
+	redirectLocal(w, r, back)
 }
 
 const settingsID = "preferences"
@@ -181,6 +232,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	if n, err := strconv.Atoi(r.PostFormValue("page_size")); err == nil && n >= 10 && n <= 200 {
 		p.PageSize = n
 	}
+	p.Theme = validTheme(r.PostFormValue("theme"))
 	switch v := r.PostFormValue("calendar_view"); v {
 	case "month", "week", "day", "agenda":
 		p.CalendarView = v
@@ -195,6 +247,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		s.fail(w, r, sess, err)
 		return
 	}
+	s.setThemeCookie(w, p.Theme)
 	http.Redirect(w, r, "/settings?n=settings-saved", http.StatusSeeOther)
 }
 

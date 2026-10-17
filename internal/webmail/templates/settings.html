@@ -33,6 +33,14 @@
       <option value="1"{{if eq .Prefs.WeekStart 1}} selected{{end}}>Monday</option>
     </select>
 
+    <h2 class="card-title">Appearance</h2>
+    <label for="theme">Theme</label>
+    <select id="theme" name="theme">
+      <option value=""{{if eq .Prefs.Theme ""}} selected{{end}}>Match my device</option>
+      <option value="light"{{if eq .Prefs.Theme "light"}} selected{{end}}>Light</option>
+      <option value="dark"{{if eq .Prefs.Theme "dark"}} selected{{end}}>Dark</option>
+    </select>
+
     <h2 class="card-title">Mail and calendar</h2>
     <label for="page_size">Messages per page</label>
     <select id="page_size" name="page_size">

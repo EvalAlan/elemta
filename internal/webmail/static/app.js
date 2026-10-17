@@ -39,6 +39,23 @@
     }
   }, true);
 
+  // ---- theme ---------------------------------------------------------------
+  // The toggle flips whichever theme is showing, including one that came
+  // from the device's setting, applies it at once and saves it in the
+  // background. Without script the button's form posts and reloads.
+  var toggle = $("[data-theme-toggle]");
+  if (toggle) {
+    toggle.addEventListener("click", function (e) {
+      e.preventDefault();
+      var current = root.getAttribute("data-theme") ||
+        (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      var next = current === "dark" ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      toggle.value = next === "dark" ? "light" : "dark";
+      post("/settings/theme", { theme: next });
+    });
+  }
+
   // ---- menus -------------------------------------------------------------
   // Menus are <details>, so they open without script; this closes them on
   // a click elsewhere or Escape, as menus are expected to behave.

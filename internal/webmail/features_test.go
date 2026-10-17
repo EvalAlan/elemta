@@ -456,3 +456,35 @@ func TestTextToHTML(t *testing.T) {
 		t.Fatalf("textToHTML = %q", got)
 	}
 }
+
+func TestThemeChoice(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	_, page := h.get("/mail")
+	if strings.Contains(page, "data-theme=") && !strings.Contains(page, "data-theme-toggle") {
+		t.Fatal("a theme was forced before the user chose one")
+	}
+	if strings.Contains(page, `<html lang="en" data-theme`) {
+		t.Fatal("default should follow the device")
+	}
+	resp := h.post("/settings/theme", url.Values{"csrf": {csrf}, "theme": {"light"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("toggle = %d", resp.StatusCode)
+	}
+	_, page = h.get("/mail")
+	if !strings.Contains(page, `<html lang="en" data-theme="light">`) || !strings.Contains(page, `name="theme" value="dark"`) {
+		t.Fatalf("light theme not applied")
+	}
+	h.post("/settings/theme", url.Values{"csrf": {csrf}, "theme": {"purple"}})
+	_, page = h.get("/mail")
+	if strings.Contains(page, `<html lang="en" data-theme`) {
+		t.Fatal("an unknown theme was stored")
+	}
+	// The sign-in page, which has no session, follows the cookie.
+	h.post("/settings/theme", url.Values{"csrf": {csrf}, "theme": {"light"}})
+	h.post("/logout", url.Values{"csrf": {csrf}})
+	_, login := h.get("/login")
+	if !strings.Contains(login, `data-theme="light"`) {
+		t.Fatal("sign-in page ignores the chosen theme")
+	}
+}
