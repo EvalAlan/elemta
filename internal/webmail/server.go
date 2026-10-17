@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -53,7 +54,7 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 	if log == nil {
 		log = slog.Default()
 	}
-	sessions, err := NewSessionManager(cfg.sessionTTL())
+	sessions, err := newSessions(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -70,6 +71,29 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		log: log, limiter: newLoginLimiter(10, 15*time.Minute), now: time.Now,
 		defaultLoc: cfg.location(),
 	}, nil
+}
+
+// newSessions builds the session manager the config asks for.
+func newSessions(cfg Config) (*SessionManager, error) {
+	if cfg.SessionStore != "valkey" {
+		return NewSessionManager(cfg.sessionTTL())
+	}
+	addr := cfg.ValkeyAddr
+	if addr == "" {
+		addr = os.Getenv("VALKEY_ADDR")
+	}
+	if addr == "" {
+		return nil, errors.New("webmail: session_store = \"valkey\" needs valkey_addr or VALKEY_ADDR")
+	}
+	key, err := loadSessionKey(cfg.SessionKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	store, err := NewValkeySessionStore(addr)
+	if err != nil {
+		return nil, err
+	}
+	return NewSharedSessionManager(cfg.sessionTTL(), key, store)
 }
 
 // Sessions exposes the session manager so the caller can run its sweeper.

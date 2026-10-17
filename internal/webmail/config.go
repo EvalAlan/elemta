@@ -81,6 +81,18 @@ type Config struct {
 	SieveAddr string `toml:"sieve_addr"`
 	// SieveTLS is "starttls" (default), "tls" or "none".
 	SieveTLS string `toml:"sieve_tls"`
+
+	// SessionStore is "memory" (the default: sessions live in one process
+	// and end when it restarts) or "valkey" (shared by every webmail pod,
+	// surviving restarts).
+	SessionStore string `toml:"session_store"`
+	// ValkeyAddr is host:port of Valkey for session_store = "valkey".
+	// Empty uses the VALKEY_ADDR environment variable.
+	ValkeyAddr string `toml:"valkey_addr"`
+	// SessionKeyFile holds the key that seals passwords in shared sessions,
+	// base64 encoded. It is created if missing. Every pod must read the
+	// same file, and it must not be stored in Valkey.
+	SessionKeyFile string `toml:"session_key_file"`
 }
 
 // Defaults applied by WithDefaults.
@@ -108,6 +120,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.DefaultTimezone == "" {
 		c.DefaultTimezone = "UTC"
+	}
+	if c.SessionStore == "" {
+		c.SessionStore = "memory"
 	}
 	if c.SessionTTL == "" {
 		c.SessionTTL = defaultSessionTTL.String()
@@ -149,6 +164,15 @@ func (c Config) Validate() error {
 		if _, _, err := net.SplitHostPort(c.SieveAddr); err != nil {
 			errs = append(errs, fmt.Errorf("webmail: sieve_addr %q: %w", c.SieveAddr, err))
 		}
+	}
+	switch c.SessionStore {
+	case "memory":
+	case "valkey":
+		if c.SessionKeyFile == "" {
+			errs = append(errs, errors.New("webmail: session_store = \"valkey\" needs session_key_file"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("webmail: session_store must be memory or valkey, not %q", c.SessionStore))
 	}
 	if _, err := time.LoadLocation(c.DefaultTimezone); err != nil {
 		errs = append(errs, fmt.Errorf("webmail: default_timezone %q: %w", c.DefaultTimezone, err))

@@ -16,11 +16,15 @@ import (
 // Session is one signed-in browser.
 //
 // The IMAP password has to be kept for the life of the session, because IMAP
-// has no token login Dovecot will accept by default. It is held only in this
-// process's memory, sealed under a key generated at startup, so a heap dump,
-// a log line or a stray %v doesn't print it, and a restart invalidates every
-// session. Moving sessions to Valkey for multi-pod deployments will need a
-// shared key from a secret; until then a webmail pod's sessions are its own.
+// has no token login Dovecot will accept by default. It is kept sealed
+// (AES-GCM) so a heap dump, a log line or a stray %v doesn't print it.
+//
+// With the default memory store the key is generated at startup, sessions
+// live in this process and a restart signs everyone out. With a shared
+// store (Valkey) the sealed records are shared by every webmail pod and
+// survive restarts; the sealing key then comes from a file the pods share
+// and is never written to the store, so reading the store alone doesn't
+// yield passwords.
 type Session struct {
 	ID       string
 	CSRF     string
@@ -44,17 +48,54 @@ type Session struct {
 // SessionManager creates, finds and expires sessions.
 type SessionManager struct {
 	mu       sync.Mutex
-	sessions map[string]*Session
+	sessions map[string]*Session // this process's sessions, with their connections
 	aead     cipher.AEAD
 	ttl      time.Duration
 	now      func() time.Time
+	// shared, when set, holds every session's record for all pods.
+	shared SessionStore
 }
 
-// NewSessionManager returns a manager whose sessions expire after ttl idle.
+// SessionStore keeps session records where every webmail pod can read
+// them. Records expire on their own after the TTL they were saved with.
+type SessionStore interface {
+	Load(ctx context.Context, id string) (*SessionRecord, error) // nil, nil when absent
+	Save(ctx context.Context, rec *SessionRecord, ttl time.Duration) error
+	Delete(ctx context.Context, id string) error
+}
+
+// SessionRecord is a session as stored: everything but the live IMAP
+// connection, with the password still sealed.
+type SessionRecord struct {
+	ID       string    `json:"id"`
+	CSRF     string    `json:"csrf"`
+	User     string    `json:"user"`
+	Address  string    `json:"address"`
+	Sealed   []byte    `json:"sealed"`
+	Nonce    []byte    `json:"nonce"`
+	Created  time.Time `json:"created"`
+	LastSeen time.Time `json:"last_seen"`
+}
+
+// touchEvery is how often a request refreshes a shared session's expiry;
+// refreshing on every request would cost a store write each time.
+const touchEvery = time.Minute
+
+// NewSessionManager returns a manager whose sessions expire after ttl idle,
+// held in memory under a key generated now.
 func NewSessionManager(ttl time.Duration) (*SessionManager, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("webmail: session key: %w", err)
+	}
+	return NewSharedSessionManager(ttl, key, nil)
+}
+
+// NewSharedSessionManager returns a manager that seals passwords with key
+// and, if store is set, keeps sessions there for every pod to share.
+func NewSharedSessionManager(ttl time.Duration, key []byte, store SessionStore) (*SessionManager, error) {
+	if len(key) != 32 {
+		return nil, errors.New("webmail: the session key must be 32 bytes")
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -64,7 +105,15 @@ func NewSessionManager(ttl time.Duration) (*SessionManager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("webmail: session cipher: %w", err)
 	}
-	return &SessionManager{sessions: make(map[string]*Session), aead: aead, ttl: ttl, now: time.Now}, nil
+	return &SessionManager{sessions: make(map[string]*Session), aead: aead, ttl: ttl, now: time.Now, shared: store}, nil
+}
+
+func (s *Session) record() *SessionRecord {
+	return &SessionRecord{ID: s.ID, CSRF: s.CSRF, User: s.User, Address: s.Address, Sealed: s.sealed, Nonce: s.nonce, Created: s.created, LastSeen: s.lastSeen}
+}
+
+func sessionFromRecord(r *SessionRecord) *Session {
+	return &Session{ID: r.ID, CSRF: r.CSRF, User: r.User, Address: r.Address, sealed: r.Sealed, nonce: r.Nonce, created: r.Created, lastSeen: r.LastSeen}
 }
 
 // randomToken returns n random bytes, URL-safe base64 encoded.
@@ -99,30 +148,84 @@ func (m *SessionManager) Create(user, address, password string, store Mailstore)
 		sealed: m.aead.Seal(nil, nonce, []byte(password), []byte(id)),
 		nonce:  nonce, created: now, lastSeen: now, store: store,
 	}
+	if m.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := m.shared.Save(ctx, s.record(), m.ttl); err != nil {
+			return nil, fmt.Errorf("webmail: save session: %w", err)
+		}
+	}
 	m.mu.Lock()
 	m.sessions[id] = s
 	m.mu.Unlock()
 	return s, nil
 }
 
-// Get returns the live session with id and extends its idle timer.
+// Get returns the live session with id and extends its idle timer. With a
+// shared store, a session this pod hasn't seen (signed in on another pod,
+// or before a restart) is loaded from it; its IMAP connection is dialled
+// when first needed.
 func (m *SessionManager) Get(id string) (*Session, bool) {
 	if id == "" {
 		return nil, false
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	s, ok := m.sessions[id]
+	m.mu.Unlock()
+	if !ok && m.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		rec, err := m.shared.Load(ctx, id)
+		cancel()
+		if err != nil || rec == nil || rec.ID != id {
+			return nil, false
+		}
+		s = sessionFromRecord(rec)
+		m.mu.Lock()
+		if existing, raced := m.sessions[id]; raced {
+			s = existing
+		} else {
+			m.sessions[id] = s
+		}
+		m.mu.Unlock()
+		ok = true
+	}
 	if !ok {
 		return nil, false
 	}
 	now := m.now()
-	if now.Sub(s.lastSeen) > m.ttl {
+	m.mu.Lock()
+	expired := now.Sub(s.lastSeen) > m.ttl
+	m.mu.Unlock()
+	if expired && m.shared != nil {
+		// This pod's copy looks idle, but the user may have been active on
+		// another pod since; the shared record has the last word.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		rec, err := m.shared.Load(ctx, id)
+		cancel()
+		if err == nil && rec != nil && now.Sub(rec.LastSeen) <= m.ttl {
+			expired = false
+		}
+	}
+	m.mu.Lock()
+	touch := m.shared != nil && now.Sub(s.lastSeen) > touchEvery
+	if expired {
 		delete(m.sessions, id)
+	} else {
+		s.lastSeen = now
+	}
+	m.mu.Unlock()
+	if expired {
 		go s.closeStore()
+		if m.shared != nil {
+			go func() { _ = m.shared.Delete(context.Background(), id) }()
+		}
 		return nil, false
 	}
-	s.lastSeen = now
+	if touch {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = m.shared.Save(ctx, s.record(), m.ttl)
+		cancel()
+	}
 	return s, true
 }
 
@@ -134,6 +237,11 @@ func (m *SessionManager) Destroy(id string) {
 	m.mu.Unlock()
 	if ok {
 		s.closeStore()
+	}
+	if m.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = m.shared.Delete(ctx, id)
+		cancel()
 	}
 }
 
@@ -155,7 +263,9 @@ func (m *SessionManager) Sweep() int {
 	return len(expired)
 }
 
-// Run sweeps expired sessions until ctx ends, then closes every session.
+// Run sweeps expired sessions until ctx ends, then closes every session's
+// connection. Shared records are left in place: another pod, or this one
+// after a restart, carries on with them.
 func (m *SessionManager) Run(ctx context.Context) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()

@@ -175,6 +175,9 @@ services:
       - TZ=UTC
       - ELEMTA_CONFIG_RESEED=${ELEMTA_CONFIG_RESEED:-}
       - NODE_ID=webmail
+      # Sessions are kept in Valkey, so a restart or a second webmail
+      # container doesn't sign anyone out ([webmail] session_store).
+      - VALKEY_ADDR=elemta-valkey:6379
     security_opt:
       - no-new-privileges:true
     user: "1001:1001"
@@ -188,6 +191,7 @@ services:
     depends_on:
       - elemta
       - elemta-dovecot
+      - valkey
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8027/healthz" ]
       interval: 30s

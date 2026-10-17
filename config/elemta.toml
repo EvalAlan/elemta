@@ -508,5 +508,10 @@ insecure_skip_verify = true
 # Served over plain HTTP in dev, so the session cookie can't be Secure.
 secure_cookies = false
 session_ttl = "8h"
+# Sessions live in Valkey (VALKEY_ADDR), so restarting the webmail doesn't
+# sign anyone out. The key that seals the stored passwords is kept apart
+# from Valkey, on the volume the services share; it is created on first start.
+session_store = "valkey"
+session_key_file = "/app/runtime-config/webmail-session.key"
 max_upload_mb = 25
 page_size = 50

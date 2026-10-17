@@ -1,9 +1,15 @@
 package webmail
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -107,5 +113,96 @@ func TestWithStoreRedialsDeadConnection(t *testing.T) {
 	err = m.withStore(context.Background(), s, dial, func(st Mailstore) error { return ErrNotFound })
 	if !errors.Is(err, ErrNotFound) || dials != 1 {
 		t.Fatalf("err=%v dials=%d", err, dials)
+	}
+}
+
+// memSessions is an in-memory SessionStore standing in for Valkey.
+type memSessions struct {
+	mu   sync.Mutex
+	recs map[string]SessionRecord
+}
+
+func (m *memSessions) Load(_ context.Context, id string) (*SessionRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.recs[id]
+	if !ok {
+		return nil, nil
+	}
+	return &r, nil
+}
+func (m *memSessions) Save(_ context.Context, r *SessionRecord, _ time.Duration) error {
+	m.mu.Lock()
+	m.recs[r.ID] = *r
+	m.mu.Unlock()
+	return nil
+}
+func (m *memSessions) Delete(_ context.Context, id string) error {
+	m.mu.Lock()
+	delete(m.recs, id)
+	m.mu.Unlock()
+	return nil
+}
+
+func TestSharedSessionsSurviveRestart(t *testing.T) {
+	key := make([]byte, 32)
+	key[0] = 7
+	store := &memSessions{recs: map[string]SessionRecord{}}
+	a, err := NewSharedSessionManager(time.Hour, key, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := a.Create("dana", "dana@example.com", "s3cret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(fmt.Sprint(store.recs), "s3cret") {
+		t.Fatal("password stored unsealed")
+	}
+
+	// A second pod (or this one after a restart) with the same key finds it.
+	b, _ := NewSharedSessionManager(time.Hour, key, store)
+	got, ok := b.Get(s.ID)
+	if !ok || got.User != "dana" || got.CSRF != s.CSRF {
+		t.Fatalf("other pod: ok=%v %+v", ok, got)
+	}
+	if pw, err := b.password(got); err != nil || pw != "s3cret" {
+		t.Fatalf("password = %q, %v", pw, err)
+	}
+
+	// A pod with a different key can't open it.
+	other := make([]byte, 32)
+	c, _ := NewSharedSessionManager(time.Hour, other, store)
+	if got, ok := c.Get(s.ID); ok {
+		if _, err := c.password(got); err == nil {
+			t.Fatal("password opened with the wrong key")
+		}
+	}
+
+	// Signing out on one pod signs out everywhere.
+	b.Destroy(s.ID)
+	a2, _ := NewSharedSessionManager(time.Hour, key, store)
+	if _, ok := a2.Get(s.ID); ok {
+		t.Fatal("session survived sign-out")
+	}
+}
+
+func TestLoadSessionKeyCreatesOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys", "webmail.key")
+	k1, err := loadSessionKey(path)
+	if err != nil || len(k1) != 32 {
+		t.Fatalf("create: %v", err)
+	}
+	info, _ := os.Stat(path)
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("key file mode = %v", info.Mode())
+	}
+	k2, err := loadSessionKey(path)
+	if err != nil || !bytes.Equal(k1, k2) {
+		t.Fatal("key changed on second load")
+	}
+	_ = os.WriteFile(path, []byte("short"), 0o600)
+	if _, err := loadSessionKey(path); err == nil {
+		t.Fatal("bad key accepted")
 	}
 }
