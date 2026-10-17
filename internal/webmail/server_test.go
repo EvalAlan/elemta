@@ -468,17 +468,42 @@ func TestLogout(t *testing.T) {
 }
 
 func TestLoginLimiter(t *testing.T) {
-	l := newLoginLimiter(3, time.Minute)
+	l := newLoginLimiter(time.Minute)
 	for i := 0; i < 3; i++ {
-		if !l.allow("ip") {
-			t.Fatalf("attempt %d blocked", i+1)
+		if l.blocked("ip", 3) {
+			t.Fatalf("blocked after %d failures", i)
 		}
+		l.fail("ip")
 	}
-	if l.allow("ip") {
-		t.Fatal("4th attempt allowed")
+	if !l.blocked("ip", 3) {
+		t.Fatal("not blocked after 3 failures")
 	}
 	l.reset("ip")
-	if !l.allow("ip") {
+	if l.blocked("ip", 3) {
 		t.Fatal("reset did not clear")
+	}
+}
+
+func TestSuccessfulSignInsAreNotThrottled(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < maxFailuresPerIP+5; i++ {
+		_, body := h.get("/login")
+		tok := hiddenRE("token").FindStringSubmatch(body)[1]
+		resp := h.post("/login", url.Values{"token": {tok}, "user": {"dana"}, "password": {"secret"}})
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("sign-in %d = %d", i+1, resp.StatusCode)
+		}
+		h.post("/logout", url.Values{"csrf": {hiddenRE("csrf").FindStringSubmatch(func() string { _, b := h.get("/mail"); return b }())[1]}})
+	}
+	// Failures still lock the account out.
+	for i := 0; i < maxFailuresPerUser; i++ {
+		_, body := h.get("/login")
+		tok := hiddenRE("token").FindStringSubmatch(body)[1]
+		h.post("/login", url.Values{"token": {tok}, "user": {"dana"}, "password": {"wrong"}})
+	}
+	_, body := h.get("/login")
+	tok := hiddenRE("token").FindStringSubmatch(body)[1]
+	if resp := h.post("/login", url.Values{"token": {tok}, "user": {"dana"}, "password": {"secret"}}); resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("after %d failures the right password got %d, want 429", maxFailuresPerUser, resp.StatusCode)
 	}
 }

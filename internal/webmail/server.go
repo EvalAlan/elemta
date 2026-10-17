@@ -68,7 +68,7 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 	}
 	return &Server{
 		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
-		log: log, limiter: newLoginLimiter(10, 15*time.Minute), now: time.Now,
+		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now,
 		defaultLoc: cfg.location(),
 	}, nil
 }
@@ -406,7 +406,8 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := clientIP(r)
-	if !s.limiter.allow(ip) || !s.limiter.allow("user:"+strings.ToLower(user)) {
+	userKey := "user:" + strings.ToLower(user)
+	if s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser) {
 		s.renderLogin(w, r, http.StatusTooManyRequests, user, "", "Too many sign-in attempts. Wait a few minutes and try again.")
 		return
 	}
@@ -419,6 +420,8 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	store, err := s.dial(ctx, user, password)
 	if err != nil {
 		if errors.Is(err, ErrAuthFailed) {
+			s.limiter.fail(ip)
+			s.limiter.fail(userKey)
 			s.log.Info("webmail: login failed", "user", user, "ip", ip)
 			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
 			return
@@ -439,7 +442,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Something went wrong.", http.StatusInternalServerError)
 		return
 	}
-	s.limiter.reset("user:" + strings.ToLower(user))
+	s.limiter.reset(userKey)
 	s.setCookie(w, preLoginCookie, "", -1)
 	s.setCookie(w, sessionCookie, sess.ID, 0)
 	s.setThemeCookie(w, s.prefs(ctx, sess).Theme)
@@ -453,10 +456,21 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, sess *Session) {
 	http.Redirect(w, r, "/login?n=loggedout", http.StatusSeeOther)
 }
 
-// loginLimiter is a fixed-window attempt counter per key (IP or user).
+// Sign-in throttling counts failed attempts only. Successful sign-ins never
+// count: behind Docker's port publishing, a NAT or a proxy, many people
+// reach the webmail from one address, and counting every attempt let
+// ordinary use lock everyone out. A password-guessing run fails, so it is
+// still stopped: per account after a few tries, and per address after
+// more, allowing for a shared address.
+const (
+	maxFailuresPerUser = 10
+	maxFailuresPerIP   = 50
+)
+
+// loginLimiter counts failures per key (an address or an account) in fixed
+// windows.
 type loginLimiter struct {
 	mu     sync.Mutex
-	max    int
 	window time.Duration
 	hits   map[string]*limitWindow
 }
@@ -466,11 +480,20 @@ type limitWindow struct {
 	reset time.Time
 }
 
-func newLoginLimiter(max int, window time.Duration) *loginLimiter {
-	return &loginLimiter{max: max, window: window, hits: map[string]*limitWindow{}}
+func newLoginLimiter(window time.Duration) *loginLimiter {
+	return &loginLimiter{window: window, hits: map[string]*limitWindow{}}
 }
 
-func (l *loginLimiter) allow(key string) bool {
+// blocked reports whether key has reached max failures in its window.
+func (l *loginLimiter) blocked(key string, max int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	w, ok := l.hits[key]
+	return ok && time.Now().Before(w.reset) && w.count >= max
+}
+
+// fail records a failed attempt for key.
+func (l *loginLimiter) fail(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
@@ -488,7 +511,6 @@ func (l *loginLimiter) allow(key string) bool {
 		l.hits[key] = w
 	}
 	w.count++
-	return w.count <= l.max
 }
 
 func (l *loginLimiter) reset(key string) {
