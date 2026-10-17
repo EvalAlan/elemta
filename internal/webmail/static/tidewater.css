@@ -10,6 +10,10 @@
   --ink-2: #1E2A3B;
   --muted: #4B5565;
   --on-dark: #C5CDD8;
+  /* The top bar keeps its own tokens: it is dark in both schemes, while
+     --ink flips to a light text colour in dark mode. */
+  --chrome: #0E1726;
+  --chrome-2: #1E2A3B;
   --line: #DDE2E8;
   --line-soft: #EEF1F4;
   --accent: #0B6E66;
@@ -34,6 +38,8 @@
     --ink-2: #1B2536;
     --muted: #9AA5B4;
     --on-dark: #C5CDD8;
+    --chrome: #070B12;
+    --chrome-2: #1B2536;
     --line: #253145;
     --line-soft: #1B2536;
     --accent: #2BA597;
@@ -45,7 +51,6 @@
     --warn-fg: #F2C879;
     --warn-bg: #33270F;
   }
-  .topbar { background: #070B12; }
 }
 
 * { box-sizing: border-box; }
@@ -80,16 +85,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .link-button:hover { color: #FFFFFF; text-decoration: underline; }
 
 /* Top bar */
-.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 8px 20px; background: var(--ink); color: #F4F6F8; }
-@media (prefers-color-scheme: dark) { .topbar { color: var(--ink); } }
+.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 8px 20px; background: var(--chrome); color: #F4F6F8; }
 .brand { display: flex; align-items: center; gap: 10px; color: #FFFFFF; text-decoration: none; font-weight: 600; font-size: 16px; }
 .brand:hover { color: #FFFFFF; }
 .brand .icon { width: 22px; height: 22px; stroke: var(--accent-on-dark); }
 .brand.dark { color: var(--ink); }
 .apps { display: flex; gap: 4px; }
 .apps a { color: var(--on-dark); text-decoration: none; padding: 8px 12px; border-radius: 6px; }
-.apps a[aria-current="page"] { background: var(--ink-2); color: #FFFFFF; font-weight: 500; }
-.search { flex: 1 1 280px; display: flex; align-items: center; gap: 8px; background: var(--ink-2); border-radius: var(--radius); padding: 0 12px; color: var(--on-dark); }
+.apps a[aria-current="page"] { background: var(--chrome-2); color: #FFFFFF; font-weight: 500; }
+.search { flex: 1 1 280px; display: flex; align-items: center; gap: 8px; background: var(--chrome-2); border-radius: var(--radius); padding: 0 12px; color: var(--on-dark); }
 .search input { flex: 1; min-width: 0; min-height: 40px; background: transparent; border: 0; color: #FFFFFF; outline: none; }
 .search input::placeholder { color: var(--on-dark); }
 .account { display: flex; align-items: center; gap: 8px; }
