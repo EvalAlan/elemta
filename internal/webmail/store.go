@@ -189,6 +189,9 @@ var (
 	ErrNotFound   = errors.New("webmail: message or folder not found")
 	ErrTooLarge   = errors.New("webmail: message too large to display")
 	ErrExists     = errors.New("webmail: a folder with that name already exists")
+	// ErrLoginRefused is a correct sign-in the server turned away, usually
+	// because the account has too many connections open.
+	ErrLoginRefused = errors.New("webmail: sign-in refused by the mail server")
 )
 
 // Dialer opens a Mailstore authenticated as one user.

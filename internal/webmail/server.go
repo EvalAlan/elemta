@@ -426,6 +426,11 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
 			return
 		}
+		if errors.Is(err, ErrLoginRefused) {
+			s.log.Warn("webmail: login refused by mail server", "user", user, "error", err)
+			s.renderLogin(w, r, http.StatusServiceUnavailable, user, "", "The mail server is limiting connections for this account. Sign out of other sessions or wait a minute, then try again.")
+			return
+		}
 		s.log.Warn("webmail: login could not reach mail server", "error", err)
 		s.renderLogin(w, r, http.StatusBadGateway, user, "", "The mail server didn't respond. Try again in a moment.")
 		return

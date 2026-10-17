@@ -72,6 +72,13 @@ func dialIMAP(ctx context.Context, cfg Config, username, password string) (*imap
 		_ = c.Close()
 		var imapErr *imap.Error
 		if errors.As(err, &imapErr) && imapErr.Type == imap.StatusResponseTypeNo {
+			// A refusal for any other reason than the credentials (too
+			// many connections, the server unavailable) mustn't read as a
+			// wrong password, or count towards locking the account.
+			switch imapErr.Code {
+			case imap.ResponseCodeLimit, imap.ResponseCodeUnavailable, imap.ResponseCodeInUse:
+				return nil, fmt.Errorf("%w: %s", ErrLoginRefused, imapErr.Text)
+			}
 			return nil, ErrAuthFailed
 		}
 		return nil, fmt.Errorf("webmail: IMAP login: %w", err)
