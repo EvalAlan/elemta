@@ -350,3 +350,26 @@ func TestPageRange(t *testing.T) {
 		}
 	}
 }
+
+func TestIMAPStoreEnsureFolders(t *testing.T) {
+	cfg := startIMAP(t)
+	st := dialTest(t, cfg)
+	ctx := context.Background()
+	// The test account has INBOX, Sent and Trash; Drafts and Junk are missing.
+	if err := st.EnsureFolders(ctx, defaultFolderRoles); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnsureFolders(ctx, defaultFolderRoles); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	folders, _ := st.Folders(ctx)
+	roles := map[Role]int{}
+	for _, f := range folders {
+		roles[f.Role]++
+	}
+	for _, r := range defaultFolderRoles {
+		if roles[r] != 1 {
+			t.Errorf("role %s: %d folders", r, roles[r])
+		}
+	}
+}

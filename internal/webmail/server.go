@@ -426,6 +426,12 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		s.renderLogin(w, r, http.StatusBadGateway, user, "", "The mail server didn't respond. Try again in a moment.")
 		return
 	}
+	// Every account gets the standard folders, so Junk and Trash are there
+	// to move mail to from the first sign-in. A failure here only means
+	// they're created later, when first needed.
+	if err := store.EnsureFolders(ctx, defaultFolderRoles); err != nil {
+		s.log.Warn("webmail: create default folders", "user", user, "error", err)
+	}
 	sess, err := s.sessions.Create(user, s.cfg.address(user), password, store)
 	if err != nil {
 		_ = store.Close()

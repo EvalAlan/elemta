@@ -161,6 +161,9 @@ type Mailstore interface {
 	Append(ctx context.Context, role Role, raw []byte, seen, draft bool) error
 
 	CreateFolder(ctx context.Context, name string) error
+	// EnsureFolders creates a folder for each role the account lacks, under
+	// its conventional name (Drafts, Sent, Junk, Trash).
+	EnsureFolders(ctx context.Context, roles []Role) error
 	RenameFolder(ctx context.Context, from, to string) error
 	DeleteFolder(ctx context.Context, name string) error
 	// EmptyFolder removes every message in folder for good.

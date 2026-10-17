@@ -628,6 +628,27 @@ func (s *imapStore) EmptyFolder(ctx context.Context, folder string) error {
 	return s.c.Expunge().Close()
 }
 
+func (s *imapStore) EnsureFolders(ctx context.Context, roles []Role) error {
+	folders, err := s.Folders(ctx)
+	if err != nil {
+		return err
+	}
+	have := map[Role]bool{}
+	for _, f := range folders {
+		have[f.Role] = true
+	}
+	for _, role := range roles {
+		name := defaultRoleNames[role]
+		if have[role] || name == "" {
+			continue
+		}
+		if err := s.CreateFolder(ctx, name); err != nil && !errors.Is(err, ErrExists) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *imapStore) CreateFolder(ctx context.Context, name string) error {
 	if err := s.c.Create(name, nil).Wait(); err != nil {
 		if isNo(err) {

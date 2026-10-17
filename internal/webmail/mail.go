@@ -544,6 +544,9 @@ func setParam(u, key, val string) string {
 	return p.String()
 }
 
+// defaultFolderRoles are the folders every account is given at sign-in.
+var defaultFolderRoles = []Role{RoleDrafts, RoleSent, RoleJunk, RoleTrash}
+
 // moveToRole moves messages to the folder with role, creating it under its
 // default name when the account has none (Archive, usually).
 func moveToRole(ctx context.Context, st Mailstore, folder string, uids []uint32, role Role) error {

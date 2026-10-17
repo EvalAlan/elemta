@@ -113,6 +113,23 @@ func (f *fakeStore) CreateFolder(_ context.Context, name string) error {
 	f.folders = append(f.folders, Folder{Name: name, Display: name, Selectable: true})
 	return nil
 }
+func (f *fakeStore) EnsureFolders(_ context.Context, roles []Role) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, role := range roles {
+		found := false
+		for _, x := range f.folders {
+			if x.Role == role {
+				found = true
+			}
+		}
+		if !found {
+			name := defaultRoleNames[role]
+			f.folders = append(f.folders, Folder{Name: name, Display: name, Role: role, Selectable: true})
+		}
+	}
+	return nil
+}
 func (f *fakeStore) RenameFolder(_ context.Context, from, to string) error {
 	for i := range f.folders {
 		if f.folders[i].Name == from {
