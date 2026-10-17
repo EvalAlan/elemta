@@ -47,7 +47,7 @@
       {{range .Folders}}
         <li>
         {{if .Selectable}}
-          <a class="folder {{depthClass .Depth}}" href="{{folderURL .Name 1 ""}}"{{if eq .Name $.Folder}} aria-current="page"{{end}} data-folder="{{.Name}}" data-ctx="folder" data-role="{{.Role}}" data-display="{{.Display}}">
+          <a class="folder {{depthClass .Depth}}" href="{{folderURL .Name 1 ""}}"{{if eq .Name $.Folder}} aria-current="page"{{end}} data-folder="{{.Name}}" data-total="{{.Total}}" data-ctx="folder" data-role="{{.Role}}" data-display="{{.Display}}">
             <span class="folder-name">{{.Display}}</span>
             <span class="count{{if not (showCount .)}} hidden{{end}}{{if not (countable .)}} hidden-role{{end}}" aria-label="{{.Unread}} unread">{{if showCount .}}{{.Unread}}{{end}}</span>
           </a>
@@ -59,6 +59,7 @@
       </ul>
     </nav>
     <a class="small manage" href="/folders">Manage folders</a>
+    <button class="link-inline small notify-enable" type="button" data-enable-notifications hidden>Turn on new-mail notifications</button>
   {{end}}
   </aside>
   <main id="main" class="content">

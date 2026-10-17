@@ -537,10 +537,93 @@
     } catch (err) { /* private mode or an old browser: keep the default */ }
   }
 
-  // ---- live unread counts ------------------------------------------------
+  // ---- new mail ----------------------------------------------------------
+  // The page asks the server for each folder's counts every 30 seconds
+  // (every 90 while the tab is in the background). Unread badges and the
+  // tab title follow them. When the folder on screen has gained messages,
+  // the list is fetched again and swapped in place, with the new rows
+  // highlighted, unless the user is in the middle of something (a
+  // selection, an open menu, a later page), in which case a "new mail"
+  // button offers the refresh instead. With notifications turned on, new
+  // unread mail that arrives while the tab is hidden raises one.
   var baseTitle = doc.title.replace(/^\(\d+\) /, "");
-  function refreshCounts() {
-    if (doc.hidden) return;
+  var knownTotals = {};
+  $$("a.folder[data-folder]").forEach(function (a) {
+    knownTotals[a.getAttribute("data-folder")] = +a.getAttribute("data-total") || 0;
+  });
+  var listEl = function () { return $("ol.messages"); };
+
+  function rowSummaries(ol) {
+    var out = {};
+    $$("li[data-uid]", ol).forEach(function (li) {
+      out[li.getAttribute("data-uid")] = {
+        unread: li.classList.contains("unread"),
+        from: ($(".from", li) || {}).textContent || "",
+        subject: ($(".subject", li) || {}).textContent || ""
+      };
+    });
+    return out;
+  }
+
+  function busy() {
+    return !!($("#bulk.has-selection") || $("details.menu[open]") || ctxMenuOpen() ||
+      new URLSearchParams(location.search).get("page") > 1);
+  }
+  function ctxMenuOpen() { return !!$(".ctx-menu"); }
+
+  function showNewMailPill() {
+    if ($(".new-mail-pill")) return;
+    var b = doc.createElement("button");
+    b.type = "button";
+    b.className = "new-mail-pill";
+    b.textContent = "New mail · Show";
+    b.addEventListener("click", function () { location.reload(); });
+    var head = $(".list-head");
+    if (head) head.insertAdjacentElement("afterend", b);
+  }
+
+  function notifyNew(added) {
+    if (!doc.hidden || !window.Notification || Notification.permission !== "granted" || !added.length) return;
+    try {
+      if (added.length === 1) {
+        var n = new Notification(added[0].from.trim() || "New mail", { body: added[0].subject.trim(), tag: "elemta-new-mail" });
+        n.onclick = function () { window.focus(); };
+      } else {
+        new Notification(added.length + " new messages", { body: added.slice(0, 3).map(function (m) { return m.from.trim() + ": " + m.subject.trim(); }).join("\n"), tag: "elemta-new-mail" });
+      }
+    } catch (err) { /* some browsers only notify from a service worker */ }
+  }
+
+  function refreshList() {
+    var old = listEl();
+    if (!old) return;
+    if (busy()) { showNewMailPill(); return; }
+    var before = rowSummaries(old);
+    fetch(location.href, { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (html) {
+        if (!html) return;
+        var fresh = new DOMParser().parseFromString(html, "text/html");
+        var next = $("ol.messages", fresh);
+        if (!next || busy() || !listEl()) { if (next) showNewMailPill(); return; }
+        var after = rowSummaries(next);
+        var added = [];
+        $$("li[data-uid]", next).forEach(function (li) {
+          var id = li.getAttribute("data-uid");
+          if (!before[id]) {
+            li.classList.add("new-arrival");
+            if (after[id].unread) added.push(after[id]);
+          }
+        });
+        listEl().replaceWith(doc.importNode(next, true));
+        var count = $(".list-head .mono", fresh), cur = $(".list-head .mono");
+        if (count && cur) cur.textContent = count.textContent;
+        notifyNew(added);
+      })
+      .catch(function () {});
+  }
+
+  function checkMail() {
     fetch("/api/counts", { credentials: "same-origin" })
       .then(function (r) {
         if (r.status === 401) { location.href = "/login"; return null; }
@@ -559,12 +642,21 @@
         });
         var inbox = data.unread.INBOX || 0;
         doc.title = (inbox > 0 ? "(" + inbox + ") " : "") + baseTitle;
+        var ol = listEl(), folder = ol && ol.getAttribute("data-folder");
+        var totals = data.total || {};
+        if (folder && folder in totals && folder in knownTotals && totals[folder] > knownTotals[folder]) refreshList();
+        Object.keys(totals).forEach(function (k) { knownTotals[k] = totals[k]; });
       })
       .catch(function () {});
   }
   if ($("a.folder[data-folder]")) {
-    setInterval(refreshCounts, 60000);
-    doc.addEventListener("visibilitychange", function () { if (!doc.hidden) refreshCounts(); });
+    var mailTimer = null;
+    var schedule = function () {
+      clearInterval(mailTimer);
+      mailTimer = setInterval(checkMail, doc.hidden ? 90000 : 30000);
+    };
+    schedule();
+    doc.addEventListener("visibilitychange", function () { schedule(); if (!doc.hidden) checkMail(); });
   }
 
   // ---- keyboard shortcuts ------------------------------------------------
@@ -761,13 +853,15 @@
     loadReminders();
     setInterval(loadReminders, 10 * 60 * 1000);
   }
-  var enable = $("[data-enable-notifications]");
-  if (enable && window.Notification && Notification.permission === "default") {
+  $$("[data-enable-notifications]").forEach(function (enable) {
+    if (!window.Notification || Notification.permission !== "default") return;
     enable.hidden = false;
     enable.addEventListener("click", function () {
-      Notification.requestPermission().then(function () { enable.hidden = true; });
+      Notification.requestPermission().then(function () {
+        $$("[data-enable-notifications]").forEach(function (b) { b.hidden = true; });
+      });
     });
-  }
+  });
 
   // ---- calendar ----------------------------------------------------------
   // Picking a start time moves the end time with it, keeping the duration.

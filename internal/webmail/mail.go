@@ -752,10 +752,12 @@ var (
 // the folder tree and the tab title current without a reload.
 func (s *Server) countsAPI(w http.ResponseWriter, r *http.Request, sess *Session) {
 	counts := map[string]uint32{}
+	totals := map[string]uint32{}
 	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		folders, err := st.Folders(r.Context())
 		for _, f := range folders {
 			counts[f.Name] = f.Unread
+			totals[f.Name] = f.Total
 		}
 		return err
 	})
@@ -769,5 +771,5 @@ func (s *Server) countsAPI(w http.ResponseWriter, r *http.Request, sess *Session
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]any{"unread": counts, "time": time.Now().Unix()})
+	_ = json.NewEncoder(w).Encode(map[string]any{"unread": counts, "total": totals, "time": time.Now().Unix()})
 }

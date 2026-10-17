@@ -792,3 +792,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .tc-frame { height: 240px; min-height: 120px; }
 .form-grid input[type="password"] { min-height: 38px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; width: 100%; max-width: 520px; }
 .form-grid input[type="password"] { min-height: 38px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; width: 100%; max-width: 520px; }
+.new-mail-pill { align-self: center; margin: 8px auto; border: 0; border-radius: 999px; padding: 6px 14px; background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer; box-shadow: var(--shadow); }
+.row-wrap.new-arrival { animation: arrive 2.5s ease-out; }
+@keyframes arrive { from { background: var(--accent-soft); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .row-wrap.new-arrival { animation: none; background: var(--accent-soft); } }
