@@ -526,6 +526,38 @@ func TestThemeChoice(t *testing.T) {
 	}
 }
 
+// The default palette matches the admin console and needs no attribute;
+// Tidewater is opt-in from Settings and follows the user to sign-in.
+func TestPaletteChoice(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	_, page := h.get("/mail")
+	if strings.Contains(page, "data-palette=") {
+		t.Fatal("a palette was set before the user chose one")
+	}
+	if !strings.Contains(page, `class="logo"`) {
+		t.Fatal("top bar lacks the shared envelope logo")
+	}
+	h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "palette": {"tidewater"}})
+	_, page = h.get("/mail")
+	if !strings.Contains(page, `data-palette="tidewater"`) {
+		t.Fatal("Tidewater not applied")
+	}
+	_, settings := h.get("/settings")
+	if !strings.Contains(settings, `<option value="tidewater" selected>`) {
+		t.Fatal("settings page doesn't show the chosen palette")
+	}
+	h.post("/logout", url.Values{"csrf": {csrf}})
+	if _, login := h.get("/login"); !strings.Contains(login, `data-palette="tidewater"`) {
+		t.Fatal("sign-in page ignores the chosen palette")
+	}
+	csrf = h.login()
+	h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "palette": {"neon"}})
+	if _, page = h.get("/mail"); strings.Contains(page, "data-palette=") {
+		t.Fatal("an unknown palette was stored")
+	}
+}
+
 func TestViewOriginal(t *testing.T) {
 	h := newHarness(t)
 	h.login()

@@ -1,10 +1,141 @@
-/* Tidewater: Elemta Webmail's visual system.
-   Cool grey ground, one teal accent, IBM Plex; light and dark themes.
+/* Elemta Webmail's visual system: two palettes (the default, shared with
+   the administration console, and Tidewater), each with light and dark.
    Pages ship no inline styles (the CSP forbids them), so every visual
    decision lives here, including the calendar's event positions, which are
    classes generated at the end of this file. */
 
+/* The default palette matches the administration console: the Tailwind
+   slate ramp with its blue accent, so both apps read as one product.
+   Tidewater, the original teal and IBM Plex palette, is kept as a choice
+   in Settings and applies through data-palette="tidewater". */
 :root {
+  --ground: #F1F5F9;
+  --surface: #FFFFFF;
+  --surface-2: #F8FAFC;
+  --ink: #0F172A;
+  --muted: #475569;
+  --chrome: #FFFFFF;
+  --chrome-2: #F1F5F9;
+  --chrome-fg: #0F172A;
+  --chrome-muted: #475569;
+  --chrome-strong: #0F172A;
+  --chrome-line: #E2E8F0;
+  --chrome-accent: #2563EB;
+  --chrome-placeholder: #64748B;
+  --line: #E2E8F0;
+  --line-soft: #F1F5F9;
+  --accent: #2563EB;
+  --accent-dark: #1D4ED8;
+  --accent-soft: #E0EAFD;
+  --on-accent: #FFFFFF;
+  --danger: #B91C1C;
+  --danger-soft: #FEE2E2;
+  --pass-fg: #166534;
+  --pass-bg: #DCFCE7;
+  --warn-fg: #92400E;
+  --warn-bg: #FEF3C7;
+  --flag: #D97706;
+  --shadow: 0 6px 16px rgba(15, 23, 42, .1);
+  --radius: 8px;
+  --hour: 48px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  /* Tag and calendar colours: readable text on a tinted chip. */
+  --c0-bg: #E0EAFD; --c0-fg: #1D4ED8;
+  --c1-bg: #E3F1EF; --c1-fg: #08524C;
+  --c2-bg: #F3E8FB; --c2-fg: #6B2C91;
+  --c3-bg: #FBE9E7; --c3-fg: #9A2A1F;
+  --c4-bg: #FBF0D9; --c4-fg: #7A4E0A;
+  --c5-bg: #E1F3E8; --c5-fg: #0B5A2E;
+  --c6-bg: #FCE7F1; --c6-fg: #96285E;
+  --c7-bg: #E8EBEF; --c7-fg: #2F3A4A;
+  color-scheme: light;
+}
+
+/* The dark theme applies when the user chose it, or when they left the
+   choice to the system and the system is dark. */
+:root[data-theme="dark"] {
+  --ground: #0B1120;
+  --surface: #111827;
+  --surface-2: #0F172A;
+  --ink: #F1F5F9;
+  --muted: #94A3B8;
+  --chrome: #111827;
+  --chrome-2: #1B2537;
+  --chrome-fg: #F1F5F9;
+  --chrome-muted: #CBD5E1;
+  --chrome-strong: #FFFFFF;
+  --chrome-line: #263349;
+  --chrome-accent: #60A5FA;
+  --chrome-placeholder: #7C8BA1;
+  --on-accent: #FFFFFF;
+  --line: #263349;
+  --line-soft: #1B2537;
+  --accent: #3B82F6;
+  --accent-dark: #60A5FA;
+  --accent-soft: #172A4A;
+  --danger: #F87171;
+  --danger-soft: #3B1518;
+  --pass-fg: #86EFAC;
+  --pass-bg: #12301F;
+  --warn-fg: #FCD34D;
+  --warn-bg: #33270F;
+  --flag: #FBBF24;
+  --shadow: 0 6px 16px rgba(2, 6, 23, .45);
+  --c0-bg: #172A4A; --c0-fg: #93C5FD;
+  --c1-bg: #10302D; --c1-fg: #7FE0D2;
+  --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+  --c3-bg: #3A1714; --c3-fg: #F5A49B;
+  --c4-bg: #33270F; --c4-fg: #F2C879;
+  --c5-bg: #12301F; --c5-fg: #8FD9AE;
+  --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+  --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0B1120;
+    --surface: #111827;
+    --surface-2: #0F172A;
+    --ink: #F1F5F9;
+    --muted: #94A3B8;
+    --chrome: #111827;
+    --chrome-2: #1B2537;
+    --chrome-fg: #F1F5F9;
+    --chrome-muted: #CBD5E1;
+    --chrome-strong: #FFFFFF;
+    --chrome-line: #263349;
+    --chrome-accent: #60A5FA;
+    --chrome-placeholder: #7C8BA1;
+    --on-accent: #FFFFFF;
+    --line: #263349;
+    --line-soft: #1B2537;
+    --accent: #3B82F6;
+    --accent-dark: #60A5FA;
+    --accent-soft: #172A4A;
+    --danger: #F87171;
+    --danger-soft: #3B1518;
+    --pass-fg: #86EFAC;
+    --pass-bg: #12301F;
+    --warn-fg: #FCD34D;
+    --warn-bg: #33270F;
+    --flag: #FBBF24;
+    --shadow: 0 6px 16px rgba(2, 6, 23, .45);
+    --c0-bg: #172A4A; --c0-fg: #93C5FD;
+    --c1-bg: #10302D; --c1-fg: #7FE0D2;
+    --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+    --c3-bg: #3A1714; --c3-fg: #F5A49B;
+    --c4-bg: #33270F; --c4-fg: #F2C879;
+    --c5-bg: #12301F; --c5-fg: #8FD9AE;
+    --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+    --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+    color-scheme: dark;
+  }
+}
+
+/* Tidewater: cool grey ground, one teal accent, IBM Plex. */
+:root[data-palette="tidewater"] {
   --ground: #F4F6F8;
   --surface: #FFFFFF;
   --surface-2: #F9FAFB;
@@ -34,8 +165,6 @@
   --warn-bg: #FBF0D9;
   --flag: #B7791F;
   --shadow: 0 8px 24px rgba(14, 23, 38, .14);
-  --radius: 8px;
-  --hour: 48px;
   --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
   /* Tag and calendar colours: readable text on a tinted chip. */
@@ -50,9 +179,7 @@
   color-scheme: light;
 }
 
-/* The dark theme applies when the user chose it, or when they left the
-   choice to the system and the system is dark. */
-:root[data-theme="dark"] {
+:root[data-palette="tidewater"][data-theme="dark"] {
   --ground: #0B111B;
   --surface: #121A27;
   --surface-2: #0F1622;
@@ -92,7 +219,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root[data-palette="tidewater"]:not([data-theme="light"]) {
     --ground: #0B111B;
     --surface: #121A27;
     --surface-2: #0F1622;
@@ -178,6 +305,13 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .brand { display: flex; align-items: center; gap: 10px; color: var(--chrome-strong); text-decoration: none; font-weight: 600; font-size: 16px; }
 .brand:hover { color: var(--chrome-strong); }
 .brand .icon { width: 22px; height: 22px; stroke: var(--chrome-accent); }
+/* The envelope logo is the administration console's, gradients and all;
+   only its paper follows the theme so it sits on either top bar. */
+.brand .logo { width: 34px; height: 27px; flex: none; }
+.brand .logo .paper { fill: var(--chrome); }
+.login .brand { font-size: 20px; }
+.login .brand .logo { width: 44px; height: 35px; }
+.login .brand .logo .paper { fill: var(--surface); }
 .brand.dark { color: var(--ink); }
 .apps { display: flex; gap: 4px; }
 .apps a { color: var(--chrome-muted); text-decoration: none; padding: 8px 12px; border-radius: 6px; }

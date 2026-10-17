@@ -26,9 +26,9 @@ const recoveryNotice = "If this account has a verified recovery address, a reset
 type recoveryAddress struct{ Email, Version string }
 type recoveryToken struct{ User, Address, Email, Version, Purpose string }
 type recoveryView struct {
-	Theme, CSRF, Token, Title, Action, Notice, Problem string
-	Reset                                              bool
-	Min                                                int
+	Theme, Palette, CSRF, Token, Title, Action, Notice, Problem string
+	Reset                                                       bool
+	Min                                                         int
 }
 
 func envOr(name, fallback string) string {
@@ -94,6 +94,7 @@ func (s *Server) renderRecovery(w http.ResponseWriter, r *http.Request, status i
 	s.setCookie(w, preLoginCookie, csrf, 600)
 	v.CSRF = csrf
 	v.Theme = themeFromCookie(r)
+	v.Palette = paletteFromCookie(r)
 	v.Min = s.cfg.MinPasswordLength
 	s.render(w, "recovery.html", status, v)
 }

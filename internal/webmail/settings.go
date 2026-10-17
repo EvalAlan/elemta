@@ -29,6 +29,9 @@ type Settings struct {
 	CalendarView string `json:"calendar_view,omitempty"`
 	// Theme is "light" or "dark", or empty to follow the device's setting.
 	Theme string `json:"theme,omitempty"`
+	// Palette is the colour scheme: empty for the default, which matches
+	// the administration console, or "tidewater".
+	Palette string `json:"palette,omitempty"`
 	// Conversations groups the message list by thread; nil means on.
 	Conversations *bool `json:"conversations,omitempty"`
 }
@@ -60,6 +63,24 @@ func themeFromCookie(r *http.Request) string {
 	return ""
 }
 
+// paletteCookie does for the colour scheme what themeCookie does for
+// light and dark.
+const paletteCookie = "elemta_palette"
+
+func paletteFromCookie(r *http.Request) string {
+	if c, err := r.Cookie(paletteCookie); err == nil {
+		return validPalette(c.Value)
+	}
+	return ""
+}
+
+func validPalette(p string) string {
+	if p == "tidewater" {
+		return p
+	}
+	return ""
+}
+
 func validTheme(t string) string {
 	if t == "light" || t == "dark" {
 		return t
@@ -67,12 +88,16 @@ func validTheme(t string) string {
 	return ""
 }
 
-func (s *Server) setThemeCookie(w http.ResponseWriter, theme string) {
-	if theme == "" {
-		s.setCookie(w, themeCookie, "", -1)
-		return
+// setAppearanceCookies copies the theme and palette into cookies; an empty
+// value is the default, so its cookie is removed.
+func (s *Server) setAppearanceCookies(w http.ResponseWriter, p Settings) {
+	for name, v := range map[string]string{themeCookie: p.Theme, paletteCookie: p.Palette} {
+		if v == "" {
+			s.setCookie(w, name, "", -1)
+			continue
+		}
+		s.setCookie(w, name, v, 400*24*3600)
 	}
-	s.setCookie(w, themeCookie, theme, 400*24*3600)
 }
 
 // themeSubmit switches the theme from the top bar's toggle. Script posts it
@@ -85,7 +110,7 @@ func (s *Server) themeSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 		s.fail(w, r, sess, err)
 		return
 	}
-	s.setThemeCookie(w, p.Theme)
+	s.setAppearanceCookies(w, p)
 	if r.Header.Get("X-CSRF-Token") != "" {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -265,6 +290,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		p.PageSize = n
 	}
 	p.Theme = validTheme(r.PostFormValue("theme"))
+	p.Palette = validPalette(r.PostFormValue("palette"))
 	conv := r.PostFormValue("conversations") == "1"
 	p.Conversations = &conv
 	switch v := r.PostFormValue("calendar_view"); v {
@@ -281,7 +307,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		s.fail(w, r, sess, err)
 		return
 	}
-	s.setThemeCookie(w, p.Theme)
+	s.setAppearanceCookies(w, p)
 	http.Redirect(w, r, "/settings?n=settings-saved", http.StatusSeeOther)
 }
 

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"{{with .Theme}} data-theme="{{.}}"{{end}}>
+<html lang="en"{{with .Theme}} data-theme="{{.}}"{{end}}{{with .Palette}} data-palette="{{.}}"{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,7 +9,7 @@
 </head>
 <body class="login-body">
 <main class="login">
-  <div class="brand dark">{{template "icon-mail"}}<span>Elemta</span></div>
+  <div class="brand dark">{{template "logo"}}<span>Elemta</span></div>
   <h1>Sign in to your mail</h1>
   {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
   {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}

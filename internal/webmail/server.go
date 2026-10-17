@@ -302,6 +302,8 @@ type view struct {
 	TZSet bool
 	// Theme is "light", "dark" or empty for the device's setting.
 	Theme string
+	// Palette is the colour scheme, empty for the default.
+	Palette string
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
@@ -313,6 +315,7 @@ func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
 		pv.Clock24 = cached.Uses24h()
 		pv.TZSet = cached.Timezone != ""
 		pv.Theme = cached.Theme
+		pv.Palette = cached.Palette
 		if pv.App == "" {
 			pv.App = "mail"
 		}
@@ -406,6 +409,7 @@ var notices = map[string]string{
 type loginView struct {
 	Recovery bool
 	Theme    string
+	Palette  string
 	Token    string
 	User     string
 	Problem  string
@@ -440,7 +444,7 @@ func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int,
 		return
 	}
 	s.setCookie(w, preLoginCookie, token, 600)
-	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Theme: themeFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
+	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Theme: themeFromCookie(r), Palette: paletteFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
 }
 
 func remoteHost(r *http.Request) string {
@@ -543,7 +547,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	s.limiter.reset(userKey)
 	s.setCookie(w, preLoginCookie, "", -1)
 	s.setCookie(w, sessionCookie, sess.ID, 0)
-	s.setThemeCookie(w, s.prefs(ctx, sess).Theme)
+	s.setAppearanceCookies(w, s.prefs(ctx, sess))
 	s.log.Info("webmail: login", "user", user, "ip", ip)
 	http.Redirect(w, r, "/mail", http.StatusSeeOther)
 }

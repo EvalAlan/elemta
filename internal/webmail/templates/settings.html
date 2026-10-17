@@ -40,6 +40,11 @@
       <option value="light"{{if eq .Prefs.Theme "light"}} selected{{end}}>Light</option>
       <option value="dark"{{if eq .Prefs.Theme "dark"}} selected{{end}}>Dark</option>
     </select>
+    <label for="palette">Colour scheme</label>
+    <select id="palette" name="palette">
+      <option value=""{{if eq .Prefs.Palette ""}} selected{{end}}>Elemta (matches the admin console)</option>
+      <option value="tidewater"{{if eq .Prefs.Palette "tidewater"}} selected{{end}}>Tidewater (teal)</option>
+    </select>
 
     <h2 class="card-title">Mail and calendar</h2>
     <span class="label">Message list</span>
