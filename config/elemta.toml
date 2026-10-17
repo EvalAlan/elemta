@@ -499,6 +499,10 @@ imap_addr = "elemta-dovecot:14143"
 imap_tls = "none"
 submission_addr = "elemta:2587"
 submission_tls = "starttls"
+# Filters and the out-of-office reply are stored here over ManageSieve.
+# Dev Dovecot has TLS off, as for IMAP.
+sieve_addr = "elemta-dovecot:4190"
+sieve_tls = "none"
 # The dev stack's certificate is self-signed. Never set this in production.
 insecure_skip_verify = true
 # Served over plain HTTP in dev, so the session cookie can't be Secure.

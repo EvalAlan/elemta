@@ -650,3 +650,6 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .ev.short { white-space: nowrap; line-height: 1.3; padding-top: 1px; }
 .ev.short .t { display: inline; margin-right: 4px; }
 .ev.short br, .ev.short br + span { display: none; }
+.rule-line .narrow-text { flex: 0 1 160px; }
+.sieve-raw { font-size: 12px; background: var(--surface-2); padding: 12px; border-radius: var(--radius); overflow-x: auto; }
+.rules { list-style: none; margin: 0; padding: 0; }

@@ -1,0 +1,86 @@
+{{define "content"}}
+<section class="page">
+  <h1>Filters and out-of-office</h1>
+  {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
+  {{with .Filters}}
+  {{if .Disabled}}
+    <p class="banner subtle">Filters aren't available: this webmail has no ManageSieve server configured (set <span class="mono">sieve_addr</span> in the [webmail] table).</p>
+  {{else}}
+  {{if .Foreign}}<p class="banner">Another filter script, “{{.Foreign}}”, is active on your account. Saving here makes these filters active instead.</p>{{end}}
+
+  <form class="card form-grid" action="/filters" method="post">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="vacation">
+    <h2 class="card-title">Out-of-office reply</h2>
+    <span></span><label class="checkline"><input type="checkbox" name="enabled" value="1"{{if .Set.Vacation.Enabled}} checked{{end}}> Send an automatic reply</label>
+    <label for="v-start">From</label><span class="inline-fields"><input id="v-start" name="start" type="date" value="{{.Set.Vacation.Start}}"> <label for="v-end">until</label> <input id="v-end" name="end" type="date" value="{{.Set.Vacation.End}}"> <span class="small muted">Leave empty to start now and run until turned off.</span></span>
+    <label for="v-subject">Subject</label><input id="v-subject" name="subject" type="text" value="{{.Set.Vacation.Subject}}" placeholder="Out of office" maxlength="300">
+    <label for="v-body">Message</label><textarea id="v-body" name="body" rows="5" placeholder="I'm away until … and will reply when I'm back.">{{.Set.Vacation.Body}}</textarea>
+    <label for="v-days">Reply once every</label><span class="inline-fields"><input id="v-days" name="days" type="number" min="1" max="30" value="{{.Set.Vacation.Days}}" class="narrow"> days to each sender</span>
+    <label for="v-aliases">Also for</label><input id="v-aliases" name="aliases" type="text" value="{{.Set.Vacation.Aliases}}" placeholder="Your other addresses, if any">
+    <div class="form-actions"><button class="button primary" type="submit">Save reply</button><span class="small muted">Mailing lists and automated mail never get a reply.</span></div>
+  </form>
+
+  {{if .Edit}}
+  {{$folders := .Folders}}
+  <form class="card rule" action="/filters" method="post">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="save"><input type="hidden" name="idx" value="{{.EditIdx}}">
+    <h2 class="card-title">{{if ge .EditIdx 0}}Edit filter{{else}}New filter{{end}}</h2>
+    <div class="rule-line"><label for="r-name">Name</label><input id="r-name" name="name" type="text" value="{{.Edit.Name}}" maxlength="100"><label class="checkline"><input type="checkbox" name="enabled" value="1"{{if .Edit.Enabled}} checked{{end}}> On</label></div>
+    <div class="rule-line">When a message matches
+      <select name="match" aria-label="Match"><option value="all"{{if .Edit.MatchAll}} selected{{end}}>all</option><option value="any"{{if not .Edit.MatchAll}} selected{{end}}>any</option></select> of:</div>
+    {{range .Conds}}
+    <div class="rule-line">
+      <select name="cond_field" aria-label="Field">
+        <option value="">—</option>
+        {{$f := .Field}}{{range fieldOptions}}<option value="{{.Value}}"{{if or (eq .Value $f) (and (eq .Value "header") (hasPrefix $f "header:"))}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+      <input name="cond_header" type="text" value="{{trimPrefix .Field "header:"}}" placeholder="Header name (if Header)" aria-label="Header name" class="narrow-text">
+      <select name="cond_op" aria-label="Comparison">
+        {{$o := .Op}}{{range opOptions}}<option value="{{.Value}}"{{if eq .Value $o}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+      <input name="cond_value" type="text" value="{{.Value}}" aria-label="Value" placeholder="Value">
+    </div>
+    {{end}}
+    <div class="rule-line">Then:</div>
+    {{range .Acts}}
+    <div class="rule-line">
+      <select name="act_type" aria-label="Action">
+        <option value="">—</option>
+        {{$t := .Type}}{{range actionOptions}}<option value="{{.Value}}"{{if eq .Value $t}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+      {{$arg := .Arg}}
+      <select name="act_folder" aria-label="Folder"><option value="">(folder)</option>{{range $folders}}{{if .Selectable}}<option value="{{.Name}}"{{if eq .Name $arg}} selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>
+      <input name="act_arg" type="text" value="{{.Arg}}" placeholder="Tag or forwarding address" aria-label="Value">
+    </div>
+    {{end}}
+    <div class="form-actions"><button class="button primary" type="submit">Save filter</button><a class="button ghost" href="/filters">Cancel</a></div>
+  </form>
+  {{end}}
+
+  <div class="card">
+    <div class="rule-head"><h2 class="card-title">Filters</h2><a class="button push" href="/filters?new=1">{{template "icon-plus"}}New filter</a></div>
+    {{if not .Set.Rules}}<p class="muted">No filters yet. Filters run on the mail server as messages arrive, even when the webmail is closed.</p>{{end}}
+    <ol class="rules">
+    {{range $i, $r := .Set.Rules}}
+      <li class="rule">
+        <div class="rule-head"><span class="strong">{{$r.Name}}</span>{{if not $r.Enabled}} <span class="muted small">(off)</span>{{end}}
+          <form action="/filters" method="post" class="inline push">
+            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="idx" value="{{$i}}">
+            <a class="button small-button" href="/filters?edit={{$i}}">Edit</a>
+            <button class="button small-button" name="op" value="toggle">{{if $r.Enabled}}Turn off{{else}}Turn on{{end}}</button>
+            {{if $i}}<button class="button small-button" name="op" value="up" title="Run earlier">↑</button>{{end}}
+            <button class="button small-button" name="op" value="down" title="Run later">↓</button>
+            <button class="button small-button danger" name="op" value="delete" data-confirm="Delete the filter “{{$r.Name}}”?">Delete</button>
+          </form>
+        </div>
+        <p class="small muted">{{$r.Describe}}</p>
+      </li>
+    {{end}}
+    </ol>
+    <p class="small"><a href="/filters?raw=1">Show the Sieve script</a></p>
+    {{if .ShowRaw}}<pre class="text-body mono sieve-raw">{{.Raw}}</pre>{{end}}
+  </div>
+  {{end}}
+  {{end}}
+</section>
+{{end}}

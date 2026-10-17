@@ -25,10 +25,13 @@ type Server struct {
 	sessions *SessionManager
 	dial     Dialer
 	submit   Submitter
-	tmpl     map[string]*template.Template
-	log      *slog.Logger
-	limiter  *loginLimiter
-	now      func() time.Time
+	// sieve reaches the ManageSieve server for filters; nil when none is
+	// configured, which hides the feature.
+	sieve   SieveDialer
+	tmpl    map[string]*template.Template
+	log     *slog.Logger
+	limiter *loginLimiter
+	now     func() time.Time
 	// defaultLoc is the time zone for users who haven't chosen one and
 	// whose browser hasn't reported one yet.
 	defaultLoc *time.Location
@@ -58,8 +61,12 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 	if err != nil {
 		return nil, err
 	}
+	var sieve SieveDialer
+	if cfg.SieveAddr != "" {
+		sieve = ManageSieveDialer(cfg.SieveAddr, cfg.SieveTLS, cfg.InsecureSkipVerify)
+	}
 	return &Server{
-		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl,
+		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
 		log: log, limiter: newLoginLimiter(10, 15*time.Minute), now: time.Now,
 		defaultLoc: cfg.location(),
 	}, nil
@@ -99,6 +106,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /calendar/rsvp", s.authed(s.rsvpSubmit))
 	mux.HandleFunc("GET /calendar/export", s.authed(s.calendarExport))
 	mux.HandleFunc("POST /calendar/import", s.authed(s.calendarImport))
+	mux.HandleFunc("GET /filters", s.authed(s.filtersPage))
+	mux.HandleFunc("POST /filters", s.authed(s.filtersSubmit))
 	mux.HandleFunc("GET /tasks", s.authed(s.tasksPage))
 	mux.HandleFunc("POST /tasks", s.authed(s.tasksSubmit))
 	mux.HandleFunc("GET /api/counts", s.authed(s.countsAPI))

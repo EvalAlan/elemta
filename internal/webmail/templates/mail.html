@@ -104,6 +104,7 @@
         </select>
         <button class="button" type="submit">Move</button>
       </form>
+      {{if .From}}<a class="button ghost" href="/filters?new=1&amp;from={{(index .From 0).Email}}" title="Make a filter for mail from this sender">Filter…</a>{{end}}
       <span class="push nav-arrows">
         {{if .Newer}}<a class="button" href="{{$.List.MessageURL .Newer}}" title="Newer (k)" data-key="k">↑</a>{{end}}
         {{if .Older}}<a class="button" href="{{$.List.MessageURL .Older}}" title="Older (j)" data-key="j">↓</a>{{end}}

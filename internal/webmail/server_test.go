@@ -181,6 +181,7 @@ type harness struct {
 	client *http.Client
 	store  *fakeStore
 	sub    *fakeSubmitter
+	server *Server
 }
 
 func newHarness(t *testing.T) *harness {
@@ -203,7 +204,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &harness{t: t, srv: srv, client: client, store: store, sub: sub}
+	return &harness{t: t, srv: srv, client: client, store: store, sub: sub, server: s}
 }
 
 func (h *harness) get(path string) (*http.Response, string) {

@@ -113,11 +113,27 @@ var templateFuncs = template.FuncMap{
 		return "/compose?" + url.Values{"mode": {mode}, "f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}}.Encode()
 	},
 	"contactsURL": contactsURL,
-	"tasksURL":    tasksURL,
-	"calURL":      calURL,
-	"calClass":    calClass,
-	"evURL":       func(o Occurrence) string { return eventURL(o.Event.UID, o.Start) },
-	"newEventAt":  func(d time.Time, hour int) string { return newEventURL(d, hour) },
+	"hasPrefix":   strings.HasPrefix,
+	"trimPrefix": func(s, prefix string) string {
+		if !strings.HasPrefix(s, prefix) {
+			return ""
+		}
+		return strings.TrimPrefix(s, prefix)
+	},
+	"fieldOptions": func() []option {
+		return []option{{"from", "From"}, {"to", "To"}, {"cc", "Cc"}, {"tocc", "To or Cc"}, {"subject", "Subject"}, {"body", "Body"}, {"size", "Size"}, {"header", "Header…"}}
+	},
+	"opOptions": func() []option {
+		return []option{{"contains", "contains"}, {"not-contains", "doesn't contain"}, {"is", "is"}, {"not-is", "isn't"}, {"matches", "matches (* and ?)"}, {"regex", "matches pattern"}, {"over", "is over"}, {"under", "is under"}}
+	},
+	"actionOptions": func() []option {
+		return []option{{"fileinto", "Move to folder"}, {"copyto", "Copy to folder"}, {"read", "Mark as read"}, {"flag", "Flag"}, {"tag", "Tag"}, {"redirect", "Forward to"}, {"discard", "Delete"}, {"reject", "Reject"}, {"stop", "Stop processing more filters"}}
+	},
+	"tasksURL":   tasksURL,
+	"calURL":     calURL,
+	"calClass":   calClass,
+	"evURL":      func(o Occurrence) string { return eventURL(o.Event.UID, o.Start) },
+	"newEventAt": func(d time.Time, hour int) string { return newEventURL(d, hour) },
 	"hourLabel": func(h24 bool, h int) string {
 		return clock(h24, time.Date(2000, 1, 1, h, 0, 0, 0, time.UTC))
 	},
@@ -181,6 +197,9 @@ var templateFuncs = template.FuncMap{
 		return name
 	},
 }
+
+// option is a value and label for a select.
+type option struct{ Value, Label string }
 
 // countable reports whether a folder's unread count means anything to the
 // user. Unread mail in Sent, Drafts, Junk or Trash isn't waiting for them.
