@@ -161,6 +161,40 @@ services:
       retries: 3
       start_period: 15s
 
+  elemta-webmail:
+    image: elemta:latest
+    container_name: elemta-webmail
+    restart: unless-stopped
+    ports:
+      - "8027:8027" # Webmail
+    volumes:
+      - ../../config:/app/config:ro
+      - elemta_config:/app/runtime-config:rw
+    command: [ "/bin/sh", "-lc", "exec /app/elemta --config \"$(/app/prepare-config.sh)\" webmail" ]
+    environment:
+      - TZ=UTC
+      - ELEMTA_CONFIG_RESEED=${ELEMTA_CONFIG_RESEED:-}
+      - NODE_ID=webmail
+    security_opt:
+      - no-new-privileges:true
+    user: "1001:1001"
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    entrypoint: []
+    networks:
+      - elemta_network
+    depends_on:
+      - elemta
+      - elemta-dovecot
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8027/healthz" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   elemta-clamav:
     image: clamav/clamav:latest
     container_name: elemta-clamav

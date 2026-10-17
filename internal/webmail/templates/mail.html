@@ -1,0 +1,100 @@
+{{define "content"}}
+<div class="panes{{if .Message}} has-message{{end}}">
+  <section class="list" aria-label="Messages">
+    <div class="list-head">
+      <h1>{{if .Query}}Results for “{{.Query}}”{{else}}{{.Folder}}{{end}}</h1>
+      {{with .Page}}<span class="mono muted">{{.Total}}</span>{{end}}
+    </div>
+    {{with .Page}}
+      {{if not .Messages}}
+        <p class="empty">{{if $.Query}}No messages match your search.{{else}}This folder is empty.{{end}}</p>
+      {{end}}
+      <ol class="messages">
+      {{range .Messages}}
+        <li>
+          <a class="row{{if not .Seen}} unread{{end}}{{if and $.Message (eq .UID $.Message.UID)}} selected{{end}}" href="{{messageURL $.Folder .UID $.Page.Page $.Query}}"{{if and $.Message (eq .UID $.Message.UID)}} aria-current="true"{{end}}>
+            <span class="row-top">
+              <span class="dot" aria-hidden="true"></span>
+              <span class="from">{{if eq $.Folder "Sent"}}{{addrs .To}}{{else}}{{addrs .From}}{{end}}</span>
+              {{if .Flagged}}<span class="flag" aria-label="Flagged">{{template "icon-star"}}</span>{{end}}
+              <time class="mono muted" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate .Date}}</time>
+            </span>
+            <span class="subject">{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
+            {{if not .Seen}}<span class="visually-hidden">Unread</span>{{end}}
+          </a>
+        </li>
+      {{end}}
+      </ol>
+      {{if gt .Pages 1}}
+      <nav class="pager" aria-label="Pages">
+        {{if gt .Page 1}}<a class="button" href="{{folderURL $.Folder (add .Page -1) $.Query}}">Newer</a>{{end}}
+        <span class="muted">Page {{.Page}} of {{.Pages}}</span>
+        {{if lt .Page .Pages}}<a class="button" href="{{folderURL $.Folder (add .Page 1) $.Query}}">Older</a>{{end}}
+      </nav>
+      {{end}}
+    {{end}}
+  </section>
+
+  <article class="reader" aria-label="Message">
+  {{with .Message}}
+    <div class="toolbar" role="toolbar" aria-label="Message actions">
+      <a class="button back" href="{{folderURL $.Folder 1 $.Query}}">{{template "icon-back"}}<span>Back</span></a>
+      <a class="button" href="{{composeURL "reply" .Folder .UID}}">Reply</a>
+      <a class="button" href="{{composeURL "replyall" .Folder .UID}}">Reply all</a>
+      <a class="button" href="{{composeURL "forward" .Folder .UID}}">Forward</a>
+      <form action="/mail/action" method="post">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}">
+        {{if .Flagged}}<button class="button" name="op" value="unflag">Unflag</button>{{else}}<button class="button" name="op" value="flag">Flag</button>{{end}}
+        <button class="button" name="op" value="unread">Mark unread</button>
+        <button class="button" name="op" value="junk">Junk</button>
+        <button class="button danger" name="op" value="delete">Delete</button>
+      </form>
+      <form class="move" action="/mail/action" method="post">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="move">
+        <label class="visually-hidden" for="dest">Move to folder</label>
+        <select id="dest" name="dest">
+          {{range $.Folders}}{{if and .Selectable (ne .Name $.Folder)}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
+        </select>
+        <button class="button" type="submit">Move</button>
+      </form>
+    </div>
+    <div class="message">
+      <h2>{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
+      <div class="sender">
+        <span class="avatar soft" aria-hidden="true">{{initials .From}}</span>
+        <div class="sender-text">
+          <div class="sender-line">
+            {{range .From}}<span class="strong">{{.Label}}</span> {{if .Name}}<span class="mono muted">{{.Email}}</span>{{end}}{{end}}
+            <time class="mono muted push" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate .Date}}</time>
+          </div>
+          <div class="muted small">To {{addrs .To}}{{if .Cc}} · Cc {{addrs .Cc}}{{end}}</div>
+        </div>
+      </div>
+      {{with authChecks .AuthResults}}
+      <ul class="chips" aria-label="Sender checks">
+        {{range .}}<li class="chip{{if .Pass}} pass{{end}}">{{.Method}} {{.Result}}</li>{{end}}
+      </ul>
+      {{end}}
+      {{with .Attachments}}
+      <ul class="attachments" aria-label="Attachments">
+        {{range .}}
+        <li><a class="attachment" href="{{partURL $.Message.Folder $.Message.UID .Index}}">{{template "icon-clip"}}<span><span class="strong">{{.Filename}}</span><span class="mono muted small">{{humanSize .Size}}</span></span></a></li>
+        {{end}}
+      </ul>
+      {{end}}
+      {{if $.Body}}
+        {{if $.Body.BlockedImages}}
+        <p class="banner">Remote images are hidden to protect your privacy. <a href="{{messageURL $.Folder .UID 1 $.Query}}&amp;remote=1">Show images</a></p>
+        {{end}}
+        <iframe class="body-frame" title="Message body" sandbox="allow-popups allow-popups-to-escape-sandbox" src="{{bodyURL .Folder .UID $.Remote}}"></iframe>
+      {{else}}
+        <pre class="text-body">{{.Text}}</pre>
+      {{end}}
+      <p class="small"><a href="{{rawURL .Folder .UID}}">Download original (.eml)</a></p>
+    </div>
+  {{else}}
+    <p class="empty reader-empty">Select a message to read it.</p>
+  {{end}}
+  </article>
+</div>
+{{end}}

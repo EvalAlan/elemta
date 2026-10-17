@@ -488,3 +488,21 @@ allowed_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 allowed_headers = ["Content-Type", "Authorization"]
 allow_credentials = true
 max_age = 86400  # 24 hours
+
+# Webmail (`elemta webmail`). The dev stack runs it as elemta-webmail on
+# http://localhost:8027, signed in with the LDAP mailbox user.
+[webmail]
+enabled = true
+listen = ":8027"
+# Dev Dovecot has TLS off; production should use "starttls" or "tls".
+imap_addr = "elemta-dovecot:14143"
+imap_tls = "none"
+submission_addr = "elemta:2587"
+submission_tls = "starttls"
+# The dev stack's certificate is self-signed. Never set this in production.
+insecure_skip_verify = true
+# Served over plain HTTP in dev, so the session cookie can't be Secure.
+secure_cookies = false
+session_ttl = "8h"
+max_upload_mb = 25
+page_size = 50

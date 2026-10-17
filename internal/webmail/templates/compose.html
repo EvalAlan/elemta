@@ -1,0 +1,30 @@
+{{define "content"}}
+<form class="compose" action="/compose" method="post" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  {{with .Compose}}
+  <input type="hidden" name="in_reply_to" value="{{.InReplyTo}}">
+  <input type="hidden" name="references" value="{{.References}}">
+  <input type="hidden" name="mode" value="{{.Mode}}">
+  <div class="compose-head">
+    <h1>{{if eq .Mode "reply" "replyall"}}Reply{{else if eq .Mode "forward"}}Forward{{else}}New message{{end}}</h1>
+  </div>
+  {{if $.Problem}}<p class="problem" role="alert">{{$.Problem}}</p>{{end}}
+  <div class="field"><span class="field-label">From</span><span class="mono">{{$.Session.Address}}</span></div>
+  <div class="field"><label class="field-label" for="to">To</label><input id="to" name="to" type="text" value="{{.To}}" autocomplete="email" multiple></div>
+  <details class="field-group"{{if .ShowCc}} open{{end}}>
+    <summary>Cc and Bcc</summary>
+    <div class="field"><label class="field-label" for="cc">Cc</label><input id="cc" name="cc" type="text" value="{{.Cc}}"></div>
+    <div class="field"><label class="field-label" for="bcc">Bcc</label><input id="bcc" name="bcc" type="text" value="{{.Bcc}}"></div>
+  </details>
+  <div class="field"><label class="field-label" for="subject">Subject</label><input id="subject" name="subject" type="text" value="{{.Subject}}"></div>
+  <label class="visually-hidden" for="body">Message</label>
+  <textarea id="body" name="body" rows="18">{{.Text}}</textarea>
+  <div class="field attach"><label class="field-label" for="attachments">{{template "icon-clip"}}Attach files</label><input id="attachments" name="attachments" type="file" multiple></div>
+  <div class="actions">
+    <button class="button primary" type="submit" name="op" value="send">Send</button>
+    <button class="button" type="submit" name="op" value="save" formnovalidate>Save draft</button>
+    <a class="button ghost danger push" href="/mail">Discard</a>
+  </div>
+  {{end}}
+</form>
+{{end}}

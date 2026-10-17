@@ -14,6 +14,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/EvalAlan/elemta/internal/runtimepaths"
 	"github.com/EvalAlan/elemta/internal/smtp"
+	"github.com/EvalAlan/elemta/internal/webmail"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
@@ -275,6 +276,10 @@ type Config struct {
 
 	// Metrics configuration
 	Metrics *smtp.MetricsConfig `toml:"metrics"`
+
+	// Webmail configures the first-party webmail (`elemta webmail`). It is
+	// read only by that subcommand; the SMTP server ignores it.
+	Webmail *webmail.Config `toml:"webmail"`
 
 	// Memory management configuration
 	Memory *smtp.MemoryConfig `toml:"memory"`

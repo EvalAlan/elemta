@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if .Title}}{{.Title}} · {{end}}Elemta Mail</title>
+<link rel="stylesheet" href="/static/tidewater.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <a class="brand" href="/mail">{{template "icon-mail"}}<span>Elemta</span></a>
+  <nav class="apps" aria-label="Apps">
+    <a href="/mail" aria-current="page">Mail</a>
+  </nav>
+  <form class="search" role="search" action="/mail" method="get">
+    <input type="hidden" name="f" value="{{.Folder}}">
+    <label class="visually-hidden" for="q">Search this folder</label>
+    {{template "icon-search"}}
+    <input id="q" type="search" name="q" value="{{.Query}}" placeholder="Search {{if .Folder}}{{.Folder}}{{else}}mail{{end}}">
+  </form>
+  <div class="account">
+    <span class="avatar" title="{{.Session.Address}}">{{initials (addrOf .Session.Address)}}</span>
+    <form action="/logout" method="post">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <button class="link-button" type="submit">Sign out</button>
+    </form>
+  </div>
+</header>
+<div class="shell">
+  <aside class="sidebar" aria-label="Folders">
+    <a class="button primary block" href="/compose">{{template "icon-plus"}}New message</a>
+    <nav aria-label="Folders">
+      <ul class="folders">
+      {{range .Folders}}
+        <li>
+        {{if .Selectable}}
+          <a class="folder {{depthClass .Depth}}" href="{{folderURL .Name 1 ""}}"{{if eq .Name $.Folder}} aria-current="page"{{end}}>
+            <span class="folder-name">{{.Display}}</span>
+            {{if and .Unread (ne .Role "sent") (ne .Role "trash")}}<span class="count" aria-label="{{.Unread}} unread">{{.Unread}}</span>{{end}}
+          </a>
+        {{else}}
+          <span class="folder {{depthClass .Depth}} muted">{{.Display}}</span>
+        {{end}}
+        </li>
+      {{end}}
+      </ul>
+    </nav>
+  </aside>
+  <main id="main" class="content">
+    {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
+    {{template "content" .}}
+  </main>
+</div>
+</body>
+</html>

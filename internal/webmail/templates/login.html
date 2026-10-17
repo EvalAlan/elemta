@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Elemta Mail</title>
+<link rel="stylesheet" href="/static/tidewater.css">
+</head>
+<body class="login-body">
+<main class="login">
+  <div class="brand dark">{{template "icon-mail"}}<span>Elemta</span></div>
+  <h1>Sign in to your mail</h1>
+  {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
+  {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
+  <form action="/login" method="post">
+    <input type="hidden" name="token" value="{{.Token}}">
+    <label for="user">Email address</label>
+    <input id="user" name="user" type="text" value="{{.User}}" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button class="button primary block" type="submit">Sign in</button>
+  </form>
+</main>
+</body>
+</html>
