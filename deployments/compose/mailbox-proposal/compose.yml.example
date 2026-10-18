@@ -1,0 +1,93 @@
+# Proposed interface only: the mailbox command and its config are not implemented.
+# Use as a separate Compose project; do not merge into the running stack.
+name: elemta-mailbox-proposal
+
+x-mailbox: &mailbox
+  image: ${MAILBOX_ENGINE_IMAGE:-elemta-mailbox:dev}
+  entrypoint: ["/app/elemta"]
+  command: ["mailbox", "--config", "/etc/elemta/mailbox.toml"]
+  restart: unless-stopped
+  mem_limit: 512m
+  cpus: 1.0
+  environment:
+    PGHOST: metadata
+    PGPORT: "5432"
+    PGDATABASE: mailbox_dev
+    PGUSER: mailbox_dev
+    PGPASSWORD: ${MAILBOX_DEV_DB_PASSWORD:?Supply MAILBOX_DEV_DB_PASSWORD}
+    PGSSLMODE: disable
+    ELEMTA_MAILBOX_LDAP_DN: ${ELEMTA_MAILBOX_LDAP_DN:-}
+    ELEMTA_MAILBOX_LDAP_PASSWORD: ${ELEMTA_MAILBOX_LDAP_PASSWORD:-}
+  volumes:
+    - ./mailbox.toml.example:/etc/elemta/mailbox.toml:ro
+    - bodies:/var/lib/elemta/bodies
+  tmpfs:
+    - /tmp:size=64m
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  depends_on:
+    metadata:
+      condition: service_healthy
+  networks:
+    - mailbox
+    - existing
+
+services:
+  metadata:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+    environment:
+      POSTGRES_DB: mailbox_dev
+      POSTGRES_USER: mailbox_dev
+      POSTGRES_PASSWORD: ${MAILBOX_DEV_DB_PASSWORD:?Supply MAILBOX_DEV_DB_PASSWORD}
+    volumes:
+      - metadata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailbox_dev -d mailbox_dev"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - mailbox
+
+  mailbox-a:
+    <<: *mailbox
+    hostname: mailbox-a
+
+  mailbox-b:
+    <<: *mailbox
+    hostname: mailbox-b
+
+  edge:
+    image: haproxy:3.0-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.5
+    ports:
+      - "127.0.0.1:11443:1143"
+      - "127.0.0.1:12424:2424"
+    volumes:
+      - ./haproxy.cfg.example:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - mailbox-a
+      - mailbox-b
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - mailbox
+
+networks:
+  mailbox:
+  existing:
+    external: true
+    name: ${ELEMTA_EXISTING_NETWORK:-compose_elemta_network}
+
+volumes:
+  metadata:
+  bodies:
