@@ -3,10 +3,9 @@
 `elemta mailbox` runs an independent IMAP/LMTP mailbox service with Postgres
 metadata and immutable filesystem or S3 message bodies. It is the first
 implementation of the [mailbox architecture](mailbox-engine-architecture.md).
-The normal development Compose stack now uses this service. Existing Maildir
-data must be imported into separate metadata/body volumes using the
-[offline cutover procedure](mailbox-dev-cutover.md). The isolated demo and HA
-labs remain optional; Dovecot is available only for explicit rollback.
+It is the mail store of the development Compose stack, which no longer
+includes Dovecot; mailboxes start empty. The isolated demo and HA labs remain
+optional.
 
 ## Implemented
 
