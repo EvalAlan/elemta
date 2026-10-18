@@ -172,3 +172,27 @@ The [cloud stress runner](cloud-stress-testing.md) exercises verified SMTP,
 IMAPS and webmail from a separate workstation, using isolated accounts and
 local recipients. Start with its smoke profile before increasing concurrency.
 Host settings, credentials and run reports stay outside tracked source.
+
+### Directory bootstrap and password recovery
+
+`scripts/dev-secrets.sh` generates a directory admin credential in the ignored,
+mode 0600 `.secrets/ldap-admin.env`. The LDAP container reads it at bootstrap;
+`scripts/ldap-admin-password.sh` applies it to existing directory volumes and
+verifies the bind. Bootstrap operations and health checks use local socket
+EXTERNAL authentication. Application services retain their separate credentials.
+After upgrading an existing deployment, generate secrets, apply the script, then
+recreate only the LDAP container with the usual Compose files and environment.
+Neither a full config reseed nor an application password change is needed.
+
+Create the configured recovery sender mailbox with `elemta provision`, and store
+its generated credential as `ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD` in the server's
+ignored `.secrets/recovery-smtp.env` (mode 0600). Run `scripts/dev-secrets.sh` to
+refresh the per-service env files, then recreate webmail with config reseeding
+disabled. The override survives later deploys; never put this password in TOML
+or tracked files. A plain container restart does not reload env-file changes.
+
+Each user must add a different accessible recovery address in webmail Settings
+and confirm the verification email before Forgot password can send reset links.
+Links expire after 15 minutes and are consumed only on form submission. Test
+verification, reset, old-password rejection, session revocation and link reuse
+with disposable accounts before relying on recovery for a real mailbox.

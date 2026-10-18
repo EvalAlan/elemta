@@ -359,10 +359,12 @@ services:
     ports:
       - "1389:389" # LDAP port
       - "1636:636" # LDAPS port  
+    env_file:
+      - path: .secrets/ldap-admin.env
+        required: true
     environment:
       - LDAP_ORGANISATION=Example Corp
       - LDAP_DOMAIN=example.com
-      - LDAP_ADMIN_PASSWORD=admin
       - LDAP_BASE_DN=dc=example,dc=com
       - LDAP_TLS_VERIFY_CLIENT=never
       - LDAP_RFC2307BIS_SCHEMA=true
@@ -375,7 +377,7 @@ services:
     networks:
       - elemta_network
     healthcheck:
-      test: [ "CMD", "sh", "-c", "ldapsearch -x -H ldapi:/// -Y EXTERNAL -b 'ou=people,dc=example,dc=com' '(uid=user)' 2>&1 | grep -q 'uid: user' || ldapsearch -x -D 'cn=admin,dc=example,dc=com' -w admin -b 'dc=example,dc=com' -s base -LLL" ]
+      test: [ "CMD", "ldapsearch", "-Q", "-Y", "EXTERNAL", "-H", "ldapi:///", "-b", "dc=example,dc=com", "-s", "base", "-LLL", "dn" ]
       interval: 10s
       timeout: 10s
       retries: 30

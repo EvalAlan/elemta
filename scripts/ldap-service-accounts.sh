@@ -32,7 +32,7 @@ else
 fi
 BASE="dc=example,dc=com"
 SVC="ou=services,$BASE"
-ADMIN=(-x -D "cn=admin,$BASE" -w admin)
+ADMIN=(-Q -Y EXTERNAL -H ldapi:///)
 
 # Creating this container requires write access to the directory root. Keep
 # that privilege in bootstrap rather than granting it to the provisioner.

@@ -105,7 +105,7 @@ dc build
 step "Directory and certificate"
 dc up -d elemta-ldap elemta-caddy
 for _ in $(seq 60); do
-    docker exec elemta-ldap ldapsearch -x -D "cn=admin,dc=example,dc=com" -w admin \
+    docker exec elemta-ldap ldapsearch -Q -Y EXTERNAL -H ldapi:/// \
         -b "dc=example,dc=com" -s base dn >/dev/null 2>&1 && break
     sleep 2
 done
@@ -117,12 +117,13 @@ fi
 # The containers the dev stack fills from fixtures, created empty: no demo
 # accounts with published passwords on a public server.
 for ou in people groups mailgroups domains; do
-    if ! docker exec elemta-ldap ldapsearch -x -D "cn=admin,dc=example,dc=com" -w admin \
+    if ! docker exec elemta-ldap ldapsearch -Q -Y EXTERNAL -H ldapi:/// \
         -b "ou=$ou,dc=example,dc=com" -s base dn >/dev/null 2>&1; then
         printf 'dn: ou=%s,dc=example,dc=com\nobjectClass: organizationalUnit\nou: %s\n' "$ou" "$ou" |
-            docker exec -i elemta-ldap ldapadd -x -D "cn=admin,dc=example,dc=com" -w admin >/dev/null
+            docker exec -i elemta-ldap ldapadd -Q -Y EXTERNAL -H ldapi:/// >/dev/null
     fi
 done
+"$root/scripts/ldap-admin-password.sh"
 "$root/scripts/ldap-service-accounts.sh"
 
 for i in $(seq 90); do

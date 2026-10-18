@@ -8,8 +8,9 @@
 # up with env_file in docker-compose.yml. ldap-services.env holds them all
 # and is used only on the host, to create the accounts.
 #
-# Passwords are random per checkout. Re-running keeps existing ones; delete
-# the directory to rotate everything (then run `make ldap-service-accounts`).
+# Passwords are random per checkout. Re-running keeps existing ones; rotate
+# individual service accounts through the protected master file. Existing
+# directories need scripts/ldap-admin-password.sh to apply the admin secret.
 set -eu
 
 dir="$(dirname "$0")/../deployments/compose/.secrets"
@@ -40,6 +41,14 @@ if [ -z "${LDAP_MAILBOX_PASSWORD:-}" ]; then
     printf '%s\n' "LDAP_MAILBOX_PASSWORD=$LDAP_MAILBOX_PASSWORD" >>"$master"
 fi
 
+# A generated bootstrap credential also covers fresh directories. Existing
+# volumes retain their old hash until ldap-admin-password.sh applies this.
+if [ -z "${LDAP_ADMIN_PASSWORD:-}" ]; then
+    LDAP_ADMIN_PASSWORD=$(gen)
+    (umask 077; printf '%s\n' "LDAP_ADMIN_PASSWORD=$LDAP_ADMIN_PASSWORD" >>"$master")
+fi
+chmod 600 "$master"
+
 write() { # file, then lines
     f="$dir/$1"
     shift
@@ -49,7 +58,13 @@ write() { # file, then lines
 
 # The recovery mail is sent from the dev sender@example.com mailbox, whose
 # password is the fixture's own (docker/ldap/99-stress-users.ldif).
-recovery_smtp="ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=password"
+ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=password
+# A deployment override must survive subsequent credential regeneration.
+if [ -f "$dir/recovery-smtp.env" ]; then
+    . "$dir/recovery-smtp.env"
+fi
+recovery_smtp="ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=$ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD"
+write ldap-admin.env "LDAP_ADMIN_PASSWORD=$LDAP_ADMIN_PASSWORD"
 
 write dovecot.env "LDAP_DOVECOT_PASSWORD=$LDAP_DOVECOT_PASSWORD"
 write elemta.env "ELEMTA_AUTH_DATASOURCE_PASS=$LDAP_SMTP_PASSWORD"
