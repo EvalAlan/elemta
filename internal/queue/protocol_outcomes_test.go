@@ -268,6 +268,7 @@ func TestLMTPHandlerMixedFinalOutcomes(t *testing.T) {
 	var port int
 	fmt.Sscanf(portText, "%d", &port)
 	h := NewLMTPDeliveryHandler(host, port, 10, 0)
+	defer h.Close() // pooled sessions QUIT, which the fake server waits for
 	msg := Message{From: "sender@test", To: []string{"ok@test", "later@test", "bad@test"}}
 	res, err := h.DeliverMessageWithMetadata(context.Background(), msg, []byte("Subject: x\r\n\r\nbody"))
 	if err == nil || res == nil || !res.Success || len(res.RecipientOutcomes) != 3 {
@@ -287,7 +288,9 @@ func TestLMTPHandlerAllAcceptedRecipientsFailReturnsOutcomes(t *testing.T) {
 	host, portText, _ := net.SplitHostPort(addr)
 	var port int
 	fmt.Sscanf(portText, "%d", &port)
-	res, err := NewLMTPDeliveryHandler(host, port, 10, 0).DeliverMessageWithMetadata(context.Background(), Message{From: "sender@test", To: []string{"later@test", "bad@test"}}, []byte("body"))
+	h := NewLMTPDeliveryHandler(host, port, 10, 0)
+	defer h.Close()
+	res, err := h.DeliverMessageWithMetadata(context.Background(), Message{From: "sender@test", To: []string{"later@test", "bad@test"}}, []byte("body"))
 	if err == nil || res == nil || len(res.RecipientOutcomes) != 2 || res.RecipientOutcomes[0].Status != RecipientTemporaryFailure || res.RecipientOutcomes[1].Status != RecipientPermanentFailure {
 		t.Fatalf("result=%+v err=%v", res, err)
 	}

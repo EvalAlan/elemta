@@ -1,7 +1,6 @@
 package queue
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -28,6 +27,9 @@ type LMTPDeliveryHandler struct {
 	// and a server that doesn't offer it is a temporary failure, never a
 	// silent downgrade to plaintext.
 	tlsConfig *tls.Config
+
+	poolMu sync.Mutex
+	pool   []*lmtpSession
 }
 
 // SetTLS requires STARTTLS with this configuration; nil turns it off.
@@ -102,124 +104,29 @@ func (h *LMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 	// Create context with timeout
 	deliveryCtx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
-	_ = deliveryCtx // Used in LMTP operations below
 
-	// Connect to LMTP server
 	addr := net.JoinHostPort(h.host, fmt.Sprintf("%d", h.port))
-	conn, err := net.DialTimeout("tcp", addr, h.timeout)
+	sess, err := h.acquire(deliveryCtx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to LMTP server %s: %w", addr, err)
-	}
-	defer func() { _ = conn.Close() }()
-	_ = deliveryCtx
-
-	// Set connection deadline
-	deadline := time.Now().Add(h.timeout)
-	if err := conn.SetDeadline(deadline); err != nil {
-		h.logger.Warn("Failed to set connection deadline", "error", err)
-	}
-
-	// Create buffers for reading/writing
-	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
-
-	// Helper function to send command and read response
-	sendCommand := func(cmd string) (string, error) {
-		h.logger.Debug("LMTP command", "command", strings.TrimSpace(cmd))
-
-		if _, err := writer.WriteString(cmd); err != nil {
-			return "", fmt.Errorf("failed to send command: %w", err)
+		if errors.Is(err, errLMTPSetup) {
+			return lmtpPreFinalFailure(msg, addr, err.Error(), RecipientTemporaryFailure)
 		}
-		if err := writer.Flush(); err != nil {
-			return "", fmt.Errorf("failed to flush command: %w", err)
-		}
-
-		resp, err := reader.ReadString('\n')
-		if err != nil {
-			return "", fmt.Errorf("failed to read response: %w", err)
-		}
-
-		resp = strings.TrimSpace(resp)
-		h.logger.Debug("LMTP response", "response", resp)
-		return resp, nil
-	}
-
-	// Read server greeting
-	greeting, err := reader.ReadString('\n')
-	if err != nil {
-		return nil, fmt.Errorf("failed to read server greeting: %w", err)
-	}
-	greeting = strings.TrimSpace(greeting)
-	h.logger.Debug("LMTP server greeting", "response", greeting)
-
-	if !strings.HasPrefix(greeting, "220 ") {
-		return nil, fmt.Errorf("unexpected server greeting: %s", greeting)
-	}
-
-	// LHLO, returning the server's extensions (upper case).
-	hostname := "elemta.local"
-	lhlo := func() (map[string]bool, error) {
-		lhloResp, err := sendCommand(fmt.Sprintf("LHLO %s\r\n", hostname))
-		if err != nil {
-			return nil, fmt.Errorf("LHLO failed: %w", err)
-		}
-		exts := map[string]bool{}
-		note := func(line string) {
-			if len(line) >= 4 {
-				exts[strings.ToUpper(strings.Fields(line[4:] + " ")[0])] = true
-			}
-		}
-		note(lhloResp)
-		if strings.HasPrefix(lhloResp, "250-") {
-			// Read remaining lines until we get "250 " (final line)
-			for {
-				resp, err := reader.ReadString('\n')
-				if err != nil {
-					return nil, fmt.Errorf("failed to read LHLO continuation: %w", err)
-				}
-				resp = strings.TrimSpace(resp)
-				h.logger.Debug("LMTP response", "response", resp)
-				note(resp)
-				if strings.HasPrefix(resp, "250 ") {
-					break
-				}
-				if !strings.HasPrefix(resp, "250-") {
-					return nil, fmt.Errorf("server rejected LHLO: %s", resp)
-				}
-			}
-		} else if !strings.HasPrefix(lhloResp, "250 ") {
-			return nil, fmt.Errorf("server rejected LHLO: %s", lhloResp)
-		}
-		return exts, nil
-	}
-	exts, err := lhlo()
-	if err != nil {
 		return &DeliveryResult{}, err
 	}
-	if h.tlsConfig != nil {
-		if !exts["STARTTLS"] {
-			return lmtpPreFinalFailure(msg, addr, "LMTP server doesn't offer STARTTLS, which is required", RecipientTemporaryFailure)
+	// The session goes back to the pool only after a clean transaction;
+	// any other exit closes it.
+	reusable := false
+	defer func() {
+		if reusable {
+			h.release(sess)
+		} else {
+			_ = sess.conn.Close()
 		}
-		resp, err := sendCommand("STARTTLS\r\n")
-		if err != nil || !strings.HasPrefix(resp, "220") {
-			return lmtpPreFinalFailure(msg, addr, fmt.Sprintf("STARTTLS failed: %s %v", resp, err), RecipientTemporaryFailure)
-		}
-		cfg := h.tlsConfig.Clone()
-		if cfg.ServerName == "" {
-			cfg.ServerName = h.host
-		}
-		tc := tls.Client(conn, cfg)
-		if err := tc.HandshakeContext(deliveryCtx); err != nil {
-			return lmtpPreFinalFailure(msg, addr, "TLS handshake failed: "+err.Error(), RecipientTemporaryFailure)
-		}
-		conn = tc
-		reader, writer = bufio.NewReader(tc), bufio.NewWriter(tc)
-		// RFC 3207: forget everything learnt before TLS and ask again.
-		if exts, err = lhlo(); err != nil {
-			return &DeliveryResult{}, err
-		}
-	}
-	canEnvelopeID := exts["DSN"]
+	}()
+	conn := sess.conn
+	reader, writer := sess.r, sess.w
+	sendCommand := sess.command
+	canEnvelopeID := sess.exts["DSN"]
 
 	// Send MAIL FROM - extract clean email address from the stored From field
 	// The From field might contain: "<test@example.com> size=237" or "test@example.com" or "<test@example.com>"
@@ -324,10 +231,12 @@ func (h *LMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 
 	// Read response for each accepted recipient (LMTP returns per-recipient responses)
 	deliveredCount := 0
+	readAll := true
 	for acceptedPosition, recipient := range acceptedRecipients {
 		outcomeIndex := acceptedIndexes[acceptedPosition]
 		resp, err := reader.ReadString('\n')
 		if err != nil {
+			readAll = false
 			outcomes[outcomeIndex].Status, outcomes[outcomeIndex].Diagnostic = RecipientTemporaryFailure, err.Error()
 			continue
 		}
@@ -348,13 +257,9 @@ func (h *LMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 		outcomes[outcomeIndex].Status, outcomes[outcomeIndex].EnhancedStatusCode, outcomes[outcomeIndex].Diagnostic = status, enhancedStatus(resp), resp
 	}
 
-	// Send QUIT
-	quitResp, err := sendCommand("QUIT\r\n")
-	if err != nil {
-		h.logger.Warn("QUIT command failed", "error", err)
-	} else if !strings.HasPrefix(quitResp, "221 ") {
-		h.logger.Warn("Unexpected QUIT response", "response", quitResp)
-	}
+	// Every recipient's reply was read, so the session is at a clean
+	// boundary and can carry the next message.
+	reusable = readAll
 
 	// Check delivery success
 	if deliveredCount == 0 {
