@@ -54,6 +54,19 @@ labs remain optional; Dovecot is available only for explicit rollback.
   changes since the session's MODSEQ, so their cost doesn't grow with the
   folder. The journal is compacted after `maintenance.journal_retention_hours`
   (a week by default); a session that fell behind reloads its folder.
+- Sieve filtering at delivery and ManageSieve (RFC 5804) on `sieve.listen`.
+  Supported: fileinto (with `:create`, `:copy` and flags), keep, discard,
+  redirect, reject/ereject, imap4flags, variables, relational, regex, body,
+  envelope, subaddress, environment, date/currentdate and vacation (with
+  `:seconds`). The interpreter is a fork of go-sieve in `internal/sievefork`
+  (see its `FORK.md`). Scripts are stored in Postgres, so every replica runs
+  the same active script. A script that doesn't compile or fails at run time
+  keeps the message. Retried LMTP deliveries don't store, redirect or reply
+  twice. Out-of-office replies follow RFC 5230 and RFC 3834: at most one per
+  sender per period, none to lists, bulk or automated mail, bounces or mail
+  that doesn't name the user, sent from the null sender. Redirects and
+  replies are submitted to `sieve.submit_addr`; without it they are skipped
+  and logged.
 - Readiness checks for a writable database and accessible body store. Strict
   mode requires configured synchronous replication and a streaming quorum/
   synchronous standby. Writes explicitly use synchronous commit in that mode.
@@ -250,7 +263,6 @@ This service can receive and serve mail; it is not yet a complete Dovecot
 replacement or a demonstrated million-mailbox deployment. Keep the existing
 server until these remaining gates are met:
 
-- ManageSieve/Sieve execution, vacation and duplicate-suppression semantics.
 - CONDSTORE/QRESYNC.
 - Measured memory limits for very large mailboxes: a selected session still
   holds one small row per message in its view.

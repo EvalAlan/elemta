@@ -59,3 +59,14 @@ ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS hdr_subject TEXT NOT NULL
 ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS body_tsv TSVECTOR;
 ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS hdr_content_type TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS mailbox_summaries_body_tsv ON mailbox_summaries USING GIN (body_tsv);
+CREATE TABLE IF NOT EXISTS mailbox_sieve_scripts (
+ account TEXT NOT NULL REFERENCES mailbox_accounts(id), name TEXT NOT NULL,
+ script TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT FALSE,
+ updated TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(account,name)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS mailbox_sieve_one_active ON mailbox_sieve_scripts(account) WHERE active;
+CREATE TABLE IF NOT EXISTS mailbox_sieve_sent (
+ account TEXT NOT NULL REFERENCES mailbox_accounts(id), key TEXT NOT NULL,
+ expires TIMESTAMPTZ NOT NULL, PRIMARY KEY(account,key)
+);
+CREATE INDEX IF NOT EXISTS mailbox_sieve_sent_expiry ON mailbox_sieve_sent(expires);

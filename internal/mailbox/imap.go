@@ -28,35 +28,47 @@ var _ imapserver.SessionIMAP4rev2 = (*imapSession)(nil)
 
 func (s *imapSession) Close() error { s.cancel(); return nil }
 func (s *imapSession) Login(user, password string) error {
-	if len(user) > 320 {
+	a, err := s.service.login(s.ctx, user, password)
+	if errors.Is(err, ErrCredentials) {
 		return imapserver.ErrAuthFailed
 	}
-	user = strings.ToLower(strings.TrimSpace(user))
-	if !strings.Contains(user, "@") && s.service.cfg.Auth.DefaultDomain != "" {
-		user += "@" + s.service.cfg.Auth.DefaultDomain
-	}
-	ctx, cancel := context.WithTimeout(s.ctx, 15*time.Second)
-	defer cancel()
-	allowed, err := s.service.allowLogin(user)
 	if err != nil {
-		return protocolError(err)
-	}
-	if !allowed {
-		return imapserver.ErrAuthFailed
-	}
-	a, err := s.service.auth.Login(ctx, user, password)
-	if err != nil {
-		if errors.Is(err, ErrCredentials) {
-			s.service.failLogin(user)
-			return imapserver.ErrAuthFailed
-		}
-		return protocolError(err)
-	}
-	if err = s.service.engine.EnsureAccount(ctx, a); err != nil {
 		return protocolError(err)
 	}
 	s.account = a
 	return nil
+}
+
+// login checks a user's password with the shared failure limit, for IMAP
+// and ManageSieve alike.
+func (s *Service) login(ctx context.Context, user, password string) (Account, error) {
+	if len(user) > 320 {
+		return Account{}, ErrCredentials
+	}
+	user = strings.ToLower(strings.TrimSpace(user))
+	if !strings.Contains(user, "@") && s.cfg.Auth.DefaultDomain != "" {
+		user += "@" + s.cfg.Auth.DefaultDomain
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	allowed, err := s.allowLogin(user)
+	if err != nil {
+		return Account{}, err
+	}
+	if !allowed {
+		return Account{}, ErrCredentials
+	}
+	a, err := s.auth.Login(ctx, user, password)
+	if err != nil {
+		if errors.Is(err, ErrCredentials) {
+			s.failLogin(user)
+		}
+		return Account{}, err
+	}
+	if err = s.engine.EnsureAccount(ctx, a); err != nil {
+		return Account{}, err
+	}
+	return a, nil
 }
 func protocolError(err error) error {
 	if err == nil {

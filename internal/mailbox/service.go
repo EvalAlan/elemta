@@ -30,6 +30,8 @@ type Service struct {
 	log          *slog.Logger
 	imap         *imapserver.Server
 	lmtp         *smtp.Server
+	sieve        sieveCache
+	tlsConfig    *tls.Config
 	http         *http.Server
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -89,6 +91,7 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 		}
 		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}
 	}
+	s.tlsConfig = tlsConfig
 	caps := imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapNamespace: {}, imap.CapUIDPlus: {}, imap.CapMove: {}, imap.CapIdle: {}, imap.CapListExtended: {}, imap.CapListStatus: {}, imap.CapSpecialUse: {}, imap.CapESearch: {}, imap.CapStatusSize: {}, imap.CapUnselect: {}}
 	s.imap = imapserver.New(&imapserver.Options{Caps: caps, TLSConfig: tlsConfig, InsecureAuth: c.Server.AllowPlaintextAuth, NewSession: func(_ *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 		ctx, cancel := context.WithCancel(s.ctx)
@@ -148,12 +151,25 @@ func (s *Service) Run(ctx context.Context) error {
 		listeners = append(listeners, ln)
 	}
 	slots := make(chan struct{}, s.cfg.Limits.MaxConnections)
-	errs := make(chan error, 3)
+	errs := make(chan error, 4)
 	var wg sync.WaitGroup
 	start := func(fn func() error) { wg.Add(1); go func() { defer wg.Done(); errs <- fn() }() }
 	start(func() error { return s.imap.Serve(&limitedListener{Listener: listeners[0], slots: slots}) })
 	start(func() error { return s.lmtp.Serve(&limitedListener{Listener: listeners[1], slots: slots}) })
 	start(func() error { return s.http.Serve(listeners[2]) })
+	if s.cfg.Sieve.Listen != "" {
+		ln, err := net.Listen("tcp", s.cfg.Sieve.Listen)
+		if err != nil {
+			s.cancel()
+			for _, l := range listeners {
+				_ = l.Close()
+			}
+			wg.Wait()
+			return err
+		}
+		listeners = append(listeners, ln)
+		start(func() error { return s.serveManageSieve(&limitedListener{Listener: ln, slots: slots}, s.tlsConfig) })
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -270,11 +286,12 @@ type lmtpSession struct {
 	recipients []Account
 	addresses  []string
 	token      string
+	from       string
 }
 
-func (l *lmtpSession) Reset()        { l.recipients = nil; l.addresses = nil; l.token = "" }
+func (l *lmtpSession) Reset()        { l.recipients = nil; l.addresses = nil; l.token = ""; l.from = "" }
 func (l *lmtpSession) Logout() error { l.Reset(); return nil }
-func (l *lmtpSession) Mail(_ string, options *smtp.MailOptions) error {
+func (l *lmtpSession) Mail(from string, options *smtp.MailOptions) error {
 	if !l.service.cfg.Server.AllowPlaintextAuth {
 		if _, secure := l.conn.TLSConnectionState(); !secure {
 			return &smtp.SMTPError{Code: 530, Message: "STARTTLS required"}
@@ -282,6 +299,7 @@ func (l *lmtpSession) Mail(_ string, options *smtp.MailOptions) error {
 	}
 	l.Reset()
 	l.token = options.EnvelopeID
+	l.from = from
 	return nil
 }
 func (l *lmtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
@@ -322,10 +340,13 @@ func (l *lmtpSession) LMTPData(r io.Reader, status smtp.StatusCollector) error {
 			digest := sha256.Sum256([]byte(token + "\x00" + strings.ToLower(l.addresses[i])))
 			token = hex.EncodeToString(digest[:])
 		}
-		_, err := l.service.engine.Append(ctx, a.ID, "INBOX", raw, nil, time.Now(), token)
+		err := l.service.deliver(ctx, delivery{account: a, from: l.from, rcpt: l.addresses[i], raw: raw, token: token})
 		cancel()
 		var result error
-		if err != nil {
+		var smtpErr *smtp.SMTPError
+		if errors.As(err, &smtpErr) {
+			result = smtpErr // a Sieve reject, or a deliberate temporary failure
+		} else if err != nil {
 			result = &smtp.SMTPError{Code: 451, Message: "Delivery temporarily unavailable"}
 			if errors.Is(err, ErrQuota) {
 				result = &smtp.SMTPError{Code: 452, EnhancedCode: smtp.EnhancedCode{4, 2, 2}, Message: "Mailbox quota exceeded"}

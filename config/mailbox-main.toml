@@ -28,3 +28,12 @@ default_domain = "example.com"
 max_connections = 256
 max_message_mb = 25
 max_concurrent_bodies = 2
+
+[sieve]
+# ManageSieve for the webmail and mail clients' filter editors.
+listen = ":4190"
+# Redirects and out-of-office replies go through Elemta's submission port,
+# which relays for the private dev network without a login.
+submit_addr = "elemta:2587"
+submit_tls = "none"
+hostname = "mail.example.com"

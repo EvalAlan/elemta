@@ -494,9 +494,10 @@ imap_addr = "elemta-mailbox:1143"
 imap_tls = "none"
 submission_addr = "elemta:2587"
 submission_tls = "starttls"
-# ManageSieve and delivery-time filters are pending in the new engine.
-# Existing scripts remain in the retained Dovecot volume for rollback.
-sieve_addr = ""
+# Filters and out-of-office replies are stored by the mailbox service's
+# ManageSieve (RFC 5804) and run at delivery. Plaintext on the isolated dev
+# network only.
+sieve_addr = "elemta-mailbox:4190"
 sieve_tls = "none"
 # The dev stack's certificate is self-signed. Never set this in production.
 insecure_skip_verify = true

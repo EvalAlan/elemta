@@ -19,6 +19,25 @@ type Config struct {
 	Auth        AuthConfig        `toml:"auth"`
 	Limits      LimitsConfig      `toml:"limits"`
 	Maintenance MaintenanceConfig `toml:"maintenance"`
+	Sieve       SieveConfig       `toml:"sieve"`
+}
+
+// SieveConfig controls filtering at delivery and the ManageSieve service.
+type SieveConfig struct {
+	// Listen is the ManageSieve address (RFC 5804); empty disables it.
+	Listen string `toml:"listen"`
+	// SubmitAddr is the SMTP submission server redirects and automatic
+	// replies are sent through; empty disables both.
+	SubmitAddr               string `toml:"submit_addr"`
+	SubmitTLS                string `toml:"submit_tls"` // none or starttls
+	SubmitInsecureSkipVerify bool   `toml:"submit_insecure_skip_verify"`
+	SubmitUserEnv            string `toml:"submit_user_env"`
+	SubmitPasswordEnv        string `toml:"submit_password_env"`
+	Hostname                 string `toml:"hostname"`
+	MaxScriptBytes           int    `toml:"max_script_bytes"`
+	MaxScripts               int    `toml:"max_scripts"`
+	MaxRedirects             int    `toml:"max_redirects"`
+	VacationMaxDays          int    `toml:"vacation_max_days"`
 }
 type MaintenanceConfig struct {
 	GarbageCollection bool `toml:"garbage_collection"`
@@ -91,6 +110,27 @@ func (c Config) WithDefaults() Config {
 		if driver := os.Getenv(c.Bodies.DriverEnv); driver != "" {
 			c.Bodies.Driver = driver
 		}
+	}
+	if c.Sieve.MaxScriptBytes == 0 {
+		c.Sieve.MaxScriptBytes = 64 << 10
+	}
+	if c.Sieve.MaxScripts == 0 {
+		c.Sieve.MaxScripts = 20
+	}
+	if c.Sieve.MaxRedirects == 0 {
+		c.Sieve.MaxRedirects = 4
+	}
+	if c.Sieve.VacationMaxDays == 0 {
+		c.Sieve.VacationMaxDays = 30
+	}
+	if c.Sieve.Hostname == "" {
+		c.Sieve.Hostname = "mailbox.elemta"
+	}
+	if c.Sieve.SubmitUserEnv == "" {
+		c.Sieve.SubmitUserEnv = "ELEMTA_MAILBOX_SUBMIT_USER"
+	}
+	if c.Sieve.SubmitPasswordEnv == "" {
+		c.Sieve.SubmitPasswordEnv = "ELEMTA_MAILBOX_SUBMIT_PASSWORD"
 	}
 	if c.Maintenance.JournalRetentionHours == 0 {
 		c.Maintenance.JournalRetentionHours = 168

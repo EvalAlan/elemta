@@ -66,6 +66,12 @@ linters:
           - errcheck
           - staticcheck
         path: ^internal/imapfork/
+      # Likewise the go-sieve fork (internal/sievefork/FORK.md).
+      - linters:
+          - errcheck
+          - staticcheck
+          - unused
+        path: ^internal/sievefork/
       - linters:
           - errcheck
         path: cmd/

@@ -401,6 +401,7 @@ services:
     ports:
       - "14143:1143"
       - "2424:2424"
+      - "4190:4190"
     volumes:
       - ./mailbox/main-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks: [elemta_network]
