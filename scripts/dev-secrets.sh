@@ -34,6 +34,12 @@ fi
 # shellcheck disable=SC1090
 . "$master"
 
+# Upgrades add a mailbox-service role without rotating existing services.
+if [ -z "${LDAP_MAILBOX_PASSWORD:-}" ]; then
+    LDAP_MAILBOX_PASSWORD=$(gen)
+    printf '%s\n' "LDAP_MAILBOX_PASSWORD=$LDAP_MAILBOX_PASSWORD" >>"$master"
+fi
+
 write() { # file, then lines
     f="$dir/$1"
     shift
@@ -47,6 +53,25 @@ recovery_smtp="ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=password"
 
 write dovecot.env "LDAP_DOVECOT_PASSWORD=$LDAP_DOVECOT_PASSWORD"
 write elemta.env "ELEMTA_AUTH_DATASOURCE_PASS=$LDAP_SMTP_PASSWORD"
+write mailbox.env \
+    "ELEMTA_MAILBOX_LDAP_DN=cn=mailbox,ou=services,dc=example,dc=com" \
+    "ELEMTA_MAILBOX_LDAP_PASSWORD=$LDAP_MAILBOX_PASSWORD"
+
+storage="$dir/mailbox-storage.env"
+if [ ! -f "$storage" ]; then
+    umask 077
+    {
+        echo "MAILBOX_DB_PASSWORD=$(gen)"
+        echo "MAILBOX_S3_ACCESS_KEY=$(gen)"
+        echo "MAILBOX_S3_SECRET_KEY=$(gen)"
+    } >"$storage"
+fi
+if [ -z "$(sed -n 's/^MAILBOX_HA_SUPERUSER_PASSWORD=//p' "$storage")" ]; then
+    printf '%s\n' "MAILBOX_HA_SUPERUSER_PASSWORD=$(gen)" >>"$storage"
+fi
+if [ -z "$(sed -n 's/^MAILBOX_HA_REPLICATION_PASSWORD=//p' "$storage")" ]; then
+    printf '%s\n' "MAILBOX_HA_REPLICATION_PASSWORD=$(gen)" >>"$storage"
+fi
 write webmail.env \
     "ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD=$LDAP_WEBMAIL_PASSWORD" \
     "ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD=$LDAP_WEBMAIL_RESET_PASSWORD" \

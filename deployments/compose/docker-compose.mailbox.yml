@@ -1,0 +1,124 @@
+name: elemta-mailbox-dev
+x-mailbox: &mailbox
+  image: elemta-mailbox:dev
+  build:
+    context: ../..
+    dockerfile: docker/mailbox/Dockerfile
+  restart: unless-stopped
+  mem_limit: 512m
+  cpus: 1.0
+  env_file:
+    - path: .secrets/mailbox.env
+      required: true
+  environment:
+    PGHOST: metadata
+    PGPORT: "5432"
+    PGDATABASE: mailbox_dev
+    PGUSER: mailbox_dev
+    PGPASSWORD: ${MAILBOX_DB_PASSWORD:?Run make ensure-dev-secrets}
+    PGSSLMODE: disable
+    ELEMTA_MAILBOX_BODY_DRIVER: ${ELEMTA_MAILBOX_BODY_DRIVER:-file}
+    ELEMTA_MAILBOX_S3_ACCESS_KEY: ${MAILBOX_S3_ACCESS_KEY:?Run make ensure-dev-secrets}
+    ELEMTA_MAILBOX_S3_SECRET_KEY: ${MAILBOX_S3_SECRET_KEY:?Run make ensure-dev-secrets}
+  volumes:
+    - ../../config/mailbox.toml:/etc/elemta/mailbox.toml:ro
+    - bodies:/var/lib/elemta/bodies
+  tmpfs:
+    - /tmp:size=64m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  depends_on:
+    metadata:
+      condition: service_healthy
+  networks: [mailbox, existing]
+  healthcheck:
+    test: [CMD, curl, -fsS, http://localhost:8080/readyz]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+
+services:
+  metadata:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+    environment:
+      POSTGRES_DB: mailbox_dev
+      POSTGRES_USER: mailbox_dev
+      POSTGRES_PASSWORD: ${MAILBOX_DB_PASSWORD:?Run make ensure-dev-secrets}
+    volumes: [metadata:/var/lib/postgresql/data]
+    networks: [mailbox]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U mailbox_dev -d mailbox_dev]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mailbox-a:
+    <<: *mailbox
+    hostname: mailbox-a
+  mailbox-b:
+    <<: *mailbox
+    hostname: mailbox-b
+
+  edge:
+    image: haproxy:3.0-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.5
+    ports:
+      - 127.0.0.1:11443:1143
+      - 127.0.0.1:12424:2424
+      - 127.0.0.1:18031:8080
+    volumes:
+      - ./mailbox/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      mailbox-a:
+        condition: service_healthy
+      mailbox-b:
+        condition: service_healthy
+    networks: [mailbox]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  object-store:
+    image: chrislusf/seaweedfs:4.48
+    profiles: [s3]
+    command: [mini, -dir=/data]
+    mem_limit: 1g
+    environment:
+      AWS_ACCESS_KEY_ID: ${MAILBOX_S3_ACCESS_KEY:?Run make ensure-dev-secrets}
+      AWS_SECRET_ACCESS_KEY: ${MAILBOX_S3_SECRET_KEY:?Run make ensure-dev-secrets}
+      S3_BUCKET: mailbox-dev
+    volumes: [objects:/data]
+    networks: [mailbox]
+    ports: [127.0.0.1:18333:8333]
+
+  webmail:
+    image: elemta-mailbox:dev
+    profiles: [webmail]
+    # The shared config loader requires ownership by the running UID. Copy
+    # the read-only example into a private, container-owned runtime file.
+    entrypoint: [/bin/sh, -c]
+    command:
+      - cp /etc/elemta/webmail.toml /tmp/webmail.toml && chmod 600 /tmp/webmail.toml && exec /app/elemta webmail --config /tmp/webmail.toml
+    mem_limit: 256m
+    ports: [127.0.0.1:18037:8027]
+    volumes:
+      - ../../config/mailbox-webmail.toml:/etc/elemta/webmail.toml:ro
+    networks: [mailbox, existing]
+    depends_on: [edge]
+
+networks:
+  mailbox:
+    ipam:
+      config:
+        - subnet: 172.30.79.0/24
+  existing:
+    external: true
+    name: ${ELEMTA_EXISTING_NETWORK:-compose_elemta_network}
+volumes:
+  metadata:
+  bodies:
+  objects:

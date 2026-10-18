@@ -3,10 +3,12 @@ package queue
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/textproto"
 	"strings"
 	"sync"
 	"time"
@@ -153,6 +155,7 @@ func (h *LMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 	}
 
 	// Handle multi-line LHLO response
+	canEnvelopeID := len(lhloResp) >= 4 && strings.EqualFold(strings.TrimSpace(lhloResp[4:]), "DSN")
 	if strings.HasPrefix(lhloResp, "250-") {
 		// Read remaining lines until we get "250 " (final line)
 		for {
@@ -162,6 +165,9 @@ func (h *LMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 			}
 			resp = strings.TrimSpace(resp)
 			h.logger.Debug("LMTP response", "response", resp)
+			if len(resp) >= 4 && strings.EqualFold(strings.TrimSpace(resp[4:]), "DSN") {
+				canEnvelopeID = true
+			}
 
 			if strings.HasPrefix(resp, "250 ") {
 				break
@@ -199,7 +205,14 @@ func (h *LMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 	}
 
 	h.logger.Debug("Sending MAIL FROM", "raw_from", msg.From, "cleaned_sender", sender)
-	mailFromResp, err := sendCommand(fmt.Sprintf("MAIL FROM:<%s>\r\n", sender))
+	mailCommand := fmt.Sprintf("MAIL FROM:<%s>", sender)
+	// A stable queue ID lets a trusted mailbox backend recognize retries
+	// after an ambiguous disconnect. Never forward a sender-chosen token.
+	if canEnvelopeID && msg.ID != "" {
+		sum := sha256.Sum256([]byte(msg.ID))
+		mailCommand += fmt.Sprintf(" ENVID=%x", sum)
+	}
+	mailFromResp, err := sendCommand(mailCommand + "\r\n")
 	if err != nil {
 		return lmtpPreFinalFailure(msg, addr, "MAIL FROM failed: "+err.Error(), RecipientTemporaryFailure)
 	}
@@ -255,12 +268,13 @@ func (h *LMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 
 	// Send message content
 	h.logger.Debug("Sending message content", "size", len(content))
-	if _, err := writer.Write(content); err != nil {
+	dotWriter := textproto.NewWriter(writer).DotWriter()
+	if _, err := dotWriter.Write(content); err != nil {
 		return &DeliveryResult{}, fmt.Errorf("failed to write message data: %w", err)
 	}
 
 	// Send end-of-data marker
-	if _, err := writer.WriteString("\r\n.\r\n"); err != nil {
+	if err := dotWriter.Close(); err != nil {
 		return &DeliveryResult{}, fmt.Errorf("failed to send end-of-data marker: %w", err)
 	}
 	if err := writer.Flush(); err != nil {

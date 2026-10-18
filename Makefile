@@ -1,4 +1,4 @@
-.PHONY: test-webmail-browser all help gotchas dovecot-index ensure-dev-secrets ldap-service-accounts build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
+.PHONY: mailbox-dev-up mailbox-dev-down mailbox-dev-status mailbox-dev-s3 test-mailbox test-webmail-browser all help gotchas dovecot-index ensure-dev-secrets ldap-service-accounts build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
 	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
@@ -6,6 +6,32 @@
 	rebuild rebuild-dev docker docker-build docker-setup docker-down update lint lint-fix fmt
 
 # Core paths/config
+.DEFAULT_GOAL := all
+.PHONY: mailbox-ha-dev-up mailbox-ha-dev-down mailbox-ha-dev-status
+
+mailbox-ha-dev-up: ensure-dev-secrets ldap-service-accounts
+	./scripts/mailbox-ha-dev.sh up
+
+mailbox-ha-dev-down:
+	./scripts/mailbox-ha-dev.sh down
+
+mailbox-ha-dev-status:
+	./scripts/mailbox-ha-dev.sh ps
+mailbox-dev-up: ensure-dev-secrets ldap-service-accounts
+	./scripts/mailbox-dev.sh up
+
+mailbox-dev-down:
+	./scripts/mailbox-dev.sh down
+
+mailbox-dev-status:
+	./scripts/mailbox-dev.sh ps
+
+mailbox-dev-s3: ensure-dev-secrets ldap-service-accounts
+	./scripts/mailbox-dev.sh s3
+
+test-mailbox:
+	go test -race ./internal/mailbox/...
+
 COMPOSE_FILE ?= deployments/compose/docker-compose.yml
 MAILAUTH_COMPOSE_FILE ?= deployments/compose/docker-compose-mailauth.yml
 ELK_COMPOSE_FILE ?= deployments/compose/docker-compose-elk.yml

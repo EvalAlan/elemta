@@ -1,0 +1,31 @@
+[server]
+imap_listen = ":1143"
+lmtp_listen = ":2424"
+http_listen = ":8080"
+allow_plaintext_auth = true
+# Only the isolated development network may deliver. This is not an open relay.
+lmtp_allowed_networks = ["172.30.81.0/24", "127.0.0.0/8"]
+
+[metadata]
+max_connections = 8
+require_synchronous_replication = true
+
+[bodies]
+driver = "file"
+driver_env = "ELEMTA_MAILBOX_BODY_DRIVER"
+root = "/var/lib/elemta/bodies"
+endpoint = "object-store:8333"
+bucket = "mailbox-dev"
+region = "us-east-1"
+secure = false
+
+[auth]
+ldap_url = "ldap://elemta-ldap:389"
+ldap_base = "ou=people,dc=example,dc=com"
+ldap_user_filter = "(&(objectClass=posixAccount)(mail=%s))"
+default_domain = "example.com"
+
+[limits]
+max_connections = 64
+max_message_mb = 25
+max_concurrent_bodies = 2

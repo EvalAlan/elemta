@@ -78,6 +78,10 @@ jobs:
         env:
           ELEMTA_TEST_OBJECT_POSTGRES_DSN: host=127.0.0.1 port=5432 dbname=objects user=objects password=local-test-only sslmode=disable
         run: go test -race -run '^TestPostgresObjects$' -count=1 ./internal/webmail/
+      - name: Test mailbox concurrency, recovery and protocols
+        env:
+          ELEMTA_TEST_MAILBOX_DSN: host=127.0.0.1 port=5432 dbname=objects user=objects password=local-test-only sslmode=disable
+        run: go test -race -count=1 ./internal/mailbox/
 
   test-webmail-browser:
     name: test (webmail in a browser)

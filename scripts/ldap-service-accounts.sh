@@ -53,6 +53,7 @@ account() { # cn, password, description
 account dovecot "$LDAP_DOVECOT_PASSWORD" "Dovecot user lookups"
 account elemta-smtp "$LDAP_SMTP_PASSWORD" "Elemta SMTP authentication and recipient lookups"
 account webmail "$LDAP_WEBMAIL_PASSWORD" "Webmail user lookups"
+account mailbox "$LDAP_MAILBOX_PASSWORD" "Mailbox identity and delivery lookups"
 account webmail-reset "$LDAP_WEBMAIL_RESET_PASSWORD" "Webmail password resets"
 account provisioner "$LDAP_PROVISIONER_PASSWORD" "Mail administration"
 
@@ -66,7 +67,7 @@ replace: olcAccess
 olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break
 olcAccess: {1}to dn.subtree="ou=people,$BASE" attrs=userPassword,shadowLastChange by self write by $(d webmail-reset) write by $(d provisioner) write by anonymous auth by * none
 olcAccess: {2}to attrs=userPassword,shadowLastChange by self write by anonymous auth by * none
-olcAccess: {3}to dn.subtree="ou=people,$BASE" by $(d provisioner) write by $(d dovecot) read by $(d elemta-smtp) read by $(d webmail) read by $(d webmail-reset) read by self read by * none
+olcAccess: {3}to dn.subtree="ou=people,$BASE" by $(d provisioner) write by $(d dovecot) read by $(d elemta-smtp) read by $(d webmail) read by $(d mailbox) read by $(d webmail-reset) read by self read by * none
 olcAccess: {4}to dn.subtree="ou=mail-addresses,$BASE" by $(d provisioner) write by $(d dovecot) read by $(d elemta-smtp) read by * none
 olcAccess: {5}to dn.subtree="ou=groups,$BASE" by $(d elemta-smtp) read by * none
 olcAccess: {6}to dn.base="$BASE" by users read by * none

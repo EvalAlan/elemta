@@ -1,0 +1,16 @@
+# Optional browser instance for the isolated mailbox development project.
+hostname = "mailbox-dev.example.com"
+queue_dir = "/tmp/queue"
+
+[webmail]
+enabled = true
+listen = ":8027"
+imap_addr = "edge:1143"
+imap_tls = "none"
+submission_addr = "elemta:2587"
+submission_tls = "starttls"
+insecure_skip_verify = true
+default_domain = "example.com"
+secure_cookies = false
+session_store = "memory"
+default_timezone = "UTC"
