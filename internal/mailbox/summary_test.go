@@ -277,3 +277,42 @@ func TestFlagUpdatesAcrossSessions(t *testing.T) {
 		t.Fatalf("STATUS = %+v, %v", st, err)
 	}
 }
+
+func TestVerify(t *testing.T) {
+	e, a := testEngine(t)
+	ctx := context.Background()
+	if _, err := e.Append(ctx, a.ID, "INBOX", []byte("Subject: keep\r\n\r\nx\r\n"), nil, time.Now(), ""); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := e.Append(ctx, a.ID, "INBOX", []byte("Subject: lost\r\n\r\ny\r\n"), nil, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only this account's bodies: the shared test database holds others.
+	own := func(r VerifyReport) (missing int) {
+		_, msgs, _ := e.Snapshot(ctx, a.ID, "INBOX")
+		mine := map[string]bool{}
+		for _, m := range msgs {
+			mine[m.Body] = true
+		}
+		for _, k := range r.Missing {
+			if mine[k] {
+				missing++
+			}
+		}
+		return missing
+	}
+	r, err := e.Verify(ctx, 0, nil)
+	if err != nil || own(r) != 0 {
+		t.Fatalf("clean store = %+v, %v", r, err)
+	}
+	_, msgs, _ := e.Snapshot(ctx, a.ID, "INBOX")
+	for _, m := range msgs {
+		if m.UID == gone.UID {
+			_ = e.Bodies.Delete(ctx, m.Body)
+		}
+	}
+	if r, _ = e.Verify(ctx, 0, nil); own(r) != 1 {
+		t.Fatalf("lost body not reported: %+v", r)
+	}
+}

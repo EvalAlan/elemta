@@ -307,14 +307,26 @@ func TestEngineQuotaIsolationAndGC(t *testing.T) {
 	if err != nil || used != 0 {
 		t.Fatalf("quota not reclaimed %d %v", used, err)
 	}
-	if _, err := e.DB.Exec(`UPDATE mailbox_bodies SET expires=now()-interval '3 days' WHERE key=$1`, body); err != nil {
+	// An old upload deleted just now must survive: the grace runs from when
+	// the body lost its last message, so yesterday's backup stays
+	// restorable.
+	if _, err := e.DB.Exec(`UPDATE mailbox_bodies SET expires=now()-interval '3 years' WHERE key=$1`, body); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.GC(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Bodies.Get(ctx, body, 100); err != nil {
+		t.Fatal("GC deleted a body as soon as its message was deleted")
+	}
+	if _, err := e.DB.Exec(`UPDATE mailbox_bodies SET orphaned_at=now()-interval '8 days' WHERE key=$1`, body); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.GC(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.Bodies.Get(ctx, body, 100); err == nil {
-		t.Fatal("GC retained unreferenced body")
+		t.Fatal("GC retained an unreferenced body past its grace")
 	}
 }
 

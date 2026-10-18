@@ -50,6 +50,10 @@ type MaintenanceConfig struct {
 	// computes per minute in the background. Zero means 200; negative
 	// disables it.
 	BackfillBatch int `toml:"backfill_batch"`
+	// BodyGraceHours keeps a message body this long after its last message
+	// is gone, so a restored metadata backup still finds it. Set it above
+	// your backup retention. Zero means 168 (a week).
+	BodyGraceHours int `toml:"body_grace_hours"`
 }
 type ServerConfig struct {
 	IMAPListen string `toml:"imap_listen"`
@@ -137,6 +141,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.Maintenance.JournalRetentionHours == 0 {
 		c.Maintenance.JournalRetentionHours = 168
+	}
+	if c.Maintenance.BodyGraceHours == 0 {
+		c.Maintenance.BodyGraceHours = 168
 	}
 	if c.Maintenance.BackfillBatch == 0 {
 		c.Maintenance.BackfillBatch = 200

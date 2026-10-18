@@ -57,11 +57,15 @@ type Engine struct {
 	MaxBytes    int64
 	requireSync bool
 	bodySlots   chan struct{}
+	// bodyGrace is how long a body stays after it was first seen without
+	// any message referring to it. It must exceed the backup retention,
+	// or restoring an older metadata backup finds bodies already gone.
+	bodyGrace time.Duration
 }
 
 func NewEngine(ctx context.Context, db *sql.DB, bodies BodyStore, c Config) (*Engine, error) {
 	c = c.WithDefaults()
-	e := &Engine{DB: db, Bodies: bodies, MaxBytes: int64(c.Limits.MaxMessageMB) << 20, requireSync: c.Metadata.RequireSynchronousReplication, bodySlots: make(chan struct{}, c.Limits.MaxConcurrentBodies)}
+	e := &Engine{DB: db, Bodies: bodies, MaxBytes: int64(c.Limits.MaxMessageMB) << 20, requireSync: c.Metadata.RequireSynchronousReplication, bodySlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), bodyGrace: time.Duration(c.Maintenance.BodyGraceHours) * time.Hour}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -735,7 +739,27 @@ func (e *Engine) GC(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT key FROM mailbox_bodies b WHERE store=$1 AND ((state='staging' AND expires<now()) OR (state='ready' AND expires<now()-interval '1 day' AND NOT EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=b.key))) ORDER BY expires LIMIT 100 FOR UPDATE SKIP LOCKED`, e.Bodies.Identity())
+	// The grace period runs from when a body was first seen unreferenced,
+	// not from its upload: a years-old message deleted today must survive
+	// as long as a backup taken yesterday might be restored. Bodies are
+	// marked on one pass and only collected after the grace on a later one.
+	if _, err := tx.ExecContext(ctx, `UPDATE mailbox_bodies b SET orphaned_at=now() WHERE b.key IN (
+SELECT key FROM mailbox_bodies x WHERE x.store=$1 AND x.state='ready' AND x.orphaned_at IS NULL
+AND NOT EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=x.key) LIMIT 1000)`, e.Bodies.Identity()); err != nil {
+		return 0, err
+	}
+	// A body referenced again (after restoring older metadata, say) starts
+	// its grace afresh if it is ever orphaned again.
+	if _, err := tx.ExecContext(ctx, `UPDATE mailbox_bodies b SET orphaned_at=NULL WHERE b.key IN (
+SELECT key FROM mailbox_bodies x WHERE x.store=$1 AND x.orphaned_at IS NOT NULL AND x.state='ready'
+AND EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=x.key) LIMIT 1000)`, e.Bodies.Identity()); err != nil {
+		return 0, err
+	}
+	grace := e.bodyGrace
+	if grace <= 0 {
+		grace = 7 * 24 * time.Hour
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT key FROM mailbox_bodies b WHERE store=$1 AND ((state='staging' AND expires<now()) OR (state='ready' AND orphaned_at<now()-$2*interval '1 second' AND NOT EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=b.key))) ORDER BY expires LIMIT 100 FOR UPDATE SKIP LOCKED`, e.Bodies.Identity(), int64(grace/time.Second))
 	if err != nil {
 		return 0, err
 	}

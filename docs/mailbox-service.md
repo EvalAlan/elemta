@@ -216,25 +216,41 @@ transaction cannot expose partial mail. A retry token reused for different
 bytes fails. Tokens are per account and envelope recipient, remain recorded
 after a message is moved/deleted, and do not use Message-ID as identity.
 
-Interrupted uploads become cleanup candidates after ten minutes. Ready
-bodies become candidates only after all memberships are gone and a full day
-of grace has elapsed. Cleanup locks and rechecks references; retired keys
+Interrupted uploads become cleanup candidates after ten minutes. A ready body
+becomes a candidate only once no message refers to it: cleanup marks it
+then, and removes it `[maintenance] body_grace_hours` later (a week by
+default) if it is still unreferenced. The grace counts from that mark, not
+from the upload, so an old message deleted today stays recoverable from a
+backup taken yesterday. Cleanup locks and rechecks references; retired keys
 cannot acquire new references. Retired rows are kept as durable tombstones
-and deletion is retried daily, covering a late orphan from a stalled upload.
-These records and the change/delivery journals currently have no compaction
-policy; measure and implement retention before large deployments.
+and deletion is retried daily. The change journal is compacted after
+`journal_retention_hours`.
 
-Automatic body cleanup is **off by default**. An operator may explicitly set
-`[maintenance] garbage_collection = true` only when the fixed one-day grace
-is compatible with backup retention. The worker processes bounded batches.
-For longer restore windows, keep automatic cleanup off until configurable,
-backup-aware retention is implemented. Removing metadata and running cleanup
-can otherwise make an older database backup unrestorable.
+Automatic body cleanup is **off by default**. Turn it on with
+`[maintenance] garbage_collection = true` once `body_grace_hours` is longer
+than your backup retention.
 
-Back up Postgres and bodies as a coordinated recovery set, including TLS and
-directory credentials. A filesystem/object copy without its metadata does
-not preserve mailbox UIDs, memberships or flags. Replication does not replace
-backup or protect against accidental deletion. Test isolated restores.
+### Backup and restore
+
+Back up the metadata and the bodies together, metadata first:
+
+```sh
+scripts/mailbox-backup.sh /path/to/backup        # pg_dump, then the bodies
+scripts/mailbox-restore-drill.sh /path/to/backup # restore beside the stack and verify
+```
+
+Bodies are written before the metadata that refers to them and never
+change, so a dump taken first refers only to bodies the copy that follows
+will include. On S3, bucket versioning or replication can stand in for the
+body copy.
+
+`elemta mailbox verify` checks that every body a message refers to exists
+with its recorded size and checksum, and that each account's quota usage
+matches its messages. Run it after every restore (the drill script does)
+and periodically in production; `--sample N` checks a random N bodies on
+large stores. Keep TLS and directory credentials with the backups. A copy
+of either half alone doesn't preserve mailboxes, and replication doesn't
+replace backups. Run the drill regularly.
 
 ## Verification
 
@@ -272,7 +288,7 @@ server until these remaining gates are met:
 - CONDSTORE/QRESYNC.
 - Backend/account migration, UID-preserving import, placement automation,
   tenant/cell management and live ownership fencing administration.
-- Backup-aware garbage retention, restore drills and production fencing.
+- Production fencing administration.
 - Real Ceph testing, sustained load and additional desktop/mobile client QA.
 
 The PostgreSQL and body-storage HA requirements are described in the

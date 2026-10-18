@@ -70,3 +70,4 @@ CREATE TABLE IF NOT EXISTS mailbox_sieve_sent (
  expires TIMESTAMPTZ NOT NULL, PRIMARY KEY(account,key)
 );
 CREATE INDEX IF NOT EXISTS mailbox_sieve_sent_expiry ON mailbox_sieve_sent(expires);
+ALTER TABLE mailbox_bodies ADD COLUMN IF NOT EXISTS orphaned_at TIMESTAMPTZ;
