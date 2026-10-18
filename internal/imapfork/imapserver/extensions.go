@@ -83,6 +83,12 @@ func (c *Conn) extensionCaps() []imap.Cap {
 			caps = append(caps, imap.Cap("THREAD="+alg))
 		}
 	}
+	if _, ok := c.session.(SessionCondStore); ok {
+		caps = append(caps, imap.CapCondStore)
+	}
+	if _, ok := c.session.(SessionQResync); ok {
+		caps = append(caps, imap.CapQResync)
+	}
 	if _, ok := c.session.(SessionQuota); ok {
 		caps = append(caps, "QUOTA", "QUOTA=RES-STORAGE")
 	}

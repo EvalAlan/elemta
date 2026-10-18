@@ -17,6 +17,7 @@ package mailbox
 import (
 	"context"
 	"database/sql"
+	"math"
 	"time"
 
 	"github.com/lib/pq"
@@ -121,4 +122,41 @@ WHERE f.id=c.folder AND c.top>f.journal_floor`, cutoff); err != nil {
 	}
 	n, _ := res.RowsAffected()
 	return n, tx.Commit()
+}
+
+// ExpungedSince returns the UIDs expunged from the folder after MODSEQ
+// since, for QRESYNC's VANISHED. complete is false when the journal no
+// longer reaches back that far.
+func (e *Engine) ExpungedSince(ctx context.Context, folderID int64, since uint64) (uids []uint32, complete bool, err error) {
+	var floor uint64
+	if err = e.DB.QueryRowContext(ctx, `SELECT journal_floor FROM mailbox_folders WHERE id=$1`, folderID).Scan(&floor); err != nil {
+		return nil, false, err
+	}
+	if since < floor {
+		return nil, false, nil
+	}
+	rows, err := e.DB.QueryContext(ctx, `SELECT DISTINCT c.uid FROM mailbox_changes c WHERE c.folder=$1 AND c.modseq>$2 AND c.kind='expunge'
+AND NOT EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.folder=c.folder AND m.uid=c.uid) ORDER BY c.uid`, folderID, since)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u uint32
+		if err := rows.Scan(&u); err != nil {
+			return nil, false, err
+		}
+		uids = append(uids, u)
+	}
+	return uids, true, rows.Err()
+}
+
+// ChangedSince returns the folder's messages whose MODSEQ is above since.
+func (e *Engine) ChangedSince(ctx context.Context, folderID int64, since uint64) ([]Message, error) {
+	// RFC 7162 caps MODSEQs at 2^63-1, so a larger one (from a client)
+	// matches nothing.
+	if since > math.MaxInt64 {
+		return nil, nil
+	}
+	return scanMessagesWhere(ctx, e.DB, `m.folder=$1 AND m.modseq>$2`, folderID, int64(since))
 }

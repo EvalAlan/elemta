@@ -559,21 +559,35 @@ func hasFlag(flags []string, flag string) bool {
 // MutateFlags and Expunge operate on UIDs resolved from a session's own
 // sequence view, never on fresh sequence numbers another replica may shift.
 func (e *Engine) MutateFlags(ctx context.Context, account, name string, uids []uint32, flags []string, op int) error {
+	_, err := e.MutateFlagsIf(ctx, account, name, uids, flags, op, 0)
+	return err
+}
+
+// MutateFlagsIf changes flags only on messages whose MODSEQ is at most
+// unchangedSince (CONDSTORE's STORE UNCHANGEDSINCE; 0 means always), and
+// returns the UIDs it left alone because they changed since.
+func (e *Engine) MutateFlagsIf(ctx context.Context, account, name string, uids []uint32, flags []string, op int, unchangedSince uint64) (modified []uint32, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	return e.tx(ctx, account, func(tx *sql.Tx) error {
+	err = e.tx(ctx, account, func(tx *sql.Tx) error {
+		modified = modified[:0]
 		f, err := folderTx(ctx, tx, account, name)
 		if err != nil {
 			return err
 		}
 		for _, uid := range uids {
 			var old []string
-			err := tx.QueryRowContext(ctx, `SELECT flags FROM mailbox_messages WHERE folder=$1 AND uid=$2`, f.ID, uid).Scan(pq.Array(&old))
+			var modseq uint64
+			err := tx.QueryRowContext(ctx, `SELECT flags,modseq FROM mailbox_messages WHERE folder=$1 AND uid=$2`, f.ID, uid).Scan(pq.Array(&old), &modseq)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			if err != nil {
 				return err
+			}
+			if unchangedSince != 0 && modseq > unchangedSince {
+				modified = append(modified, uid)
+				continue
 			}
 			next := normalizeFlags(flags)
 			switch op {
@@ -602,6 +616,7 @@ func (e *Engine) MutateFlags(ctx context.Context, account, name string, uids []u
 		_, err = tx.ExecContext(ctx, `UPDATE mailbox_folders SET modseq=$2 WHERE id=$1`, f.ID, f.ModSeq)
 		return err
 	})
+	return modified, err
 }
 func (e *Engine) Expunge(ctx context.Context, account, name string, uids []uint32) (removed []uint32, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)

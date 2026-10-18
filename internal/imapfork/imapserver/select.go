@@ -9,8 +9,18 @@ import (
 
 func (c *Conn) handleSelect(tag string, dec *imapwire.Decoder, readOnly bool) error {
 	var mailbox string
-	if !dec.ExpectSP() || !dec.ExpectMailbox(&mailbox) || !dec.ExpectCRLF() {
+	if !dec.ExpectSP() || !dec.ExpectMailbox(&mailbox) {
 		return dec.Err()
+	}
+	condStore, qresync, err := readSelectParams(dec)
+	if err != nil {
+		return err
+	}
+	if !dec.ExpectCRLF() {
+		return dec.Err()
+	}
+	if (condStore && !c.condStoreSupported()) || (qresync != nil && !c.qresyncEnabled()) {
+		return newClientBugError("CONDSTORE or QRESYNC isn't available here; QRESYNC needs ENABLE first")
 	}
 
 	if err := c.checkState(imap.ConnStateAuthenticated); err != nil {
@@ -32,7 +42,7 @@ func (c *Conn) handleSelect(tag string, dec *imapwire.Decoder, readOnly bool) er
 		}
 	}
 
-	options := imap.SelectOptions{ReadOnly: readOnly}
+	options := imap.SelectOptions{ReadOnly: readOnly, CondStore: condStore || qresync != nil}
 	data, err := c.session.Select(mailbox, &options)
 	if err != nil {
 		return err
@@ -68,8 +78,21 @@ func (c *Conn) handleSelect(tag string, dec *imapwire.Decoder, readOnly bool) er
 			return err
 		}
 	}
+	if c.condStoreSupported() {
+		if options.CondStore {
+			c.enableCondStore()
+		}
+		if err := c.writeHighestModSeq(data.HighestModSeq); err != nil {
+			return err
+		}
+	}
 
 	c.state = imap.ConnStateSelected
+	if qr, ok := c.session.(SessionQResync); ok && qresync != nil {
+		if err := qr.QResync(&FetchWriter{conn: c}, qresync); err != nil {
+			return err
+		}
+	}
 	// TODO: forbid write commands in read-only mode
 
 	var (

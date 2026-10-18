@@ -114,7 +114,7 @@ func (s *imapSession) Select(name string, options *imap.SelectOptions) (*imap.Se
 			unseen = seqNumber(i + 1)
 		}
 	}
-	return &imap.SelectData{Flags: allFlags(info.Keywords), PermanentFlags: []imap.Flag{imap.FlagSeen, imap.FlagAnswered, imap.FlagFlagged, imap.FlagDeleted, imap.FlagDraft, imap.FlagWildcard}, NumMessages: seqNumber(len(s.uids)), FirstUnseenSeqNum: unseen, UIDValidity: info.Folder.Validity, UIDNext: imap.UID(info.Folder.Next)}, nil
+	return &imap.SelectData{Flags: allFlags(info.Keywords), PermanentFlags: []imap.Flag{imap.FlagSeen, imap.FlagAnswered, imap.FlagFlagged, imap.FlagDeleted, imap.FlagDraft, imap.FlagWildcard}, NumMessages: seqNumber(len(s.uids)), FirstUnseenSeqNum: unseen, UIDValidity: info.Folder.Validity, UIDNext: imap.UID(info.Folder.Next), HighestModSeq: info.Folder.ModSeq}, nil
 }
 func allFlags(keywords []string) []imap.Flag {
 	m := map[imap.Flag]bool{imap.FlagSeen: true, imap.FlagAnswered: true, imap.FlagFlagged: true, imap.FlagDeleted: true, imap.FlagDraft: true}
@@ -226,6 +226,9 @@ func (s *imapSession) Status(name string, options *imap.StatusOptions) (*imap.St
 	}
 	if options.Size {
 		data.Size = &size
+	}
+	if options.HighestModSeq {
+		data.HighestModSeq = f.ModSeq
 	}
 	return data, nil
 }
@@ -376,6 +379,11 @@ func (s *imapSession) Fetch(w *imapserver.FetchWriter, set imap.NumSet, options 
 			return protocolError(err)
 		}
 	}
+	if w.Vanished() {
+		if err := s.writeVanishedSince(w, set, options.ChangedSince); err != nil {
+			return err
+		}
+	}
 	bodyNeeded := len(options.BinarySection) > 0 || len(options.BinarySectionSize) > 0
 	summaryNeeded := options.Envelope || options.BodyStructure != nil
 	for _, section := range options.BodySection {
@@ -426,6 +434,9 @@ func (s *imapSession) Fetch(w *imapserver.FetchWriter, set imap.NumSet, options 
 				// next poll. RFC 9051 lets the server leave it out here.
 				continue
 			}
+			if options.ChangedSince != 0 && m.ModSeq <= options.ChangedSince {
+				continue
+			}
 			if err := s.fetchOne(w, i, m, options, seen, bodyNeeded, summaries); err != nil {
 				return err
 			}
@@ -459,6 +470,9 @@ func (s *imapSession) fetchOne(w *imapserver.FetchWriter, i int, m Message, opti
 	}
 	if options.RFC822Size {
 		response.WriteRFC822Size(m.Size)
+	}
+	if options.ModSeq || (seen && w.CondStore()) {
+		response.WriteModSeq(m.ModSeq)
 	}
 	if options.Envelope {
 		response.WriteEnvelope(sum.Envelope)
@@ -510,7 +524,7 @@ func (s *imapSession) viewIndex(uid uint32) (int, bool) {
 	return i, i < len(s.uids) && s.uids[i] == uid
 }
 
-func (s *imapSession) Store(w *imapserver.FetchWriter, set imap.NumSet, flags *imap.StoreFlags, _ *imap.StoreOptions) error {
+func (s *imapSession) Store(w *imapserver.FetchWriter, set imap.NumSet, flags *imap.StoreFlags, options *imap.StoreOptions) error {
 	if s.readOnly {
 		return protocolError(ErrReadOnly)
 	}
@@ -523,10 +537,21 @@ func (s *imapSession) Store(w *imapserver.FetchWriter, set imap.NumSet, flags *i
 	for i, f := range flags.Flags {
 		values[i] = string(f)
 	}
-	if err := s.service.engine.MutateFlags(s.ctx, s.account.ID, s.folder.Name, uids, values, int(flags.Op)); err != nil {
+	var unchangedSince uint64
+	if options != nil {
+		unchangedSince = options.UnchangedSince
+	}
+	modified, err := s.service.engine.MutateFlagsIf(s.ctx, s.account.ID, s.folder.Name, uids, values, int(flags.Op), unchangedSince)
+	if err != nil {
 		return protocolError(err)
 	}
-	if flags.Silent {
+	skipped := make(map[uint32]bool, len(modified))
+	for _, u := range modified {
+		skipped[u] = true
+	}
+	// RFC 7162 3.1.3: with UNCHANGEDSINCE the new MODSEQs are reported
+	// even for .SILENT.
+	if flags.Silent && unchangedSince == 0 {
 		return nil
 	}
 	for start := 0; start < len(idx); start += fetchChunk {
@@ -537,16 +562,38 @@ func (s *imapSession) Store(w *imapserver.FetchWriter, set imap.NumSet, flags *i
 		}
 		for _, i := range chunk {
 			m, ok := rows[s.uids[i]]
-			if !ok {
+			if !ok || skipped[m.UID] {
 				continue
 			}
 			r := w.CreateMessage(seqNumber(i + 1))
 			r.WriteUID(imap.UID(m.UID))
-			r.WriteFlags(imapFlags(m.Flags))
+			if !flags.Silent {
+				r.WriteFlags(imapFlags(m.Flags))
+			}
+			if w.CondStore() {
+				r.WriteModSeq(m.ModSeq)
+			}
 			if err := r.Close(); err != nil {
 				return err
 			}
 		}
+	}
+	if len(modified) > 0 {
+		// Reported in the numbering the client used.
+		if _, isUID := set.(imap.UIDSet); isUID {
+			var out imap.UIDSet
+			for _, u := range modified {
+				out.AddNum(imap.UID(u))
+			}
+			return imapserver.NewModifiedError(out)
+		}
+		var out imap.SeqSet
+		for _, u := range modified {
+			if i, ok := s.viewIndex(u); ok {
+				out.AddNum(seqNumber(i + 1))
+			}
+		}
+		return imapserver.NewModifiedError(out)
 	}
 	return nil
 }
@@ -554,10 +601,10 @@ func (s *imapSession) Store(w *imapserver.FetchWriter, set imap.NumSet, flags *i
 // dropFromView reports the given UIDs as expunged, highest sequence number
 // first so each number is still valid when the client applies the ones
 // before it, and removes them from the view.
-func (s *imapSession) dropFromView(gone map[uint32]bool, write func(uint32) error) error {
+func (s *imapSession) dropFromView(gone map[uint32]bool, write func(uint32, imap.UID) error) error {
 	for i := len(s.uids) - 1; i >= 0; i-- {
 		if gone[s.uids[i]] {
-			if err := write(seqNumber(i + 1)); err != nil {
+			if err := write(seqNumber(i+1), imap.UID(s.uids[i])); err != nil {
 				return err
 			}
 		}
@@ -590,7 +637,7 @@ func (s *imapSession) Expunge(w *imapserver.ExpungeWriter, set *imap.UIDSet) err
 	for _, u := range removed {
 		gone[u] = true
 	}
-	return s.dropFromView(gone, w.WriteExpunge)
+	return s.dropFromView(gone, w.WriteExpungeUID)
 }
 func (s *imapSession) Copy(set imap.NumSet, dest string) (*imap.CopyData, error) {
 	v, from, to, err := s.service.engine.CopyMove(s.ctx, s.account.ID, s.folder.Name, dest, s.selected(set), false)
@@ -624,7 +671,7 @@ func (s *imapSession) Move(w *imapserver.MoveWriter, set imap.NumSet, dest strin
 	for _, u := range from {
 		gone[u] = true
 	}
-	return s.dropFromView(gone, w.WriteExpunge)
+	return s.dropFromView(gone, w.WriteExpungeUID)
 }
 func (s *imapSession) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	if s.folder.ID == 0 {
@@ -653,7 +700,7 @@ func (s *imapSession) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error 
 		if len(gone) > 0 && !allowExpunge {
 			pending = true
 		} else if len(gone) > 0 {
-			if err := s.dropFromView(gone, w.WriteExpunge); err != nil {
+			if err := s.dropFromView(gone, w.WriteExpungeUID); err != nil {
 				return err
 			}
 		}
@@ -669,7 +716,7 @@ func (s *imapSession) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error 
 		// changed since the session's MODSEQ is reported; RFC 9051 allows
 		// unchanged flags to be repeated.
 		if m.ModSeq > s.reported {
-			if err := w.WriteMessageFlags(seqNumber(i+1), imap.UID(m.UID), imapFlags(m.Flags)); err != nil {
+			if err := w.WriteMessageFlagsModSeq(seqNumber(i+1), imap.UID(m.UID), imapFlags(m.Flags), m.ModSeq); err != nil {
 				return err
 			}
 		}
@@ -712,7 +759,7 @@ func (s *imapSession) pollFull(w *imapserver.UpdateWriter, allowExpunge bool) er
 	}
 	pending := len(gone) > 0 && !allowExpunge
 	if len(gone) > 0 && allowExpunge {
-		if err := s.dropFromView(gone, w.WriteExpunge); err != nil {
+		if err := s.dropFromView(gone, w.WriteExpungeUID); err != nil {
 			return err
 		}
 	}
@@ -737,7 +784,7 @@ func (s *imapSession) pollFull(w *imapserver.UpdateWriter, allowExpunge bool) er
 		}
 		for _, i := range chunk {
 			if m, ok := rows[s.uids[i]]; ok {
-				if err := w.WriteMessageFlags(seqNumber(i+1), imap.UID(m.UID), imapFlags(m.Flags)); err != nil {
+				if err := w.WriteMessageFlagsModSeq(seqNumber(i+1), imap.UID(m.UID), imapFlags(m.Flags), m.ModSeq); err != nil {
 					return err
 				}
 			}
@@ -859,6 +906,18 @@ func (s *imapSession) Search(kind imapserver.NumKind, c *imap.SearchCriteria, _ 
 		}
 	}
 	data := &imap.SearchData{Count: seqNumber(len(nums))}
+	if c.ModSeq != nil && len(idx) > 0 {
+		// RFC 7162 3.1.5: a MODSEQ search reports the highest MODSEQ found.
+		for start := 0; start < len(idx); start += fetchChunk {
+			rows, err := s.rows(idx[start:min(start+fetchChunk, len(idx))])
+			if err != nil {
+				return nil, protocolError(err)
+			}
+			for _, m := range rows {
+				data.ModSeq = max(data.ModSeq, m.ModSeq)
+			}
+		}
+	}
 	if len(nums) > 0 {
 		data.Min = nums[0]
 		data.Max = nums[len(nums)-1]

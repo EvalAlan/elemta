@@ -75,6 +75,10 @@ func (c *Conn) handleFetch(dec *imapwire.Decoder, numKind NumKind) error {
 		}
 	}
 
+	vanished, err := readFetchModifiers(dec, &options)
+	if err != nil {
+		return err
+	}
 	if !dec.ExpectCRLF() {
 		return dec.Err()
 	}
@@ -82,12 +86,21 @@ func (c *Conn) handleFetch(dec *imapwire.Decoder, numKind NumKind) error {
 	if err := c.checkState(imap.ConnStateSelected); err != nil {
 		return err
 	}
+	if options.ModSeq && !c.condStoreSupported() {
+		return newClientBugError("CONDSTORE is not supported")
+	}
+	if vanished && (numKind != NumKindUID || options.ChangedSince == 0 || !c.qresyncEnabled()) {
+		return newClientBugError("VANISHED needs UID FETCH with CHANGEDSINCE and QRESYNC enabled")
+	}
+	if options.ModSeq {
+		c.enableCondStore()
+	}
 
 	if numKind == NumKindUID {
 		options.UID = true
 	}
 
-	w := &FetchWriter{conn: c, options: writerOptions}
+	w := &FetchWriter{conn: c, options: writerOptions, vanished: vanished}
 	if err := c.session.Fetch(w, numSet, &options); err != nil {
 		return err
 	}
@@ -108,6 +121,8 @@ func handleFetchAtt(dec *imapwire.Decoder, attName string, options *imap.FetchOp
 		options.RFC822Size = true
 	case "UID":
 		options.UID = true
+	case "MODSEQ": // CONDSTORE, added in this fork
+		options.ModSeq = true
 	case "RFC822": // equivalent to BODY[]
 		bs := &imap.FetchItemBodySection{}
 		writerOptions.obsolete[bs] = attName
@@ -324,8 +339,9 @@ func maybeReadPartial(dec *imapwire.Decoder) (*imap.SectionPartial, error) {
 
 // FetchWriter writes FETCH responses.
 type FetchWriter struct {
-	conn    *Conn
-	options fetchWriterOptions
+	conn     *Conn
+	options  fetchWriterOptions
+	vanished bool // UID FETCH ... (CHANGEDSINCE n VANISHED), RFC 7162
 }
 
 // CreateMessage writes a FETCH response for a message.

@@ -18,7 +18,10 @@ optional.
   processes; no process-local lock owns authoritative state.
 - IMAP4rev1 with UIDPLUS, MOVE, NAMESPACE, IDLE, LIST-EXTENDED, LIST-STATUS,
   SPECIAL-USE, ESEARCH, STATUS=SIZE, SORT and SORT=DISPLAY,
-  THREAD=REFERENCES and THREAD=ORDEREDSUBJECT, QUOTA (read only) and ID.
+  THREAD=REFERENCES and THREAD=ORDEREDSUBJECT, QUOTA (read only), ID,
+  CONDSTORE and QRESYNC (clients resynchronise from the MODSEQ they last
+  saw; VANISHED comes from the change journal, or from the UIDs that no
+  longer exist once the journal has been compacted).
   STARTTLS, and implicit TLS on `server.imaps_listen` (normally :993), use
   `tls_cert`/`tls_key`, which are re-read when the files change so renewals
   need no restart. Only implemented extensions are advertised. SORT, THREAD, QUOTA and ID come from a fork of
@@ -285,7 +288,6 @@ This service can receive and serve mail; it is not yet a complete Dovecot
 replacement or a demonstrated million-mailbox deployment. Keep the existing
 server until these remaining gates are met:
 
-- CONDSTORE/QRESYNC.
 - Backend/account migration, UID-preserving import, placement automation,
   tenant/cell management and live ownership fencing administration.
 - Production fencing administration.

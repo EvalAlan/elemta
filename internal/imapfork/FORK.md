@@ -10,6 +10,12 @@ Changes from upstream:
 - `imapserver/extensions.go` (new): SORT and SORT=DISPLAY, THREAD,
   GETQUOTA/GETQUOTAROOT and ID, each advertised only when the session
   implements its interface.
+- `imapserver/condstore.go` (new): CONDSTORE and QRESYNC (RFC 7162):
+  SELECT/EXAMINE parameters and HIGHESTMODSEQ, FETCH MODSEQ and
+  (CHANGEDSINCE n [VANISHED]), STORE (UNCHANGEDSINCE n) with MODIFIED,
+  SEARCH MODSEQ, STATUS HIGHESTMODSEQ, ENABLE, and expunges reported as
+  VANISHED once QRESYNC is enabled. Hooked into `select.go`, `fetch.go`,
+  `store.go`, `status.go`, `search.go` and `enable.go`.
 - `imapserver/conn.go`: dispatch for the commands above.
 - `imapserver/capability.go`: advertise them.
 - `imapserver/message.go`: keyed struct literals, so `go vet` passes.

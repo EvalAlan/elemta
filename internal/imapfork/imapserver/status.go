@@ -39,6 +39,12 @@ func (c *Conn) handleStatus(dec *imapwire.Decoder) error {
 	if err := c.checkState(imap.ConnStateAuthenticated); err != nil {
 		return err
 	}
+	if options.HighestModSeq {
+		if !c.condStoreSupported() {
+			return &imap.Error{Type: imap.StatusResponseTypeBad, Text: "Unknown STATUS data item"}
+		}
+		c.enableCondStore()
+	}
 
 	data, err := c.session.Status(mailbox, &options)
 	if err != nil {
@@ -71,6 +77,9 @@ func (c *Conn) writeStatus(data *imap.StatusData, options *imap.StatusOptions) e
 	}
 	if options.Size {
 		listEnc.Item().Atom("SIZE").SP().Number64(*data.Size)
+	}
+	if options.HighestModSeq {
+		listEnc.Item().Atom("HIGHESTMODSEQ").SP().ModSeq(data.HighestModSeq)
 	}
 	if options.AppendLimit {
 		listEnc.Item().Atom("APPENDLIMIT").SP()
@@ -115,6 +124,8 @@ func readStatusItem(dec *imapwire.Decoder, options *imap.StatusOptions) error {
 		options.DeletedStorage = true
 	case "RECENT":
 		options.NumRecent = true
+	case "HIGHESTMODSEQ": // CONDSTORE, added in this fork
+		options.HighestModSeq = true
 	default:
 		return &imap.Error{
 			Type: imap.StatusResponseTypeBad,

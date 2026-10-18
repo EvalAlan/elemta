@@ -50,7 +50,7 @@ func searchNeeds(c *imap.SearchCriteria, hits *indexHits) (header, text bool) {
 // searchNeedsRows reports whether a criteria tree reads a message's flags,
 // internal date or size.
 func searchNeedsRows(c *imap.SearchCriteria) bool {
-	if len(c.Flag) > 0 || len(c.NotFlag) > 0 || !c.Since.IsZero() || !c.Before.IsZero() || c.Larger > 0 || c.Smaller > 0 {
+	if len(c.Flag) > 0 || len(c.NotFlag) > 0 || !c.Since.IsZero() || !c.Before.IsZero() || c.Larger > 0 || c.Smaller > 0 || c.ModSeq != nil {
 		return true
 	}
 	for i := range c.Not {
@@ -153,6 +153,9 @@ func matchMessage(m Message, seq, total, maxUID uint32, src *searchSource, c *im
 		}
 	}
 	if !dateMatches(m.Date, c.Since, c.Before) || (c.Larger > 0 && m.Size <= c.Larger) || (c.Smaller > 0 && m.Size >= c.Smaller) {
+		return false
+	}
+	if c.ModSeq != nil && m.ModSeq < c.ModSeq.ModSeq {
 		return false
 	}
 	for _, f := range c.Flag {

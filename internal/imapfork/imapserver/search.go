@@ -80,6 +80,13 @@ func (c *Conn) handleSearch(tag string, dec *imapwire.Decoder, numKind NumKind) 
 		options.ReturnAll = true
 	}
 
+	if usesModSeq(&criteria) {
+		if !c.condStoreSupported() {
+			return newClientBugError("CONDSTORE is not supported")
+		}
+		c.enableCondStore()
+	}
+
 	data, err := c.session.Search(numKind, &criteria, &options)
 	if err != nil {
 		return err
@@ -88,7 +95,7 @@ func (c *Conn) handleSearch(tag string, dec *imapwire.Decoder, numKind NumKind) 
 	if c.enabled.Has(imap.CapIMAP4rev2) || extended {
 		return c.writeESearch(tag, data, &options, numKind)
 	} else {
-		return c.writeSearch(data.All)
+		return c.writeSearch(data.All, data.ModSeq)
 	}
 }
 
@@ -117,6 +124,9 @@ func (c *Conn) writeESearch(tag string, data *imap.SearchData, options *imap.Sea
 	if options.ReturnCount {
 		enc.SP().Atom("COUNT").SP().Number(data.Count)
 	}
+	if data.ModSeq != 0 {
+		enc.SP().Atom("MODSEQ").SP().ModSeq(data.ModSeq)
+	}
 	return enc.CRLF()
 }
 
@@ -131,7 +141,7 @@ func isNumSetEmpty(numSet imap.NumSet) bool {
 	}
 }
 
-func (c *Conn) writeSearch(numSet imap.NumSet) error {
+func (c *Conn) writeSearch(numSet imap.NumSet, modSeq uint64) error {
 	enc := newResponseEncoder(c)
 	defer enc.end()
 
@@ -153,6 +163,9 @@ func (c *Conn) writeSearch(numSet imap.NumSet) error {
 	}
 	if !ok {
 		return fmt.Errorf("imapserver: failed to enumerate message numbers in SEARCH response")
+	}
+	if modSeq != 0 {
+		enc.SP().Special('(').Atom("MODSEQ").SP().ModSeq(modSeq).Special(')')
 	}
 	return enc.CRLF()
 }
@@ -211,6 +224,10 @@ func readSearchKeyWithAtom(criteria *imap.SearchCriteria, dec *imapwire.Decoder,
 			return dec.Err()
 		}
 		criteria.UID = append(criteria.UID, uidSet)
+	case "MODSEQ": // CONDSTORE, added in this fork
+		if err := readSearchModSeq(dec, criteria); err != nil {
+			return err
+		}
 	case "ANSWERED", "DELETED", "DRAFT", "FLAGGED", "RECENT", "SEEN":
 		criteria.Flag = append(criteria.Flag, searchKeyFlag(key))
 	case "UNANSWERED", "UNDELETED", "UNDRAFT", "UNFLAGGED", "UNSEEN":

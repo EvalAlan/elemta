@@ -13,7 +13,14 @@ func (c *Conn) handleStore(dec *imapwire.Decoder, numKind NumKind) error {
 		numSet imap.NumSet
 		item   string
 	)
-	if !dec.ExpectSP() || !dec.ExpectNumSet(numKind.wire(), &numSet) || !dec.ExpectSP() || !dec.ExpectAtom(&item) || !dec.ExpectSP() {
+	options := imap.StoreOptions{}
+	if !dec.ExpectSP() || !dec.ExpectNumSet(numKind.wire(), &numSet) || !dec.ExpectSP() {
+		return dec.Err()
+	}
+	if _, err := readStoreModifiers(dec, &options); err != nil {
+		return err
+	}
+	if !dec.ExpectAtom(&item) || !dec.ExpectSP() {
 		return dec.Err()
 	}
 	var flags []imap.Flag
@@ -68,8 +75,13 @@ func (c *Conn) handleStore(dec *imapwire.Decoder, numKind NumKind) error {
 		return err
 	}
 
+	if options.UnchangedSince != 0 {
+		if !c.condStoreSupported() {
+			return newClientBugError("CONDSTORE is not supported")
+		}
+		c.enableCondStore()
+	}
 	w := &FetchWriter{conn: c}
-	options := imap.StoreOptions{}
 	return c.session.Store(w, numSet, &imap.StoreFlags{
 		Op:     op,
 		Silent: silent,
