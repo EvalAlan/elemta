@@ -254,10 +254,3 @@ func collectUIDs(rows interface {
 	}
 	return rows.Err()
 }
-
-// storeSearchText fills the index columns of a summary row.
-func storeSearchText(ctx context.Context, db execer, body string, t searchText) error {
-	_, err := db.ExecContext(ctx, `UPDATE mailbox_summaries SET hdr_from=$2,hdr_to=$3,hdr_cc=$4,hdr_bcc=$5,hdr_subject=$6,hdr_content_type=$7,body_tsv=to_tsvector('simple',$8) WHERE body=$1`,
-		body, t.headers["from"], t.headers["to"], t.headers["cc"], t.headers["bcc"], t.headers["subject"], t.headers["content-type"], t.body)
-	return err
-}

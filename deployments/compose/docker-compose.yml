@@ -353,6 +353,9 @@ services:
     image: osixia/openldap:latest
     container_name: elemta-ldap
     hostname: elemta-ldap
+    # Everything authenticates against the directory, so it must come back
+    # after a reboot like the services that depend on it.
+    restart: unless-stopped
     ports:
       - "1389:389" # LDAP port
       - "1636:636" # LDAPS port  

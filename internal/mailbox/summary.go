@@ -257,16 +257,18 @@ func storeSummary(ctx context.Context, db execer, body string, s *Summary) error
 	if s.Envelope != nil {
 		subject = s.Envelope.Subject
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO mailbox_summaries(body,version,data,base_subject,sent,sender,recipient,cc,display_from,display_to,message_id,refs,reply)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	// One statement, so one commit: summary and search index together.
+	t := s.search
+	_, err = db.ExecContext(ctx, `INSERT INTO mailbox_summaries(body,version,data,base_subject,sent,sender,recipient,cc,display_from,display_to,message_id,refs,reply,
+hdr_from,hdr_to,hdr_cc,hdr_bcc,hdr_subject,hdr_content_type,body_tsv)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,to_tsvector('simple',$20))
 ON CONFLICT(body) DO UPDATE SET version=EXCLUDED.version,data=EXCLUDED.data,base_subject=EXCLUDED.base_subject,sent=EXCLUDED.sent,
 sender=EXCLUDED.sender,recipient=EXCLUDED.recipient,cc=EXCLUDED.cc,display_from=EXCLUDED.display_from,display_to=EXCLUDED.display_to,
-message_id=EXCLUDED.message_id,refs=EXCLUDED.refs,reply=EXCLUDED.reply`,
-		body, summaryVersion, data, s.BaseSubject, sent, s.From, s.To, s.Cc, s.DisplayFrom, s.DisplayTo, s.MessageID, pq.Array(refs), hasReplyMarker(subject))
-	if err != nil {
-		return err
-	}
-	return storeSearchText(ctx, db, body, s.search)
+message_id=EXCLUDED.message_id,refs=EXCLUDED.refs,reply=EXCLUDED.reply,hdr_from=EXCLUDED.hdr_from,hdr_to=EXCLUDED.hdr_to,hdr_cc=EXCLUDED.hdr_cc,
+hdr_bcc=EXCLUDED.hdr_bcc,hdr_subject=EXCLUDED.hdr_subject,hdr_content_type=EXCLUDED.hdr_content_type,body_tsv=EXCLUDED.body_tsv`,
+		body, summaryVersion, data, s.BaseSubject, sent, s.From, s.To, s.Cc, s.DisplayFrom, s.DisplayTo, s.MessageID, pq.Array(refs), hasReplyMarker(subject),
+		t.headers["from"], t.headers["to"], t.headers["cc"], t.headers["bcc"], t.headers["subject"], t.headers["content-type"], t.body)
+	return err
 }
 
 // missingSummaries lists bodies without a current summary, from start

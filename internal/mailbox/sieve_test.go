@@ -285,3 +285,16 @@ func TestManageSieveParsing(t *testing.T) {
 		}
 	}
 }
+
+// Lines longer than RFC 5321 allows are real-world mail the MTA already
+// accepted; they must be delivered, not bounced.
+func TestLMTPAcceptsLongLines(t *testing.T) {
+	r := newSieveRig(t)
+	long := "From: a@example.com\r\nTo: " + r.a.Address + "\r\nSubject: long\r\n\r\n" + strings.Repeat("x", 50000) + "\r\n"
+	if st := r.deliver("a@example.com", "long-1", long); st != nil {
+		t.Fatalf("long line = %v", st)
+	}
+	if r.count("INBOX") != 1 {
+		t.Fatal("long-line message not stored")
+	}
+}

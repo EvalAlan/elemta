@@ -119,6 +119,11 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	s.lmtp.LMTP = true
 	s.lmtp.Domain = "mailbox.elemta"
 	s.lmtp.MaxMessageBytes = e.MaxBytes
+	// RFC 5321 caps lines at 998 octets, but real mail breaks that (long
+	// unwrapped HTML, careless senders) and the MTA has already accepted
+	// it. Refusing it here would bounce mail permanently that other
+	// mailbox servers deliver, so only the message size limit applies.
+	s.lmtp.MaxLineLength = int(min(e.MaxBytes, 1<<30))
 	s.lmtp.MaxRecipients = 100
 	s.lmtp.ReadTimeout = time.Minute
 	s.lmtp.WriteTimeout = time.Minute
@@ -348,8 +353,12 @@ func (l *lmtpSession) LMTPData(r io.Reader, status smtp.StatusCollector) error {
 	defer release()
 
 	raw, err := readBounded(r, l.service.engine.MaxBytes)
+	if errors.Is(err, ErrTooLarge) {
+		return &smtp.SMTPError{Code: 552, EnhancedCode: smtp.EnhancedCode{5, 3, 4}, Message: "Message exceeds limit"}
+	}
 	if err != nil {
-		return &smtp.SMTPError{Code: 552, Message: "Message exceeds limit"}
+		// A broken read is the connection's fault, not the message's.
+		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "Message not received completely; try again"}
 	}
 	for i, a := range l.recipients {
 		ctx, cancel := context.WithTimeout(l.service.ctx, 45*time.Second)

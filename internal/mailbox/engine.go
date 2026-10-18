@@ -221,8 +221,20 @@ func (e *Engine) EnsureAccount(ctx context.Context, a Account) error {
 	if a.ID == "" || a.Address == "" || a.Quota < 0 {
 		return errors.New("invalid account identity")
 	}
+	// Every RCPT and login lands here. When the account is already as the
+	// directory describes it, a read answers without taking the account
+	// row's lock, which deliveries to that account hold while they commit.
+	var current bool
+	err := e.DB.QueryRowContext(ctx, `SELECT a.address=$2 AND a.quota_bytes=$3 AND EXISTS(SELECT 1 FROM mailbox_folders f WHERE f.account=a.id AND f.name='INBOX')
+FROM mailbox_accounts a WHERE a.id=$1`, a.ID, strings.ToLower(a.Address), a.Quota).Scan(&current)
+	if err == nil && current {
+		return nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	// The immutable directory ID, not a login alias, owns all mailbox rows.
-	_, err := e.DB.ExecContext(ctx, `INSERT INTO mailbox_accounts(id,address,quota_bytes) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET address=EXCLUDED.address,quota_bytes=EXCLUDED.quota_bytes WHERE mailbox_accounts.address IS DISTINCT FROM EXCLUDED.address OR mailbox_accounts.quota_bytes IS DISTINCT FROM EXCLUDED.quota_bytes`, a.ID, strings.ToLower(a.Address), a.Quota)
+	_, err = e.DB.ExecContext(ctx, `INSERT INTO mailbox_accounts(id,address,quota_bytes) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET address=EXCLUDED.address,quota_bytes=EXCLUDED.quota_bytes WHERE mailbox_accounts.address IS DISTINCT FROM EXCLUDED.address OR mailbox_accounts.quota_bytes IS DISTINCT FROM EXCLUDED.quota_bytes`, a.ID, strings.ToLower(a.Address), a.Quota)
 	if err != nil {
 		return err
 	}
@@ -447,8 +459,13 @@ func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, f
 	if err = e.Bodies.Put(ctx, key, raw); err != nil {
 		return result, err
 	}
-	// Parsed outside the transaction so the account lock isn't held for it.
-	summary := summarize(raw)
+	// The summary (and its search vector, the costly part) is stored before
+	// the account transaction, so deliveries to one account don't queue
+	// behind each other's indexing. It is a cache keyed by the body: if the
+	// transaction fails, cleanup removes it with the unused body.
+	if err = storeSummary(ctx, e.DB, key, summarize(raw)); err != nil {
+		return result, err
+	}
 	err = e.tx(ctx, account, func(tx *sql.Tx) error {
 		if token != "" {
 			var oldHash string
@@ -486,9 +503,6 @@ func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, f
 			return errors.New("upload lease expired")
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE mailbox_bodies SET state='ready' WHERE key=$1`, key); err != nil {
-			return err
-		}
-		if err = storeSummary(ctx, tx, key, summary); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO mailbox_messages(folder,uid,body,flags,internal_date,modseq) VALUES($1,$2,$3,$4,$5,$6)`, f.ID, f.Next, key, pq.Array(normalizeFlags(flags)), date, f.ModSeq+1); err != nil {

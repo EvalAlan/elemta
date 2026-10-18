@@ -34,7 +34,7 @@ default_domain = "example.com"
 [limits]
 max_connections = 256
 max_message_mb = 25
-max_concurrent_bodies = 2
+max_concurrent_bodies = 8
 
 [sieve]
 # ManageSieve for the webmail and mail clients' filter editors.
