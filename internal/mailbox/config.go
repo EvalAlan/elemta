@@ -22,6 +22,15 @@ type Config struct {
 }
 type MaintenanceConfig struct {
 	GarbageCollection bool `toml:"garbage_collection"`
+	// JournalRetentionHours is how long change records are kept for
+	// sessions to catch up from; older ones are removed and such sessions
+	// reload their folder instead. Zero means 168 (a week); negative keeps
+	// the journal forever.
+	JournalRetentionHours int `toml:"journal_retention_hours"`
+	// BackfillBatch is how many missing message summaries the service
+	// computes per minute in the background. Zero means 200; negative
+	// disables it.
+	BackfillBatch int `toml:"backfill_batch"`
 }
 type ServerConfig struct {
 	IMAPListen          string   `toml:"imap_listen"`
@@ -82,6 +91,12 @@ func (c Config) WithDefaults() Config {
 		if driver := os.Getenv(c.Bodies.DriverEnv); driver != "" {
 			c.Bodies.Driver = driver
 		}
+	}
+	if c.Maintenance.JournalRetentionHours == 0 {
+		c.Maintenance.JournalRetentionHours = 168
+	}
+	if c.Maintenance.BackfillBatch == 0 {
+		c.Maintenance.BackfillBatch = 200
 	}
 	if c.Server.IMAPListen == "" {
 		c.Server.IMAPListen = ":1143"

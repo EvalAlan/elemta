@@ -40,3 +40,13 @@ CREATE TABLE IF NOT EXISTS mailbox_auth_failures (
  expires TIMESTAMPTZ NOT NULL DEFAULT now()+interval '15 minutes'
 );
 CREATE INDEX IF NOT EXISTS mailbox_auth_failures_expiry ON mailbox_auth_failures(expires);
+CREATE TABLE IF NOT EXISTS mailbox_summaries (
+ body TEXT PRIMARY KEY REFERENCES mailbox_bodies(key) ON DELETE CASCADE,
+ version INTEGER NOT NULL, data BYTEA NOT NULL,
+ base_subject TEXT NOT NULL DEFAULT '', sent TIMESTAMPTZ,
+ sender TEXT NOT NULL DEFAULT '', recipient TEXT NOT NULL DEFAULT '', cc TEXT NOT NULL DEFAULT '',
+ display_from TEXT NOT NULL DEFAULT '', display_to TEXT NOT NULL DEFAULT '',
+ message_id TEXT NOT NULL DEFAULT '', refs TEXT[] NOT NULL DEFAULT '{}'
+);
+ALTER TABLE mailbox_folders ADD COLUMN IF NOT EXISTS journal_floor BIGINT NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS mailbox_changes_modseq ON mailbox_changes(folder,modseq);

@@ -1,18 +1,17 @@
 package mailbox
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"math"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
-	"github.com/emersion/go-message/textproto"
 )
 
 type imapSession struct {
@@ -253,63 +252,96 @@ func (s *imapSession) Append(name string, r imap.LiteralReader, options *imap.Ap
 	}
 	return &imap.AppendData{UIDValidity: res.Validity, UID: imap.UID(res.UID)}, nil
 }
-func (s *imapSession) selected(set imap.NumSet) []uint32 {
-	var out []uint32
-	maxUID := uint32(0)
-	if len(s.view) > 0 {
-		maxUID = s.view[len(s.view)-1].UID
+
+// selectedIdx returns the view indices a sequence or UID set names, in view
+// order. It is linear in the view: FETCH 1:* on a large folder must not be
+// quadratic.
+func (s *imapSession) selectedIdx(set imap.NumSet) []int {
+	n := len(s.view)
+	if n == 0 {
+		return nil
 	}
-	for i, m := range s.view {
-		match := false
-		switch v := set.(type) {
-		case imap.UIDSet:
-			for _, r := range v {
-				a, b := uint32(r.Start), uint32(r.Stop)
-				if a == 0 {
-					a = maxUID
-				}
-				if b == 0 {
-					b = maxUID
-				}
-				if a > b {
-					a, b = b, a
-				}
-				if m.UID >= a && m.UID <= b {
-					match = true
-					break
-				}
+	mark := make([]bool, n)
+	switch v := set.(type) {
+	case imap.UIDSet:
+		maxUID := s.view[n-1].UID
+		for _, r := range v {
+			a, b := uint32(r.Start), uint32(r.Stop)
+			if a == 0 {
+				a = maxUID
 			}
-		case imap.SeqSet:
-			for _, r := range v {
-				a, b := r.Start, r.Stop
-				if a == 0 {
-					a = seqNumber(len(s.view))
-				}
-				if b == 0 {
-					b = seqNumber(len(s.view))
-				}
-				if a > b {
-					a, b = b, a
-				}
-				if seqNumber(i+1) >= a && seqNumber(i+1) <= b {
-					match = true
-					break
+			if b == 0 {
+				b = maxUID
+			}
+			if a > b {
+				a, b = b, a
+			}
+			// The view is in UID order, so each range is one contiguous run.
+			i := sort.Search(n, func(i int) bool { return s.view[i].UID >= a })
+			for ; i < n && s.view[i].UID <= b; i++ {
+				mark[i] = true
+			}
+		}
+	case imap.SeqSet:
+		for _, r := range v {
+			a, b := r.Start, r.Stop
+			if a == 0 {
+				a = seqNumber(n)
+			}
+			if b == 0 {
+				b = seqNumber(n)
+			}
+			if a > b {
+				a, b = b, a
+			}
+			for i := int(a) - 1; i < int(b) && i < n; i++ {
+				if i >= 0 {
+					mark[i] = true
 				}
 			}
 		}
-		if match {
-			out = append(out, m.UID)
+	}
+	var out []int
+	for i, m := range mark {
+		if m {
+			out = append(out, i)
 		}
 	}
 	return out
 }
+
+func (s *imapSession) selected(set imap.NumSet) []uint32 {
+	idx := s.selectedIdx(set)
+	out := make([]uint32, len(idx))
+	for i, j := range idx {
+		out[i] = s.view[j].UID
+	}
+	return out
+}
+
+// headerOnly reports whether a body section can be answered from the
+// stored header block.
+func headerOnly(section *imap.FetchItemBodySection) bool {
+	if len(section.Part) > 0 {
+		return false
+	}
+	switch section.Specifier {
+	case imap.PartSpecifierHeader:
+		return true
+	}
+	return false
+}
+
+// fetchChunk bounds how many summaries one query loads.
+const fetchChunk = 500
+
 func (s *imapSession) Fetch(w *imapserver.FetchWriter, set imap.NumSet, options *imap.FetchOptions) error {
 	release, err := s.service.receiveSlot(s.ctx)
 	if err != nil {
 		return protocolError(err)
 	}
 	defer release()
-	uids := s.selected(set)
+	idx := s.selectedIdx(set)
 	seen := false
 	for _, section := range options.BodySection {
 		if !section.Peek {
@@ -321,7 +353,11 @@ func (s *imapSession) Fetch(w *imapserver.FetchWriter, set imap.NumSet, options 
 			seen = true
 		}
 	}
-	if seen && !s.readOnly {
+	if seen && !s.readOnly && len(idx) > 0 {
+		uids := make([]uint32, len(idx))
+		for i, j := range idx {
+			uids[i] = s.view[j].UID
+		}
 		if err := s.service.engine.MutateFlags(s.ctx, s.account.ID, s.folder.Name, uids, []string{"\\seen"}, 1); err != nil {
 			return protocolError(err)
 		}
@@ -329,69 +365,98 @@ func (s *imapSession) Fetch(w *imapserver.FetchWriter, set imap.NumSet, options 
 			return err
 		}
 	}
-	for i, m := range s.view {
-		if !slices.Contains(uids, m.UID) {
-			continue
+	bodyNeeded := len(options.BinarySection) > 0 || len(options.BinarySectionSize) > 0
+	summaryNeeded := options.Envelope || options.BodyStructure != nil
+	for _, section := range options.BodySection {
+		if headerOnly(section) {
+			summaryNeeded = true
+		} else {
+			bodyNeeded = true
 		}
-		rawNeeded := options.Envelope || options.BodyStructure != nil || len(options.BodySection) > 0 || len(options.BinarySection) > 0 || len(options.BinarySectionSize) > 0
-		var raw []byte
-		var err error
-		if rawNeeded {
-			raw, err = s.service.engine.Read(s.ctx, m)
-			if err != nil {
+	}
+	for start := 0; start < len(idx); start += fetchChunk {
+		chunk := idx[start:min(start+fetchChunk, len(idx))]
+		var summaries map[string]*Summary
+		if summaryNeeded {
+			msgs := make([]Message, len(chunk))
+			for i, j := range chunk {
+				msgs[i] = s.view[j]
+			}
+			if summaries, err = s.service.engine.Summaries(s.ctx, msgs); err != nil {
 				return protocolError(err)
 			}
 		}
-		response := w.CreateMessage(seqNumber(i + 1))
-		response.WriteUID(imap.UID(m.UID))
-		if options.Flags || seen {
-			response.WriteFlags(imapFlags(m.Flags))
-		}
-		if options.InternalDate {
-			response.WriteInternalDate(m.Date)
-		}
-		if options.RFC822Size {
-			response.WriteRFC822Size(m.Size)
-		}
-		if options.Envelope {
-			header, err := textproto.ReadHeader(bufio.NewReader(bytes.NewReader(raw)))
-			if err == nil {
-				response.WriteEnvelope(imapserver.ExtractEnvelope(header))
-			} else {
-				response.WriteEnvelope(&imap.Envelope{})
-			}
-		}
-		if options.BodyStructure != nil {
-			response.WriteBodyStructure(bodyStructure(raw))
-		}
-		for _, section := range options.BodySection {
-			data := bodySection(raw, section)
-			writer := response.WriteBodySection(section, int64(len(data)))
-			if _, err := writer.Write(data); err != nil {
+		for _, i := range chunk {
+			if err := s.fetchOne(w, i, options, seen, bodyNeeded, summaries); err != nil {
 				return err
 			}
-			if err := writer.Close(); err != nil {
-				return err
-			}
-		}
-		for _, section := range options.BinarySection {
-			data := imapserver.ExtractBinarySection(bytes.NewReader(raw), section)
-			writer := response.WriteBinarySection(section, int64(len(data)))
-			if _, err := writer.Write(data); err != nil {
-				return err
-			}
-			if err := writer.Close(); err != nil {
-				return err
-			}
-		}
-		for _, section := range options.BinarySectionSize {
-			response.WriteBinarySectionSize(section, imapserver.ExtractBinarySectionSize(bytes.NewReader(raw), section))
-		}
-		if err := response.Close(); err != nil {
-			return err
 		}
 	}
 	return nil
+}
+
+func (s *imapSession) fetchOne(w *imapserver.FetchWriter, i int, options *imap.FetchOptions, seen, bodyNeeded bool, summaries map[string]*Summary) error {
+	m := s.view[i]
+	var raw []byte
+	var err error
+	sum := summaries[m.Body]
+	if summaries != nil && sum == nil {
+		// Mail stored before summaries existed: compute it now, once.
+		if sum, err = s.service.engine.Summary(s.ctx, m); err != nil {
+			return protocolError(err)
+		}
+	}
+	if bodyNeeded || (sum != nil && sum.Header == nil && len(options.BodySection) > 0) {
+		if raw, err = s.service.engine.Read(s.ctx, m); err != nil {
+			return protocolError(err)
+		}
+	}
+	response := w.CreateMessage(seqNumber(i + 1))
+	response.WriteUID(imap.UID(m.UID))
+	if options.Flags || seen {
+		response.WriteFlags(imapFlags(m.Flags))
+	}
+	if options.InternalDate {
+		response.WriteInternalDate(m.Date)
+	}
+	if options.RFC822Size {
+		response.WriteRFC822Size(m.Size)
+	}
+	if options.Envelope {
+		response.WriteEnvelope(sum.Envelope)
+	}
+	if options.BodyStructure != nil {
+		response.WriteBodyStructure(sum.Structure)
+	}
+	for _, section := range options.BodySection {
+		var data []byte
+		if headerOnly(section) && raw == nil {
+			data = imapserver.ExtractBodySection(bytes.NewReader(sum.Header), section)
+		} else {
+			data = bodySection(raw, section)
+		}
+		writer := response.WriteBodySection(section, int64(len(data)))
+		if _, err := writer.Write(data); err != nil {
+			return err
+		}
+		if err := writer.Close(); err != nil {
+			return err
+		}
+	}
+	for _, section := range options.BinarySection {
+		data := imapserver.ExtractBinarySection(bytes.NewReader(raw), section)
+		writer := response.WriteBinarySection(section, int64(len(data)))
+		if _, err := writer.Write(data); err != nil {
+			return err
+		}
+		if err := writer.Close(); err != nil {
+			return err
+		}
+	}
+	for _, section := range options.BinarySectionSize {
+		response.WriteBinarySectionSize(section, imapserver.ExtractBinarySectionSize(bytes.NewReader(raw), section))
+	}
+	return response.Close()
 }
 func imapFlags(flags []string) []imap.Flag {
 	out := make([]imap.Flag, len(flags))
@@ -400,7 +465,33 @@ func imapFlags(flags []string) []imap.Flag {
 	}
 	return out
 }
+
+// viewIndex finds a UID in the view, which is in UID order.
+func (s *imapSession) viewIndex(uid uint32) (int, bool) {
+	i := sort.Search(len(s.view), func(i int) bool { return s.view[i].UID >= uid })
+	return i, i < len(s.view) && s.view[i].UID == uid
+}
+
+// refreshFlags updates the view's flags after this session changed them.
+// It doesn't advance the folder's MODSEQ, so the next poll still reports
+// what other sessions did meanwhile.
 func (s *imapSession) refreshFlags() error {
+	ch, err := s.service.engine.Changes(s.ctx, s.account.ID, s.folder.ID, s.folder.ModSeq)
+	if err != nil {
+		return protocolError(err)
+	}
+	if !ch.Complete {
+		return s.refreshFlagsFull()
+	}
+	for _, m := range ch.Changed {
+		if i, ok := s.viewIndex(m.UID); ok {
+			s.view[i] = m
+		}
+	}
+	return nil
+}
+
+func (s *imapSession) refreshFlagsFull() error {
 	_, msgs, err := s.service.engine.Snapshot(s.ctx, s.account.ID, s.folder.Name)
 	if err != nil {
 		return protocolError(err)
@@ -432,8 +523,12 @@ func (s *imapSession) Store(w *imapserver.FetchWriter, set imap.NumSet, flags *i
 		return err
 	}
 	if !flags.Silent {
+		want := make(map[uint32]bool, len(uids))
+		for _, u := range uids {
+			want[u] = true
+		}
 		for i, m := range s.view {
-			if slices.Contains(uids, m.UID) {
+			if want[m.UID] {
 				r := w.CreateMessage(seqNumber(i + 1))
 				r.WriteUID(imap.UID(m.UID))
 				r.WriteFlags(imapFlags(m.Flags))
@@ -459,14 +554,26 @@ func (s *imapSession) Expunge(w *imapserver.ExpungeWriter, set *imap.UIDSet) err
 	if err != nil {
 		return protocolError(err)
 	}
+	gone := make(map[uint32]bool, len(removed))
+	for _, u := range removed {
+		gone[u] = true
+	}
+	// Highest first, so each reported number is still valid when the
+	// client applies the ones before it.
 	for i := len(s.view) - 1; i >= 0; i-- {
-		if slices.Contains(removed, s.view[i].UID) {
+		if gone[s.view[i].UID] {
 			if err := w.WriteExpunge(seqNumber(i + 1)); err != nil {
 				return err
 			}
-			s.view = append(s.view[:i], s.view[i+1:]...)
 		}
 	}
+	kept := s.view[:0]
+	for _, m := range s.view {
+		if !gone[m.UID] {
+			kept = append(kept, m)
+		}
+	}
+	s.view = kept
 	return nil
 }
 func (s *imapSession) Copy(set imap.NumSet, dest string) (*imap.CopyData, error) {
@@ -511,14 +618,78 @@ func (s *imapSession) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error 
 	if s.folder.ID == 0 {
 		return nil
 	}
-	f, err := s.service.engine.folderByID(s.ctx, s.account.ID, s.folder.ID)
+	ch, err := s.service.engine.Changes(s.ctx, s.account.ID, s.folder.ID, s.folder.ModSeq)
 	if err != nil {
 		return protocolError(err)
 	}
-	s.folder.Name = f.Name
-	if f.ModSeq == s.folder.ModSeq {
+	s.folder.Name = ch.Folder.Name
+	if !ch.Complete {
+		return s.pollFull(w, allowExpunge)
+	}
+	if ch.Folder.ModSeq == s.folder.ModSeq {
 		return nil
 	}
+	pending := false
+	count := len(s.view)
+	if len(ch.Gone) > 0 {
+		gone := make(map[uint32]bool, len(ch.Gone))
+		for _, u := range ch.Gone {
+			if _, ok := s.viewIndex(u); ok {
+				gone[u] = true
+			}
+		}
+		if len(gone) > 0 && !allowExpunge {
+			pending = true
+		} else if len(gone) > 0 {
+			for i := len(s.view) - 1; i >= 0; i-- {
+				if gone[s.view[i].UID] {
+					if err := w.WriteExpunge(seqNumber(i + 1)); err != nil {
+						return err
+					}
+				}
+			}
+			kept := s.view[:0]
+			for _, m := range s.view {
+				if !gone[m.UID] {
+					kept = append(kept, m)
+				}
+			}
+			s.view = kept
+		}
+	}
+	var added []Message
+	for _, m := range ch.Changed {
+		i, ok := s.viewIndex(m.UID)
+		if !ok {
+			added = append(added, m)
+			continue
+		}
+		if !slices.Equal(m.Flags, s.view[i].Flags) {
+			if err := w.WriteMessageFlags(seqNumber(i+1), imap.UID(m.UID), imapFlags(m.Flags)); err != nil {
+				return err
+			}
+		}
+		s.view[i] = m
+	}
+	if len(added) > 0 {
+		// UIDs only grow, so new mail goes after everything in the view.
+		sort.Slice(added, func(i, j int) bool { return added[i].UID < added[j].UID })
+		s.view = append(s.view, added...)
+	}
+	if len(s.view) != count || len(added) > 0 {
+		if err := w.WriteNumMessages(seqNumber(len(s.view))); err != nil {
+			return err
+		}
+	}
+	if !pending {
+		s.folder = ch.Folder
+	}
+	return nil
+}
+
+// pollFull reconciles the view with a full snapshot, for sessions the
+// change journal can no longer answer.
+func (s *imapSession) pollFull(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	f, msgs, err := s.service.engine.Snapshot(s.ctx, s.account.ID, s.folder.Name)
 	if err != nil {
 		return protocolError(err)
@@ -528,6 +699,7 @@ func (s *imapSession) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error 
 		next[m.UID] = m
 	}
 	pending := false
+	gone := map[uint32]bool{}
 	for i := len(s.view) - 1; i >= 0; i-- {
 		old := s.view[i]
 		m, ok := next[old.UID]
@@ -536,7 +708,7 @@ func (s *imapSession) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error 
 				if err := w.WriteExpunge(seqNumber(i + 1)); err != nil {
 					return err
 				}
-				s.view = append(s.view[:i], s.view[i+1:]...)
+				gone[old.UID] = true
 			} else {
 				pending = true
 			}
@@ -550,6 +722,13 @@ func (s *imapSession) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error 
 		s.view[i] = m
 		delete(next, m.UID)
 	}
+	kept := s.view[:0]
+	for _, m := range s.view {
+		if !gone[m.UID] {
+			kept = append(kept, m)
+		}
+	}
+	s.view = kept
 	for _, m := range msgs {
 		if _, ok := next[m.UID]; ok {
 			s.view = append(s.view, m)

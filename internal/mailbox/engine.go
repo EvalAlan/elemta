@@ -262,11 +262,6 @@ func (e *Engine) Folder(ctx context.Context, account, name string) (Folder, erro
 	defer cancel()
 	return scanFolder(e.DB.QueryRowContext(ctx, `SELECT `+folderCols+` FROM mailbox_folders WHERE account=$1 AND name=$2`, account, canonicalMailbox(name)))
 }
-func (e *Engine) folderByID(ctx context.Context, account string, id int64) (Folder, error) {
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-	return scanFolder(e.DB.QueryRowContext(ctx, `SELECT `+folderCols+` FROM mailbox_folders WHERE account=$1 AND id=$2`, account, id))
-}
 func (e *Engine) Folders(ctx context.Context, account string) ([]Folder, error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -359,10 +354,17 @@ func (e *Engine) Rename(ctx context.Context, account, old, newName string) error
 		return err
 	})
 }
-func scanMessages(ctx context.Context, q interface {
+
+type querier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}, folder int64) ([]Message, error) {
-	rows, err := q.QueryContext(ctx, `SELECT m.uid,m.body,m.flags,m.internal_date,m.modseq,b.size,b.checksum FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body WHERE m.folder=$1 ORDER BY m.uid`, folder)
+}
+
+func scanMessages(ctx context.Context, q querier, folder int64) ([]Message, error) {
+	return scanMessagesWhere(ctx, q, `m.folder=$1`, folder)
+}
+
+func scanMessagesWhere(ctx context.Context, q querier, where string, args ...any) ([]Message, error) {
+	rows, err := q.QueryContext(ctx, `SELECT m.uid,m.body,m.flags,m.internal_date,m.modseq,b.size,b.checksum FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body WHERE `+where+` ORDER BY m.uid`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -445,6 +447,8 @@ func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, f
 	if err = e.Bodies.Put(ctx, key, raw); err != nil {
 		return result, err
 	}
+	// Parsed outside the transaction so the account lock isn't held for it.
+	summary := summarize(raw)
 	err = e.tx(ctx, account, func(tx *sql.Tx) error {
 		if token != "" {
 			var oldHash string
@@ -482,6 +486,9 @@ func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, f
 			return errors.New("upload lease expired")
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE mailbox_bodies SET state='ready' WHERE key=$1`, key); err != nil {
+			return err
+		}
+		if err = storeSummary(ctx, tx, key, summary); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO mailbox_messages(folder,uid,body,flags,internal_date,modseq) VALUES($1,$2,$3,$4,$5,$6)`, f.ID, f.Next, key, pq.Array(normalizeFlags(flags)), date, f.ModSeq+1); err != nil {
@@ -740,6 +747,9 @@ func (e *Engine) GC(ctx context.Context) (int, error) {
 			return 0, err
 		}
 		if !referenced {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM mailbox_summaries WHERE body=$1`, key); err != nil {
+				return 0, err
+			}
 			if _, err := tx.ExecContext(ctx, `UPDATE mailbox_bodies SET state='retiring',expires=now() WHERE key=$1`, key); err != nil {
 				return 0, err
 			}

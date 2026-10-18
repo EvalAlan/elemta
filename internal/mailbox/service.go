@@ -169,6 +169,20 @@ func (s *Service) Run(ctx context.Context) error {
 					s.log.Warn("mailbox cleanup failed", "error", err)
 				}
 				_, _ = s.engine.DB.ExecContext(ctx, `DELETE FROM mailbox_auth_failures WHERE expires<now()`)
+				if h := s.cfg.Maintenance.JournalRetentionHours; h > 0 {
+					if _, err := s.engine.CompactChanges(ctx, time.Duration(h)*time.Hour); err != nil && ctx.Err() == nil {
+						s.log.Warn("mailbox journal compaction failed", "error", err)
+					}
+				}
+				// Every replica runs this; summaries are idempotent, so overlap
+				// only costs a duplicate parse.
+				if n := s.cfg.Maintenance.BackfillBatch; n > 0 {
+					if done, err := s.engine.Backfill(ctx, n); err != nil && ctx.Err() == nil {
+						s.log.Warn("mailbox summary backfill failed", "error", err)
+					} else if done > 0 {
+						s.log.Info("mailbox summaries backfilled", "count", done)
+					}
+				}
 				cancel()
 			}
 		}

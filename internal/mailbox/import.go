@@ -166,6 +166,9 @@ func (e *Engine) ImportOfflineFolder(ctx context.Context, account string, source
 			if n != 1 {
 				return errors.New("import upload lease expired")
 			}
+			if err := storeSummary(ctx, tx, key, summarize(raw)); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_messages(folder,uid,body,flags,internal_date,modseq) VALUES($1,$2,$3,$4,$5,1)`, f.ID, m.UID, key, pq.Array(normalizeFlags(m.Flags)), m.Date); err != nil {
 				return err
 			}
