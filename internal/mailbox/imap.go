@@ -24,15 +24,18 @@ type imapSession struct {
 	// reported is the MODSEQ up to which flag changes have been sent.
 	reported uint64
 	readOnly bool
-	ctx      context.Context
-	cancel   context.CancelFunc
+	// public is a listener mail apps connect to, where a user's app-password
+	// requirement applies.
+	public bool
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 var _ imapserver.SessionIMAP4rev2 = (*imapSession)(nil)
 
 func (s *imapSession) Close() error { s.cancel(); return nil }
 func (s *imapSession) Login(user, password string) error {
-	a, err := s.service.login(s.ctx, user, password)
+	a, err := s.service.login(s.ctx, user, password, s.public)
 	if errors.Is(err, ErrCredentials) {
 		return imapserver.ErrAuthFailed
 	}
@@ -43,11 +46,31 @@ func (s *imapSession) Login(user, password string) error {
 	return nil
 }
 
-// login checks a user's password with the shared failure limit, for IMAP
-// and ManageSieve alike.
-func (s *Service) login(ctx context.Context, user, password string) (Account, error) {
-	if len(user) > 320 {
+// login checks a user's credentials for a mail protocol. On a public
+// listener, an account that requires app passwords refuses its account
+// password (security.go).
+func (s *Service) login(ctx context.Context, user, password string, public bool) (Account, error) {
+	a, app, err := s.authenticate(ctx, user, password)
+	if err != nil || app || !public {
+		return a, err
+	}
+	required, err := s.engine.AppPasswordsRequired(ctx, a.ID)
+	if err != nil {
+		return Account{}, err
+	}
+	if required {
+		s.failLogin(a.Address)
+		s.log.Info("mailbox: account password refused; app password required", "user", a.Address)
 		return Account{}, ErrCredentials
+	}
+	return a, nil
+}
+
+// authenticate checks an app password or the account password, with the
+// shared failure limit, and reports which one it was.
+func (s *Service) authenticate(ctx context.Context, user, password string) (Account, bool, error) {
+	if len(user) > 320 {
+		return Account{}, false, ErrCredentials
 	}
 	user = strings.ToLower(strings.TrimSpace(user))
 	if !strings.Contains(user, "@") && s.cfg.Auth.DefaultDomain != "" {
@@ -57,22 +80,43 @@ func (s *Service) login(ctx context.Context, user, password string) (Account, er
 	defer cancel()
 	allowed, err := s.allowLogin(user)
 	if err != nil {
-		return Account{}, err
+		return Account{}, false, err
 	}
 	if !allowed {
-		return Account{}, ErrCredentials
+		return Account{}, false, ErrCredentials
+	}
+	// An app password is one indexed lookup, and trying it first keeps a
+	// mail app that uses one from counting LDAP failures against the user.
+	id, app, err := s.engine.appPasswordAccount(ctx, user, password)
+	if err != nil {
+		return Account{}, false, err
+	}
+	if app {
+		// The directory still decides whether the account exists and may
+		// sign in; an app password doesn't outlive its account.
+		a, err := s.auth.Resolve(ctx, user)
+		if err == nil && a.ID != id {
+			err = ErrCredentials
+		}
+		if err != nil {
+			if errors.Is(err, ErrCredentials) {
+				s.failLogin(user)
+			}
+			return Account{}, false, err
+		}
+		return a, true, nil
 	}
 	a, err := s.auth.Login(ctx, user, password)
 	if err != nil {
 		if errors.Is(err, ErrCredentials) {
 			s.failLogin(user)
 		}
-		return Account{}, err
+		return Account{}, false, err
 	}
 	if err = s.engine.EnsureAccount(ctx, a); err != nil {
-		return Account{}, err
+		return Account{}, false, err
 	}
-	return a, nil
+	return a, false, nil
 }
 func protocolError(err error) error {
 	if err == nil {

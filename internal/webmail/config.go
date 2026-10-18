@@ -31,6 +31,11 @@ const (
 // load silently and do nothing.
 type Config struct {
 	Enabled bool `toml:"enabled"`
+	// SecurityURL is the mailbox service's internal account-security API
+	// (two-step verification and app passwords), for example
+	// http://elemta-mailbox:8080. Empty hides those settings and skips the
+	// second sign-in step. ELEMTA_WEBMAIL_SECURITY_URL overrides it.
+	SecurityURL string `toml:"security_url"`
 	// ObjectStore selects imap (default) or postgres for non-mail objects.
 	ObjectStore string `toml:"object_store"`
 	// ObjectPostgresDSN may instead be supplied through

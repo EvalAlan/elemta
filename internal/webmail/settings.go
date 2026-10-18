@@ -239,6 +239,9 @@ type settingsView struct {
 	MinPasswordLength int
 	// DAVURL is the address to give calendar and contact apps.
 	DAVURL string
+	// Security is two-step verification and app passwords; nil when the
+	// mailbox service's API isn't configured.
+	Security *securityView
 }
 
 // davURL is where CalDAV and CardDAV clients should point. The configured
@@ -256,19 +259,38 @@ func (s *Server) davURL(r *http.Request) string {
 }
 
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, sess *Session) {
+	v, err := s.settingsView(r, sess)
+	if err != nil {
+		s.fail(w, r, sess, err)
+		return
+	}
+	s.render(w, "settings.html", http.StatusOK, v)
+}
+
+func (s *Server) settingsView(r *http.Request, sess *Session) (view, error) {
 	p := s.prefs(r.Context(), sess)
 	v := view{Title: "Settings", Session: sess, Notice: notices[r.URL.Query().Get("n")], Settings: &settingsView{Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength, DAVURL: s.davURL(r)}}
 	if s.recovery != nil {
 		rec, err := s.recoveryRecord(r.Context(), s.recoveryAccount(sess.User))
 		if err != nil {
-			s.fail(w, r, sess, err)
-			return
+			return v, err
 		}
 		v.Settings.CanRecover = true
 		v.Settings.RecoveryEmail = rec.Email
 	}
+	if s.security != nil {
+		// The rest of the page works without the mailbox service's API, so
+		// its absence is shown on the card rather than failing the page.
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		st, err := s.securityStatusFor(ctx, sess)
+		cancel()
+		if err != nil {
+			s.log.Warn("webmail: account security status", "user", sess.User, "error", err)
+		}
+		v.Settings.Security = &securityView{Status: st, Unavailable: err != nil}
+	}
 	s.withFolders(r, sess, &v)
-	s.render(w, "settings.html", http.StatusOK, v)
+	return v, nil
 }
 
 func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {

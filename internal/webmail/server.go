@@ -45,6 +45,10 @@ type Server struct {
 	now          func() time.Time
 	// dav keeps the mail connections of CalDAV and CardDAV clients.
 	dav *davPool
+	// security reaches the mailbox service's account-security API; nil
+	// when none is configured (security.go).
+	security *securityClient
+	pending  pendingLogins
 	// defaultLoc is the time zone for users who haven't chosen one and
 	// whose browser hasn't reported one yet.
 	defaultLoc *time.Location
@@ -105,6 +109,9 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		}
 		server.recovery = valkeyRecovery{client: v.client}
 		server.resetter = ldapPasswords{url: cfg.LDAPURL, base: cfg.LDAPBase, filter: cfg.LDAPUserFilter, searchDN: cfg.LDAPResetDN, searchPassword: envOr("ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD", cfg.LDAPResetPassword), insecureSkipVerify: cfg.InsecureSkipVerify}
+	}
+	if u := envOr("ELEMTA_WEBMAIL_SECURITY_URL", cfg.SecurityURL); u != "" {
+		server.security = newSecurityClient(u)
 	}
 	if cfg.ObjectStore == "postgres" {
 		dsn := envOr("ELEMTA_WEBMAIL_OBJECT_POSTGRES_DSN", cfg.ObjectPostgresDSN)
@@ -180,6 +187,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/recovery", s.authed(s.recoverySubmit))
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.loginSubmit)
+	mux.HandleFunc("GET /login/verify", s.twoFactorPage)
+	mux.HandleFunc("POST /login/verify", s.twoFactorSubmit)
+	mux.HandleFunc("POST /settings/2fa/begin", s.authed(s.totpBeginSubmit))
+	mux.HandleFunc("POST /settings/2fa/confirm", s.authed(s.totpConfirmSubmit))
+	mux.HandleFunc("POST /settings/2fa/disable", s.authed(s.totpDisableSubmit))
+	mux.HandleFunc("POST /settings/app-passwords", s.authed(s.appPasswordSubmit))
+	mux.HandleFunc("POST /settings/app-passwords/delete", s.authed(s.appPasswordDeleteSubmit))
+	mux.HandleFunc("POST /settings/app-required", s.authed(s.appRequiredSubmit))
 	mux.HandleFunc("POST /logout", s.authed(s.logout))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/mail", http.StatusFound) })
 	mux.HandleFunc("GET /mail", s.authed(s.mailPage))
@@ -406,43 +421,48 @@ func (s *Server) renderProblem(w http.ResponseWriter, r *http.Request, sess *Ses
 // notices maps the codes redirects carry to their text, so a crafted link
 // can't put arbitrary words on the page.
 var notices = map[string]string{
-	"sent":              "Message sent.",
-	"sent-nocopy":       "Message sent, but a copy couldn't be saved to Sent.",
-	"saved":             "Draft saved.",
-	"deleted":           "Message deleted.",
-	"deleted-many":      "Messages deleted.",
-	"moved":             "Message moved.",
-	"moved-many":        "Messages moved.",
-	"archived":          "Message archived.",
-	"archived-many":     "Messages archived.",
-	"emptied":           "Folder emptied.",
-	"all-read":          "All messages marked read.",
-	"loggedout":         "You've signed out.",
-	"folder-created":    "Folder created.",
-	"folder-renamed":    "Folder renamed.",
-	"folder-deleted":    "Folder deleted.",
-	"settings-saved":    "Settings saved.",
-	"password-reset":    "Your password was reset. Sign in with your new password.",
-	"recovery-sent":     "A verification link was sent to your recovery address.",
-	"recovery-verified": "Your recovery email is verified.",
-	"recovery-removed":  "Your recovery email was removed.",
-	"password-changed":  "Your password was changed. Use the new one everywhere you read mail.",
-	"contact-saved":     "Contact saved.",
-	"contact-exists":    "That sender is already in your contacts.",
-	"contact-deleted":   "Contact deleted.",
-	"contacts-imported": "Contacts imported.",
-	"event-saved":       "Event saved.",
-	"event-deleted":     "Event deleted.",
-	"events-imported":   "Events imported.",
-	"invites-sent":      "Event saved and invitations sent.",
-	"invite-failed":     "Event saved, but the invitations couldn't be sent.",
-	"rsvp-sent":         "Your reply was sent and the event is in your calendar.",
-	"rsvp-saved":        "The event is in your calendar. The organizer couldn't be told; try again later.",
-	"rsvp-updated":      "The attendee's reply was recorded in your calendar.",
-	"task-saved":        "Task saved.",
-	"task-deleted":      "Task deleted.",
-	"filters-saved":     "Filters saved.",
-	"vacation-saved":    "Out-of-office reply saved.",
+	"sent":                 "Message sent.",
+	"sent-nocopy":          "Message sent, but a copy couldn't be saved to Sent.",
+	"saved":                "Draft saved.",
+	"deleted":              "Message deleted.",
+	"deleted-many":         "Messages deleted.",
+	"moved":                "Message moved.",
+	"moved-many":           "Messages moved.",
+	"archived":             "Message archived.",
+	"archived-many":        "Messages archived.",
+	"emptied":              "Folder emptied.",
+	"all-read":             "All messages marked read.",
+	"loggedout":            "You've signed out.",
+	"recovery-code-used":   "You signed in with a recovery code, which can't be used again. If you've lost your authenticator, turn two-step verification off and on again to get new codes.",
+	"2fa-off":              "Two-step verification is off.",
+	"app-password-deleted": "App password deleted. Apps using it will be asked for a new one.",
+	"app-required":         "Mail apps now need an app password; your account password works only in webmail.",
+	"app-optional":         "Mail apps can use your account password again.",
+	"folder-created":       "Folder created.",
+	"folder-renamed":       "Folder renamed.",
+	"folder-deleted":       "Folder deleted.",
+	"settings-saved":       "Settings saved.",
+	"password-reset":       "Your password was reset. Sign in with your new password.",
+	"recovery-sent":        "A verification link was sent to your recovery address.",
+	"recovery-verified":    "Your recovery email is verified.",
+	"recovery-removed":     "Your recovery email was removed.",
+	"password-changed":     "Your password was changed. Use the new one everywhere you read mail.",
+	"contact-saved":        "Contact saved.",
+	"contact-exists":       "That sender is already in your contacts.",
+	"contact-deleted":      "Contact deleted.",
+	"contacts-imported":    "Contacts imported.",
+	"event-saved":          "Event saved.",
+	"event-deleted":        "Event deleted.",
+	"events-imported":      "Events imported.",
+	"invites-sent":         "Event saved and invitations sent.",
+	"invite-failed":        "Event saved, but the invitations couldn't be sent.",
+	"rsvp-sent":            "Your reply was sent and the event is in your calendar.",
+	"rsvp-saved":           "The event is in your calendar. The organizer couldn't be told; try again later.",
+	"rsvp-updated":         "The attendee's reply was recorded in your calendar.",
+	"task-saved":           "Task saved.",
+	"task-deleted":         "Task deleted.",
+	"filters-saved":        "Filters saved.",
+	"vacation-saved":       "Out-of-office reply saved.",
 }
 
 // ---- login -----------------------------------------------------------------
@@ -573,6 +593,44 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		s.renderLogin(w, r, http.StatusBadGateway, user, "", "The mail server didn't respond. Try again in a moment.")
 		return
 	}
+	if s.security != nil {
+		check, err := s.security.check(ctx, user, password)
+		if err != nil {
+			// Without the answer, whether a second step is needed is
+			// unknown, so the sign-in stops rather than skipping it.
+			_ = store.Close()
+			s.log.Warn("webmail: account security check unavailable", "user", user, "error", err)
+			s.renderLogin(w, r, http.StatusBadGateway, user, "", "Sign-in is temporarily unavailable. Try again in a moment.")
+			return
+		}
+		if check.Kind == "app" {
+			// App passwords are for mail apps; the webmail would otherwise
+			// be a way around the second step.
+			_ = store.Close()
+			s.limiter.fail(userKey)
+			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That's an app password. Sign in to webmail with your account password.")
+			return
+		}
+		if check.TOTP {
+			_ = store.Close()
+			token, err := s.pending.put(user, password, s.now())
+			if err != nil {
+				http.Error(w, "Something went wrong.", http.StatusInternalServerError)
+				return
+			}
+			s.limiter.reset(userKey)
+			s.setCookie(w, preLoginCookie, "", -1)
+			s.setCookie(w, twoFactorCookie, token, int(pendingLoginTTL.Seconds()))
+			http.Redirect(w, r, "/login/verify", http.StatusSeeOther)
+			return
+		}
+	}
+	s.limiter.reset(userKey)
+	s.finishLogin(ctx, w, r, user, password, store, "/mail")
+}
+
+// finishLogin turns a verified sign-in into a session.
+func (s *Server) finishLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password string, store Mailstore, next string) {
 	// Every account gets the standard folders, so Junk and Trash are there
 	// to move mail to from the first sign-in. A failure here only means
 	// they're created later, when first needed.
@@ -585,12 +643,11 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Something went wrong.", http.StatusInternalServerError)
 		return
 	}
-	s.limiter.reset(userKey)
 	s.setCookie(w, preLoginCookie, "", -1)
 	s.setCookie(w, sessionCookie, sess.ID, 0)
 	s.setAppearanceCookies(w, s.prefs(ctx, sess))
-	s.log.Info("webmail: login", "user", user, "ip", ip)
-	http.Redirect(w, r, "/mail", http.StatusSeeOther)
+	s.log.Info("webmail: login", "user", user, "ip", s.clientIP(r))
+	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, sess *Session) {

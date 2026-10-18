@@ -87,7 +87,7 @@ func (p *popSession) renew(ctx context.Context) bool {
 func (p *popSession) login(ctx context.Context, password string) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	a, err := p.s.login(ctx, p.user, password)
+	a, err := p.s.login(ctx, p.user, password, true)
 	if err != nil {
 		return err
 	}

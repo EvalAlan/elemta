@@ -30,6 +30,8 @@ type Service struct {
 	log          *slog.Logger
 	imap         *imapserver.Server
 	imapStartTLS *imapserver.Server
+	// internalNets may use the account-security API (security_api.go).
+	internalNets []*net.IPNet
 	lmtp         *smtp.Server
 	sieve        sieveCache
 	tlsConfig    *tls.Config
@@ -93,14 +95,23 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.GetCertificate}
 	}
 	s.tlsConfig = tlsConfig
+	for _, cidr := range c.Server.LMTPAllowedNetworks {
+		if _, network, err := net.ParseCIDR(cidr); err == nil {
+			s.internalNets = append(s.internalNets, network)
+		}
+	}
 	caps := imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapNamespace: {}, imap.CapUIDPlus: {}, imap.CapMove: {}, imap.CapIdle: {}, imap.CapListExtended: {}, imap.CapListStatus: {}, imap.CapSpecialUse: {}, imap.CapESearch: {}, imap.CapStatusSize: {}, imap.CapUnselect: {}}
-	s.imap = imapserver.New(&imapserver.Options{Caps: caps, TLSConfig: tlsConfig, InsecureAuth: c.Server.AllowPlaintextAuth, NewSession: func(_ *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+	// This server takes both the internal listener the webmail uses and
+	// the implicit-TLS listener (993). Only the latter faces mail apps, and
+	// it is the one whose connections are TLS from the first byte.
+	s.imap = imapserver.New(&imapserver.Options{Caps: caps, TLSConfig: tlsConfig, InsecureAuth: c.Server.AllowPlaintextAuth, NewSession: func(conn *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+		_, public := conn.NetConn().(*tls.Conn)
 		ctx, cancel := context.WithCancel(s.ctx)
-		return &imapSession{service: s, ctx: ctx, cancel: cancel}, nil, nil
+		return &imapSession{service: s, ctx: ctx, cancel: cancel, public: public}, nil, nil
 	}})
 	s.imapStartTLS = imapserver.New(&imapserver.Options{Caps: caps, TLSConfig: tlsConfig, InsecureAuth: false, NewSession: func(_ *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 		ctx, cancel := context.WithCancel(s.ctx)
-		return &imapSession{service: s, ctx: ctx, cancel: cancel}, nil, nil
+		return &imapSession{service: s, ctx: ctx, cancel: cancel, public: true}, nil, nil
 	}})
 
 	s.lmtp = smtp.NewServer(smtp.BackendFunc(func(conn *smtp.Conn) (smtp.Session, error) {
@@ -146,6 +157,7 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+	s.securityAPI(mux)
 	s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	return s, nil
 }

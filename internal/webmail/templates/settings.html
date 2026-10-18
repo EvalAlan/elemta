@@ -88,13 +88,85 @@
     <div class="form-actions"><button class="button primary" type="submit">Update recovery email</button></div>
   </form>
   {{end}}
+  {{with .Settings.Security}}
+  <div class="card" id="security">
+    <h2 class="card-title">Two-step verification and app passwords</h2>
+    {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
+    {{if .Unavailable}}<p class="problem" role="alert">These settings can't be loaded right now. Try again in a moment.</p>{{end}}
+    {{if .RecoveryCodes}}
+    <p class="notice" role="status">Two-step verification is on. Save these recovery codes somewhere safe, away from your phone. Each one signs you in once if you lose your authenticator. They won't be shown again.</p>
+    <ul class="code-list mono">{{range .RecoveryCodes}}<li>{{.}}</li>{{end}}</ul>
+    {{end}}
+    {{if .NewAppPassword}}
+    <p class="notice" role="status">Your app password for <strong>{{.NewAppName}}</strong>. Enter it in the app in place of your account password. It won't be shown again.</p>
+    <p class="mono app-password">{{.NewAppPassword}}</p>
+    {{end}}
+    {{if .SetupSecret}}
+    <form class="form-grid" action="/settings/2fa/confirm" method="post" autocomplete="off">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <input type="hidden" name="secret" value="{{.SetupSecret}}">
+      <span class="label">1. Scan</span>
+      <span><img class="qr" src="{{.SetupQR}}" alt="QR code for your authenticator app" width="200" height="200"><br>
+      <span class="small muted">Use an authenticator app such as Aegis, 2FAS, Google Authenticator or 1Password. To type it in instead, use this key:</span><br><code>{{.SetupSecret}}</code></span>
+      <label for="totp-code">2. Enter the code</label>
+      <input id="totp-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+      <div class="form-actions"><button class="button primary" type="submit">Turn on</button></div>
+    </form>
+    {{else}}{{with .Status}}
+    {{if .TOTP}}
+    <p>Two-step verification is <strong>on</strong>. Webmail asks for a code from your authenticator app after your password. {{.RecoveryLeft}} recovery codes left.</p>
+    <form class="form-grid" action="/settings/2fa/disable" method="post" autocomplete="off">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <label for="totp-off">Current code</label>
+      <input id="totp-off" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="16" required>
+      <div class="form-actions"><button class="button danger" type="submit">Turn off two-step verification</button></div>
+    </form>
+    {{else}}
+    <p>Two-step verification is <strong>off</strong>. Turn it on so a stolen password alone can't open your webmail.</p>
+    <form action="/settings/2fa/begin" method="post">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <div class="form-actions"><button class="button primary" type="submit">Set up two-step verification</button></div>
+    </form>
+    {{end}}
+    <h3>App passwords</h3>
+    <p class="muted">Mail, calendar and contacts apps (Thunderbird, Outlook, phones) can each have their own password. You can delete one without changing your account password.</p>
+    {{if .AppPasswords}}
+    <table class="table">
+      <thead><tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+      <tbody>{{range .AppPasswords}}
+      <tr><td>{{.Name}}</td><td>{{.Created.Format "2 Jan 2006"}}</td><td>{{with .LastUsed}}{{.Format "2 Jan 2006 15:04"}}{{else}}Never{{end}}</td>
+      <td><form action="/settings/app-passwords/delete" method="post"><input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button danger" type="submit">Delete</button></form></td></tr>
+      {{end}}</tbody>
+    </table>
+    {{end}}
+    <form class="form-grid" action="/settings/app-passwords" method="post" autocomplete="off">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <label for="app-name">New app password for</label>
+      <input id="app-name" name="name" type="text" maxlength="64" placeholder="e.g. Thunderbird on laptop" required>
+      <div class="form-actions"><button class="button" type="submit">Create app password</button></div>
+    </form>
+    <form class="form-grid" action="/settings/app-required" method="post">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      {{if .AppRequired}}
+      <input type="hidden" name="required" value="0">
+      <p><strong>Mail apps need an app password.</strong> Your account password works only in webmail.</p>
+      <div class="form-actions"><button class="button" type="submit">Let mail apps use my account password</button></div>
+      {{else}}
+      <input type="hidden" name="required" value="1">
+      <p class="muted">Mail apps can still use your account password.{{if .TOTP}} With two-step verification on, require app passwords too, or a stolen password can still read your mail through IMAP or POP3.{{end}}</p>
+      <div class="form-actions"><button class="button{{if .TOTP}} primary{{end}}" type="submit">Require app passwords for mail apps</button></div>
+      {{end}}
+    </form>
+    {{end}}{{end}}
+  </div>
+  {{end}}
   <div class="card">
     <h2 class="card-title">Calendar and contacts on other devices</h2>
     <p class="muted">Phones and desktop apps (DAVx⁵, Thunderbird, Apple Calendar and Contacts) can sync your calendar, tasks and contacts. Add a CalDAV or CardDAV account with:</p>
     <dl class="kv-list">
       <dt>Server</dt><dd><code>{{.Settings.DAVURL}}</code></dd>
       <dt>User name</dt><dd><code>{{.Session.Address}}</code></dd>
-      <dt>Password</dt><dd>your mail password</dd>
+      <dt>Password</dt><dd>{{if and .Settings.Security .Settings.Security.Status .Settings.Security.Status.AppRequired}}an app password (see above){{else}}your mail password, or an app password{{end}}</dd>
     </dl>
   </div>
   <div class="card links-card">

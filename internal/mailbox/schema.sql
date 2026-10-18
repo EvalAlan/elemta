@@ -77,3 +77,18 @@ CREATE TABLE IF NOT EXISTS mailbox_pop3_leases (
  owner text NOT NULL,
  expires timestamptz NOT NULL
 );
+
+-- Account security (security.go): two-step verification and app passwords.
+CREATE TABLE IF NOT EXISTS mailbox_security (
+ account text PRIMARY KEY REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+ totp_secret text, totp_pending text, totp_last_step bigint NOT NULL DEFAULT 0,
+ app_passwords_required boolean NOT NULL DEFAULT false,
+ recovery_codes text[] NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS mailbox_app_passwords (
+ id bigserial PRIMARY KEY,
+ account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+ name text NOT NULL, hash text NOT NULL UNIQUE,
+ created timestamptz NOT NULL DEFAULT now(), last_used timestamptz
+);
+CREATE INDEX IF NOT EXISTS mailbox_app_passwords_account ON mailbox_app_passwords(account);

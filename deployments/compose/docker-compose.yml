@@ -229,6 +229,10 @@ services:
       - TZ=UTC
       - ELEMTA_CONFIG_RESEED=${ELEMTA_CONFIG_RESEED:-}
       - NODE_ID=webmail
+      # Two-step verification and app passwords live in the mailbox
+      # service; its internal API is on the proxy's health port, which is
+      # never published ([webmail] security_url).
+      - ELEMTA_WEBMAIL_SECURITY_URL=http://elemta-mailbox:8080
       # Sessions are kept in Valkey, so a restart or a second webmail
       # container doesn't sign anyone out ([webmail] session_store).
       - VALKEY_ADDR=elemta-valkey:6379

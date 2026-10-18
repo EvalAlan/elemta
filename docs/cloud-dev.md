@@ -221,3 +221,41 @@ A shared PostgreSQL lease excludes simultaneous POP sessions across replicas;
 a crashed server's lease expires after 15 minutes. Sessions time out after
 10 minutes of inactivity. IMAP can still independently move or expunge messages;
 a concurrently removed message may become unavailable to POP retrieval.
+
+### Two-step verification and app passwords
+
+Users turn both on themselves, in webmail **Settings → Two-step verification
+and app passwords**.
+
+- **Two-step verification** (TOTP, RFC 6238) asks for a code from an
+  authenticator app after the password. It works with Aegis, 2FAS, Google
+  Authenticator, 1Password and similar apps.
+  - Turning it on shows a QR code, then ten one-time recovery codes.
+  - A recovery code signs the user in once if the phone is lost.
+  - Turning it off requires a current code.
+  - Each code is accepted once, wrong codes count toward the login failure
+    limit, and an app password can't sign in to webmail.
+- **App passwords** are random per-app passwords, stored only as hashes. Each
+  one shows when it was last used and can be deleted on its own.
+  - They work on IMAP (993, 143), POP3 (110) and CalDAV/CardDAV.
+  - With **Require app passwords for mail apps** on, those listeners refuse
+    the account password, which then works only in webmail.
+  - Users with two-step verification should turn this on. Otherwise a stolen
+    password can still read mail over IMAP or POP3.
+  - SMTP submission (587) still accepts the account password.
+
+The mailbox service stores both in Postgres (`mailbox_security`,
+`mailbox_app_passwords`). The webmail manages them through the mailbox service's
+internal API on the proxy's health port, which is never published. The API also
+refuses clients outside `lmtp_allowed_networks`. Each request carries the user's
+own credentials. Settings change only with the account password, so a leaked app
+password can't remove the protection.
+
+If a user loses both the phone and the recovery codes, an administrator turns
+two-step verification off. Run this on the server, with the user's address:
+
+```
+docker exec elemta-mailbox-db psql -U mailbox -d mailbox -c \
+  "UPDATE mailbox_security SET totp_secret=NULL,totp_pending=NULL,recovery_codes='{}' \
+   WHERE account=(SELECT id FROM mailbox_accounts WHERE lower(address)=lower('user@example.net'))"
+```

@@ -309,7 +309,9 @@ func (ss *sieveSession) authenticate(ctx context.Context, args []string) {
 		ss.no("", "Invalid PLAIN response")
 		return
 	}
-	a, err := ss.s.login(ctx, string(parts[1]), string(parts[2]))
+	// ManageSieve is internal-only in deployments (the webmail edits
+	// filters), so it is not a listener the requirement covers.
+	a, err := ss.s.login(ctx, string(parts[1]), string(parts[2]), false)
 	if err != nil {
 		if !errors.Is(err, ErrCredentials) {
 			ss.no("TRYLATER", "Temporarily unavailable")

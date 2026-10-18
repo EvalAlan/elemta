@@ -248,6 +248,26 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 		http.Error(w, "The mail server didn't respond.", http.StatusBadGateway)
 		return nil, false
 	}
+	// Sync apps are mail apps for this purpose: an account that requires
+	// app passwords refuses its account password here too, as on IMAP and
+	// POP3. The webmail reaches the mail server through the internal
+	// listener, which accepts it, so the check is made here.
+	if s.security != nil {
+		check, err := s.security.check(ctx, user, pw)
+		if err != nil {
+			_ = st.Close()
+			s.log.Warn("webmail: dav account security check unavailable", "user", user, "error", err)
+			http.Error(w, "Sign-in is temporarily unavailable.", http.StatusBadGateway)
+			return nil, false
+		}
+		if check.Kind == "password" && check.AppRequired {
+			_ = st.Close()
+			s.limiter.fail(userKey)
+			s.log.Info("webmail: dav account password refused; app password required", "user", user, "ip", ip)
+			challenge()
+			return nil, false
+		}
+	}
 	return s.dav.add(user, pw, st, now), true
 }
 
