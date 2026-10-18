@@ -152,7 +152,10 @@ func (s *Server) mailEvents(w http.ResponseWriter, r *http.Request, sess *Sessio
 			}
 		case <-ctx.Done():
 			return
-		case <-failed:
+		case err := <-failed:
+			// Logged so a mailbox that keeps dropping push is diagnosable;
+			// the page falls back to polling either way.
+			s.log.Debug("webmail: mail push stopped", "user", sess.User, "error", err)
 			_ = send("unavailable")
 			return
 		case <-changed:
