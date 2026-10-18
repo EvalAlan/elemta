@@ -195,10 +195,7 @@ func TestChangesReplay(t *testing.T) {
 }
 
 func TestSelectedIdx(t *testing.T) {
-	s := &imapSession{}
-	for _, u := range []uint32{2, 5, 7, 9, 12} {
-		s.view = append(s.view, Message{UID: u})
-	}
+	s := &imapSession{uids: []uint32{2, 5, 7, 9, 12}}
 	var uids imap.UIDSet
 	uids.AddRange(5, 9)
 	uids.AddNum(12)
@@ -216,5 +213,67 @@ func TestSelectedIdx(t *testing.T) {
 	seq.AddRange(5, 0)
 	if got := s.selected(seq); len(got) != 3 || got[0] != 5 || got[2] != 12 {
 		t.Errorf("seq set = %v", got)
+	}
+}
+
+// Flag changes made in one session reach another selected on the folder,
+// and STATUS counts without loading messages.
+func TestFlagUpdatesAcrossSessions(t *testing.T) {
+	e, a := testEngine(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := e.Append(ctx, a.ID, "INBOX", []byte("Subject: x\r\n\r\nx\r\n"), nil, time.Now(), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, addr, _ := startTestService(t, e, a)
+	flags := make(chan []imap.Flag, 4)
+	c1, err := imapclient.DialInsecure(addr, &imapclient.Options{UnilateralDataHandler: &imapclient.UnilateralDataHandler{
+		Fetch: func(msg *imapclient.FetchMessageData) {
+			if buf, err := msg.Collect(); err == nil {
+				flags <- buf.Flags
+			}
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c1.Close()
+	c2, err := imapclient.DialInsecure(addr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	for _, c := range []*imapclient.Client{c1, c2} {
+		if err := c.Login(a.Address, "testpass").Wait(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c2.Store(imap.SeqSetNum(2), &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagFlagged}, Silent: true}, nil).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c1.Noop().Wait(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case f := <-flags:
+		found := false
+		for _, x := range f {
+			if strings.EqualFold(string(x), `\Flagged`) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("flags update = %v", f)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no flag update reached the other session")
+	}
+	st, err := c1.Status("INBOX", &imap.StatusOptions{NumMessages: true, NumUnseen: true, Size: true}).Wait()
+	if err != nil || *st.NumMessages != 3 || *st.NumUnseen != 3 || *st.Size == 0 {
+		t.Fatalf("STATUS = %+v, %v", st, err)
 	}
 }

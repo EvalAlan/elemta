@@ -70,6 +70,10 @@ labs remain optional; Dovecot is available only for explicit rollback.
   that doesn't name the user, sent from the null sender. Redirects and
   replies are submitted to `sieve.submit_addr`; without it they are skipped
   and logged.
+- A selected IMAP session keeps only its folder's UIDs (4 bytes a message)
+  and loads flags, dates and sizes for the messages a command touches, so
+  memory doesn't grow with the folder. Measured on the dev stack: 400
+  sessions on a 30,001-message folder use about 100 MB per replica.
 - Readiness checks for a writable database and accessible body store. Strict
   mode requires configured synchronous replication and a streaming quorum/
   synchronous standby. Writes explicitly use synchronous commit in that mode.
@@ -267,8 +271,6 @@ replacement or a demonstrated million-mailbox deployment. Keep the existing
 server until these remaining gates are met:
 
 - CONDSTORE/QRESYNC.
-- Measured memory limits for very large mailboxes: a selected session still
-  holds one small row per message in its view.
 - Backend/account migration, UID-preserving import, placement automation,
   tenant/cell management and live ownership fencing administration.
 - Backup-aware garbage retention, restore drills and production fencing.

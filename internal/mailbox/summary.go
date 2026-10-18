@@ -300,7 +300,8 @@ WHERE b.state='ready' AND s.body IS NULL AND b.key<$3 ORDER BY b.key LIMIT $2`
 // its summary.
 type SortKeys struct {
 	BaseSubject, From, To, Cc, DisplayFrom, DisplayTo, MessageID, Subject string
-	Sent                                                                  time.Time
+	Sent, Arrival                                                         time.Time
+	Size                                                                  int64
 	References                                                            []string
 	Reply                                                                 bool
 }
@@ -309,8 +310,8 @@ type SortKeys struct {
 // UID, in one query. Messages without a current summary are missing; the
 // caller computes those.
 func (e *Engine) FolderSortKeys(ctx context.Context, folder int64) (map[uint32]*SortKeys, error) {
-	rows, err := e.DB.QueryContext(ctx, `SELECT m.uid,s.base_subject,s.sent,s.sender,s.recipient,s.cc,s.display_from,s.display_to,s.message_id,s.refs,s.reply
-FROM mailbox_messages m JOIN mailbox_summaries s ON s.body=m.body AND s.version=$2 WHERE m.folder=$1`, folder, summaryVersion)
+	rows, err := e.DB.QueryContext(ctx, `SELECT m.uid,s.base_subject,s.sent,s.sender,s.recipient,s.cc,s.display_from,s.display_to,s.message_id,s.refs,s.reply,m.internal_date,b.size
+FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body JOIN mailbox_summaries s ON s.body=m.body AND s.version=$2 WHERE m.folder=$1`, folder, summaryVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +321,7 @@ FROM mailbox_messages m JOIN mailbox_summaries s ON s.body=m.body AND s.version=
 		var uid uint32
 		var k SortKeys
 		var sent sql.NullTime
-		if err := rows.Scan(&uid, &k.BaseSubject, &sent, &k.From, &k.To, &k.Cc, &k.DisplayFrom, &k.DisplayTo, &k.MessageID, pq.Array(&k.References), &k.Reply); err != nil {
+		if err := rows.Scan(&uid, &k.BaseSubject, &sent, &k.From, &k.To, &k.Cc, &k.DisplayFrom, &k.DisplayTo, &k.MessageID, pq.Array(&k.References), &k.Reply, &k.Arrival, &k.Size); err != nil {
 			return nil, err
 		}
 		if sent.Valid {

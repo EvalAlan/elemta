@@ -15,10 +15,14 @@ import (
 )
 
 type imapSession struct {
-	service  *Service
-	account  Account
-	folder   Folder
-	view     []Message
+	service *Service
+	account Account
+	folder  Folder
+	// uids is the selected folder's view: the UID at each sequence number.
+	// Everything else about a message is loaded when a command needs it.
+	uids []uint32
+	// reported is the MODSEQ up to which flag changes have been sent.
+	reported uint64
 	readOnly bool
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -96,28 +100,26 @@ func protocolError(err error) error {
 	return &imap.Error{Type: imap.StatusResponseTypeNo, Code: code, Text: text}
 }
 func (s *imapSession) Select(name string, options *imap.SelectOptions) (*imap.SelectData, error) {
-	f, msgs, err := s.service.engine.Snapshot(s.ctx, s.account.ID, name)
+	info, err := s.service.engine.SelectFolder(s.ctx, s.account.ID, name)
 	if err != nil {
 		return nil, protocolError(err)
 	}
-	s.folder = f
-	s.view = msgs
+	s.folder = info.Folder
+	s.uids = info.UIDs
+	s.reported = info.Folder.ModSeq
 	s.readOnly = options.ReadOnly
 	var unseen uint32
-	for i, m := range msgs {
-		if !hasFlag(m.Flags, "\\seen") {
+	if info.FirstUnseen != 0 {
+		if i, ok := s.viewIndex(info.FirstUnseen); ok {
 			unseen = seqNumber(i + 1)
-			break
 		}
 	}
-	return &imap.SelectData{Flags: allFlags(msgs), PermanentFlags: []imap.Flag{imap.FlagSeen, imap.FlagAnswered, imap.FlagFlagged, imap.FlagDeleted, imap.FlagDraft, imap.FlagWildcard}, NumMessages: seqNumber(len(msgs)), FirstUnseenSeqNum: unseen, UIDValidity: f.Validity, UIDNext: imap.UID(f.Next)}, nil
+	return &imap.SelectData{Flags: allFlags(info.Keywords), PermanentFlags: []imap.Flag{imap.FlagSeen, imap.FlagAnswered, imap.FlagFlagged, imap.FlagDeleted, imap.FlagDraft, imap.FlagWildcard}, NumMessages: seqNumber(len(s.uids)), FirstUnseenSeqNum: unseen, UIDValidity: info.Folder.Validity, UIDNext: imap.UID(info.Folder.Next)}, nil
 }
-func allFlags(msgs []Message) []imap.Flag {
+func allFlags(keywords []string) []imap.Flag {
 	m := map[imap.Flag]bool{imap.FlagSeen: true, imap.FlagAnswered: true, imap.FlagFlagged: true, imap.FlagDeleted: true, imap.FlagDraft: true}
-	for _, v := range msgs {
-		for _, f := range v.Flags {
-			m[imap.Flag(f)] = true
-		}
+	for _, k := range keywords {
+		m[imap.Flag(k)] = true
 	}
 	out := make([]imap.Flag, 0, len(m))
 	for f := range m {
@@ -126,7 +128,7 @@ func allFlags(msgs []Message) []imap.Flag {
 	slices.Sort(out)
 	return out
 }
-func (s *imapSession) Unselect() error { s.folder = Folder{}; s.view = nil; return nil }
+func (s *imapSession) Unselect() error { s.folder = Folder{}; s.uids = nil; return nil }
 func (s *imapSession) Namespace() (*imap.NamespaceData, error) {
 	return &imap.NamespaceData{Personal: []imap.NamespaceDescriptor{{Delim: '/'}}}, nil
 }
@@ -201,20 +203,11 @@ func (s *imapSession) List(w *imapserver.ListWriter, ref string, patterns []stri
 	return nil
 }
 func (s *imapSession) Status(name string, options *imap.StatusOptions) (*imap.StatusData, error) {
-	f, msgs, err := s.service.engine.Snapshot(s.ctx, s.account.ID, name)
+	f, n, unseen, size, err := s.service.engine.FolderStatus(s.ctx, s.account.ID, name)
 	if err != nil {
 		return nil, protocolError(err)
 	}
 	data := &imap.StatusData{Mailbox: f.Name}
-	n := seqNumber(len(msgs))
-	unseen := uint32(0)
-	size := int64(0)
-	for _, m := range msgs {
-		if !hasFlag(m.Flags, "\\seen") {
-			unseen++
-		}
-		size += m.Size
-	}
 	if options.NumMessages {
 		data.NumMessages = &n
 	}
@@ -269,14 +262,14 @@ func (s *imapSession) Append(name string, r imap.LiteralReader, options *imap.Ap
 // order. It is linear in the view: FETCH 1:* on a large folder must not be
 // quadratic.
 func (s *imapSession) selectedIdx(set imap.NumSet) []int {
-	n := len(s.view)
+	n := len(s.uids)
 	if n == 0 {
 		return nil
 	}
 	mark := make([]bool, n)
 	switch v := set.(type) {
 	case imap.UIDSet:
-		maxUID := s.view[n-1].UID
+		maxUID := s.uids[n-1]
 		for _, r := range v {
 			a, b := uint32(r.Start), uint32(r.Stop)
 			if a == 0 {
@@ -289,8 +282,8 @@ func (s *imapSession) selectedIdx(set imap.NumSet) []int {
 				a, b = b, a
 			}
 			// The view is in UID order, so each range is one contiguous run.
-			i := sort.Search(n, func(i int) bool { return s.view[i].UID >= a })
-			for ; i < n && s.view[i].UID <= b; i++ {
+			i := sort.Search(n, func(i int) bool { return s.uids[i] >= a })
+			for ; i < n && s.uids[i] <= b; i++ {
 				mark[i] = true
 			}
 		}
@@ -326,9 +319,18 @@ func (s *imapSession) selected(set imap.NumSet) []uint32 {
 	idx := s.selectedIdx(set)
 	out := make([]uint32, len(idx))
 	for i, j := range idx {
-		out[i] = s.view[j].UID
+		out[i] = s.uids[j]
 	}
 	return out
+}
+
+// rows loads the current rows of the messages at these view indices.
+func (s *imapSession) rows(idx []int) (map[uint32]Message, error) {
+	uids := make([]uint32, len(idx))
+	for i, j := range idx {
+		uids[i] = s.uids[j]
+	}
+	return s.service.engine.MessagesByUID(s.ctx, s.folder.ID, uids)
 }
 
 // headerOnly reports whether a body section can be answered from the
@@ -368,13 +370,10 @@ func (s *imapSession) Fetch(w *imapserver.FetchWriter, set imap.NumSet, options 
 	if seen && !s.readOnly && len(idx) > 0 {
 		uids := make([]uint32, len(idx))
 		for i, j := range idx {
-			uids[i] = s.view[j].UID
+			uids[i] = s.uids[j]
 		}
 		if err := s.service.engine.MutateFlags(s.ctx, s.account.ID, s.folder.Name, uids, []string{"\\seen"}, 1); err != nil {
 			return protocolError(err)
-		}
-		if err := s.refreshFlags(); err != nil {
-			return err
 		}
 	}
 	bodyNeeded := len(options.BinarySection) > 0 || len(options.BinarySectionSize) > 0
@@ -386,20 +385,48 @@ func (s *imapSession) Fetch(w *imapserver.FetchWriter, set imap.NumSet, options 
 			bodyNeeded = true
 		}
 	}
+	// A fetch over much of a large folder (a client's "UID FETCH 1:*
+	// (FLAGS)" resync) reads the folder's rows in one query; smaller ones
+	// read each batch's.
+	var folderRows map[uint32]Message
+	if len(idx) > 4*fetchChunk {
+		msgs, err := scanMessages(s.ctx, s.service.engine.DB, s.folder.ID)
+		if err != nil {
+			return protocolError(err)
+		}
+		folderRows = make(map[uint32]Message, len(msgs))
+		for _, m := range msgs {
+			folderRows[m.UID] = m
+		}
+	}
 	for start := 0; start < len(idx); start += fetchChunk {
 		chunk := idx[start:min(start+fetchChunk, len(idx))]
+		rows := folderRows
+		if rows == nil {
+			if rows, err = s.rows(chunk); err != nil {
+				return protocolError(err)
+			}
+		}
 		var summaries map[string]*Summary
 		if summaryNeeded {
-			msgs := make([]Message, len(chunk))
-			for i, j := range chunk {
-				msgs[i] = s.view[j]
+			msgs := make([]Message, 0, len(chunk))
+			for _, i := range chunk {
+				if m, ok := rows[s.uids[i]]; ok {
+					msgs = append(msgs, m)
+				}
 			}
 			if summaries, err = s.service.engine.Summaries(s.ctx, msgs); err != nil {
 				return protocolError(err)
 			}
 		}
 		for _, i := range chunk {
-			if err := s.fetchOne(w, i, options, seen, bodyNeeded, summaries); err != nil {
+			m, ok := rows[s.uids[i]]
+			if !ok {
+				// Expunged by another session; it is reported as such on the
+				// next poll. RFC 9051 lets the server leave it out here.
+				continue
+			}
+			if err := s.fetchOne(w, i, m, options, seen, bodyNeeded, summaries); err != nil {
 				return err
 			}
 		}
@@ -407,8 +434,7 @@ func (s *imapSession) Fetch(w *imapserver.FetchWriter, set imap.NumSet, options 
 	return nil
 }
 
-func (s *imapSession) fetchOne(w *imapserver.FetchWriter, i int, options *imap.FetchOptions, seen, bodyNeeded bool, summaries map[string]*Summary) error {
-	m := s.view[i]
+func (s *imapSession) fetchOne(w *imapserver.FetchWriter, i int, m Message, options *imap.FetchOptions, seen, bodyNeeded bool, summaries map[string]*Summary) error {
 	var raw []byte
 	var err error
 	sum := summaries[m.Body]
@@ -480,50 +506,19 @@ func imapFlags(flags []string) []imap.Flag {
 
 // viewIndex finds a UID in the view, which is in UID order.
 func (s *imapSession) viewIndex(uid uint32) (int, bool) {
-	i := sort.Search(len(s.view), func(i int) bool { return s.view[i].UID >= uid })
-	return i, i < len(s.view) && s.view[i].UID == uid
+	i := sort.Search(len(s.uids), func(i int) bool { return s.uids[i] >= uid })
+	return i, i < len(s.uids) && s.uids[i] == uid
 }
 
-// refreshFlags updates the view's flags after this session changed them.
-// It doesn't advance the folder's MODSEQ, so the next poll still reports
-// what other sessions did meanwhile.
-func (s *imapSession) refreshFlags() error {
-	ch, err := s.service.engine.Changes(s.ctx, s.account.ID, s.folder.ID, s.folder.ModSeq)
-	if err != nil {
-		return protocolError(err)
-	}
-	if !ch.Complete {
-		return s.refreshFlagsFull()
-	}
-	for _, m := range ch.Changed {
-		if i, ok := s.viewIndex(m.UID); ok {
-			s.view[i] = m
-		}
-	}
-	return nil
-}
-
-func (s *imapSession) refreshFlagsFull() error {
-	_, msgs, err := s.service.engine.Snapshot(s.ctx, s.account.ID, s.folder.Name)
-	if err != nil {
-		return protocolError(err)
-	}
-	byUID := map[uint32]Message{}
-	for _, m := range msgs {
-		byUID[m.UID] = m
-	}
-	for i, m := range s.view {
-		if next, ok := byUID[m.UID]; ok {
-			s.view[i] = next
-		}
-	}
-	return nil
-}
 func (s *imapSession) Store(w *imapserver.FetchWriter, set imap.NumSet, flags *imap.StoreFlags, _ *imap.StoreOptions) error {
 	if s.readOnly {
 		return protocolError(ErrReadOnly)
 	}
-	uids := s.selected(set)
+	idx := s.selectedIdx(set)
+	uids := make([]uint32, len(idx))
+	for i, j := range idx {
+		uids[i] = s.uids[j]
+	}
 	values := make([]string, len(flags.Flags))
 	for i, f := range flags.Flags {
 		values[i] = string(f)
@@ -531,27 +526,52 @@ func (s *imapSession) Store(w *imapserver.FetchWriter, set imap.NumSet, flags *i
 	if err := s.service.engine.MutateFlags(s.ctx, s.account.ID, s.folder.Name, uids, values, int(flags.Op)); err != nil {
 		return protocolError(err)
 	}
-	if err := s.refreshFlags(); err != nil {
-		return err
+	if flags.Silent {
+		return nil
 	}
-	if !flags.Silent {
-		want := make(map[uint32]bool, len(uids))
-		for _, u := range uids {
-			want[u] = true
+	for start := 0; start < len(idx); start += fetchChunk {
+		chunk := idx[start:min(start+fetchChunk, len(idx))]
+		rows, err := s.rows(chunk)
+		if err != nil {
+			return protocolError(err)
 		}
-		for i, m := range s.view {
-			if want[m.UID] {
-				r := w.CreateMessage(seqNumber(i + 1))
-				r.WriteUID(imap.UID(m.UID))
-				r.WriteFlags(imapFlags(m.Flags))
-				if err := r.Close(); err != nil {
-					return err
-				}
+		for _, i := range chunk {
+			m, ok := rows[s.uids[i]]
+			if !ok {
+				continue
+			}
+			r := w.CreateMessage(seqNumber(i + 1))
+			r.WriteUID(imap.UID(m.UID))
+			r.WriteFlags(imapFlags(m.Flags))
+			if err := r.Close(); err != nil {
+				return err
 			}
 		}
 	}
 	return nil
 }
+
+// dropFromView reports the given UIDs as expunged, highest sequence number
+// first so each number is still valid when the client applies the ones
+// before it, and removes them from the view.
+func (s *imapSession) dropFromView(gone map[uint32]bool, write func(uint32) error) error {
+	for i := len(s.uids) - 1; i >= 0; i-- {
+		if gone[s.uids[i]] {
+			if err := write(seqNumber(i + 1)); err != nil {
+				return err
+			}
+		}
+	}
+	kept := s.uids[:0]
+	for _, u := range s.uids {
+		if !gone[u] {
+			kept = append(kept, u)
+		}
+	}
+	s.uids = kept
+	return nil
+}
+
 func (s *imapSession) Expunge(w *imapserver.ExpungeWriter, set *imap.UIDSet) error {
 	if s.readOnly {
 		return protocolError(ErrReadOnly)
@@ -570,23 +590,7 @@ func (s *imapSession) Expunge(w *imapserver.ExpungeWriter, set *imap.UIDSet) err
 	for _, u := range removed {
 		gone[u] = true
 	}
-	// Highest first, so each reported number is still valid when the
-	// client applies the ones before it.
-	for i := len(s.view) - 1; i >= 0; i-- {
-		if gone[s.view[i].UID] {
-			if err := w.WriteExpunge(seqNumber(i + 1)); err != nil {
-				return err
-			}
-		}
-	}
-	kept := s.view[:0]
-	for _, m := range s.view {
-		if !gone[m.UID] {
-			kept = append(kept, m)
-		}
-	}
-	s.view = kept
-	return nil
+	return s.dropFromView(gone, w.WriteExpunge)
 }
 func (s *imapSession) Copy(set imap.NumSet, dest string) (*imap.CopyData, error) {
 	v, from, to, err := s.service.engine.CopyMove(s.ctx, s.account.ID, s.folder.Name, dest, s.selected(set), false)
@@ -616,15 +620,11 @@ func (s *imapSession) Move(w *imapserver.MoveWriter, set imap.NumSet, dest strin
 	if err = w.WriteCopyData(copyData(v, from, to)); err != nil {
 		return err
 	}
-	for i := len(s.view) - 1; i >= 0; i-- {
-		if slices.Contains(from, s.view[i].UID) {
-			if err = w.WriteExpunge(seqNumber(i + 1)); err != nil {
-				return err
-			}
-			s.view = append(s.view[:i], s.view[i+1:]...)
-		}
+	gone := make(map[uint32]bool, len(from))
+	for _, u := range from {
+		gone[u] = true
 	}
-	return nil
+	return s.dropFromView(gone, w.WriteExpunge)
 }
 func (s *imapSession) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	if s.folder.ID == 0 {
@@ -642,7 +642,7 @@ func (s *imapSession) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error 
 		return nil
 	}
 	pending := false
-	count := len(s.view)
+	count := len(s.uids)
 	if len(ch.Gone) > 0 {
 		gone := make(map[uint32]bool, len(ch.Gone))
 		for _, u := range ch.Gone {
@@ -653,104 +653,102 @@ func (s *imapSession) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error 
 		if len(gone) > 0 && !allowExpunge {
 			pending = true
 		} else if len(gone) > 0 {
-			for i := len(s.view) - 1; i >= 0; i-- {
-				if gone[s.view[i].UID] {
-					if err := w.WriteExpunge(seqNumber(i + 1)); err != nil {
-						return err
-					}
-				}
+			if err := s.dropFromView(gone, w.WriteExpunge); err != nil {
+				return err
 			}
-			kept := s.view[:0]
-			for _, m := range s.view {
-				if !gone[m.UID] {
-					kept = append(kept, m)
-				}
-			}
-			s.view = kept
 		}
 	}
-	var added []Message
+	var added []uint32
 	for _, m := range ch.Changed {
 		i, ok := s.viewIndex(m.UID)
 		if !ok {
-			added = append(added, m)
+			added = append(added, m.UID)
 			continue
 		}
-		if !slices.Equal(m.Flags, s.view[i].Flags) {
+		// The view keeps no flags to compare against, so every message
+		// changed since the session's MODSEQ is reported; RFC 9051 allows
+		// unchanged flags to be repeated.
+		if m.ModSeq > s.reported {
 			if err := w.WriteMessageFlags(seqNumber(i+1), imap.UID(m.UID), imapFlags(m.Flags)); err != nil {
 				return err
 			}
 		}
-		s.view[i] = m
 	}
 	if len(added) > 0 {
 		// UIDs only grow, so new mail goes after everything in the view.
-		sort.Slice(added, func(i, j int) bool { return added[i].UID < added[j].UID })
-		s.view = append(s.view, added...)
+		slices.Sort(added)
+		s.uids = append(s.uids, added...)
 	}
-	if len(s.view) != count || len(added) > 0 {
-		if err := w.WriteNumMessages(seqNumber(len(s.view))); err != nil {
+	if len(s.uids) != count || len(added) > 0 {
+		if err := w.WriteNumMessages(seqNumber(len(s.uids))); err != nil {
 			return err
 		}
 	}
+	// Flag changes up to here are reported even when an expunge is held
+	// back, so they aren't repeated on every poll until it is sent.
+	s.reported = ch.Folder.ModSeq
 	if !pending {
 		s.folder = ch.Folder
 	}
 	return nil
 }
 
-// pollFull reconciles the view with a full snapshot, for sessions the
-// change journal can no longer answer.
+// pollFull reconciles the view with the folder, for sessions the change
+// journal can no longer answer. Flags of every message are reported.
 func (s *imapSession) pollFull(w *imapserver.UpdateWriter, allowExpunge bool) error {
-	f, msgs, err := s.service.engine.Snapshot(s.ctx, s.account.ID, s.folder.Name)
+	info, err := s.service.engine.SelectFolder(s.ctx, s.account.ID, s.folder.Name)
 	if err != nil {
 		return protocolError(err)
 	}
-	next := map[uint32]Message{}
-	for _, m := range msgs {
-		next[m.UID] = m
+	present := make(map[uint32]bool, len(info.UIDs))
+	for _, u := range info.UIDs {
+		present[u] = true
 	}
-	pending := false
 	gone := map[uint32]bool{}
-	for i := len(s.view) - 1; i >= 0; i-- {
-		old := s.view[i]
-		m, ok := next[old.UID]
-		if !ok {
-			if allowExpunge {
-				if err := w.WriteExpunge(seqNumber(i + 1)); err != nil {
+	for _, u := range s.uids {
+		if !present[u] {
+			gone[u] = true
+		}
+	}
+	pending := len(gone) > 0 && !allowExpunge
+	if len(gone) > 0 && allowExpunge {
+		if err := s.dropFromView(gone, w.WriteExpunge); err != nil {
+			return err
+		}
+	}
+	last := uint32(0)
+	if len(s.uids) > 0 {
+		last = s.uids[len(s.uids)-1]
+	}
+	for _, u := range info.UIDs {
+		if u > last {
+			s.uids = append(s.uids, u)
+		}
+	}
+	all := make([]int, len(s.uids))
+	for i := range all {
+		all[i] = i
+	}
+	for start := 0; start < len(all); start += fetchChunk {
+		chunk := all[start:min(start+fetchChunk, len(all))]
+		rows, err := s.rows(chunk)
+		if err != nil {
+			return protocolError(err)
+		}
+		for _, i := range chunk {
+			if m, ok := rows[s.uids[i]]; ok {
+				if err := w.WriteMessageFlags(seqNumber(i+1), imap.UID(m.UID), imapFlags(m.Flags)); err != nil {
 					return err
 				}
-				gone[old.UID] = true
-			} else {
-				pending = true
-			}
-			continue
-		}
-		if !slices.Equal(m.Flags, old.Flags) {
-			if err := w.WriteMessageFlags(seqNumber(i+1), imap.UID(m.UID), imapFlags(m.Flags)); err != nil {
-				return err
 			}
 		}
-		s.view[i] = m
-		delete(next, m.UID)
 	}
-	kept := s.view[:0]
-	for _, m := range s.view {
-		if !gone[m.UID] {
-			kept = append(kept, m)
-		}
-	}
-	s.view = kept
-	for _, m := range msgs {
-		if _, ok := next[m.UID]; ok {
-			s.view = append(s.view, m)
-		}
-	}
-	if err := w.WriteNumMessages(seqNumber(len(s.view))); err != nil {
+	if err := w.WriteNumMessages(seqNumber(len(s.uids))); err != nil {
 		return err
 	}
+	s.reported = info.Folder.ModSeq
 	if !pending {
-		s.folder = f
+		s.folder = info.Folder
 	}
 	return nil
 }
@@ -772,8 +770,8 @@ func (s *imapSession) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) err
 }
 
 // match returns the view indices of the messages matching c, in view
-// order. Summaries are loaded in chunks only when header criteria need
-// them; bodies are read only for BODY and TEXT.
+// order. Rows are loaded in chunks; summaries only when header criteria
+// need them; bodies only for BODY and TEXT.
 func (s *imapSession) match(c *imap.SearchCriteria) ([]int, error) {
 	hits, err := s.service.engine.searchIndex(s.ctx, s.folder.ID, c)
 	if err != nil {
@@ -789,21 +787,48 @@ func (s *imapSession) match(c *imap.SearchCriteria) ([]int, error) {
 	}
 	var out []int
 	maxUID := uint32(0)
-	if len(s.view) > 0 {
-		maxUID = s.view[len(s.view)-1].UID
+	if len(s.uids) > 0 {
+		maxUID = s.uids[len(s.uids)-1]
 	}
-	total := seqNumber(len(s.view))
-	for start := 0; start < len(s.view); start += fetchChunk {
-		end := min(start+fetchChunk, len(s.view))
+	total := seqNumber(len(s.uids))
+	// Rows are needed for flag, date and size criteria, for header and text
+	// criteria the index can't answer, and for mail not yet indexed. When
+	// none apply (SORT ALL, THREAD ALL, indexed text searches) the UIDs are
+	// all there is to evaluate.
+	var rows map[uint32]Message
+	if needHeader || needText || searchNeedsRows(c) || (hits != nil && len(hits.unindexed) > 0) {
+		msgs, err := scanMessages(s.ctx, s.service.engine.DB, s.folder.ID)
+		if err != nil {
+			return nil, protocolError(err)
+		}
+		rows = make(map[uint32]Message, len(msgs))
+		for _, m := range msgs {
+			rows[m.UID] = m
+		}
+	}
+	for start := 0; start < len(s.uids); start += fetchChunk {
+		end := min(start+fetchChunk, len(s.uids))
 		var summaries map[string]*Summary
 		if needHeader {
+			msgs := make([]Message, 0, end-start)
+			for _, u := range s.uids[start:end] {
+				if m, ok := rows[u]; ok {
+					msgs = append(msgs, m)
+				}
+			}
 			var err error
-			if summaries, err = s.service.engine.Summaries(s.ctx, s.view[start:end]); err != nil {
+			if summaries, err = s.service.engine.Summaries(s.ctx, msgs); err != nil {
 				return nil, protocolError(err)
 			}
 		}
 		for i := start; i < end; i++ {
-			m := s.view[i]
+			m := Message{UID: s.uids[i]}
+			if rows != nil {
+				var ok bool
+				if m, ok = rows[s.uids[i]]; !ok {
+					continue // expunged by another session
+				}
+			}
 			src := &searchSource{
 				summary:     summaries[m.Body],
 				loadSummary: func() (*Summary, error) { return s.service.engine.Summary(s.ctx, m) },
@@ -830,7 +855,7 @@ func (s *imapSession) Search(kind imapserver.NumKind, c *imap.SearchCriteria, _ 
 	for i, j := range idx {
 		nums[i] = seqNumber(j + 1)
 		if kind == imapserver.NumKindUID {
-			nums[i] = s.view[j].UID
+			nums[i] = s.uids[j]
 		}
 	}
 	data := &imap.SearchData{Count: seqNumber(len(nums))}

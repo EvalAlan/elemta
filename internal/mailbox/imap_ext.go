@@ -29,17 +29,30 @@ func (s *imapSession) matchedKeys(c *imap.SearchCriteria) ([]int, []*SortKeys, e
 		return nil, nil, protocolError(err)
 	}
 	keys := make([]*SortKeys, len(idx))
+	var missing []int
 	for i, j := range idx {
-		m := s.view[j]
-		k := byUID[m.UID]
-		if k == nil {
+		if keys[i] = byUID[s.uids[j]]; keys[i] == nil {
+			missing = append(missing, j)
+		}
+	}
+	if len(missing) > 0 {
+		// Mail stored before summaries existed.
+		rows, err := s.rows(missing)
+		if err != nil {
+			return nil, nil, protocolError(err)
+		}
+		for i, j := range idx {
+			if keys[i] != nil {
+				continue
+			}
+			m := rows[s.uids[j]]
 			sum, err := s.service.engine.Summary(s.ctx, m)
 			if err != nil {
 				return nil, nil, protocolError(err)
 			}
-			k = sum.sortKeys()
+			keys[i] = sum.sortKeys()
+			keys[i].Arrival, keys[i].Size = m.Date, m.Size
 		}
-		keys[i] = k
 	}
 	return idx, keys, nil
 }
@@ -59,29 +72,22 @@ func (s *imapSession) Sort(kind imapserver.NumKind, sortKeys []imapserver.SortKe
 		order[i] = i
 	}
 	compare := func(a, b int, key string) int {
-		ma, mb := s.view[idx[a]], s.view[idx[b]]
 		sa, sb := keys[a], keys[b]
 		str := func(x, y string) int { return strings.Compare(x, y) }
 		switch key {
 		case "ARRIVAL":
-			return ma.Date.Compare(mb.Date)
+			return sa.Arrival.Compare(sb.Arrival)
 		case "SIZE":
 			switch {
-			case ma.Size < mb.Size:
+			case sa.Size < sb.Size:
 				return -1
-			case ma.Size > mb.Size:
+			case sa.Size > sb.Size:
 				return 1
 			}
 			return 0
 		case "DATE":
 			// A message without a usable Date header sorts by arrival.
-			da, db := sa.Sent, sb.Sent
-			if da.IsZero() {
-				da = ma.Date
-			}
-			if db.IsZero() {
-				db = mb.Date
-			}
+			da, db := sentOr(sa.Sent, sa.Arrival), sentOr(sb.Sent, sb.Arrival)
 			return da.Compare(db)
 		case "SUBJECT":
 			return str(sa.BaseSubject, sb.BaseSubject)
@@ -120,7 +126,7 @@ func (s *imapSession) Sort(kind imapserver.NumKind, sortKeys []imapserver.SortKe
 
 func (s *imapSession) number(kind imapserver.NumKind, i int) uint32 {
 	if kind == imapserver.NumKindUID {
-		return s.view[i].UID
+		return s.uids[i]
 	}
 	return seqNumber(i + 1)
 }
@@ -137,7 +143,7 @@ func (s *imapSession) Thread(kind imapserver.NumKind, algorithm string, c *imap.
 		k := keys[i]
 		items[i] = &threadItem{
 			num: s.number(kind, j), seq: j, id: k.MessageID, refs: k.References,
-			subject: k.BaseSubject, reply: k.Reply, sent: sentOr(k.Sent, s.view[j].Date),
+			subject: k.BaseSubject, reply: k.Reply, sent: sentOr(k.Sent, k.Arrival),
 		}
 	}
 	if algorithm == "ORDEREDSUBJECT" {
