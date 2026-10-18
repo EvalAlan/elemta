@@ -498,6 +498,9 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .keys { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; }
 .keys dt { font-family: var(--mono); font-size: 12px; color: var(--accent-dark); }
 .keys dd { margin: 0; }
+.kv-list { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 12px 0 0; }
+.kv-list dt { color: var(--muted); }
+.kv-list dd { margin: 0; overflow-wrap: anywhere; }
 
 /* Login */
 /* The sign-in and recovery pages follow the administration console's sign-in:

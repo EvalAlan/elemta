@@ -51,7 +51,12 @@ func isObjectFolder(name string) bool {
 // Object is one stored item: an iCalendar event or task, a vCard, or a
 // settings document.
 type Object struct {
-	ID          string
+	ID string
+	// Name is the resource name a CalDAV or CardDAV client chose for the
+	// object, when it isn't the ID plus the usual extension. Clients keep
+	// their own names, so it must survive edits made in the webmail, which
+	// don't know it: PutObject with an empty Name keeps the existing one.
+	Name        string
 	Title       string // shown as the message subject in other mail clients
 	ContentType string
 	Data        []byte
@@ -72,6 +77,9 @@ type ObjectStore interface {
 
 // objectHeader marks a message as a stored object and carries its ID.
 const objectHeader = "X-Elemta-Object"
+
+// objectNameHeader carries Object.Name.
+const objectNameHeader = "X-Elemta-Object-Name"
 
 // objectCache is one collection as last read, valid while the folder's
 // UIDVALIDITY, UIDNEXT and message count are unchanged. Any append or
@@ -103,6 +111,15 @@ func objectID(id string) string {
 }
 
 func (s *imapStore) loadObjects(c Collection) (*objectCache, error) {
+	// STATUS on the folder this connection has selected can miss changes
+	// another connection made (a CalDAV client, another tab) until the
+	// server has had a chance to report them, which would leave the cache
+	// below looking valid. A NOOP lets it catch up first.
+	if mb := s.c.Mailbox(); mb != nil && mb.Name == string(c) {
+		if err := s.c.Noop().Wait(); err != nil {
+			return nil, fmt.Errorf("webmail: noop: %w", err)
+		}
+	}
 	status, err := s.c.Status(string(c), &imap.StatusOptions{NumMessages: true, UIDNext: true, UIDValidity: true}).Wait()
 	if err != nil {
 		if isNo(err) {
@@ -170,6 +187,14 @@ func (s *imapStore) PutObject(ctx context.Context, c Collection, obj Object) err
 		return err
 	}
 	old := cache.uids[obj.ID]
+	if obj.Name == "" && len(old) > 0 {
+		for _, o := range cache.objects {
+			if o.ID == obj.ID {
+				obj.Name = o.Name
+				break
+			}
+		}
+	}
 	raw, err := encodeObject(obj, time.Now())
 	if err != nil {
 		return err
@@ -222,6 +247,9 @@ func encodeObject(obj Object, now time.Time) ([]byte, error) {
 	}
 	h.SetSubject(title)
 	h.Set(objectHeader, obj.ID)
+	if obj.Name != "" {
+		h.Set(objectNameHeader, obj.Name)
+	}
 	ct := obj.ContentType
 	if ct == "" {
 		ct = "application/octet-stream"
@@ -261,5 +289,6 @@ func decodeObject(raw []byte) (Object, error) {
 	if err != nil {
 		return Object{}, err
 	}
-	return Object{ID: id, Title: title, ContentType: ct, Data: data, Modified: date}, nil
+	name := strings.TrimSpace(e.Header.Get(objectNameHeader))
+	return Object{ID: id, Name: name, Title: title, ContentType: ct, Data: data, Modified: date}, nil
 }

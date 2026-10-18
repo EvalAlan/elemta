@@ -237,11 +237,27 @@ type settingsView struct {
 	// CanChangePassword shows the password form.
 	CanChangePassword bool
 	MinPasswordLength int
+	// DAVURL is the address to give calendar and contact apps.
+	DAVURL string
+}
+
+// davURL is where CalDAV and CardDAV clients should point. The configured
+// public origin wins; otherwise the address this page was reached on,
+// which is what the user's browser already trusts.
+func (s *Server) davURL(r *http.Request) string {
+	if s.cfg.RecoveryURL != "" {
+		return strings.TrimSuffix(s.cfg.RecoveryURL, "/") + davRoot
+	}
+	scheme := "https"
+	if r.TLS == nil && s.cfg.SecureCookies != nil && !*s.cfg.SecureCookies {
+		scheme = "http"
+	}
+	return scheme + "://" + r.Host + davRoot
 }
 
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, sess *Session) {
 	p := s.prefs(r.Context(), sess)
-	v := view{Title: "Settings", Session: sess, Notice: notices[r.URL.Query().Get("n")], Settings: &settingsView{Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength}}
+	v := view{Title: "Settings", Session: sess, Notice: notices[r.URL.Query().Get("n")], Settings: &settingsView{Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength, DAVURL: s.davURL(r)}}
 	if s.recovery != nil {
 		rec, err := s.recoveryRecord(r.Context(), s.recoveryAccount(sess.User))
 		if err != nil {

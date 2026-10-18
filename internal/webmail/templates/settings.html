@@ -88,6 +88,15 @@
     <div class="form-actions"><button class="button primary" type="submit">Update recovery email</button></div>
   </form>
   {{end}}
+  <div class="card">
+    <h2 class="card-title">Calendar and contacts on other devices</h2>
+    <p class="muted">Phones and desktop apps (DAVx⁵, Thunderbird, Apple Calendar and Contacts) can sync your calendar, tasks and contacts. Add a CalDAV or CardDAV account with:</p>
+    <dl class="kv-list">
+      <dt>Server</dt><dd><code>{{.Settings.DAVURL}}</code></dd>
+      <dt>User name</dt><dd><code>{{.Session.Address}}</code></dd>
+      <dt>Password</dt><dd>your mail password</dd>
+    </dl>
+  </div>
   <div class="card links-card">
     <h2 class="card-title">More</h2>
     <ul class="link-list">

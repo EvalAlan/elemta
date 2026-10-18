@@ -41,6 +41,8 @@ type Server struct {
 	log          *slog.Logger
 	limiter      *loginLimiter
 	now          func() time.Time
+	// dav keeps the mail connections of CalDAV and CardDAV clients.
+	dav *davPool
 	// defaultLoc is the time zone for users who haven't chosen one and
 	// whose browser hasn't reported one yet.
 	defaultLoc *time.Location
@@ -85,7 +87,7 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 	server := &Server{
 		passwords: passwords, recoveryMail: make(chan struct{}, 4),
 		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
-		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now,
+		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now, dav: newDAVPool(),
 		defaultLoc: cfg.location(),
 	}
 	if cfg.RecoveryURL != "" {
@@ -184,6 +186,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", s.authed(s.mailEvents))
 	mux.HandleFunc("GET /api/counts", s.authed(s.countsAPI))
 	mux.HandleFunc("GET /api/addresses", s.authed(s.addressesAPI))
+	// Calendar and contact sync for phones and desktop clients. Clients
+	// look for the well-known paths first (RFC 6764).
+	mux.Handle("/dav/", s.davHandler())
+	mux.Handle("/dav", s.davHandler())
+	mux.Handle("/.well-known/caldav", http.RedirectHandler(davRoot, http.StatusMovedPermanently))
+	mux.Handle("/.well-known/carddav", http.RedirectHandler(davRoot, http.StatusMovedPermanently))
 	return securityHeaders(mux)
 }
 

@@ -12,6 +12,7 @@ require (
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-msgauth v0.7.0
 	github.com/emersion/go-vcard v0.1.0
+	github.com/emersion/go-webdav v0.7.0
 	github.com/go-ldap/ldap/v3 v3.4.15
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/google/uuid v1.6.0

@@ -210,6 +210,9 @@ func (f *fakeStore) PutObject(_ context.Context, c Collection, obj Object) error
 	if f.objects[c] == nil {
 		f.objects[c] = map[string]Object{}
 	}
+	if old, ok := f.objects[c][objectID(obj.ID)]; ok && obj.Name == "" {
+		obj.Name = old.Name
+	}
 	f.objects[c][objectID(obj.ID)] = obj
 	return nil
 }
