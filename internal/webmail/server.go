@@ -3,6 +3,7 @@ package webmail
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"html/template"
 	"io"
@@ -22,6 +23,7 @@ const (
 
 // Server is the webmail HTTP application.
 type Server struct {
+	objectDB *sql.DB
 	cfg      Config
 	sessions *SessionManager
 	dial     Dialer
@@ -104,7 +106,36 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		server.recovery = valkeyRecovery{client: v.client}
 		server.resetter = ldapPasswords{url: cfg.LDAPURL, base: cfg.LDAPBase, filter: cfg.LDAPUserFilter, searchDN: cfg.LDAPResetDN, searchPassword: envOr("ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD", cfg.LDAPResetPassword), insecureSkipVerify: cfg.InsecureSkipVerify}
 	}
+	if cfg.ObjectStore == "postgres" {
+		dsn := envOr("ELEMTA_WEBMAIL_OBJECT_POSTGRES_DSN", cfg.ObjectPostgresDSN)
+		if dsn == "" {
+			return nil, errors.New("webmail: postgres object store needs object_postgres_dsn or ELEMTA_WEBMAIL_OBJECT_POSTGRES_DSN")
+		}
+		db, err := sql.Open("postgres", dsn)
+		if err != nil {
+			return nil, errors.New("webmail: invalid object database configuration")
+		}
+		db.SetMaxOpenConns(10)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(30 * time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := initObjectSchema(ctx, db); err != nil {
+			_ = db.Close()
+			return nil, errors.New("webmail: could not initialize object database")
+		}
+		server.objectDB = db
+		server.dial = postgresObjectDialer(db, cfg, dial)
+	}
 	return server, nil
+}
+
+// Close releases the shared object pool after HTTP requests have drained.
+func (s *Server) Close() error {
+	if s.objectDB != nil {
+		return s.objectDB.Close()
+	}
+	return nil
 }
 
 // newSessions builds the session manager the config asks for.

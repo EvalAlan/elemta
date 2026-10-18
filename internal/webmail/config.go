@@ -31,6 +31,11 @@ const (
 // load silently and do nothing.
 type Config struct {
 	Enabled bool `toml:"enabled"`
+	// ObjectStore selects imap (default) or postgres for non-mail objects.
+	ObjectStore string `toml:"object_store"`
+	// ObjectPostgresDSN may instead be supplied through
+	// ELEMTA_WEBMAIL_OBJECT_POSTGRES_DSN to keep credentials out of config.
+	ObjectPostgresDSN string `toml:"object_postgres_dsn"`
 
 	// Listen is the HTTP listen address, for example ":8027".
 	Listen string `toml:"listen"`
@@ -147,6 +152,9 @@ const (
 
 // WithDefaults returns a copy of c with every unset field filled in.
 func (c Config) WithDefaults() Config {
+	if c.ObjectStore == "" {
+		c.ObjectStore = "imap"
+	}
 	if c.Listen == "" {
 		c.Listen = defaultListen
 	}
@@ -197,6 +205,9 @@ func (c Config) WithDefaults() Config {
 // Call it on the result of WithDefaults.
 func (c Config) Validate() error {
 	var errs []error
+	if c.ObjectStore != "imap" && c.ObjectStore != "postgres" {
+		errs = append(errs, errors.New("webmail: object_store must be imap or postgres"))
+	}
 	if c.IMAPAddr == "" {
 		errs = append(errs, errors.New("webmail: imap_addr is required"))
 	} else if _, _, err := net.SplitHostPort(c.IMAPAddr); err != nil {

@@ -1,0 +1,27 @@
+services:
+  elemta-webmail:
+    environment:
+      ELEMTA_WEBMAIL_OBJECT_POSTGRES_DSN: ${ELEMTA_WEBMAIL_OBJECT_POSTGRES_DSN:-}
+    depends_on:
+      webmail-objects:
+        condition: service_healthy
+
+  webmail-objects:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: webmail
+      POSTGRES_USER: webmail
+      POSTGRES_PASSWORD: ${ELEMTA_OBJECT_DB_PASSWORD:?Set ELEMTA_OBJECT_DB_PASSWORD}
+    volumes:
+      - webmail_objects:/var/lib/postgresql/data
+    networks:
+      - elemta_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U webmail -d webmail"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  webmail_objects:

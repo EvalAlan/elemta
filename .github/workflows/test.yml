@@ -50,6 +50,35 @@ jobs:
       - name: Run full test suite
         run: go test ./...
 
+  test-webmail-objects:
+    name: test (webmail Postgres objects)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: objects
+          POSTGRES_USER: objects
+          POSTGRES_PASSWORD: local-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U objects -d objects"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test object storage and migration
+        env:
+          ELEMTA_TEST_OBJECT_POSTGRES_DSN: host=127.0.0.1 port=5432 dbname=objects user=objects password=local-test-only sslmode=disable
+        run: go test -race -run '^TestPostgresObjects$' -count=1 ./internal/webmail/
+
   test-webmail-browser:
     name: test (webmail in a browser)
     runs-on: ubuntu-latest

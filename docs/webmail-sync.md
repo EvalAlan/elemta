@@ -2,9 +2,10 @@
 
 The webmail serves CalDAV and CardDAV. Phones and desktop apps can then sync
 the same calendar, task list and address book that users see in the browser.
-Clients read and write the objects the webmail keeps in each user's hidden
-IMAP folders (`Calendar`, `Tasks` and `Contacts`). There is no second copy,
-so a change made on either side shows on the other at the next sync.
+Clients and webmail read and write the same ObjectStore, so a change made
+on either side shows on the other at the next sync. The default backend uses
+hidden IMAP folders; an optional [Postgres backend](webmail-object-storage.md)
+copies existing objects on first login and keeps subsequent writes in SQL.
 
 ## Endpoints
 

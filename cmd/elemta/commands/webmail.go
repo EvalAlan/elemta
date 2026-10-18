@@ -47,6 +47,7 @@ func runWebmail(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("webmail: %w (configure the [webmail] table)", err)
 	}
+	defer srv.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
