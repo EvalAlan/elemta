@@ -52,7 +52,10 @@ type MaintenanceConfig struct {
 	BackfillBatch int `toml:"backfill_batch"`
 }
 type ServerConfig struct {
-	IMAPListen          string   `toml:"imap_listen"`
+	IMAPListen string `toml:"imap_listen"`
+	// IMAPSListen is an implicit-TLS IMAP listener (usually :993). It
+	// needs tls_cert and tls_key.
+	IMAPSListen         string   `toml:"imaps_listen"`
 	LMTPListen          string   `toml:"lmtp_listen"`
 	HTTPListen          string   `toml:"http_listen"`
 	AllowPlaintextAuth  bool     `toml:"allow_plaintext_auth"`
@@ -199,6 +202,9 @@ func (c Config) Validate() error {
 	}
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		return errors.New("both tls_cert and tls_key are required")
+	}
+	if c.Server.IMAPSListen != "" && c.Server.TLSCert == "" {
+		return errors.New("imaps_listen needs tls_cert and tls_key")
 	}
 	if !c.Server.AllowPlaintextAuth && c.Server.TLSCert == "" {
 		return errors.New("TLS certificates required unless allow_plaintext_auth is explicitly enabled")

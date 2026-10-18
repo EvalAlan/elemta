@@ -90,3 +90,23 @@ write web.env \
     "ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD=$LDAP_WEBMAIL_PASSWORD" \
     "ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD=$LDAP_WEBMAIL_RESET_PASSWORD" \
     "$recovery_smtp"
+
+# A self-signed certificate for the mailbox service's IMAP (STARTTLS and
+# implicit TLS on 993), ManageSieve and LMTP. Elemta's LMTP client pins it
+# as its CA, so delivery is verified TLS even in dev. Mail clients will
+# warn about it; production uses a real certificate. The key is readable
+# inside this 0700 directory so the mailbox container (uid 1001) can read
+# its bind mount.
+tlsdir="$dir/mailbox-tls"
+if [ ! -f "$tlsdir/cert.pem" ] && command -v openssl >/dev/null 2>&1; then
+    mkdir -p "$tlsdir"
+    san="DNS:elemta-mailbox,DNS:mail.example.com,DNS:localhost,IP:127.0.0.1"
+    for ip in $(hostname -I 2>/dev/null || ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1); do
+        case "$ip" in *:*) ;; *) san="$san,IP:$ip" ;; esac
+    done
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 \
+        -subj "/CN=mail.example.com" -addext "subjectAltName=$san" \
+        -keyout "$tlsdir/key.pem" -out "$tlsdir/cert.pem" 2>/dev/null
+    chmod 644 "$tlsdir/cert.pem" "$tlsdir/key.pem"
+    echo "🔐 Generated the dev mailbox TLS certificate ($san)"
+fi

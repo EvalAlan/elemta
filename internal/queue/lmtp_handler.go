@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,7 +24,14 @@ type LMTPDeliveryHandler struct {
 	limiter                   *domainLimiter
 	maxInFly                  int
 	failedQueueRetentionHours int
+	// tlsConfig, when set, makes every session STARTTLS before MAIL FROM,
+	// and a server that doesn't offer it is a temporary failure, never a
+	// silent downgrade to plaintext.
+	tlsConfig *tls.Config
 }
+
+// SetTLS requires STARTTLS with this configuration; nil turns it off.
+func (h *LMTPDeliveryHandler) SetTLS(cfg *tls.Config) { h.tlsConfig = cfg }
 
 // NewLMTPDeliveryHandler creates a new LMTP delivery handler
 func NewLMTPDeliveryHandler(host string, port int, maxPerDomain int, failedQueueRetentionHours int) *LMTPDeliveryHandler {
@@ -103,6 +111,7 @@ func (h *LMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 		return nil, fmt.Errorf("failed to connect to LMTP server %s: %w", addr, err)
 	}
 	defer func() { _ = conn.Close() }()
+	_ = deliveryCtx
 
 	// Set connection deadline
 	deadline := time.Now().Add(h.timeout)
@@ -147,38 +156,70 @@ func (h *LMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 		return nil, fmt.Errorf("unexpected server greeting: %s", greeting)
 	}
 
-	// Send LHLO
+	// LHLO, returning the server's extensions (upper case).
 	hostname := "elemta.local"
-	lhloResp, err := sendCommand(fmt.Sprintf("LHLO %s\r\n", hostname))
-	if err != nil {
-		return nil, fmt.Errorf("LHLO failed: %w", err)
-	}
-
-	// Handle multi-line LHLO response
-	canEnvelopeID := len(lhloResp) >= 4 && strings.EqualFold(strings.TrimSpace(lhloResp[4:]), "DSN")
-	if strings.HasPrefix(lhloResp, "250-") {
-		// Read remaining lines until we get "250 " (final line)
-		for {
-			resp, err := reader.ReadString('\n')
-			if err != nil {
-				return nil, fmt.Errorf("failed to read LHLO continuation: %w", err)
-			}
-			resp = strings.TrimSpace(resp)
-			h.logger.Debug("LMTP response", "response", resp)
-			if len(resp) >= 4 && strings.EqualFold(strings.TrimSpace(resp[4:]), "DSN") {
-				canEnvelopeID = true
-			}
-
-			if strings.HasPrefix(resp, "250 ") {
-				break
-			}
-			if !strings.HasPrefix(resp, "250-") {
-				return &DeliveryResult{}, fmt.Errorf("server rejected LHLO: %s", resp)
+	lhlo := func() (map[string]bool, error) {
+		lhloResp, err := sendCommand(fmt.Sprintf("LHLO %s\r\n", hostname))
+		if err != nil {
+			return nil, fmt.Errorf("LHLO failed: %w", err)
+		}
+		exts := map[string]bool{}
+		note := func(line string) {
+			if len(line) >= 4 {
+				exts[strings.ToUpper(strings.Fields(line[4:] + " ")[0])] = true
 			}
 		}
-	} else if !strings.HasPrefix(lhloResp, "250 ") {
-		return &DeliveryResult{}, fmt.Errorf("server rejected LHLO: %s", lhloResp)
+		note(lhloResp)
+		if strings.HasPrefix(lhloResp, "250-") {
+			// Read remaining lines until we get "250 " (final line)
+			for {
+				resp, err := reader.ReadString('\n')
+				if err != nil {
+					return nil, fmt.Errorf("failed to read LHLO continuation: %w", err)
+				}
+				resp = strings.TrimSpace(resp)
+				h.logger.Debug("LMTP response", "response", resp)
+				note(resp)
+				if strings.HasPrefix(resp, "250 ") {
+					break
+				}
+				if !strings.HasPrefix(resp, "250-") {
+					return nil, fmt.Errorf("server rejected LHLO: %s", resp)
+				}
+			}
+		} else if !strings.HasPrefix(lhloResp, "250 ") {
+			return nil, fmt.Errorf("server rejected LHLO: %s", lhloResp)
+		}
+		return exts, nil
 	}
+	exts, err := lhlo()
+	if err != nil {
+		return &DeliveryResult{}, err
+	}
+	if h.tlsConfig != nil {
+		if !exts["STARTTLS"] {
+			return lmtpPreFinalFailure(msg, addr, "LMTP server doesn't offer STARTTLS, which is required", RecipientTemporaryFailure)
+		}
+		resp, err := sendCommand("STARTTLS\r\n")
+		if err != nil || !strings.HasPrefix(resp, "220") {
+			return lmtpPreFinalFailure(msg, addr, fmt.Sprintf("STARTTLS failed: %s %v", resp, err), RecipientTemporaryFailure)
+		}
+		cfg := h.tlsConfig.Clone()
+		if cfg.ServerName == "" {
+			cfg.ServerName = h.host
+		}
+		tc := tls.Client(conn, cfg)
+		if err := tc.HandshakeContext(deliveryCtx); err != nil {
+			return lmtpPreFinalFailure(msg, addr, "TLS handshake failed: "+err.Error(), RecipientTemporaryFailure)
+		}
+		conn = tc
+		reader, writer = bufio.NewReader(tc), bufio.NewWriter(tc)
+		// RFC 3207: forget everything learnt before TLS and ask again.
+		if exts, err = lhlo(); err != nil {
+			return &DeliveryResult{}, err
+		}
+	}
+	canEnvelopeID := exts["DSN"]
 
 	// Send MAIL FROM - extract clean email address from the stored From field
 	// The From field might contain: "<test@example.com> size=237" or "test@example.com" or "<test@example.com>"

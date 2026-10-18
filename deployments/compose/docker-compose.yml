@@ -14,6 +14,8 @@ x-mailbox: &mailbox
       required: true
   volumes:
     - ../../config/mailbox-main.toml:/etc/elemta/mailbox.toml:ro
+    - ./.secrets/mailbox-tls/cert.pem:/etc/elemta/tls/cert.pem:ro
+    - ./.secrets/mailbox-tls/key.pem:/etc/elemta/tls/key.pem:ro
     - mailbox_bodies:/var/lib/elemta/bodies
   tmpfs: [/tmp:size=64m]
   cap_drop: [ALL]
@@ -57,6 +59,8 @@ services:
       # never reads — the toggle would report success and do nothing.
       - ../../config:/app/config:ro
       - elemta_config:/app/runtime-config:rw
+      # The dev mailbox certificate, pinned as the CA for LMTP over STARTTLS.
+      - ./.secrets/mailbox-tls/cert.pem:/app/mailbox-ca.pem:ro
       # Disable plugins mount for now due to Docker file sharing issues
       # - ./plugins:/app/plugins:ro
     environment:
@@ -400,6 +404,7 @@ services:
     mem_limit: 128m
     ports:
       - "14143:1143"
+      - "993:10993"
       - "2424:2424"
       - "4190:4190"
     volumes:

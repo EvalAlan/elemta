@@ -184,6 +184,12 @@ mode = "lmtp"
 max_messages_per_minute_per_domain = 0  # 0 = no limit
 host = "elemta-mailbox"
 port = 2424
+# Delivery and RCPT-time checks use STARTTLS, verified against the dev
+# mailbox certificate (scripts/dev-secrets.sh). A mailbox server without
+# STARTTLS is then a temporary failure, never a plaintext fallback.
+lmtp_tls = "starttls"
+lmtp_tls_ca_file = "/app/mailbox-ca.pem"
+lmtp_tls_server_name = "elemta-mailbox"
 timeout = 30
 retry_delay = 60
 

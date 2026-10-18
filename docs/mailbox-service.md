@@ -20,12 +20,15 @@ labs remain optional; Dovecot is available only for explicit rollback.
 - IMAP4rev1 with UIDPLUS, MOVE, NAMESPACE, IDLE, LIST-EXTENDED, LIST-STATUS,
   SPECIAL-USE, ESEARCH, STATUS=SIZE, SORT and SORT=DISPLAY,
   THREAD=REFERENCES and THREAD=ORDEREDSUBJECT, QUOTA (read only) and ID.
-  STARTTLS is available with configured certificates. Only implemented
-  extensions are advertised. SORT, THREAD, QUOTA and ID come from a fork of
+  STARTTLS, and implicit TLS on `server.imaps_listen` (normally :993), use
+  `tls_cert`/`tls_key`, which are re-read when the files change so renewals
+  need no restart. Only implemented extensions are advertised. SORT, THREAD, QUOTA and ID come from a fork of
   go-imap's server in `internal/imapfork` (see its `FORK.md`).
   With `server.allow_plaintext_auth=false`, both IMAP authentication and
-  LMTP delivery require TLS; LDAP must use verified LDAPS. The existing queue
-  LMTP client still needs STARTTLS support before a secure production cutover.
+  LMTP delivery require TLS; LDAP must use verified LDAPS. Elemta's LMTP
+  clients (delivery and RCPT-time recipient checks) use STARTTLS when
+  `[delivery] lmtp_tls = "starttls"`, verified against `lmtp_tls_ca_file`
+  or the system roots, and never fall back to plaintext.
 - MIME envelopes, body sections and structures, raw download and search.
   Deep/malformed MIME has a bounded structure fallback; original bytes stay
   downloadable.
@@ -268,7 +271,7 @@ server until these remaining gates are met:
   holds one small row per message in its view.
 - Backend/account migration, UID-preserving import, placement automation,
   tenant/cell management and live ownership fencing administration.
-- Backup-aware garbage retention, restore drills and production TLS/fencing.
+- Backup-aware garbage retention, restore drills and production fencing.
 - Real Ceph testing, sustained load and additional desktop/mobile client QA.
 
 The PostgreSQL and body-storage HA requirements are described in the

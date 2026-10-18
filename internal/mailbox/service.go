@@ -84,12 +84,12 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel}
 	var tlsConfig *tls.Config
 	if c.Server.TLSCert != "" {
-		cert, err := tls.LoadX509KeyPair(c.Server.TLSCert, c.Server.TLSKey)
+		certs, err := newCertReloader(c.Server.TLSCert, c.Server.TLSKey)
 		if err != nil {
 			cancel()
 			return nil, err
 		}
-		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.GetCertificate}
 	}
 	s.tlsConfig = tlsConfig
 	caps := imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapNamespace: {}, imap.CapUIDPlus: {}, imap.CapMove: {}, imap.CapIdle: {}, imap.CapListExtended: {}, imap.CapListStatus: {}, imap.CapSpecialUse: {}, imap.CapESearch: {}, imap.CapStatusSize: {}, imap.CapUnselect: {}}
@@ -151,12 +151,30 @@ func (s *Service) Run(ctx context.Context) error {
 		listeners = append(listeners, ln)
 	}
 	slots := make(chan struct{}, s.cfg.Limits.MaxConnections)
-	errs := make(chan error, 4)
+	errs := make(chan error, 5)
 	var wg sync.WaitGroup
 	start := func(fn func() error) { wg.Add(1); go func() { defer wg.Done(); errs <- fn() }() }
 	start(func() error { return s.imap.Serve(&limitedListener{Listener: listeners[0], slots: slots}) })
 	start(func() error { return s.lmtp.Serve(&limitedListener{Listener: listeners[1], slots: slots}) })
 	start(func() error { return s.http.Serve(listeners[2]) })
+	if s.cfg.Server.IMAPSListen != "" && s.tlsConfig != nil {
+		// Implicit TLS (port 993), which most clients default to. TLS wraps
+		// the connection limiter, so the IMAP server sees a *tls.Conn and
+		// knows the session is encrypted.
+		ln, err := net.Listen("tcp", s.cfg.Server.IMAPSListen)
+		if err != nil {
+			s.cancel()
+			for _, l := range listeners {
+				_ = l.Close()
+			}
+			wg.Wait()
+			return err
+		}
+		listeners = append(listeners, ln)
+		start(func() error {
+			return s.imap.Serve(tls.NewListener(&limitedListener{Listener: ln, slots: slots}, s.tlsConfig))
+		})
+	}
 	if s.cfg.Sieve.Listen != "" {
 		ln, err := net.Listen("tcp", s.cfg.Sieve.Listen)
 		if err != nil {

@@ -3,6 +3,13 @@ imap_listen = ":1143"
 lmtp_listen = ":2424"
 http_listen = ":8080"
 allow_plaintext_auth = true
+# TLS for IMAP (STARTTLS, and implicit TLS on imaps_listen), ManageSieve and
+# LMTP. The dev certificate is self-signed (scripts/dev-secrets.sh); the
+# files are re-read when they change, so renewals need no restart.
+tls_cert = "/etc/elemta/tls/cert.pem"
+tls_key = "/etc/elemta/tls/key.pem"
+# Containers can't bind ports below 1024; the host publishes this as 993.
+imaps_listen = ":10993"
 # Only the isolated development network may deliver. This is not an open relay.
 lmtp_allowed_networks = ["10.253.53.0/24", "127.0.0.0/8"]
 

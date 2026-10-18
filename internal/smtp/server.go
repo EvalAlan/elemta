@@ -2,6 +2,8 @@ package smtp
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"log/slog"
@@ -241,6 +243,44 @@ func lmtpTarget(config *Config) (string, int) {
 	return host, port
 }
 
+// lmtpTLSConfig builds the client TLS configuration for LMTP, or nil when
+// LMTP is plaintext.
+func lmtpTLSConfig(config *Config) (*tls.Config, error) {
+	d := config.Delivery
+	if d == nil {
+		return nil, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(d.LMTPTLS)) {
+	case "", "none":
+		return nil, nil
+	case "starttls":
+	default:
+		return nil, fmt.Errorf(`[delivery] lmtp_tls must be "none" or "starttls", not %q`, d.LMTPTLS)
+	}
+	// #nosec G402 -- InsecureSkipVerify is an explicit, documented development opt-in
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: d.LMTPTLSServerName, InsecureSkipVerify: d.LMTPTLSInsecureSkipVerify}
+	if d.LMTPTLSCAFile != "" {
+		pem, err := os.ReadFile(d.LMTPTLSCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("[delivery] lmtp_tls_ca_file: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("[delivery] lmtp_tls_ca_file %s holds no certificates", d.LMTPTLSCAFile)
+		}
+		cfg.RootCAs = pool
+	}
+	return cfg, nil
+}
+
+// withLMTPTLS applies the LMTP TLS configuration to an LMTP handler.
+func withLMTPTLS(h queue.DeliveryHandler, cfg *tls.Config) queue.DeliveryHandler {
+	if l, ok := h.(*queue.LMTPDeliveryHandler); ok && cfg != nil {
+		l.SetTLS(cfg)
+	}
+	return h
+}
+
 // deliveryModeOf returns the configured delivery mode, lmtp by default.
 func deliveryModeOf(config *Config) string {
 	if config.Delivery != nil && strings.TrimSpace(config.Delivery.Mode) != "" {
@@ -270,7 +310,15 @@ func newRecipientVerifierFor(config *Config, logger *slog.Logger) *recipientVeri
 		return nil
 	}
 	host, port := lmtpTarget(config)
-	return newRecipientVerifier(net.JoinHostPort(host, strconv.Itoa(port)), config.Hostname, logger)
+	v := newRecipientVerifier(net.JoinHostPort(host, strconv.Itoa(port)), config.Hostname, logger)
+	// An invalid setting is reported when the queue starts; here it only
+	// means no verification.
+	cfg, err := lmtpTLSConfig(config)
+	if err != nil {
+		return nil
+	}
+	v.tlsConfig = cfg
+	return v
 }
 
 // initQueueSystem initializes the queue manager and optional queue processor.
@@ -333,6 +381,10 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		}
 
 		deliveryMode := deliveryModeOf(config)
+		lmtpTLS, err := lmtpTLSConfig(config)
+		if err != nil {
+			return nil, nil, err
+		}
 
 		// remoteSMTPHandler is the outbound handler, whether it is the delivery
 		// handler itself or wrapped inside the split router. Everything that
@@ -342,7 +394,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		switch deliveryMode {
 		case "lmtp":
 			slogger.Info("Creating LMTP delivery handler", "host", deliveryHost, "port", deliveryPort, "max_per_domain", maxPerDomain)
-			deliveryHandler = newDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours)
+			deliveryHandler = withLMTPTLS(newDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours), lmtpTLS)
 		case "smtp":
 			slogger.Info("Creating SMTP delivery handler", "max_per_domain", maxPerDomain)
 			smtpHandler := newSMTPDeliveryHandler(config.FailedQueueRetentionHours)
@@ -361,7 +413,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 				"max_per_domain", maxPerDomain)
 			smtpHandler := newSMTPDeliveryHandler(config.FailedQueueRetentionHours)
 			deliveryHandler = queue.NewSplitDeliveryHandler(
-				newDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours),
+				withLMTPTLS(newDeliveryHandler(deliveryHost, deliveryPort, maxPerDomain, config.FailedQueueRetentionHours), lmtpTLS),
 				smtpHandler,
 				config.LocalDomains,
 				slogger,
