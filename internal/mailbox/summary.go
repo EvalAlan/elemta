@@ -35,7 +35,7 @@ import (
 
 // summaryVersion changes when the summary format or its derivation does, so
 // stale rows are recomputed rather than served.
-const summaryVersion = 2
+const summaryVersion = 3
 
 // maxSummaryHeader bounds the stored header block. Larger headers (rare,
 // usually abuse) are answered from the body instead.
@@ -62,6 +62,8 @@ type Summary struct {
 	DisplayTo   string
 	MessageID   string
 	References  []string // References, or In-Reply-To when absent
+
+	search searchText // index input, not stored in data
 }
 
 // summarize computes the summary of a raw message. It never fails: damaged
@@ -78,6 +80,7 @@ func summarize(raw []byte) *Summary {
 		s.Header = append([]byte(nil), raw[:end]...)
 	}
 	s.Envelope = imapserver.ExtractEnvelope(header)
+	s.search = searchText{headers: indexHeaders(header), body: bodyText(raw)}
 	mh := mail.Header{Header: message.Header{Header: header}}
 	subject, _ := mh.Subject()
 	s.BaseSubject = baseSubject(subject)
@@ -260,7 +263,10 @@ ON CONFLICT(body) DO UPDATE SET version=EXCLUDED.version,data=EXCLUDED.data,base
 sender=EXCLUDED.sender,recipient=EXCLUDED.recipient,cc=EXCLUDED.cc,display_from=EXCLUDED.display_from,display_to=EXCLUDED.display_to,
 message_id=EXCLUDED.message_id,refs=EXCLUDED.refs,reply=EXCLUDED.reply`,
 		body, summaryVersion, data, s.BaseSubject, sent, s.From, s.To, s.Cc, s.DisplayFrom, s.DisplayTo, s.MessageID, pq.Array(refs), hasReplyMarker(subject))
-	return err
+	if err != nil {
+		return err
+	}
+	return storeSearchText(ctx, db, body, s.search)
 }
 
 // missingSummaries lists bodies without a current summary, from start

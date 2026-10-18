@@ -14,22 +14,58 @@ import (
 	"github.com/emersion/go-message/textproto"
 )
 
-// searchNeeds reports what a criteria tree needs beyond the message list:
-// the header block (from the summary) and the body text (from the body).
-func searchNeeds(c *imap.SearchCriteria) (header, text bool) {
-	header = len(c.Header) > 0 || !c.SentSince.IsZero() || !c.SentBefore.IsZero()
-	text = len(c.Body) > 0 || len(c.Text) > 0
+// searchNeeds reports what a criteria tree needs beyond the message list
+// and the index: the header block (from the summary) and the body text.
+// Leaves the index answered (hits) need neither.
+func searchNeeds(c *imap.SearchCriteria, hits *indexHits) (header, text bool) {
+	header = !c.SentSince.IsZero() || !c.SentBefore.IsZero()
+	for _, f := range c.Header {
+		if !hits.has(headerLeafKey(f.Key, f.Value)) {
+			header = true
+		}
+	}
+	for _, p := range c.Body {
+		if !hits.has(bodyLeafKey(p, false)) {
+			text = true
+		}
+	}
+	for _, p := range c.Text {
+		if !hits.has(bodyLeafKey(p, true)) {
+			text = true
+		}
+	}
 	for i := range c.Not {
-		h, t := searchNeeds(&c.Not[i])
+		h, t := searchNeeds(&c.Not[i], hits)
 		header, text = header || h, text || t
 	}
 	for i := range c.Or {
 		for j := range c.Or[i] {
-			h, t := searchNeeds(&c.Or[i][j])
+			h, t := searchNeeds(&c.Or[i][j], hits)
 			header, text = header || h, text || t
 		}
 	}
 	return header, text
+}
+
+func (h *indexHits) has(key string) bool {
+	if h == nil {
+		return false
+	}
+	_, ok := h.leaves[key]
+	return ok
+}
+
+// lookup answers a leaf from the index for one message, or reports false
+// when the message or the leaf isn't indexed.
+func (h *indexHits) lookup(key string, uid uint32) (matched, ok bool) {
+	if h == nil || h.unindexed[uid] {
+		return false, false
+	}
+	set, ok := h.leaves[key]
+	if !ok {
+		return false, false
+	}
+	return set[uid], true
 }
 
 func dateMatches(t, since, before time.Time) bool {
@@ -40,11 +76,20 @@ func dateMatches(t, since, before time.Time) bool {
 // searchSource is what a message is matched against. Header criteria use
 // the summary's header block; the body is read only for BODY and TEXT.
 type searchSource struct {
-	summary *Summary
-	header  *mail.Header
-	raw     []byte
-	load    func() ([]byte, error)
-	err     error
+	summary     *Summary
+	loadSummary func() (*Summary, error)
+	header      *mail.Header
+	raw         []byte
+	load        func() ([]byte, error)
+	err         error
+	hits        *indexHits
+}
+
+func (src *searchSource) sum() *Summary {
+	if src.summary == nil && src.err == nil && src.loadSummary != nil {
+		src.summary, src.err = src.loadSummary()
+	}
+	return src.summary
 }
 
 func (src *searchSource) body() []byte {
@@ -59,8 +104,8 @@ func (src *searchSource) headers() *mail.Header {
 		return src.header
 	}
 	block := []byte(nil)
-	if src.summary != nil {
-		block = src.summary.Header
+	if sum := src.sum(); sum != nil {
+		block = sum.Header
 	}
 	if block == nil {
 		block = src.body()
@@ -102,6 +147,12 @@ func matchMessage(m Message, seq, total, maxUID uint32, src *searchSource, c *im
 		}
 	}
 	for _, field := range c.Header {
+		if matched, ok := src.hits.lookup(headerLeafKey(field.Key, field.Value), m.UID); ok {
+			if !matched {
+				return false
+			}
+			continue
+		}
 		found := false
 		fields := src.headers().FieldsByKey(field.Key)
 		for fields.Next() {
@@ -117,8 +168,8 @@ func matchMessage(m Message, seq, total, maxUID uint32, src *searchSource, c *im
 	}
 	if !c.SentSince.IsZero() || !c.SentBefore.IsZero() {
 		var sent time.Time
-		if src.summary != nil {
-			sent = src.summary.Sent
+		if sum := src.sum(); sum != nil {
+			sent = sum.Sent
 		} else if d, err := src.headers().Date(); err == nil {
 			sent = d
 		}
@@ -127,11 +178,23 @@ func matchMessage(m Message, seq, total, maxUID uint32, src *searchSource, c *im
 		}
 	}
 	for _, pattern := range c.Body {
+		if matched, ok := src.hits.lookup(bodyLeafKey(pattern, false), m.UID); ok {
+			if !matched {
+				return false
+			}
+			continue
+		}
 		if !matchesMIME(src.body(), pattern, false) {
 			return false
 		}
 	}
 	for _, pattern := range c.Text {
+		if matched, ok := src.hits.lookup(bodyLeafKey(pattern, true), m.UID); ok {
+			if !matched {
+				return false
+			}
+			continue
+		}
 		if !matchesMIME(src.body(), pattern, true) {
 			return false
 		}

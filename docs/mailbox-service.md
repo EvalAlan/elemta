@@ -18,15 +18,29 @@ labs remain optional; Dovecot is available only for explicit rollback.
   and database promotion. Account rows serialize conflicting writers across
   processes; no process-local lock owns authoritative state.
 - IMAP4rev1 with UIDPLUS, MOVE, NAMESPACE, IDLE, LIST-EXTENDED, LIST-STATUS,
-  SPECIAL-USE, ESEARCH and STATUS=SIZE. STARTTLS is available with configured
-  certificates. Only implemented extensions are advertised.
+  SPECIAL-USE, ESEARCH, STATUS=SIZE, SORT and SORT=DISPLAY,
+  THREAD=REFERENCES and THREAD=ORDEREDSUBJECT, QUOTA (read only) and ID.
+  STARTTLS is available with configured certificates. Only implemented
+  extensions are advertised. SORT, THREAD, QUOTA and ID come from a fork of
+  go-imap's server in `internal/imapfork` (see its `FORK.md`).
   With `server.allow_plaintext_auth=false`, both IMAP authentication and
   LMTP delivery require TLS; LDAP must use verified LDAPS. The existing queue
   LMTP client still needs STARTTLS support before a secure production cutover.
 - MIME envelopes, body sections and structures, raw download and search.
   Deep/malformed MIME has a bounded structure fallback; original bytes stay
-  downloadable. BODY/TEXT matching decodes MIME; full-text indexing is not
-  implemented yet. Search and selected-folder views currently scan metadata.
+  downloadable.
+- Message summaries in Postgres, computed once per stored body: header
+  block, envelope, MIME structure, sort/thread keys and search index columns.
+  Message lists (ENVELOPE, BODYSTRUCTURE, header fields), SORT and THREAD
+  never read bodies. Mail stored before summaries existed is summarised on
+  first use, by a background backfill (`maintenance.backfill_batch` per
+  minute per replica) or at once with `elemta mailbox backfill`.
+- Indexed SEARCH. From, To, Cc, Bcc, Subject and Content-Type are matched as
+  case-insensitive substrings on stored decoded values. BODY and TEXT match
+  words by prefix against a Postgres text search vector of the readable body
+  text (GIN indexed), as indexed IMAP servers do. Other header fields, and
+  patterns without letters or digits, are evaluated from the stored header
+  block or the body.
 - LMTP with per-recipient results and retry deduplication when trusted clients
   supply a stable ENVID. Elemta's queue transport now supplies a hash of its
   own queue ID when DSN is advertised, and correctly dot-stuffs message data.
@@ -36,8 +50,10 @@ labs remain optional; Dovecot is available only for explicit rollback.
   are bounded in memory, concurrent body operations are limited, and metadata
   pools and protocol connections have explicit limits.
 - Durable change records, MODSEQ counters and upload intents. Cross-process
-  IDLE notifications reconcile folder state once a second; there is no
-  requirement for a shared in-memory notification service.
+  IDLE notifications check folder state once a second and replay only the
+  changes since the session's MODSEQ, so their cost doesn't grow with the
+  folder. The journal is compacted after `maintenance.journal_retention_hours`
+  (a week by default); a session that fell behind reloads its folder.
 - Readiness checks for a writable database and accessible body store. Strict
   mode requires configured synchronous replication and a streaming quorum/
   synchronous standby. Writes explicitly use synchronous commit in that mode.
@@ -235,10 +251,9 @@ replacement or a demonstrated million-mailbox deployment. Keep the existing
 server until these remaining gates are met:
 
 - ManageSieve/Sieve execution, vacation and duplicate-suppression semantics.
-- Indexed search, SORT/THREAD, IMAP quota reporting and CONDSTORE/QRESYNC.
-  Webmail currently falls back to individual conversations and basic ordering.
-- Indexed/durable change replay instead of full selected-view reconciliation,
-  journal compaction, and measured memory/latency limits for large mailboxes.
+- CONDSTORE/QRESYNC.
+- Measured memory limits for very large mailboxes: a selected session still
+  holds one small row per message in its view.
 - Backend/account migration, UID-preserving import, placement automation,
   tenant/cell management and live ownership fencing administration.
 - Backup-aware garbage retention, restore drills and production TLS/fencing.

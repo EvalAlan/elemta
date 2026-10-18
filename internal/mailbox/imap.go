@@ -763,7 +763,11 @@ func (s *imapSession) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) err
 // order. Summaries are loaded in chunks only when header criteria need
 // them; bodies are read only for BODY and TEXT.
 func (s *imapSession) match(c *imap.SearchCriteria) ([]int, error) {
-	needHeader, needText := searchNeeds(c)
+	hits, err := s.service.engine.searchIndex(s.ctx, s.folder.ID, c)
+	if err != nil {
+		return nil, protocolError(err)
+	}
+	needHeader, needText := searchNeeds(c, hits)
 	if needText {
 		release, err := s.service.receiveSlot(s.ctx)
 		if err != nil {
@@ -788,13 +792,11 @@ func (s *imapSession) match(c *imap.SearchCriteria) ([]int, error) {
 		}
 		for i := start; i < end; i++ {
 			m := s.view[i]
-			src := &searchSource{summary: summaries[m.Body], load: func() ([]byte, error) { return s.service.engine.Read(s.ctx, m) }}
-			if needHeader && src.summary == nil {
-				sum, err := s.service.engine.Summary(s.ctx, m)
-				if err != nil {
-					return nil, protocolError(err)
-				}
-				src.summary = sum
+			src := &searchSource{
+				summary:     summaries[m.Body],
+				loadSummary: func() (*Summary, error) { return s.service.engine.Summary(s.ctx, m) },
+				load:        func() ([]byte, error) { return s.service.engine.Read(s.ctx, m) },
+				hits:        hits,
 			}
 			if matchMessage(m, seqNumber(i+1), total, maxUID, src, c) {
 				out = append(out, i)

@@ -51,3 +51,11 @@ CREATE TABLE IF NOT EXISTS mailbox_summaries (
 ALTER TABLE mailbox_folders ADD COLUMN IF NOT EXISTS journal_floor BIGINT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS mailbox_changes_modseq ON mailbox_changes(folder,modseq);
 ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS reply BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS hdr_from TEXT NOT NULL DEFAULT '';
+ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS hdr_to TEXT NOT NULL DEFAULT '';
+ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS hdr_cc TEXT NOT NULL DEFAULT '';
+ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS hdr_bcc TEXT NOT NULL DEFAULT '';
+ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS hdr_subject TEXT NOT NULL DEFAULT '';
+ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS body_tsv TSVECTOR;
+ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS hdr_content_type TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS mailbox_summaries_body_tsv ON mailbox_summaries USING GIN (body_tsv);
