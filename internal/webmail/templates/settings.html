@@ -1,0 +1,101 @@
+{{define "content"}}
+<section class="page">
+  <h1>Settings</h1>
+  {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
+  {{with .Settings}}
+  <form class="card form-grid" action="/settings" method="post">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <h2 class="card-title">Identity</h2>
+    <span class="label">Address</span><span class="mono">{{$.Session.Address}}</span>
+    <label for="display_name">Your name</label>
+    <input id="display_name" name="display_name" type="text" value="{{.Prefs.DisplayName}}" maxlength="120" placeholder="Shown to people you write to">
+    <label for="reply_to">Reply-to address</label>
+    <input id="reply_to" name="reply_to" type="email" value="{{.Prefs.ReplyTo}}" placeholder="Optional: where replies should go">
+    <label for="signature">Signature</label>
+    <textarea id="signature" name="signature" rows="5">{{.Prefs.Signature}}</textarea>
+    <span></span>
+    <label class="checkline"><input type="checkbox" name="signature_above" value="1"{{if .Prefs.SignatureAbove}} checked{{end}}> In replies, put the signature above the quoted message</label>
+
+    <h2 class="card-title">Date and time</h2>
+    <label for="timezone">Time zone</label>
+    <span>
+      <input id="timezone" name="timezone" type="text" list="zones" value="{{.Prefs.Timezone}}" placeholder="e.g. America/New_York">
+      <datalist id="zones">{{range .Zones}}<option value="{{.}}">{{end}}</datalist>
+    </span>
+    <label for="clock">Time format</label>
+    <select id="clock" name="clock">
+      <option value="24"{{if .Prefs.Uses24h}} selected{{end}}>24-hour (15:30)</option>
+      <option value="12"{{if not .Prefs.Uses24h}} selected{{end}}>12-hour (3:30 PM)</option>
+    </select>
+    <label for="week_start">Week starts on</label>
+    <select id="week_start" name="week_start">
+      <option value="0"{{if eq .Prefs.WeekStart 0}} selected{{end}}>Sunday</option>
+      <option value="1"{{if eq .Prefs.WeekStart 1}} selected{{end}}>Monday</option>
+    </select>
+
+    <h2 class="card-title">Appearance</h2>
+    <label for="theme">Theme</label>
+    <select id="theme" name="theme">
+      <option value=""{{if eq .Prefs.Theme ""}} selected{{end}}>Match my device</option>
+      <option value="light"{{if eq .Prefs.Theme "light"}} selected{{end}}>Light</option>
+      <option value="dark"{{if eq .Prefs.Theme "dark"}} selected{{end}}>Dark</option>
+    </select>
+    <label for="palette">Colour scheme</label>
+    <select id="palette" name="palette">
+      <option value=""{{if eq .Prefs.Palette ""}} selected{{end}}>Elemta (matches the admin console)</option>
+      <option value="tidewater"{{if eq .Prefs.Palette "tidewater"}} selected{{end}}>Tidewater (teal)</option>
+    </select>
+
+    <h2 class="card-title">Mail and calendar</h2>
+    <span class="label">Message list</span>
+    <label class="checkline"><input type="checkbox" name="conversations" value="1"{{if .Prefs.GroupConversations}} checked{{end}}> Group messages into conversations</label>
+    <label for="page_size">Messages per page</label>
+    <select id="page_size" name="page_size">
+      {{$ps := .Prefs.PageSize}}
+      {{range $n := pageSizes}}<option value="{{$n}}"{{if eq $n $ps}} selected{{end}}>{{$n}}</option>{{end}}
+    </select>
+    <label for="calendar_view">Calendar opens in</label>
+    <select id="calendar_view" name="calendar_view">
+      {{$cv := .Prefs.CalendarView}}
+      <option value="month"{{if or (eq $cv "month") (eq $cv "")}} selected{{end}}>Month</option>
+      <option value="week"{{if eq $cv "week"}} selected{{end}}>Week</option>
+      <option value="day"{{if eq $cv "day"}} selected{{end}}>Day</option>
+      <option value="agenda"{{if eq $cv "agenda"}} selected{{end}}>Agenda</option>
+    </select>
+    <div class="form-actions"><button class="button primary" type="submit">Save settings</button></div>
+  </form>
+  {{end}}
+  {{if .Settings.CanChangePassword}}
+  <form class="card form-grid" action="/settings/password" method="post" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <h2 class="card-title">Password</h2>
+    <input type="text" name="username" value="{{.Session.Address}}" autocomplete="username" hidden>
+    <label for="pw-current">Current password</label><input id="pw-current" name="current" type="password" autocomplete="current-password" required>
+    <label for="pw-new">New password</label><input id="pw-new" name="new" type="password" autocomplete="new-password" minlength="{{.Settings.MinPasswordLength}}" required>
+    <label for="pw-confirm">Repeat new password</label><input id="pw-confirm" name="confirm" type="password" autocomplete="new-password" minlength="{{.Settings.MinPasswordLength}}" required>
+    <span></span><span class="small muted">At least {{.Settings.MinPasswordLength}} characters. The new password works at once for webmail, phone and desktop mail apps; they will ask for it again.</span>
+    <div class="form-actions"><button class="button primary" type="submit">Change password</button></div>
+  </form>
+  {{end}}
+  {{if .Settings.CanRecover}}
+  <form class="card form-grid" action="/settings/recovery" method="post">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <h2 class="card-title">Password recovery</h2>
+    <span class="label">Verified recovery email</span><span>{{if .Settings.RecoveryEmail}}{{.Settings.RecoveryEmail}}{{else}}None{{end}}</span>
+    <label for="recovery-email">Recovery email</label><input id="recovery-email" name="email" type="email" placeholder="An address outside this mailbox">
+    <label for="recovery-current">Current password</label><input id="recovery-current" name="current" type="password" autocomplete="current-password" required>
+    <span></span><span class="small muted">Verify the link sent to the new address. Leave the address empty to remove recovery.</span>
+    <div class="form-actions"><button class="button primary" type="submit">Update recovery email</button></div>
+  </form>
+  {{end}}
+  <div class="card links-card">
+    <h2 class="card-title">More</h2>
+    <ul class="link-list">
+      <li><a href="/filters">Mail filters and out-of-office reply</a></li>
+      <li><a href="/folders">Manage folders</a></li>
+      <li><a href="/contacts/export">Export contacts (.vcf)</a></li>
+      <li><a href="/calendar/export">Export calendar (.ics)</a></li>
+    </ul>
+  </div>
+</section>
+{{end}}

@@ -37,7 +37,7 @@ services:
       MP_SMTP_BIND_ADDR: 0.0.0.0:25
       MP_UI_BIND_ADDR: 0.0.0.0:8025
     ports:
-      - "8027:8025"
+      - "8029:8025"
     networks:
       mailauth_network:
         ipv4_address: 172.31.0.25

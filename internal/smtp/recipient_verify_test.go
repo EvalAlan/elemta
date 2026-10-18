@@ -147,3 +147,25 @@ func TestRCPTRefusesUnknownLocalMailbox(t *testing.T) {
 		t.Errorf("existing local mailbox: got %q, want 250", reply)
 	}
 }
+
+func TestRecipientVerifierProvisioningGeneration(t *testing.T) {
+	addr, probes := fakeLMTP(t, map[string]bool{"alice@example.com": true})
+	v := newRecipientVerifier(addr, "mx.example.com", slog.Default())
+	generation := "initial"
+	v.generation = func() string { return generation }
+	ctx := context.Background()
+	v.Verify(ctx, "alice@example.com")
+	v.Verify(ctx, "missing@example.com")
+	before := atomic.LoadInt32(probes)
+	v.Verify(ctx, "alice@example.com")
+	v.Verify(ctx, "missing@example.com")
+	if atomic.LoadInt32(probes) != before {
+		t.Fatal("cache unused before provisioning")
+	}
+	generation = "after-provisioning"
+	v.Verify(ctx, "alice@example.com")
+	v.Verify(ctx, "missing@example.com")
+	if atomic.LoadInt32(probes) != before+2 {
+		t.Fatal("provisioning did not invalidate both verdicts")
+	}
+}

@@ -171,8 +171,10 @@ datasource_type = "ldap"
 datasource_name = "ldap"
 datasource_host = "elemta-ldap"
 datasource_port = 389
-datasource_user = "cn=admin,dc=example,dc=com"
-datasource_pass = "admin"
+# SMTP AUTH and recipient lookups bind as a read-only service account. Its
+# password comes from ELEMTA_AUTH_DATASOURCE_PASS (deployments/compose/
+# .secrets/elemta.env in the dev stack), not this file.
+datasource_user = "cn=elemta-smtp,ou=services,dc=example,dc=com"
 datasource_db = "dc=example,dc=com"
 
 [delivery]
@@ -488,3 +490,47 @@ allowed_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 allowed_headers = ["Content-Type", "Authorization"]
 allow_credentials = true
 max_age = 86400  # 24 hours
+
+# Webmail (`elemta webmail`). The dev stack runs it as elemta-webmail on
+# http://localhost:8027, signed in with the LDAP mailbox user.
+[webmail]
+enabled = true
+listen = ":8027"
+# Dev Dovecot has TLS off; production should use "starttls" or "tls".
+imap_addr = "elemta-dovecot:14143"
+imap_tls = "none"
+submission_addr = "elemta:2587"
+submission_tls = "starttls"
+# Filters and the out-of-office reply are stored here over ManageSieve.
+# Dev Dovecot has TLS off, as for IMAP.
+sieve_addr = "elemta-dovecot:4190"
+sieve_tls = "none"
+# The dev stack's certificate is self-signed. Never set this in production.
+insecure_skip_verify = true
+# Served over plain HTTP in dev, so the session cookie can't be Secure.
+secure_cookies = false
+session_ttl = "8h"
+# Sessions live in Valkey (VALKEY_ADDR), so restarting the webmail doesn't
+# sign anyone out. The key that seals the stored passwords is kept apart
+# from Valkey, on the volume the services share; it is created on first start.
+session_store = "valkey"
+# Users change their own password in Settings. The change is made in LDAP,
+# bound as the user; the read-only cn=webmail account only finds their
+# entry. Every account below is a dev service account with only the access
+# its job needs (scripts/ldap-service-accounts.sh); passwords come from the
+# environment (deployments/compose/.secrets/), so none sits in this file.
+ldap_url = "ldap://elemta-ldap:389"
+ldap_base = "ou=people,dc=example,dc=com"
+ldap_user_filter = "(&(objectClass=posixAccount)(mail=%s))"
+ldap_search_dn = "cn=webmail,ou=services,dc=example,dc=com"
+# Dev recovery links use this origin, never a request's Host header.
+# Production needs its public HTTPS origin and dedicated LDAP/SMTP accounts.
+recovery_url = "http://localhost:8027"
+ldap_reset_dn = "cn=webmail-reset,ou=services,dc=example,dc=com"
+# Mail administration binds as its own account (ELEMTA_LDAP_PROVISION_PASSWORD).
+ldap_provision_dn = "cn=provisioner,ou=services,dc=example,dc=com"
+recovery_sender = "sender@example.com"
+recovery_smtp_user = "sender@example.com"
+session_key_file = "/app/runtime-config/webmail-session.key"
+max_upload_mb = 25
+page_size = 50

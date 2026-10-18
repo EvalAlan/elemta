@@ -66,7 +66,7 @@ func AuthDataSourceConfig(config *AuthConfig) datasource.Config {
 		Port:     config.DataSourcePort,
 		Database: config.DataSourceDB,
 		Username: config.DataSourceUser,
-		Password: config.DataSourcePass,
+		Password: dataSourcePassword(config),
 		Options:  make(map[string]interface{}),
 	}
 
@@ -176,4 +176,15 @@ func (a *SMTPAuthenticator) Close() error {
 		return a.dataSource.Close()
 	}
 	return nil
+}
+
+// dataSourcePassword is the bind password for the auth datasource. The
+// ELEMTA_AUTH_DATASOURCE_PASS environment variable wins over datasource_pass,
+// so the secret can be given to the process without being written into a
+// config file that the dashboard can read and save.
+func dataSourcePassword(config *AuthConfig) string {
+	if v := os.Getenv("ELEMTA_AUTH_DATASOURCE_PASS"); v != "" {
+		return v
+	}
+	return config.DataSourcePass
 }

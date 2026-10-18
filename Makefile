@@ -1,4 +1,4 @@
-.PHONY: all help gotchas build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
+.PHONY: all help gotchas dovecot-index ensure-dev-secrets ldap-service-accounts build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
 	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
@@ -14,7 +14,7 @@ DEV_ENV_FILE ?= .env
 # elemta-sink runs in every dev stack but is not the delivery target: keeping it
 # up means 'make sink-up' is a restart rather than a deploy, and mail still goes
 # to a real mailbox until someone asks otherwise.
-DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-dovecot elemta-ldap valkey elemta-sink
+DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-webmail elemta-dovecot elemta-ldap valkey elemta-sink
 DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-roundcube
 # The benchmarking stack: everything that scans, nothing that stores. Roundcube
 # is pointless here because delivery is discarded.
@@ -78,7 +78,7 @@ gotchas:
 	@echo "    on their own within ~5 seconds. Listen address, size limits, timeouts, queue"
 	@echo "    backend and ARC sealing need a restart; the UI and logs say so."
 	@echo "  • 'install-dev-mailauth' is a different stack, not an add-on. Delivery mode is a"
-	@echo "    single global setting, so it sends over remote SMTP to a sink at :8027 instead"
+	@echo "    single global setting, so it sends over remote SMTP to a sink at :8029 instead"
 	@echo "    of over LMTP to Roundcube. That is what makes DKIM signing and ARC sealing"
 	@echo "    visible. Run any other install-dev target to go back; it cleans up for you."
 	@echo "  • Logs are line-delimited JSON on stdout and in /app/logs/elemta.log. Only"
@@ -355,6 +355,16 @@ ensure-dev-certs:
 		echo "ℹ️  Using existing TLS certificate (expires $$(openssl x509 -enddate -noout -in config/test.crt | cut -d= -f2))"; \
 	fi
 
+# Per-service LDAP credentials for the dev stack (deployments/compose/.secrets/,
+# never committed). Generated once; existing ones are kept.
+ensure-dev-secrets:
+	@./scripts/dev-secrets.sh
+
+# Create or re-sync the least-privilege LDAP service accounts and access
+# rules (also run by every install-dev target via init-ldap-if-needed.sh).
+ldap-service-accounts:
+	@./scripts/ldap-service-accounts.sh
+
 ensure-dev-env:
 	@if [ ! -f $(DEV_ENV_FILE) ]; then \
 		echo "📝 Creating $(DEV_ENV_FILE) for development..."; \
@@ -396,6 +406,7 @@ print-dev-summary:
 	@echo "   📧 SMTP:      localhost:2525"
 	@echo "   📊 Metrics:   http://localhost:8080/metrics"
 	@echo "   🌐 Web UI:    http://localhost:8025  (login required)"
+	@echo "   ✉️  Webmail:   http://localhost:8027  (sign in as the mailbox user)"
 	@echo ""
 	@# Report where mail actually goes rather than asserting it. The two installs
 	@# differ on this, and a summary that guesses is worse than none.
@@ -427,7 +438,7 @@ help:
 	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
 	@echo "  make install-dev-bench        # Scanners on, delivery DISCARDED — for throughput work"
 	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
-	@echo "  make install-dev-mailauth     # Dev stack for SPF/DKIM/DMARC/ARC: fixed DNS, mail lands at :8027"
+	@echo "  make install-dev-mailauth     # Dev stack for SPF/DKIM/DMARC/ARC: fixed DNS, mail lands at :8029"
 	@echo "  make install                  # Interactive production setup"
 	@echo ""
 	@echo "🔑 Accounts & Access:"
@@ -481,7 +492,7 @@ help:
 	@echo "  On an install-dev-mailauth stack:"
 	@echo "    mailauth-check       - Send a message that should pass SPF, DKIM and DMARC"
 	@echo "    mailauth-check-fail  - Send one that fails SPF and DMARC; it is still accepted"
-	@echo "                           because enforcement is off. Read both at :8027"
+	@echo "                           because enforcement is off. Read both at :8029"
 	@echo ""
 	@echo "🎛️  Variables (override on the command line):"
 	@echo "  ADMIN_USER=admin              Dashboard account name"
@@ -502,7 +513,7 @@ help:
 	@echo "                    delivery, cert expiry, what [logging] ignores). Worth reading"
 	@echo "                    once; HANDOFF.md has the same traps in depth."
 
-install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+install-dev: check-tools ensure-dev-secrets docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Minimal)"
 	@echo "======================================"
 	@$(MAKE) stop-mailauth-services
@@ -526,7 +537,7 @@ install-dev: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-de
 # Separate from install-dev-full rather than a flag on it, because "mail is
 # thrown away" is not a detail to bury in an option. Anyone running this has
 # said so.
-install-dev-bench: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+install-dev-bench: check-tools ensure-dev-secrets docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Benchmarking)"
 	@echo "=========================================="
 	@$(MAKE) stop-mailauth-services
@@ -595,7 +606,7 @@ install-dev-postgres:
 	@echo "   DSN: $(QUEUE_POSTGRES_DSN)"
 	@echo "   Verify: docker exec -it $(POSTGRES_CONTAINER_NAME) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
 
-install-dev-full: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+install-dev-full: check-tools ensure-dev-secrets docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Full)"
 	@echo "=================================="
 	@$(MAKE) stop-mailauth-services
@@ -619,7 +630,7 @@ install-dev-full: check-tools docker-build ensure-dev-certs ensure-dev-env refre
 #
 # Switching back is just running another install-dev target; they remove these
 # services for you.
-install-dev-mailauth: check-tools docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
+install-dev-mailauth: check-tools ensure-dev-secrets docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🔐 Elemta Development Setup (Mail Authentication)"
 	@echo "================================================="
 	@$(MAKE) configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
@@ -635,7 +646,7 @@ install-dev-mailauth: check-tools docker-build ensure-dev-certs ensure-dev-env r
 	@./scripts/init-ldap-if-needed.sh || true
 	@$(MAKE) bootstrap-admin
 	@$(MAKE) print-dev-summary
-	@echo "   📥 Delivered mail: http://localhost:8027 (this stack does not deliver to Roundcube)"
+	@echo "   📥 Delivered mail: http://localhost:8029 (this stack does not deliver to Roundcube)"
 	@echo "   ✅ SPF/DMARC pass: pass.auth.test      ❌ fail: fail.auth.test"
 	@echo "   Send one: make mailauth-check   or   make mailauth-check-fail"
 
@@ -803,9 +814,16 @@ elk-down:
 stop-mailauth-services:
 	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) rm -sf elemta-mailauth-dns elemta-mailauth-sink >/dev/null 2>&1 || true
 
+# Build the full-text search index for every mailbox in the background.
+# New mail is indexed on delivery; this covers mail that predates the index
+# (see docker/dovecot/README.md).
+dovecot-index:
+	@docker exec elemta-dovecot doveadm index -A -q '*'
+	@echo "Indexing queued for every mailbox; Dovecot works through it in the background."
+
 mailauth-check:
 	@printf 'EHLO lab\r\nMAIL FROM:<sender@pass.auth.test>\r\nRCPT TO:<user@receiver.auth.test>\r\nDATA\r\nFrom: sender@pass.auth.test\r\nTo: user@receiver.auth.test\r\nSubject: Elemta mail-auth lab\r\nDate: Tue, 11 Aug 2026 12:00:00 -0400\r\nMessage-ID: <mailauth-lab@pass.auth.test>\r\n\r\nSPF, DKIM and DMARC lab message.\r\n.\r\nQUIT\r\n' | nc localhost 2525
-	@echo "Message queued. The remote SMTP worker signs it; inspect http://localhost:8027"
+	@echo "Message queued. The remote SMTP worker signs it; inspect http://localhost:8029"
 
 mailauth-check-fail:
 	@printf 'EHLO lab-fail\r\nMAIL FROM:<sender@fail.auth.test>\r\nRCPT TO:<user@receiver.auth.test>\r\nDATA\r\nFrom: sender@fail.auth.test\r\nTo: user@receiver.auth.test\r\nSubject: Elemta mail-auth negative lab\r\nDate: Tue, 11 Aug 2026 12:01:00 -0400\r\nMessage-ID: <mailauth-fail@fail.auth.test>\r\n\r\nExpected SPF and DMARC failure in reporting mode.\r\n.\r\nQUIT\r\n' | nc localhost 2525
@@ -1076,7 +1094,7 @@ k8s-reseed:
 
 # What every k8s-install-dev* target does, for one overlay: build, configure,
 # apply, re-seed, then accounts.
-k8s-install: check-tools k8s-check ensure-dev-certs
+k8s-install: check-tools k8s-check ensure-dev-certs ensure-dev-secrets
 	@if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx elemta-node0; then \
 		echo "❌ The Compose dev stack is running and holds the same ports. 'make down' first."; \
 		exit 1; \

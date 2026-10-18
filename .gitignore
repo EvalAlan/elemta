@@ -135,6 +135,7 @@ working-config.sh
 # LDIF files (user data)
 *.ldif
 !docker/ldap/99-stress-users.ldif
+!docker/ldap/10-mail-schema.ldif
 local-user*.ldif
 change-password.ldif
 
@@ -177,3 +178,6 @@ CLAUDE.md
 .codex/
 .claude/settings.local.json
 .claude/worktrees/
+
+# Generated dev service credentials (scripts/dev-secrets.sh)
+deployments/compose/.secrets/

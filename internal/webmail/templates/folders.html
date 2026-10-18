@@ -1,0 +1,47 @@
+{{define "content"}}
+<section class="page">
+  <h1>Folders</h1>
+  {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
+  <form class="card form-grid" action="/folders" method="post">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}"><input type="hidden" name="op" value="create">
+    <h2 class="card-title">New folder</h2>
+    <label for="new-name">Name</label>
+    <input id="new-name" name="name" type="text" maxlength="80" required>
+    <label for="new-parent">Inside</label>
+    <select id="new-parent" name="parent">
+      <option value="">(top level)</option>
+      {{range .Folders}}{{if .Selectable}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
+    </select>
+    <div class="form-actions"><button class="button primary" type="submit">Create folder</button></div>
+  </form>
+  <table class="table">
+    <thead><tr><th scope="col">Folder</th><th scope="col" class="num">Messages</th><th scope="col" class="num">Unread</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+    {{range .Folders}}
+      <tr>
+        <td class="{{depthClass .Depth}} folder-cell"><a href="{{folderURL .Name 1 ""}}">{{.Display}}</a>{{if .Role}} <span class="muted small">({{.Role}})</span>{{end}}</td>
+        <td class="num mono">{{.Total}}</td>
+        <td class="num mono">{{.Unread}}</td>
+        <td class="row-actions">
+          {{if not .Role}}
+          <details class="menu">
+            <summary class="button small-button">Rename</summary>
+            <form class="menu-body" action="/folders" method="post">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="rename"><input type="hidden" name="folder" value="{{.Name}}">
+              <label class="visually-hidden" for="rn-{{.Name}}">New name</label>
+              <input id="rn-{{.Name}}" name="name" type="text" value="{{.Display}}" maxlength="80" required>
+              <button class="button" type="submit">Save</button>
+            </form>
+          </details>
+          <form action="/folders" method="post" class="inline">
+            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="folder" value="{{.Name}}">
+            <button class="button small-button danger" data-confirm="Delete the folder {{.Name}} and every message in it?">Delete</button>
+          </form>
+          {{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

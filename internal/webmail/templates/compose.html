@@ -1,0 +1,103 @@
+{{define "content"}}
+<form class="compose" action="/compose" method="post" enctype="multipart/form-data" data-unsaved-warning>
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  {{with .Compose}}
+  <input type="hidden" name="in_reply_to" value="{{.InReplyTo}}">
+  <input type="hidden" name="references" value="{{.References}}">
+  <input type="hidden" name="mode" value="{{.Mode}}">
+  {{if .OrigUID}}<input type="hidden" name="orig_f" value="{{.OrigFolder}}"><input type="hidden" name="orig_uid" value="{{.OrigUID}}">{{end}}
+  {{if .DraftUID}}<input type="hidden" name="draft_uid" value="{{.DraftUID}}">{{end}}
+  <div class="compose-head">
+    <h1>{{if eq .Mode "reply" "replyall"}}Reply{{else if eq .Mode "forward"}}Forward{{else if eq .Mode "draft"}}Draft{{else}}New message{{end}}</h1>
+  </div>
+  {{if $.Problem}}<p class="problem" role="alert">{{$.Problem}}</p>{{end}}
+  <div class="field"><span class="field-label">From</span><span>{{if .From.Name}}{{.From.Name}} <span class="mono muted">&lt;{{.From.Email}}&gt;</span>{{else}}<span class="mono">{{.From.Email}}</span>{{end}}</span><a class="small push" href="/settings">Change name or signature</a></div>
+  <div class="field"><label class="field-label" for="to">To</label><input id="to" name="to" type="text" value="{{.To}}" autocomplete="off" data-addresses></div>
+  <details class="field-group"{{if .ShowCc}} open{{end}}>
+    <summary>Cc and Bcc</summary>
+    <div class="field"><label class="field-label" for="cc">Cc</label><input id="cc" name="cc" type="text" value="{{.Cc}}" autocomplete="off" data-addresses></div>
+    <div class="field"><label class="field-label" for="bcc">Bcc</label><input id="bcc" name="bcc" type="text" value="{{.Bcc}}" autocomplete="off" data-addresses></div>
+  </details>
+  <div class="field"><label class="field-label" for="subject">Subject</label><input id="subject" name="subject" type="text" value="{{.Subject}}"></div>
+  <input type="hidden" name="format" value="text" data-format>
+  <input type="hidden" name="html" value="" data-html>
+  <div class="editor-wrap" hidden data-editor-wrap>
+    <div class="editor-toolbar" role="toolbar" aria-label="Formatting">
+      <span class="tb-group">
+        <button type="button" class="tb" data-cmd="undo" title="Undo (Ctrl+Z)">↶</button>
+        <button type="button" class="tb" data-cmd="redo" title="Redo (Ctrl+Y)">↷</button>
+      </span>
+      <span class="tb-group">
+        <select class="tb-select" data-block aria-label="Paragraph style" title="Paragraph style">
+          <option value="p">Normal</option><option value="h1">Heading 1</option><option value="h2">Heading 2</option><option value="h3">Heading 3</option><option value="pre">Code</option>
+        </select>
+        <select class="tb-select" data-font aria-label="Font" title="Font">
+          <option value="">Font</option><option value="Arial, Helvetica, sans-serif">Sans serif</option><option value="Georgia, 'Times New Roman', serif">Serif</option><option value="'Courier New', Courier, monospace">Fixed width</option><option value="Verdana, Geneva, sans-serif">Wide</option><option value="'Trebuchet MS', sans-serif">Narrow</option>
+        </select>
+        <select class="tb-select" data-size aria-label="Size" title="Size">
+          <option value="">Size</option><option value="1">Smallest</option><option value="2">Small</option><option value="3">Normal</option><option value="4">Large</option><option value="5">Larger</option><option value="6">Huge</option>
+        </select>
+      </span>
+      <span class="tb-group">
+        <button type="button" class="tb" data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+        <button type="button" class="tb" data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+        <button type="button" class="tb" data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+        <button type="button" class="tb" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+        <label class="tb tb-color" title="Text colour"><span class="tb-a">A</span><input type="color" data-color="foreColor" value="#c0392b" aria-label="Text colour"></label>
+        <label class="tb tb-color" title="Highlight"><span class="tb-hl">▮</span><input type="color" data-color="hiliteColor" value="#fff176" aria-label="Highlight colour"></label>
+      </span>
+      <span class="tb-group">
+        <button type="button" class="tb" data-cmd="justifyLeft" title="Align left">⯇</button>
+        <button type="button" class="tb" data-cmd="justifyCenter" title="Centre">≡</button>
+        <button type="button" class="tb" data-cmd="justifyRight" title="Align right">⯈</button>
+      </span>
+      <span class="tb-group">
+        <button type="button" class="tb" data-cmd="insertUnorderedList" title="Bulleted list">•</button>
+        <button type="button" class="tb" data-cmd="insertOrderedList" title="Numbered list">1.</button>
+        <button type="button" class="tb" data-cmd="outdent" title="Decrease indent">⇤</button>
+        <button type="button" class="tb" data-cmd="indent" title="Increase indent">⇥</button>
+        <button type="button" class="tb" data-cmd="formatBlock" data-arg="blockquote" title="Quote">❝</button>
+      </span>
+      <span class="tb-group">
+        <button type="button" class="tb" data-cmd="createLink" title="Insert link">Link</button>
+        <button type="button" class="tb" data-cmd="unlink" title="Remove link">Unlink</button>
+        <button type="button" class="tb" data-insert-image title="Insert picture">Picture</button>
+        <button type="button" class="tb" data-insert-table title="Insert table">Table</button>
+        <button type="button" class="tb" data-cmd="insertHorizontalRule" title="Horizontal line">―</button>
+        <button type="button" class="tb" data-cmd="removeFormat" title="Clear formatting">Clear</button>
+      </span>
+      <button type="button" class="tb push" data-to-plain>Plain text</button>
+      <input type="file" accept="image/*" multiple hidden data-image-input>
+    </div>
+    <div class="image-bar" hidden data-image-bar role="toolbar" aria-label="Picture">
+      <span class="small muted">Picture:</span>
+      <button type="button" class="tb" data-img-size="25">Small</button>
+      <button type="button" class="tb" data-img-size="50">Medium</button>
+      <button type="button" class="tb" data-img-size="100">Full width</button>
+      <button type="button" class="tb" data-img-size="0">Original</button>
+      <button type="button" class="tb danger" data-img-remove>Remove</button>
+    </div>
+    <div class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message" data-editor>{{.HTML}}</div>
+  </div>
+  <label class="visually-hidden" for="body">Message</label>
+  <textarea id="body" name="body" rows="18"{{if eq .Mode "reply" "replyall" "forward"}} data-cursor-top{{end}}>{{.Text}}</textarea>
+  <div class="field to-rich" hidden data-to-rich-wrap><button type="button" class="link-inline" data-to-rich>Switch to rich text</button></div>
+  {{with .Forwarded}}
+  <fieldset class="field forwarded">
+    <legend class="field-label">Attachments from the original</legend>
+    {{range .}}<label class="checkline"><input type="checkbox" name="fwd_part" value="{{.Index}}" checked> {{.Filename}} <span class="mono muted small">{{humanSize .Size}}</span></label>{{end}}
+  </fieldset>
+  {{end}}
+  <div class="field attach"><label class="field-label" for="attachments">{{template "icon-clip"}}Attach files</label><input id="attachments" name="attachments" type="file" multiple></div>
+  <div class="field options">
+    <label class="checkline"><input type="checkbox" name="priority" value="high"{{if .HighPriority}} checked{{end}}> High priority</label>
+    <label class="checkline"><input type="checkbox" name="receipt" value="1"{{if .Receipt}} checked{{end}}> Request a read receipt</label>
+  </div>
+  <div class="actions">
+    <button class="button primary" type="submit" name="op" value="send" data-submit-key>Send</button>
+    <button class="button" type="submit" name="op" value="save" formnovalidate>Save draft</button>
+    <a class="button ghost danger push" href="/mail" data-discard>Discard</a>
+  </div>
+  {{end}}
+</form>
+{{end}}

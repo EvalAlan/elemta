@@ -356,6 +356,12 @@ func runWeb(cmd *cobra.Command, args []string) {
 		server.SetDirectory(ds)
 	}
 
+	if provisioning, err := openProvision(cfg, resolvedConfigPath); err == nil {
+		server.SetProvisioner(provisioning)
+	} else {
+		slog.Warn("Mail administration unavailable", "error", err)
+	}
+
 	if err := server.Start(); err != nil {
 		slog.Error("Failed to start API server; the web interface cannot start",
 			"error", err,
