@@ -206,3 +206,28 @@ func TestTOTPURIAndQR(t *testing.T) {
 		t.Errorf("groupSecret = %q", got)
 	}
 }
+
+// Settings changes return to the card they were made in, with the notice
+// there rather than at the top of the page, out of sight.
+func TestSettingsReturnToTheChangedCard(t *testing.T) {
+	h := newSecurityHarness(t, &fakeSecurity{})
+	csrf := h.login()
+	_, page := h.get("/settings")
+	for _, action := range []string{`action="/settings#general"`, `action="/settings/2fa/begin#security"`, `action="/settings/app-passwords#security"`, `action="/settings/app-required#security"`} {
+		if !strings.Contains(page, action) {
+			t.Errorf("settings page lacks %s", action)
+		}
+	}
+	resp := h.post("/settings", url.Values{"csrf": {csrf}, "display_name": {"Dana"}})
+	if loc := resp.Header.Get("Location"); !strings.HasSuffix(loc, "#general") {
+		t.Fatalf("save redirect = %q", loc)
+	}
+	_, page = h.get("/settings?n=app-required")
+	card := page[strings.Index(page, `id="security"`):]
+	if !strings.Contains(card, notices["app-required"]) {
+		t.Fatal("notice not in the security card")
+	}
+	if strings.Count(page, notices["app-required"]) != 1 {
+		t.Fatal("notice shown twice")
+	}
+}

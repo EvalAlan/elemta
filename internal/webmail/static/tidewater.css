@@ -957,3 +957,8 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .app-password { font-size: 1.4rem; letter-spacing: 0.08em; user-select: all; margin: 0.25rem 0 1rem; }
 .qr { background: #fff; padding: 8px; border-radius: 6px; image-rendering: pixelated; max-width: 100%; height: auto; }
 #security h3 { margin-top: 1.5rem; }
+
+/* Settings changes return to the card they were made in (#general,
+   #password, #recovery, #security); keep it clear of the window edge. */
+.page .card[id] { scroll-margin-top: 16px; }
+.card-notice { margin: 0 0 12px; }

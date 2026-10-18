@@ -269,7 +269,7 @@ func (s *Server) twoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 	next := "/mail"
 	if out.Recovery {
 		s.log.Info("webmail: recovery code used", "user", p.user, "left", out.RecoveryLeft)
-		next = "/settings?n=recovery-code-used"
+		next = "/settings?n=recovery-code-used#security"
 	}
 	s.finishLogin(ctx, w, r, p.user, p.password, store, next)
 }

@@ -3,9 +3,10 @@
   <h1>Settings</h1>
   {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
   {{with .Settings}}
-  <form class="card form-grid" action="/settings" method="post">
+  <form class="card form-grid" id="general" action="/settings#general" method="post">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
     <h2 class="card-title">Identity</h2>
+    {{if eq .NoticeCard "general"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
     <span class="label">Address</span><span class="mono">{{$.Session.Address}}</span>
     <label for="display_name">Your name</label>
     <input id="display_name" name="display_name" type="text" value="{{.Prefs.DisplayName}}" maxlength="120" placeholder="Shown to people you write to">
@@ -66,9 +67,10 @@
   </form>
   {{end}}
   {{if .Settings.CanChangePassword}}
-  <form class="card form-grid" action="/settings/password" method="post" autocomplete="off">
+  <form class="card form-grid" id="password" action="/settings/password#password" method="post" autocomplete="off">
     <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
     <h2 class="card-title">Password</h2>
+    {{if eq $.Settings.NoticeCard "password"}}<p class="notice card-notice" role="status">{{$.Settings.Notice}}</p>{{end}}
     <input type="text" name="username" value="{{.Session.Address}}" autocomplete="username" hidden>
     <label for="pw-current">Current password</label><input id="pw-current" name="current" type="password" autocomplete="current-password" required>
     <label for="pw-new">New password</label><input id="pw-new" name="new" type="password" autocomplete="new-password" minlength="{{.Settings.MinPasswordLength}}" required>
@@ -78,9 +80,10 @@
   </form>
   {{end}}
   {{if .Settings.CanRecover}}
-  <form class="card form-grid" action="/settings/recovery" method="post">
+  <form class="card form-grid" id="recovery" action="/settings/recovery#recovery" method="post">
     <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
     <h2 class="card-title">Password recovery</h2>
+    {{if eq $.Settings.NoticeCard "recovery"}}<p class="notice card-notice" role="status">{{$.Settings.Notice}}</p>{{end}}
     <span class="label">Verified recovery email</span><span>{{if .Settings.RecoveryEmail}}{{.Settings.RecoveryEmail}}{{else}}None{{end}}</span>
     <label for="recovery-email">Recovery email</label><input id="recovery-email" name="email" type="email" placeholder="An address outside this mailbox">
     <label for="recovery-current">Current password</label><input id="recovery-current" name="current" type="password" autocomplete="current-password" required>
@@ -91,6 +94,7 @@
   {{with .Settings.Security}}
   <div class="card" id="security">
     <h2 class="card-title">Two-step verification and app passwords</h2>
+    {{if eq $.Settings.NoticeCard "security"}}<p class="notice card-notice" role="status">{{$.Settings.Notice}}</p>{{end}}
     {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
     {{if .Unavailable}}<p class="problem" role="alert">These settings can't be loaded right now. Try again in a moment.</p>{{end}}
     {{if .RecoveryCodes}}
@@ -102,7 +106,7 @@
     <p class="mono app-password">{{.NewAppPassword}}</p>
     {{end}}
     {{if .SetupSecret}}
-    <form class="form-grid" action="/settings/2fa/confirm" method="post" autocomplete="off">
+    <form class="form-grid" action="/settings/2fa/confirm#security" method="post" autocomplete="off">
       <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
       <input type="hidden" name="secret" value="{{.SetupSecret}}">
       <span class="label">1. Scan</span>
@@ -115,7 +119,7 @@
     {{else}}{{with .Status}}
     {{if .TOTP}}
     <p>Two-step verification is <strong>on</strong>. Webmail asks for a code from your authenticator app after your password. {{.RecoveryLeft}} recovery codes left.</p>
-    <form class="form-grid" action="/settings/2fa/disable" method="post" autocomplete="off">
+    <form class="form-grid" action="/settings/2fa/disable#security" method="post" autocomplete="off">
       <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
       <label for="totp-off">Current code</label>
       <input id="totp-off" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="16" required>
@@ -123,7 +127,7 @@
     </form>
     {{else}}
     <p>Two-step verification is <strong>off</strong>. Turn it on so a stolen password alone can't open your webmail.</p>
-    <form action="/settings/2fa/begin" method="post">
+    <form action="/settings/2fa/begin#security" method="post">
       <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
       <div class="form-actions"><button class="button primary" type="submit">Set up two-step verification</button></div>
     </form>
@@ -135,17 +139,17 @@
       <thead><tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead>
       <tbody>{{range .AppPasswords}}
       <tr><td>{{.Name}}</td><td>{{.Created.Format "2 Jan 2006"}}</td><td>{{with .LastUsed}}{{.Format "2 Jan 2006 15:04"}}{{else}}Never{{end}}</td>
-      <td><form action="/settings/app-passwords/delete" method="post"><input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button danger" type="submit">Delete</button></form></td></tr>
+      <td><form action="/settings/app-passwords/delete#security" method="post"><input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button danger" type="submit">Delete</button></form></td></tr>
       {{end}}</tbody>
     </table>
     {{end}}
-    <form class="form-grid" action="/settings/app-passwords" method="post" autocomplete="off">
+    <form class="form-grid" action="/settings/app-passwords#security" method="post" autocomplete="off">
       <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
       <label for="app-name">New app password for</label>
       <input id="app-name" name="name" type="text" maxlength="64" placeholder="e.g. Thunderbird on laptop" required>
       <div class="form-actions"><button class="button" type="submit">Create app password</button></div>
     </form>
-    <form class="form-grid" action="/settings/app-required" method="post">
+    <form class="form-grid" action="/settings/app-required#security" method="post">
       <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
       {{if .AppRequired}}
       <input type="hidden" name="required" value="0">

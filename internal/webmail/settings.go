@@ -242,6 +242,24 @@ type settingsView struct {
 	// Security is two-step verification and app passwords; nil when the
 	// mailbox service's API isn't configured.
 	Security *securityView
+	// Notice is shown in the card named by NoticeCard, the one the change
+	// was made in, rather than at the top of the page: after a change the
+	// page returns to that card, so a notice at the top would go unseen.
+	Notice, NoticeCard string
+}
+
+// noticeCards places each settings notice in the card it is about. The
+// cards' ids match the anchors their forms and redirects return to.
+var noticeCards = map[string]string{
+	"settings-saved":       "general",
+	"password-changed":     "password",
+	"recovery-sent":        "recovery",
+	"recovery-removed":     "recovery",
+	"recovery-code-used":   "security",
+	"2fa-off":              "security",
+	"app-password-deleted": "security",
+	"app-required":         "security",
+	"app-optional":         "security",
 }
 
 // davURL is where CalDAV and CardDAV clients should point. The configured
@@ -270,6 +288,9 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, sess *Sess
 func (s *Server) settingsView(r *http.Request, sess *Session) (view, error) {
 	p := s.prefs(r.Context(), sess)
 	v := view{Title: "Settings", Session: sess, Notice: notices[r.URL.Query().Get("n")], Settings: &settingsView{Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength, DAVURL: s.davURL(r)}}
+	if card, ok := noticeCards[r.URL.Query().Get("n")]; ok {
+		v.Settings.Notice, v.Settings.NoticeCard, v.Notice = v.Notice, card, ""
+	}
 	if s.recovery != nil {
 		rec, err := s.recoveryRecord(r.Context(), s.recoveryAccount(sess.User))
 		if err != nil {
@@ -346,7 +367,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		return
 	}
 	s.setAppearanceCookies(w, p)
-	http.Redirect(w, r, "/settings?n=settings-saved", http.StatusSeeOther)
+	http.Redirect(w, r, "/settings?n=settings-saved#general", http.StatusSeeOther)
 }
 
 // timezoneSubmit records the browser's time zone the first time a user
