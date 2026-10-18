@@ -309,9 +309,6 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
    only its paper follows the theme so it sits on either top bar. */
 .brand .logo { width: 34px; height: 27px; flex: none; }
 .brand .logo .paper { fill: var(--chrome); }
-.login .brand { font-size: 20px; }
-.login .brand .logo { width: 44px; height: 35px; }
-.login .brand .logo .paper { fill: var(--surface); }
 .brand.dark { color: var(--ink); }
 .apps { display: flex; gap: 4px; }
 .apps a { color: var(--chrome-muted); text-decoration: none; padding: 8px 12px; border-radius: 6px; }
@@ -491,13 +488,22 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .keys dd { margin: 0; }
 
 /* Login */
-.login-body { display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 16px; }
-.login { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 32px; display: flex; flex-direction: column; gap: 16px; }
+/* The sign-in and recovery pages follow the administration console's sign-in:
+   one centred card led by the full Elemta artwork. The artwork's lettering is
+   white, so light themes get a copy with slate lettering (logo-light.png). */
+.login-body { display: flex; flex-direction: column; min-height: 100vh; align-items: center; justify-content: center; gap: 24px; padding: 32px 16px; }
+.login { width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 32px; display: flex; flex-direction: column; gap: 16px; box-shadow: var(--shadow); }
+.login-logo { display: flex; justify-content: center; }
+.login-logo img { display: block; width: 100%; max-width: 280px; height: auto; }
+.login-title { text-align: center; font-size: 15px; font-weight: 500; color: var(--muted); margin-bottom: 4px; }
 .login form { display: flex; flex-direction: column; gap: 8px; }
-.login label { color: var(--muted); font-size: 13px; margin-top: 6px; }
-.login input { min-height: 44px; border: 1px solid var(--line); border-radius: var(--radius); padding: 0 12px; background: var(--surface); }
-.login .button { margin-top: 12px; }
+.login label { color: var(--ink); font-weight: 500; font-size: 14px; margin-top: 8px; }
+.login input { min-height: 44px; border: 1px solid var(--line); border-radius: var(--radius); padding: 0 12px; background: var(--surface-2); color: var(--ink); font-size: 15px; }
+.login input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.login .button { margin-top: 16px; }
 .login .notice, .login .problem { margin: 0; }
+.login-links { margin: 0; text-align: center; }
+.login-footer { margin: 0; color: var(--muted); font-size: 13px; text-align: center; }
 
 /* ---- Calendar ---------------------------------------------------------- */
 .cal-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
