@@ -48,6 +48,9 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 			}
 			f.codeUsed = true
 			out = map[string]any{"recovery": false, "recovery_left": 10}
+		case "/v1/security/app-required":
+			f.appRequired, _ = in["required"].(bool)
+			out = map[string]any{"ok": true}
 		case "/v1/security/app-passwords":
 			name, _ := in["name"].(string)
 			f.created = append(f.created, name)
@@ -171,7 +174,7 @@ func TestSecuritySettings(t *testing.T) {
 	f := &fakeSecurity{}
 	h := newSecurityHarness(t, f)
 	csrf := h.login()
-	_, page := h.get("/settings")
+	_, page := h.get("/settings/security")
 	if !strings.Contains(page, "Set up two-step verification") || !strings.Contains(page, "Create app password") {
 		t.Fatal("security card missing")
 	}
@@ -207,27 +210,54 @@ func TestTOTPURIAndQR(t *testing.T) {
 	}
 }
 
-// Settings changes return to the card they were made in, with the notice
-// there rather than at the top of the page, out of sight.
-func TestSettingsReturnToTheChangedCard(t *testing.T) {
+// Settings are split into tabs, each with its own address in the settings
+// sidebar, and changes return to the card they were made in, with the notice
+// there rather than at the top of the page.
+func TestSettingsTabs(t *testing.T) {
 	h := newSecurityHarness(t, &fakeSecurity{})
 	csrf := h.login()
-	_, page := h.get("/settings")
-	for _, action := range []string{`action="/settings#general"`, `action="/settings/2fa/begin#security"`, `action="/settings/app-passwords#security"`, `action="/settings/app-required#security"`} {
-		if !strings.Contains(page, action) {
-			t.Errorf("settings page lacks %s", action)
+	tabs := map[string][]string{
+		"/settings":          {`action="/settings#general"`, `id="display_name"`},
+		"/settings/account":  {"<h1>Account</h1>"},
+		"/settings/security": {`action="/settings/2fa/begin#two-step"`, `action="/settings/app-passwords#app-passwords"`, `action="/settings/app-required#app-passwords"`},
+		"/settings/devices":  {"993", "587", "/dav/", "/contacts/export"},
+		"/filters":           {"Filters and out-of-office"},
+		"/folders":           {`action="/folders"`},
+	}
+	for path, wants := range tabs {
+		resp, page := h.get(path)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s = %d", path, resp.StatusCode)
 		}
+		for _, want := range wants {
+			if !strings.Contains(page, want) {
+				t.Errorf("%s lacks %s", path, want)
+			}
+		}
+		// The sidebar marks the tab and the top bar marks Settings.
+		if !strings.Contains(page, `href="`+path+`" aria-current="page"`) || !strings.Contains(page, `href="/settings" title="Settings" aria-current="page"`) {
+			t.Errorf("%s: current tab not marked", path)
+		}
+		if strings.Contains(page, "Manage folders") {
+			t.Errorf("%s shows the mail sidebar", path)
+		}
+	}
+	// One tab doesn't carry another's forms.
+	if _, page := h.get("/settings"); strings.Contains(page, "/settings/password") || strings.Contains(page, "2fa/begin") {
+		t.Error("general tab carries other tabs' forms")
 	}
 	resp := h.post("/settings", url.Values{"csrf": {csrf}, "display_name": {"Dana"}})
 	if loc := resp.Header.Get("Location"); !strings.HasSuffix(loc, "#general") {
 		t.Fatalf("save redirect = %q", loc)
 	}
-	_, page = h.get("/settings?n=app-required")
-	card := page[strings.Index(page, `id="security"`):]
-	if !strings.Contains(card, notices["app-required"]) {
-		t.Fatal("notice not in the security card")
+	resp = h.post("/settings/app-required", url.Values{"csrf": {csrf}, "required": {"1"}})
+	loc := resp.Header.Get("Location")
+	if !strings.HasPrefix(loc, "/settings/security?") || !strings.HasSuffix(loc, "#app-passwords") {
+		t.Fatalf("security redirect = %q", loc)
 	}
-	if strings.Count(page, notices["app-required"]) != 1 {
-		t.Fatal("notice shown twice")
+	_, page := h.get(strings.Split(loc, "#")[0])
+	card := page[strings.Index(page, `id="app-passwords"`):]
+	if !strings.Contains(card, notices["app-required"]) || strings.Count(page, notices["app-required"]) != 1 {
+		t.Fatal("notice not shown once, in the app passwords card")
 	}
 }

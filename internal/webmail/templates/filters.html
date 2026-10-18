@@ -1,6 +1,11 @@
+{{define "search"}}<div class="search-spacer"></div>{{end}}
+{{define "sidebar"}}{{template "settings-sidebar" .}}{{end}}
 {{define "content"}}
-<section class="page">
-  <h1>Filters and out-of-office</h1>
+<section class="page settings">
+  <header class="page-head">
+    <h1>Filters and out-of-office</h1>
+    <p class="muted">Sort incoming mail automatically, and reply while you're away.</p>
+  </header>
   {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
   {{with .Filters}}
   {{if .Disabled}}

@@ -31,7 +31,7 @@ func TestChangePassword(t *testing.T) {
 	h.server.passwords = fp
 	csrf := h.login()
 
-	_, page := h.get("/settings")
+	_, page := h.get("/settings/account")
 	if !strings.Contains(page, `action="/settings/password#password"`) {
 		t.Fatal("no password form when changes are configured")
 	}
@@ -78,7 +78,7 @@ func TestChangePassword(t *testing.T) {
 func TestPasswordFormHiddenWithoutLDAP(t *testing.T) {
 	h := newHarness(t)
 	csrf := h.login()
-	_, page := h.get("/settings")
+	_, page := h.get("/settings/account")
 	if strings.Contains(page, `action="/settings/password#password"`) {
 		t.Fatal("password form shown without a directory configured")
 	}

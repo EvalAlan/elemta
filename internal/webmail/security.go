@@ -269,7 +269,7 @@ func (s *Server) twoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 	next := "/mail"
 	if out.Recovery {
 		s.log.Info("webmail: recovery code used", "user", p.user, "left", out.RecoveryLeft)
-		next = "/settings?n=recovery-code-used#security"
+		next = "/settings/security?n=recovery-code-used#two-step"
 	}
 	s.finishLogin(ctx, w, r, p.user, p.password, store, next)
 }
@@ -293,7 +293,7 @@ type securityView struct {
 // securityRender re-renders the settings page with the security card's
 // one-time state, or a problem.
 func (s *Server) securityRender(w http.ResponseWriter, r *http.Request, sess *Session, status int, sv securityView) {
-	v, err := s.settingsView(r, sess)
+	v, err := s.settingsView(r, sess, "security")
 	if err != nil {
 		s.fail(w, r, sess, err)
 		return
@@ -456,7 +456,7 @@ func (s *Server) totpDisableSubmit(w http.ResponseWriter, r *http.Request, sess 
 		return
 	}
 	s.log.Info("webmail: two-step verification off", "user", sess.User, "ip", s.clientIP(r))
-	http.Redirect(w, r, "/settings?n=2fa-off#security", http.StatusSeeOther)
+	http.Redirect(w, r, "/settings/security?n=2fa-off#two-step", http.StatusSeeOther)
 }
 
 func (s *Server) appPasswordSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
@@ -480,7 +480,7 @@ func (s *Server) appPasswordDeleteSubmit(w http.ResponseWriter, r *http.Request,
 	if !s.securityAction(w, r, sess, "/v1/security/app-passwords/"+strconv.FormatInt(id, 10)+"/delete", nil, nil) {
 		return
 	}
-	http.Redirect(w, r, "/settings?n=app-password-deleted#security", http.StatusSeeOther)
+	http.Redirect(w, r, "/settings/security?n=app-password-deleted#app-passwords", http.StatusSeeOther)
 }
 
 func (s *Server) appRequiredSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
@@ -492,5 +492,5 @@ func (s *Server) appRequiredSubmit(w http.ResponseWriter, r *http.Request, sess 
 	if required {
 		n = "app-required"
 	}
-	http.Redirect(w, r, "/settings?n="+n+"#security", http.StatusSeeOther)
+	http.Redirect(w, r, "/settings/security?n="+n+"#app-passwords", http.StatusSeeOther)
 }

@@ -210,6 +210,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /folders", s.authed(s.foldersPage))
 	mux.HandleFunc("POST /folders", s.authed(s.foldersSubmit))
 	mux.HandleFunc("GET /settings", s.authed(s.settingsPage))
+	mux.HandleFunc("GET /settings/account", s.authed(s.settingsTab("account")))
+	mux.HandleFunc("GET /settings/security", s.authed(s.settingsTab("security")))
+	mux.HandleFunc("GET /settings/devices", s.authed(s.settingsTab("devices")))
 	mux.HandleFunc("POST /settings", s.authed(s.settingsSubmit))
 	mux.HandleFunc("POST /settings/timezone", s.authed(s.timezoneSubmit))
 	mux.HandleFunc("POST /settings/theme", s.authed(s.themeSubmit))
@@ -360,6 +363,9 @@ type view struct {
 	Theme string
 	// Palette is the colour scheme, empty for the default.
 	Palette string
+	// SettingsTab is the settings section shown, for the settings
+	// sidebar: general, account, security, devices, filters or folders.
+	SettingsTab string
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {

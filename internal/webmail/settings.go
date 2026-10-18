@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -242,6 +243,10 @@ type settingsView struct {
 	// Security is two-step verification and app passwords; nil when the
 	// mailbox service's API isn't configured.
 	Security *securityView
+	// Tab is the section shown: general, account, security or devices.
+	Tab string
+	// MailHost is the server name mail apps connect to.
+	MailHost string
 	// Notice is shown in the card named by NoticeCard, the one the change
 	// was made in, rather than at the top of the page: after a change the
 	// page returns to that card, so a notice at the top would go unseen.
@@ -255,11 +260,34 @@ var noticeCards = map[string]string{
 	"password-changed":     "password",
 	"recovery-sent":        "recovery",
 	"recovery-removed":     "recovery",
-	"recovery-code-used":   "security",
-	"2fa-off":              "security",
-	"app-password-deleted": "security",
-	"app-required":         "security",
-	"app-optional":         "security",
+	"recovery-code-used":   "two-step",
+	"2fa-off":              "two-step",
+	"app-password-deleted": "app-passwords",
+	"app-required":         "app-passwords",
+	"app-optional":         "app-passwords",
+}
+
+// settingsTitles names the settings tabs, for the page title.
+var settingsTitles = map[string]string{
+	"general":  "Settings",
+	"account":  "Account",
+	"security": "Security",
+	"devices":  "Mail apps and sync",
+}
+
+// mailHost is the server name to give mail apps: the public origin's host
+// when one is configured, else the host this page was reached on.
+func (s *Server) mailHost(r *http.Request) string {
+	host := r.Host
+	if s.cfg.RecoveryURL != "" {
+		if u, err := url.Parse(s.cfg.RecoveryURL); err == nil && u.Host != "" {
+			host = u.Host
+		}
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return host
 }
 
 // davURL is where CalDAV and CardDAV clients should point. The configured
@@ -277,21 +305,30 @@ func (s *Server) davURL(r *http.Request) string {
 }
 
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, sess *Session) {
-	v, err := s.settingsView(r, sess)
-	if err != nil {
-		s.fail(w, r, sess, err)
-		return
-	}
-	s.render(w, "settings.html", http.StatusOK, v)
+	s.settingsTab("general")(w, r, sess)
 }
 
-func (s *Server) settingsView(r *http.Request, sess *Session) (view, error) {
+// settingsTab serves one settings section. Each loads only what it shows,
+// so a slow mailbox API doesn't hold up the general settings.
+func (s *Server) settingsTab(tab string) func(http.ResponseWriter, *http.Request, *Session) {
+	return func(w http.ResponseWriter, r *http.Request, sess *Session) {
+		v, err := s.settingsView(r, sess, tab)
+		if err != nil {
+			s.fail(w, r, sess, err)
+			return
+		}
+		s.render(w, "settings.html", http.StatusOK, v)
+	}
+}
+
+func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view, error) {
 	p := s.prefs(r.Context(), sess)
-	v := view{Title: "Settings", Session: sess, Notice: notices[r.URL.Query().Get("n")], Settings: &settingsView{Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength, DAVURL: s.davURL(r)}}
+	v := view{Title: settingsTitles[tab], Session: sess, App: "settings", SettingsTab: tab, Notice: notices[r.URL.Query().Get("n")],
+		Settings: &settingsView{Tab: tab, Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength, DAVURL: s.davURL(r), MailHost: s.mailHost(r)}}
 	if card, ok := noticeCards[r.URL.Query().Get("n")]; ok {
 		v.Settings.Notice, v.Settings.NoticeCard, v.Notice = v.Notice, card, ""
 	}
-	if s.recovery != nil {
+	if s.recovery != nil && tab == "account" {
 		rec, err := s.recoveryRecord(r.Context(), s.recoveryAccount(sess.User))
 		if err != nil {
 			return v, err
@@ -299,7 +336,7 @@ func (s *Server) settingsView(r *http.Request, sess *Session) (view, error) {
 		v.Settings.CanRecover = true
 		v.Settings.RecoveryEmail = rec.Email
 	}
-	if s.security != nil {
+	if s.security != nil && (tab == "security" || tab == "devices") {
 		// The rest of the page works without the mailbox service's API, so
 		// its absence is shown on the card rather than failing the page.
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -357,7 +394,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		p.CalendarView = v
 	}
 	if problem != "" {
-		v := view{Title: "Settings", Session: sess, Problem: problem, Settings: &settingsView{Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength}}
+		v := view{Title: "Settings", Session: sess, App: "settings", SettingsTab: "general", Problem: problem, Settings: &settingsView{Tab: "general", Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength}}
 		s.withFolders(r, sess, &v)
 		s.render(w, "settings.html", http.StatusBadRequest, v)
 		return
