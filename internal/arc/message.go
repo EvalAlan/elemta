@@ -1,6 +1,10 @@
 package arc
 
 import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"io"
 	"strconv"
 	"strings"
 )
@@ -15,8 +19,34 @@ type header struct {
 
 // message is a parsed RFC 5322 message split at the header/body boundary.
 type message struct {
-	headers []header
-	body    string
+	headers    []header
+	body       string
+	bodyReader io.Reader
+}
+
+// parseMessageReader retains only the headers; AMS verification consumes the
+// body directly so attachments do not require another message-sized allocation.
+func parseMessageReader(r io.Reader) (message, error) {
+	reader := bufio.NewReader(r)
+	var head []byte
+	for {
+		part, err := reader.ReadSlice('\n')
+		if len(head)+len(part) > 256*1024 {
+			return message{}, fmt.Errorf("ARC header block exceeds 256 KiB")
+		}
+		head = append(head, part...)
+		if bytes.HasSuffix(head, []byte("\r\n\r\n")) || bytes.HasSuffix(head, []byte("\n\n")) {
+			msg := parseMessage(head)
+			msg.bodyReader = reader
+			return msg, nil
+		}
+		if err == io.EOF {
+			return parseMessage(head), nil
+		}
+		if err != nil && err != bufio.ErrBufferFull {
+			return message{}, err
+		}
+	}
 }
 
 // parseMessage splits a message without altering either half.

@@ -109,9 +109,11 @@ func canonicalizeBody(body string, canon Canonicalization) string {
 	lines = lines[:end]
 
 	if len(lines) == 0 {
-		// An empty body canonicalises to a single CRLF, not to nothing. Hashing
-		// the empty string here would make an empty body and a body of one blank
-		// line produce the same hash.
+		// RFC 6376 gives an empty relaxed body zero octets; simple requires
+		// one CRLF. ARC uses the same canonicalization rules.
+		if canon == CanonRelaxed {
+			return ""
+		}
 		return "\r\n"
 	}
 	return strings.Join(lines, "\r\n") + "\r\n"

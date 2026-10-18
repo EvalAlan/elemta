@@ -697,7 +697,7 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 	// Rejects only when the operator has asked for DMARC to be enforced;
 	// otherwise the verdict is recorded and written into a header below.
 	if dh.session != nil {
-		if err := dh.session.VerifyAuthentication(ctx, metadata.From, head); err != nil {
+		if err := dh.session.verifyAuthenticationContent(ctx, metadata.From, head, body); err != nil {
 			return err
 		}
 	}

@@ -52,7 +52,10 @@ type arcSet struct {
 // "fail" here does not by itself reject mail — it removes the chain's ability
 // to vouch for an earlier authentication result.
 func verifyChain(ctx context.Context, raw []byte, resolver TXTResolver) (string, string) {
-	msg := parseMessage(raw)
+	return verifyMessage(ctx, parseMessage(raw), resolver)
+}
+
+func verifyMessage(ctx context.Context, msg message, resolver TXTResolver) (string, string) {
 	sets, err := collectSets(msg.headers)
 	if err != nil {
 		return ChainFail, err.Error()
@@ -206,7 +209,14 @@ func verifyAMS(ctx context.Context, msg message, set arcSet, resolver TXTResolve
 		// have been written by someone else.
 		return fmt.Errorf("l= (partial body signing) is not accepted")
 	}
-	if got := bodyHash(body, bodyCanon); !equalBytes(got, expected) {
+	got := bodyHash(body, bodyCanon)
+	if msg.bodyReader != nil {
+		got, err = bodyHashReader(ctx, msg.bodyReader, bodyCanon)
+		if err != nil {
+			return fmt.Errorf("reading signed body: %w", err)
+		}
+	}
+	if !equalBytes(got, expected) {
 		return fmt.Errorf("body hash does not match; the body changed after signing")
 	}
 
