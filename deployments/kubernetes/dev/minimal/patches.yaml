@@ -38,7 +38,7 @@ spec:
             - name: ELEMTA_DEV_CERT_DAYS
               value: "7"
             - name: ELEMTA_HOSTNAME
-              value: mail.dev.evil-admin.com
+              value: mail.dev.example.net
       containers:
         - name: smtp
           imagePullPolicy: IfNotPresent

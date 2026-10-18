@@ -1,9 +1,9 @@
 # Elemta SMTP Server Configuration
 
 # Top-level configuration (used by SMTP server)
-hostname = "mail.dev.evil-admin.com"
+hostname = "mail.dev.example.net"
 listen_addr = ":2525"
-local_domains = ["example.com", "evil-admin.com", "localhost", "mail.example.com"]
+local_domains = ["example.com", "example.com", "localhost", "mail.example.com"]
 max_size = 52428800  # 50MB
 
 # Who may send to domains outside local_domains without logging in. Loopback

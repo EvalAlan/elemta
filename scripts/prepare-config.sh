@@ -139,7 +139,7 @@ fi
 if ! pair_matches "$RUNTIME_DIR/test.crt" "$RUNTIME_DIR/test.key"; then
     if [ "${ELEMTA_DEV_CERT:-}" = "true" ] && command -v openssl >/dev/null 2>&1; then
         days="${ELEMTA_DEV_CERT_DAYS:-7}"
-        host="${ELEMTA_HOSTNAME:-mail.dev.evil-admin.com}"
+        host="${ELEMTA_HOSTNAME:-mail.dev.example.net}"
         echo "prepare-config: generating a ${days}-day self-signed development certificate" >&2
         if openssl req -x509 -newkey rsa:2048 -nodes \
             -keyout "$RUNTIME_DIR/test.key.new" \

@@ -28,9 +28,9 @@ if [ ! -f ".env.linode" ]; then
         echo "❌ Template file not found. Creating basic .env.linode..."
         cat > .env.linode << 'EOF'
 # Server Configuration
-ELEMTA_HOSTNAME=mail.dev.evil-admin.com
-ELEMTA_DOMAIN=dev.evil-admin.com
-ELEMTA_EMAIL=admin@evil-admin.com
+ELEMTA_HOSTNAME=mail.dev.example.net
+ELEMTA_DOMAIN=dev.example.net
+ELEMTA_EMAIL=admin@example.com
 
 # Environment Settings
 TZ=UTC
@@ -60,20 +60,20 @@ DB_TYPE=sqlite
 # LDAP Configuration
 LDAP_HOST=ldap
 LDAP_PORT=389
-LDAP_BASE_DN=dc=dev,dc=evil-admin,dc=com
-LDAP_ADMIN_DN=cn=admin,dc=dev,dc=evil-admin,dc=com
+LDAP_BASE_DN=dc=dev,dc=example,dc=net
+LDAP_ADMIN_DN=cn=admin,dc=dev,dc=example,dc=net
 LDAP_ADMIN_PASSWORD=admin123
-LDAP_ORGANISATION=Dev Evil Admin
-LDAP_DOMAIN=dev.evil-admin.com
+LDAP_ORGANISATION=Example Development
+LDAP_DOMAIN=dev.example.net
 
 # Test User Configuration
-TEST_USER=alan
-TEST_PASSWORD=***REMOVED***
+TEST_USER=user
+TEST_PASSWORD=change-me
 
 # Let's Encrypt Configuration
 LETSENCRYPT_ENABLED=true
 LETSENCRYPT_STAGING=false
-LETSENCRYPT_EMAIL=admin@evil-admin.com
+LETSENCRYPT_EMAIL=admin@example.com
 
 # Logging Configuration
 LOG_LEVEL=info
@@ -122,8 +122,8 @@ echo "🔧 Generating configuration..."
 echo "👥 Creating users.txt for authentication..."
 mkdir -p config
 cat > config/users.txt << 'EOF'
-alan@dev.evil-admin.com:***REMOVED***
-admin@dev.evil-admin.com:***REMOVED***
+user@dev.example.net:change-me
+admin@dev.example.net:change-me
 EOF
 
 # Verify config was generated

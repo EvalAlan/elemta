@@ -148,8 +148,8 @@ certs:
 		-keyout config/test.key \
 		-out config/test.crt \
 		-days $(CERT_DAYS) \
-		-subj '/CN=mail.dev.evil-admin.com/O=Elemta Dev/C=US' \
-		-addext 'subjectAltName=DNS:mail.dev.evil-admin.com,DNS:*.dev.evil-admin.com' 2>/dev/null
+		-subj '/CN=mail.dev.example.net/O=Elemta Dev/C=US' \
+		-addext 'subjectAltName=DNS:mail.dev.example.net,DNS:*.dev.example.net' 2>/dev/null
 	@chmod 600 config/test.key
 	@chmod 644 config/test.crt
 	@echo "✅ TLS certificates generated at config/test.{crt,key} (valid $(CERT_DAYS) days)"
@@ -400,7 +400,7 @@ ensure-dev-env:
 		echo "📝 Creating $(DEV_ENV_FILE) for development..."; \
 		printf "# Elemta Development Environment - Auto-generated\n" > $(DEV_ENV_FILE); \
 		printf "ENVIRONMENT=development\n" >> $(DEV_ENV_FILE); \
-		printf "HOSTNAME=mail.dev.evil-admin.com\n" >> $(DEV_ENV_FILE); \
+		printf "HOSTNAME=mail.dev.example.net\n" >> $(DEV_ENV_FILE); \
 		printf "LISTEN_PORT=2525\n" >> $(DEV_ENV_FILE); \
 		printf "LOG_LEVEL=DEBUG\n" >> $(DEV_ENV_FILE); \
 		printf "DEV_MODE=true\n" >> $(DEV_ENV_FILE); \
