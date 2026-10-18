@@ -61,6 +61,7 @@ d=$MAIL_DOMAIN
 render "$root/config/elemta.toml" "$secrets/cloud/config/elemta.toml" \
     "s|^hostname = .*|hostname = \"$d\"|" \
     "s|^local_domains = .*|local_domains = [\"$d\"]|" \
+    's|^mode = "lmtp"|mode = "split"|' \
     "s|^cert_file = .*|cert_file = \"/app/tls/cert.pem\"|" \
     "s|^key_file = .*|key_file = \"/app/tls/key.pem\"|" \
     "s|^lmtp_tls_ca_file = .*|lmtp_tls_ca_file = \"\"|" \

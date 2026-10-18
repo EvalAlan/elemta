@@ -11,6 +11,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/antivirus"
 	"io"
 	"net"
+	"net/mail"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -1484,21 +1485,31 @@ func (dh *DataHandler) validateEmailAddressesInHeaders(ctx context.Context, head
 
 	for _, headerName := range emailHeaders {
 		if headerValue, exists := headers[headerName]; exists {
-			// Use enhanced validator to validate email addresses
-			validationResult := dh.enhancedValidator.ValidateSMTPParameter("MAIL_FROM", headerValue)
+			// Header fields carry address lists with display names; SMTP envelope
+			// validation applies only to each parsed addr-spec.
+			if headerName == "bcc" && strings.TrimSpace(headerValue) == "" {
+				continue
+			}
+			addresses, err := mail.ParseAddressList(headerValue)
+			if err != nil {
+				return fmt.Errorf("invalid email address in %s header: %w", headerName, err)
+			}
+			for _, address := range addresses {
+				validationResult := dh.enhancedValidator.ValidateSMTPParameter("MAIL_FROM", address.Address)
 
-			if !validationResult.Valid {
-				LogSecurityEvent(dh.logger, "email_header_validation_failed", validationResult.SecurityThreat,
-					validationResult.ErrorMessage, headerValue, dh.conn.RemoteAddr().String())
+				if !validationResult.Valid {
+					LogSecurityEvent(dh.logger, "email_header_validation_failed", validationResult.SecurityThreat,
+						validationResult.ErrorMessage, headerValue, dh.conn.RemoteAddr().String())
 
-				dh.logger.WarnContext(ctx, "Email header validation failed",
-					"header", headerName,
-					"error_type", validationResult.ErrorType,
-					"error_message", validationResult.ErrorMessage,
-					"security_threat", validationResult.SecurityThreat,
-				)
+					dh.logger.WarnContext(ctx, "Email header validation failed",
+						"header", headerName,
+						"error_type", validationResult.ErrorType,
+						"error_message", validationResult.ErrorMessage,
+						"security_threat", validationResult.SecurityThreat,
+					)
 
-				return fmt.Errorf("invalid email address in %s header: %s", headerName, validationResult.ErrorMessage)
+					return fmt.Errorf("invalid email address in %s header: %s", headerName, validationResult.ErrorMessage)
+				}
 			}
 		}
 	}

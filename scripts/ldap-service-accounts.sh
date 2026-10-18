@@ -34,6 +34,13 @@ BASE="dc=example,dc=com"
 SVC="ou=services,$BASE"
 ADMIN=(-x -D "cn=admin,$BASE" -w admin)
 
+# Creating this container requires write access to the directory root. Keep
+# that privilege in bootstrap rather than granting it to the provisioner.
+if ! "${EXEC[@]}" ldapsearch "${ADMIN[@]}" -b "ou=mail-addresses,$BASE" -s base dn >/dev/null 2>&1; then
+    printf 'dn: ou=mail-addresses,%s\nobjectClass: organizationalUnit\nou: mail-addresses\n' "$BASE" |
+        "${EXEC[@]}" ldapadd "${ADMIN[@]}" >/dev/null
+fi
+
 if ! "${EXEC[@]}" ldapsearch "${ADMIN[@]}" -b "$SVC" -s base dn >/dev/null 2>&1; then
     printf 'dn: %s\nobjectClass: organizationalUnit\nou: services\ndescription: Accounts that Elemta components bind as\n' "$SVC" |
         "${EXEC[@]}" ldapadd "${ADMIN[@]}" >/dev/null
