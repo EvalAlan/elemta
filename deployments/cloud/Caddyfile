@@ -48,3 +48,19 @@
 		reverse_proxy elemta-webmail:8027
 	}
 }
+
+https://{$MAIL_DOMAIN}:8025 {
+	@allowed remote_ip {$ELEMTA_ADMIN_ALLOWED_IP:127.0.0.1}
+	handle @allowed {
+		reverse_proxy elemta-web:8025
+	}
+	handle {
+		respond "Forbidden" 403
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		-Server
+	}
+}

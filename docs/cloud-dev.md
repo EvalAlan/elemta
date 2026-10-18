@@ -22,7 +22,7 @@ domain whose mail is handled elsewhere.
 
 Everything else is bound to 127.0.0.1 on the server:
 
-- the admin console, on 8025
+- the admin HTTPS proxy, on 8025 (unless explicitly exposed below)
 - LDAP, on 1389
 - rspamd, on 11334
 - valkey
@@ -37,7 +37,24 @@ Reach any of them over SSH, for example:
 ssh -L 8025:127.0.0.1:8025 you@dev.example.net
 ```
 
-then open http://localhost:8025.
+For admin HTTPS through this tunnel, resolve the mail domain to 127.0.0.1
+locally and open `https://<domain>:8025`, preserving the certificate's hostname.
+
+For direct admin access from a fixed IPv4 address, first add an exception to
+`/etc/nftables/docker-guard.nft` before its final drop rule:
+
+```
+iifname "eth0" meta l4proto tcp ct status dnat ct original proto-dst 8025 ip saddr 203.0.113.10 accept
+```
+
+Validate and load the file with `nft -c -f` and `nft -f`. Only after the guard
+is active, set `ELEMTA_ADMIN_BIND_IP=0.0.0.0` and
+`ELEMTA_ADMIN_ALLOWED_IP=203.0.113.10` in `.secrets/cloud.env`. Recreate
+`elemta-web` first, then `elemta-caddy`. Caddy serves
+`https://<domain>:8025` with the domain's public certificate and independently
+checks the client IP. The admin backend has no published host port. Keep
+8025 out of `public_ports`: the final drop rule must block every other source.
+The default admin proxy binding and allowed IP remain loopback.
 
 ManageSieve stays private because the mailbox service accepts plaintext logins
 from the webmail on the internal network. Filters are edited in the webmail.

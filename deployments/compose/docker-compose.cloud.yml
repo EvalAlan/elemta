@@ -50,8 +50,7 @@ services:
         aliases: ["${MAIL_DOMAIN:?MAIL_DOMAIN must be set}"]
 
   elemta-web:
-    ports: !override
-      - "127.0.0.1:8025:8025"
+    ports: !override []
     environment:
       - ELEMTA_DEV_CERT=false
       - ELEMTA_DEMO_DATA=false
@@ -103,8 +102,10 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "${ELEMTA_ADMIN_BIND_IP:-127.0.0.1}:8025:8025"
     environment:
       - MAIL_DOMAIN=${MAIL_DOMAIN}
+      - ELEMTA_ADMIN_ALLOWED_IP=${ELEMTA_ADMIN_ALLOWED_IP:-127.0.0.1}
     volumes:
       - ../cloud/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

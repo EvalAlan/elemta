@@ -1151,7 +1151,24 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 	// claims to be from, and what it found. Written whatever the outcome —
 	// omitting it when nothing passed leaves a reader unable to tell that from
 	// "never looked".
-	if dh.session != nil {
+	if dh.state != nil && dh.state.IsAuthenticated() {
+		// Report the identity we actually checked at submission (RFC 8601).
+		// SPF/DKIM/DMARC are evaluated by the receiving hop after signing.
+		value := sanitizeEmailForHeader(dh.config.Hostname) + "; auth=pass"
+		username := dh.state.GetUsername()
+		// Some readers split even quoted values at semicolons. Omit unusual
+		// identities instead of letting their punctuation create extra results.
+		for _, c := range username {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("@._+-", c)) {
+				username = ""
+				break
+			}
+		}
+		if username != "" {
+			value += " smtp.auth=" + username
+		}
+		additionalHeaders = append(additionalHeaders, "Authentication-Results: "+value)
+	} else if dh.session != nil {
 		if results, ok := dh.session.AuthResults(); ok {
 			additionalHeaders = append(additionalHeaders,
 				"Authentication-Results: "+results.Header(dh.config.Hostname))

@@ -333,9 +333,17 @@ func (s *Session) SetAuthVerifier(verifier *authresult.Verifier) {
 // message is accepted — which is what lets an operator see what enforcement
 // would have done before turning it on.
 func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, message []byte) error {
-	s.mu.RLock()
+	s.mu.Lock()
 	verifier := s.authVerifier
-	s.mu.RUnlock()
+	s.authResults = authresult.Results{}
+	s.authChecked = false
+	s.mu.Unlock()
+	// A logged-in client submits before outbound DKIM signing, and its peer
+	// address is not the domain's public sending IP. Receiver-side checks here
+	// would invent failures and can reject valid submissions under DMARC.
+	if s.state != nil && s.state.IsAuthenticated() {
+		return nil
+	}
 	if !verifier.Enabled() {
 		return nil
 	}
