@@ -63,3 +63,38 @@ func TestExternalAddressHeaderLists(t *testing.T) {
 		t.Fatal("malformed From accepted")
 	}
 }
+
+func TestMessageTextIsNotCommandSyntax(t *testing.T) {
+	v := NewEnhancedValidator(quietLogger())
+	dh := externalDataHandler(t)
+	for _, text := range []string{
+		`<div><img src="https://images.example.net/proxy?width=992&amp;h=abc123"></div>`,
+		`R&D | Engineering & Operations`,
+		`Discussion: javascript: URLs and eval(code)`,
+		`Example SQL: UNION SELECT name FROM users; DROP TABLE demo`,
+		`<script>alert("quoted source code")</script>`,
+	} {
+		if result := v.ValidateEmailHeaders("Subject: " + text); !result.Valid {
+			t.Errorf("message subject rejected: %q: %s", text, result.ErrorMessage)
+		}
+		content := "From: sender@example.com\r\nSubject: message text\r\n\r\n" + text + "\r\n"
+		scan := &SecurityScanResult{Passed: true}
+		if err := dh.performContentAnalysis(context.Background(), newScanContent([]byte(content)), scan); err != nil || !scan.Passed {
+			t.Errorf("message content rejected: %q: error=%v threats=%v", text, err, scan.Threats)
+		}
+		for _, inHeaders := range []bool{true, false} {
+			line := text
+			if inHeaders {
+				line = " " + text
+			}
+			if err := dh.validateLineContent(context.Background(), line+"\r\n", &DataReaderState{InHeaders: inHeaders}); err != nil {
+				t.Errorf("message text rejected (headers=%v): %q: %v", inHeaders, text, err)
+			}
+		}
+	}
+	for _, text := range []string{"value\r\nBcc: victim@example.net", "value\x00", "value\x1b", "value\x7f"} {
+		if result := v.validateHeaderValueRelaxed(text); result.Valid {
+			t.Errorf("framing/control bytes accepted: %q", text)
+		}
+	}
+}

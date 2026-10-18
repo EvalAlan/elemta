@@ -704,15 +704,12 @@ func (v *EnhancedValidator) validateHeaderValueRelaxed(headerValue string) *Enha
 		SecurityScore:     100,
 	}
 
-	// Only check for actual dangerous patterns, not legitimate header syntax
+	// Mail text is never executed here. HTML entities, URLs, source snippets
+	// and quoted SQL belong to the message; scanners and rendering boundaries
+	// handle their content. Only framing and control bytes violate this layer.
 	dangerousPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)\r\n|\n\r|\r|\n`),                                              // Line breaks (header injection)
-		regexp.MustCompile(`\x00|\x01|\x02|\x03|\x04|\x05|\x06|\x07|\x08|\x0B|\x0C|\x0E|\x0F`), // Control chars
-		regexp.MustCompile(`(?i)<script[^>]*>.*?</script>`),                                    // Script tags
-		regexp.MustCompile(`(?i)javascript:`),                                                  // JavaScript protocol
-		regexp.MustCompile(`(?i)eval\s*\(`),                                                    // eval() function
-		regexp.MustCompile(`(?i)\b(union\s+select.*from|drop\s+table|delete\s+from)\b`),        // Obvious SQL injection
-		regexp.MustCompile(`[|&` + "`" + `$]\s*[a-zA-Z/]`),                                     // Command injection (but not legitimate syntax)
+		regexp.MustCompile(`[\r\n]`),
+		regexp.MustCompile(`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]`),
 	}
 
 	for _, pattern := range dangerousPatterns {
