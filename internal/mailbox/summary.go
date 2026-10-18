@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/imapfork/imapserver"
 	"github.com/emersion/go-imap/v2"
-	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-message"
 	"github.com/emersion/go-message/mail"
 	"github.com/emersion/go-message/textproto"
@@ -35,7 +35,7 @@ import (
 
 // summaryVersion changes when the summary format or its derivation does, so
 // stale rows are recomputed rather than served.
-const summaryVersion = 1
+const summaryVersion = 2
 
 // maxSummaryHeader bounds the stored header block. Larger headers (rare,
 // usually abuse) are answered from the body instead.
@@ -250,19 +250,31 @@ func storeSummary(ctx context.Context, db execer, body string, s *Summary) error
 	if !s.Sent.IsZero() {
 		sent = s.Sent
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO mailbox_summaries(body,version,data,base_subject,sent,sender,recipient,cc,display_from,display_to,message_id,refs)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+	subject := ""
+	if s.Envelope != nil {
+		subject = s.Envelope.Subject
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO mailbox_summaries(body,version,data,base_subject,sent,sender,recipient,cc,display_from,display_to,message_id,refs,reply)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 ON CONFLICT(body) DO UPDATE SET version=EXCLUDED.version,data=EXCLUDED.data,base_subject=EXCLUDED.base_subject,sent=EXCLUDED.sent,
 sender=EXCLUDED.sender,recipient=EXCLUDED.recipient,cc=EXCLUDED.cc,display_from=EXCLUDED.display_from,display_to=EXCLUDED.display_to,
-message_id=EXCLUDED.message_id,refs=EXCLUDED.refs`,
-		body, summaryVersion, data, s.BaseSubject, sent, s.From, s.To, s.Cc, s.DisplayFrom, s.DisplayTo, s.MessageID, pq.Array(refs))
+message_id=EXCLUDED.message_id,refs=EXCLUDED.refs,reply=EXCLUDED.reply`,
+		body, summaryVersion, data, s.BaseSubject, sent, s.From, s.To, s.Cc, s.DisplayFrom, s.DisplayTo, s.MessageID, pq.Array(refs), hasReplyMarker(subject))
 	return err
 }
 
-func (e *Engine) missingSummaries(ctx context.Context, where string, limit int, start string) ([]Message, error) {
-	rows, err := e.DB.QueryContext(ctx, `SELECT b.key,b.size,b.checksum FROM mailbox_bodies b
+// missingSummaries lists bodies without a current summary, from start
+// onwards in key order, or before start when wrapped is set.
+func (e *Engine) missingSummaries(ctx context.Context, wrapped bool, limit int, start string) ([]Message, error) {
+	query := `SELECT b.key,b.size,b.checksum FROM mailbox_bodies b
 LEFT JOIN mailbox_summaries s ON s.body=b.key AND s.version=$1
-WHERE b.state='ready' AND s.body IS NULL AND `+where+` LIMIT $2`, summaryVersion, limit, start)
+WHERE b.state='ready' AND s.body IS NULL AND b.key>=$3 ORDER BY b.key LIMIT $2`
+	if wrapped {
+		query = `SELECT b.key,b.size,b.checksum FROM mailbox_bodies b
+LEFT JOIN mailbox_summaries s ON s.body=b.key AND s.version=$1
+WHERE b.state='ready' AND s.body IS NULL AND b.key<$3 ORDER BY b.key LIMIT $2`
+	}
+	rows, err := e.DB.QueryContext(ctx, query, summaryVersion, limit, start)
 	if err != nil {
 		return nil, err
 	}
@@ -276,6 +288,50 @@ WHERE b.state='ready' AND s.body IS NULL AND `+where+` LIMIT $2`, summaryVersion
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// SortKeys holds a message's sort and thread keys, without the rest of
+// its summary.
+type SortKeys struct {
+	BaseSubject, From, To, Cc, DisplayFrom, DisplayTo, MessageID, Subject string
+	Sent                                                                  time.Time
+	References                                                            []string
+	Reply                                                                 bool
+}
+
+// FolderSortKeys returns the sort keys of every message in the folder by
+// UID, in one query. Messages without a current summary are missing; the
+// caller computes those.
+func (e *Engine) FolderSortKeys(ctx context.Context, folder int64) (map[uint32]*SortKeys, error) {
+	rows, err := e.DB.QueryContext(ctx, `SELECT m.uid,s.base_subject,s.sent,s.sender,s.recipient,s.cc,s.display_from,s.display_to,s.message_id,s.refs,s.reply
+FROM mailbox_messages m JOIN mailbox_summaries s ON s.body=m.body AND s.version=$2 WHERE m.folder=$1`, folder, summaryVersion)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uint32]*SortKeys{}
+	for rows.Next() {
+		var uid uint32
+		var k SortKeys
+		var sent sql.NullTime
+		if err := rows.Scan(&uid, &k.BaseSubject, &sent, &k.From, &k.To, &k.Cc, &k.DisplayFrom, &k.DisplayTo, &k.MessageID, pq.Array(&k.References), &k.Reply); err != nil {
+			return nil, err
+		}
+		if sent.Valid {
+			k.Sent = sent.Time
+		}
+		out[uid] = &k
+	}
+	return out, rows.Err()
+}
+
+func (s *Summary) sortKeys() *SortKeys {
+	subject := ""
+	if s.Envelope != nil {
+		subject = s.Envelope.Subject
+	}
+	return &SortKeys{BaseSubject: s.BaseSubject, From: s.From, To: s.To, Cc: s.Cc, DisplayFrom: s.DisplayFrom, DisplayTo: s.DisplayTo,
+		MessageID: s.MessageID, Sent: s.Sent, References: s.References, Reply: hasReplyMarker(subject), Subject: subject}
 }
 
 // Summaries returns the stored, current summaries of the messages' bodies.
@@ -341,12 +397,12 @@ func (e *Engine) Backfill(ctx context.Context, limit int) (int, error) {
 		return 0, err
 	}
 	start := hex.EncodeToString(seed[:])
-	todo, err := e.missingSummaries(ctx, `b.key>=$3 ORDER BY b.key`, limit, start)
+	todo, err := e.missingSummaries(ctx, false, limit, start)
 	if err != nil {
 		return 0, err
 	}
 	if len(todo) < limit {
-		more, err := e.missingSummaries(ctx, `b.key<$3 ORDER BY b.key`, limit-len(todo), start)
+		more, err := e.missingSummaries(ctx, true, limit-len(todo), start)
 		if err != nil {
 			return 0, err
 		}

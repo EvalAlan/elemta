@@ -59,6 +59,13 @@ linters:
           - staticcheck
           - unparam
         path: ^tests/
+      # A fork of go-imap's server (see internal/imapfork/FORK.md). Upstream
+      # style findings are left as upstream wrote them so the fork stays easy
+      # to compare and rebase; our own changes there are reviewed as usual.
+      - linters:
+          - errcheck
+          - staticcheck
+        path: ^internal/imapfork/
       - linters:
           - errcheck
         path: cmd/

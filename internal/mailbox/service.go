@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/imapfork/imapserver"
 	"github.com/emersion/go-imap/v2"
-	"github.com/emersion/go-imap/v2/imapserver"
 	smtp "github.com/emersion/go-smtp"
 )
 

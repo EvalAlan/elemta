@@ -5,8 +5,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/EvalAlan/elemta/internal/imapfork/imapserver"
 	"github.com/emersion/go-imap/v2"
-	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-message"
 )
 

@@ -50,3 +50,4 @@ CREATE TABLE IF NOT EXISTS mailbox_summaries (
 );
 ALTER TABLE mailbox_folders ADD COLUMN IF NOT EXISTS journal_floor BIGINT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS mailbox_changes_modseq ON mailbox_changes(folder,modseq);
+ALTER TABLE mailbox_summaries ADD COLUMN IF NOT EXISTS reply BOOLEAN NOT NULL DEFAULT FALSE;

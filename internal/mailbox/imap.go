@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/imapfork/imapserver"
 	"github.com/emersion/go-imap/v2"
-	"github.com/emersion/go-imap/v2/imapserver"
 )
 
 type imapSession struct {
@@ -758,34 +758,65 @@ func (s *imapSession) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) err
 		}
 	}
 }
-func (s *imapSession) Search(kind imapserver.NumKind, c *imap.SearchCriteria, _ *imap.SearchOptions) (*imap.SearchData, error) {
-	if searchNeedsBody(c) {
+
+// match returns the view indices of the messages matching c, in view
+// order. Summaries are loaded in chunks only when header criteria need
+// them; bodies are read only for BODY and TEXT.
+func (s *imapSession) match(c *imap.SearchCriteria) ([]int, error) {
+	needHeader, needText := searchNeeds(c)
+	if needText {
 		release, err := s.service.receiveSlot(s.ctx)
 		if err != nil {
 			return nil, protocolError(err)
 		}
 		defer release()
 	}
-	var nums []uint32
+	var out []int
 	maxUID := uint32(0)
 	if len(s.view) > 0 {
 		maxUID = s.view[len(s.view)-1].UID
 	}
-	for i, m := range s.view {
-		var raw []byte
-		if searchNeedsBody(c) {
+	total := seqNumber(len(s.view))
+	for start := 0; start < len(s.view); start += fetchChunk {
+		end := min(start+fetchChunk, len(s.view))
+		var summaries map[string]*Summary
+		if needHeader {
 			var err error
-			raw, err = s.service.engine.Read(s.ctx, m)
-			if err != nil {
+			if summaries, err = s.service.engine.Summaries(s.ctx, s.view[start:end]); err != nil {
 				return nil, protocolError(err)
 			}
 		}
-		if matchMessage(m, seqNumber(i+1), seqNumber(len(s.view)), maxUID, raw, c) {
-			n := seqNumber(i + 1)
-			if kind == imapserver.NumKindUID {
-				n = m.UID
+		for i := start; i < end; i++ {
+			m := s.view[i]
+			src := &searchSource{summary: summaries[m.Body], load: func() ([]byte, error) { return s.service.engine.Read(s.ctx, m) }}
+			if needHeader && src.summary == nil {
+				sum, err := s.service.engine.Summary(s.ctx, m)
+				if err != nil {
+					return nil, protocolError(err)
+				}
+				src.summary = sum
 			}
-			nums = append(nums, n)
+			if matchMessage(m, seqNumber(i+1), total, maxUID, src, c) {
+				out = append(out, i)
+			}
+			if src.err != nil {
+				return nil, protocolError(src.err)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *imapSession) Search(kind imapserver.NumKind, c *imap.SearchCriteria, _ *imap.SearchOptions) (*imap.SearchData, error) {
+	idx, err := s.match(c)
+	if err != nil {
+		return nil, err
+	}
+	nums := make([]uint32, len(idx))
+	for i, j := range idx {
+		nums[i] = seqNumber(j + 1)
+		if kind == imapserver.NumKindUID {
+			nums[i] = s.view[j].UID
 		}
 	}
 	data := &imap.SearchData{Count: seqNumber(len(nums))}
