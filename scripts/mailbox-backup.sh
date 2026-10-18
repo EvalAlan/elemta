@@ -12,7 +12,7 @@
 # dump. Keep body_grace_hours above how long you keep backups.
 set -eu
 out=${1:?usage: $0 <directory>}
-db=${MAILBOX_DB_CONTAINER:-compose-elemta-mailbox-db-1}
+db=${MAILBOX_DB_CONTAINER:-elemta-mailbox-db}
 bodies=${MAILBOX_BODIES_VOLUME:-compose_mailbox_bodies}
 image=${MAILBOX_IMAGE:-elemta-mailbox:dev}
 mkdir -p "$out"

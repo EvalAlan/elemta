@@ -383,6 +383,7 @@ services:
 
   elemta-mailbox-db:
     image: postgres:17-alpine
+    container_name: elemta-mailbox-db
     restart: unless-stopped
     mem_limit: 1g
     env_file:
@@ -398,11 +399,14 @@ services:
 
   elemta-mailbox-a:
     <<: *mailbox
+    container_name: elemta-mailbox-a
   elemta-mailbox-b:
     <<: *mailbox
+    container_name: elemta-mailbox-b
 
   elemta-mailbox:
     image: haproxy:3.0-alpine
+    container_name: elemta-mailbox
     restart: unless-stopped
     mem_limit: 128m
     ports:
