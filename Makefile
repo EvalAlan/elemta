@@ -37,14 +37,13 @@ MAILAUTH_COMPOSE_FILE ?= deployments/compose/docker-compose-mailauth.yml
 ELK_COMPOSE_FILE ?= deployments/compose/docker-compose-elk.yml
 MAILAUTH_LAB_DIR ?= /tmp/elemta-mailauth-lab
 DEV_ENV_FILE ?= .env
-# elemta-sink runs in every dev stack but is not the delivery target: keeping it
-# up means 'make sink-up' is a restart rather than a deploy, and mail still goes
-# to a real mailbox until someone asks otherwise.
-DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-webmail elemta-dovecot elemta-ldap valkey elemta-sink
+# The normal dev stack keeps only services used by mail delivery and webmail.
+# The discarding sink is started explicitly by the benchmark targets.
+DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-webmail elemta-mailbox-db elemta-mailbox-a elemta-mailbox-b elemta-mailbox elemta-ldap valkey
 DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-roundcube
 # The benchmarking stack: everything that scans, nothing that stores. Roundcube
 # is pointless here because delivery is discarded.
-DEV_BENCH_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd
+DEV_BENCH_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-sink
 
 # Development TLS certificate.
 #
@@ -94,7 +93,7 @@ all: build
 # gets read.
 gotchas:
 	@echo "💡 Things that surprise people:"
-	@echo "  • Benchmarks against Dovecot measure Dovecot (~70/s: maildir writes, indexing)."
+	@echo "  • Benchmarks against mailbox storage include its metadata and body-write costs."
 	@echo "    'make sink-up' points delivery at a sink that absorbs ~4500/s, so the number"
 	@echo "    is about Elemta. Mail is discarded while it is on; 'make sink-down' undoes it."
 	@echo "  • Editing config/elemta.toml does not change a running stack. The services read a"
@@ -408,7 +407,7 @@ ensure-dev-env:
 		printf "TEST_MODE=true\n" >> $(DEV_ENV_FILE); \
 		printf "AUTH_REQUIRED=false\n" >> $(DEV_ENV_FILE); \
 		printf "LDAP_HOST=elemta-ldap\n" >> $(DEV_ENV_FILE); \
-		printf "DELIVERY_HOST=elemta-dovecot\n" >> $(DEV_ENV_FILE); \
+		printf "DELIVERY_HOST=elemta-mailbox\n" >> $(DEV_ENV_FILE); \
 		printf "COMPOSE_PROJECT_NAME=elemta\n" >> $(DEV_ENV_FILE); \
 		printf "COMPOSE_FILE=$(COMPOSE_FILE)\n" >> $(DEV_ENV_FILE); \
 		echo "✅ $(DEV_ENV_FILE) created"; \
@@ -593,7 +592,7 @@ install-dev-bench: check-tools ensure-dev-secrets docker-build ensure-dev-certs 
 	@# The repo config stays as shipped: the sink lives in the seeded copy the
 	@# server reads, and a benchmarking run should not rewrite the default
 	@# everyone else gets.
-	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424 >/dev/null
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-mailbox DELIVERY_PORT=2424 >/dev/null
 
 install-dev-postgres:
 	@echo "🐘 Elemta Development Setup (Postgres Queue)"
@@ -772,12 +771,9 @@ rspamd-train:
 elk-dashboard-check:
 	@python3 scripts/dev/check_elk_dashboard.py
 
-# Point delivery at a discarding LMTP sink instead of Dovecot.
-#
-# Benchmarking against Dovecot measures Dovecot — maildir writes, indexing and
-# sieve, saturating near 70/s. The sink accepts and discards at ~4,500/s, so it
-# cannot be the thing being measured. Dovecot and Roundcube keep running; only
-# where the queue delivers changes.
+# Point delivery at a discarding LMTP sink instead of mailbox storage.
+# This isolates SMTP/queue throughput from storage work; the mailbox engines
+# keep running so switching back does not require another deployment.
 sink-up:
 	@docker compose -f $(COMPOSE_FILE) up -d elemta-sink
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
@@ -788,17 +784,18 @@ sink-up:
 	@echo "   Benchmark:  make bench-queue"
 	@echo "   Sink rate:  docker logs -f elemta-sink"
 
-# Real mailboxes: deliver to Dovecot and start Roundcube to read the result.
+# Real mailboxes: restore the development mailbox service and its reader.
 sink-down:
-	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-mailbox DELIVERY_PORT=2424
 	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
+	@docker compose -f $(COMPOSE_FILE) stop elemta-sink >/dev/null
 	@docker compose -f $(COMPOSE_FILE) up -d elemta-roundcube >/dev/null 2>&1 || true
-	@echo "✅ Delivery goes to Dovecot; mail lands in real mailboxes."
+	@echo "✅ Delivery goes to Elemta mailbox storage; mail lands in real mailboxes."
 	@echo "   ✉️  Roundcube: http://localhost:8026  (user@example.com / password)"
 
 # Rewrites [delivery] host/port. Same approach as configure-plugins: the repo
 # config is the source that gets seeded, so it is what has to change.
-DELIVERY_HOST ?= elemta-dovecot
+DELIVERY_HOST ?= elemta-mailbox
 DELIVERY_PORT ?= 2424
 configure-delivery-target:
 	@python3 scripts/dev/set_delivery_target.py "$(DELIVERY_HOST)" "$(DELIVERY_PORT)"

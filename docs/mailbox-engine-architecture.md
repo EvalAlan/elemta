@@ -1,8 +1,9 @@
 # Proposed mailbox engine and local development deployment
 
 Status: architecture target, 2026-10-18. A first [mailbox service](mailbox-service.md)
-now implements the core engine and isolated Compose/HA labs. The remaining
-sections describe the broader target; Dovecot remains the default server. The
+now implements the core engine and is the default in the development Compose
+stack. See the [development cutover](mailbox-dev-cutover.md). The remaining
+sections describe the broader target and optional isolated labs. The
 existing optional Postgres ObjectStore holds calendar/contact/task/settings
 objects; it is not a mail metadata engine or an HA deployment.
 
@@ -175,7 +176,12 @@ metadata snapshots, protect credentials/keys, and rehearse restores into an
 isolated cell. Coordinate garbage collection with the backup retention
 window so a database restore does not reference already deleted bodies.
 
-## Minimal daily development on this system
+## Original isolated lab on this system
+
+The section below records the proposal and its separate test project. The
+normal development stack now uses the same two-engine pattern with its own
+metadata/body volumes; Dovecot is stopped and retained for explicit rollback.
+See [the current deployment and migration procedure](mailbox-dev-cutover.md).
 
 Observed during this proposal: 14 logical CPUs, about 31 GiB RAM with 18 GiB
 available, and about 4.5 TiB free on the repository filesystem. Docker's
@@ -183,12 +189,12 @@ root is `/var/lib/docker`, on a different filesystem with about 503 GiB
 free. Named volumes consume that smaller disk unless explicitly relocated;
 budget body/index/backup space there before large-message tests. These
 observations are not a capacity benchmark. The
-current eight Elemta services remain running, including Dovecot.
+then-current eight Elemta services included Dovecot.
 
 Add a separate four-container project alongside them:
 
 ```text
-Existing SMTP/webmail/Dovecot/LDAP/Valkey stack remains unchanged
+Original SMTP/webmail/Dovecot/LDAP/Valkey stack during isolated testing
                            |
             existing Docker network (LDAP access only)
                            |

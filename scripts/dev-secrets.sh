@@ -72,6 +72,15 @@ fi
 if [ -z "$(sed -n 's/^MAILBOX_HA_REPLICATION_PASSWORD=//p' "$storage")" ]; then
     printf '%s\n' "MAILBOX_HA_REPLICATION_PASSWORD=$(gen)" >>"$storage"
 fi
+# Main development metadata uses separate volumes from the optional labs.
+# The app receives its own protected env file, avoiding resolved Compose output.
+. "$storage"
+write mailbox-postgres.env \
+    "POSTGRES_DB=mailbox" "POSTGRES_USER=mailbox" \
+    "POSTGRES_PASSWORD=$MAILBOX_DB_PASSWORD"
+write mailbox-client.env \
+    "PGHOST=elemta-mailbox-db" "PGPORT=5432" "PGDATABASE=mailbox" \
+    "PGUSER=mailbox" "PGPASSWORD=$MAILBOX_DB_PASSWORD" "PGSSLMODE=disable"
 write webmail.env \
     "ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD=$LDAP_WEBMAIL_PASSWORD" \
     "ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD=$LDAP_WEBMAIL_RESET_PASSWORD" \

@@ -3,8 +3,10 @@
 `elemta mailbox` runs an independent IMAP/LMTP mailbox service with Postgres
 metadata and immutable filesystem or S3 message bodies. It is the first
 implementation of the [mailbox architecture](mailbox-engine-architecture.md).
-Dovecot remains the default mailbox server; the new service has isolated
-volumes, ports and test data. Do not point it at an existing Maildir.
+The normal development Compose stack now uses this service. Existing Maildir
+data must be imported into separate metadata/body volumes using the
+[offline cutover procedure](mailbox-dev-cutover.md). The isolated demo and HA
+labs remain optional; Dovecot is available only for explicit rollback.
 
 ## Implemented
 
@@ -66,8 +68,8 @@ This creates the read-only `cn=mailbox,ou=services,...` LDAP account, builds
 Memory caps total 2.125 GiB; they are not a capacity measurement. The two
 service replicas share a named body volume. This tests replica loss and
 restart recovery, but its database, proxy, disk and host remain single
-failure points. The existing Dovecot, SMTP delivery target and webmail on
-8027 remain unchanged. There is no automatic import of existing mail.
+failure points. This optional project does not change the normal SMTP/webmail
+routing or share its mailbox data. There is no automatic import into this lab.
 
 The real service config is [`config/mailbox.toml`](../config/mailbox.toml).
 The Compose file is
@@ -95,11 +97,11 @@ make mailbox-dev-down
 
 Open `http://localhost:18037` and sign in with a development mailbox account
 such as `user@example.com` / `password`. This is a separate webmail instance
-using the new, initially empty mailbox. Port 8027 continues to use Dovecot.
-Sessions here are deliberately process-local for an isolated demo. Sending
-uses the existing SMTP submission server, whose destination is still
-Dovecot, so replies do not automatically arrive in the new engine. Use LMTP
-test delivery to exercise new-engine incoming mail until routing is migrated.
+using a separate, initially empty mailbox store. Port 8027 uses the normal
+mailbox deployment and its migrated data. Sessions in this optional demo are
+deliberately process-local. Sending uses the normal SMTP submission server,
+whose destination is the normal mailbox store, so replies do not automatically
+arrive in this isolated lab. Use its LMTP port for test delivery.
 Calendar/contacts/tasks/settings use the new engine's hidden IMAP folders;
 there is no copy of the existing user's hidden folders in this demo.
 

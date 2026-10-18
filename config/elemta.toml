@@ -178,18 +178,11 @@ datasource_user = "cn=elemta-smtp,ou=services,dc=example,dc=com"
 datasource_db = "dc=example,dc=com"
 
 [delivery]
-# Delivery goes to a real mailbox server, because a mail server that discards
-# mail by default is a bad thing to hand someone.
-#
-# For throughput work this is the wrong destination: Dovecot's maildir writes
-# and indexing cost ~100ms a message and saturate near 70/s, so a benchmark
-# against it measures Dovecot. 'make sink-up' repoints delivery at a sink that
-# absorbs ~4,500/s and therefore cannot be what is being measured;
-# 'make sink-down' brings it back here. The sink container runs either way, so
-# switching costs a restart and nothing else.
+# The normal development stack delivers to Elemta's mailbox engine. The
+# optional benchmark sink discards mail; make sink-down restores this target.
 mode = "lmtp"
 max_messages_per_minute_per_domain = 0  # 0 = no limit
-host = "elemta-dovecot"
+host = "elemta-mailbox"
 port = 2424
 timeout = 30
 retry_delay = 60
@@ -496,14 +489,14 @@ max_age = 86400  # 24 hours
 [webmail]
 enabled = true
 listen = ":8027"
-# Dev Dovecot has TLS off; production should use "starttls" or "tls".
-imap_addr = "elemta-dovecot:14143"
+# Dev mailbox authentication is plaintext on the isolated network.
+imap_addr = "elemta-mailbox:1143"
 imap_tls = "none"
 submission_addr = "elemta:2587"
 submission_tls = "starttls"
-# Filters and the out-of-office reply are stored here over ManageSieve.
-# Dev Dovecot has TLS off, as for IMAP.
-sieve_addr = "elemta-dovecot:4190"
+# ManageSieve and delivery-time filters are pending in the new engine.
+# Existing scripts remain in the retained Dovecot volume for rollback.
+sieve_addr = ""
 sieve_tls = "none"
 # The dev stack's certificate is self-signed. Never set this in production.
 insecure_skip_verify = true
