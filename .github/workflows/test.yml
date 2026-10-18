@@ -50,6 +50,25 @@ jobs:
       - name: Run full test suite
         run: go test ./...
 
+  test-webmail-browser:
+    name: test (webmail in a browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The runner image ships Google Chrome; the tests find it on PATH.
+      - name: Run browser tests
+        run: go test -tags browser -run Browser -count=1 ./internal/webmail/
+
   test-queue-race:
     name: test (queue race)
     runs-on: ubuntu-latest

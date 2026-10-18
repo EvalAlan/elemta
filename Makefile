@@ -1,4 +1,4 @@
-.PHONY: all help gotchas dovecot-index ensure-dev-secrets ldap-service-accounts build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
+.PHONY: test-webmail-browser all help gotchas dovecot-index ensure-dev-secrets ldap-service-accounts build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
 	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
@@ -144,6 +144,11 @@ run: build
 	./bin/elemta server --dev
 
 # Test targets
+# Drives the webmail pages in headless Chromium against an in-memory server;
+# needs chromium or google-chrome on PATH (or CHROME_PATH).
+test-webmail-browser:
+	go test -tags browser -run Browser -count=1 ./internal/webmail/
+
 test:
 	@echo "Running Go tests..."
 	@echo "⚠️  Note: Some packages require Docker services to be running"
