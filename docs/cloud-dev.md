@@ -165,3 +165,10 @@ need the manual settings:
 - IMAP: `<domain>`, port 993, SSL/TLS
 - SMTP: `<domain>`, port 587, STARTTLS
 - Username: the full address
+
+## Stress testing
+
+The [cloud stress runner](cloud-stress-testing.md) exercises verified SMTP,
+IMAPS and webmail from a separate workstation, using isolated accounts and
+local recipients. Start with its smoke profile before increasing concurrency.
+Host settings, credentials and run reports stay outside tracked source.
