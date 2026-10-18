@@ -29,6 +29,7 @@ type Service struct {
 	auth         Authenticator
 	log          *slog.Logger
 	imap         *imapserver.Server
+	imapStartTLS *imapserver.Server
 	lmtp         *smtp.Server
 	sieve        sieveCache
 	tlsConfig    *tls.Config
@@ -97,6 +98,11 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 		ctx, cancel := context.WithCancel(s.ctx)
 		return &imapSession{service: s, ctx: ctx, cancel: cancel}, nil, nil
 	}})
+	s.imapStartTLS = imapserver.New(&imapserver.Options{Caps: caps, TLSConfig: tlsConfig, InsecureAuth: false, NewSession: func(_ *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+		ctx, cancel := context.WithCancel(s.ctx)
+		return &imapSession{service: s, ctx: ctx, cancel: cancel}, nil, nil
+	}})
+
 	s.lmtp = smtp.NewServer(smtp.BackendFunc(func(conn *smtp.Conn) (smtp.Session, error) {
 		host, _, err := net.SplitHostPort(conn.Conn().RemoteAddr().String())
 		if err != nil {
@@ -156,12 +162,40 @@ func (s *Service) Run(ctx context.Context) error {
 		listeners = append(listeners, ln)
 	}
 	slots := make(chan struct{}, s.cfg.Limits.MaxConnections)
-	errs := make(chan error, 5)
+	errs := make(chan error, 7)
 	var wg sync.WaitGroup
 	start := func(fn func() error) { wg.Add(1); go func() { defer wg.Done(); errs <- fn() }() }
 	start(func() error { return s.imap.Serve(&limitedListener{Listener: listeners[0], slots: slots}) })
 	start(func() error { return s.lmtp.Serve(&limitedListener{Listener: listeners[1], slots: slots}) })
 	start(func() error { return s.http.Serve(listeners[2]) })
+	for _, endpoint := range []struct {
+		addr  string
+		serve func(net.Listener) error
+	}{
+		{s.cfg.Server.IMAPStartTLSListen, s.imapStartTLS.Serve},
+		{s.cfg.Server.POP3Listen, s.servePOP3},
+	} {
+		if endpoint.addr == "" {
+			continue
+		}
+		ln, err := net.Listen("tcp", endpoint.addr)
+		if err != nil {
+			s.cancel()
+			_ = s.imap.Close()
+			_ = s.imapStartTLS.Close()
+			_ = s.lmtp.Close()
+			_ = s.http.Close()
+			for _, l := range listeners {
+				_ = l.Close()
+			}
+			wg.Wait()
+			return err
+		}
+		listeners = append(listeners, ln)
+		serve := endpoint.serve
+		start(func() error { return serve(&limitedListener{Listener: ln, slots: slots}) })
+	}
+
 	if s.cfg.Server.IMAPSListen != "" && s.tlsConfig != nil {
 		// Implicit TLS (port 993), which most clients default to. TLS wraps
 		// the connection limiter, so the IMAP server sees a *tls.Conn and
@@ -234,6 +268,7 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	s.cancel()
 	_ = s.imap.Close()
+	_ = s.imapStartTLS.Close()
 	_ = s.lmtp.Close()
 	_ = s.http.Close()
 	for _, ln := range listeners {

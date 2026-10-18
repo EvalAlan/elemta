@@ -71,3 +71,9 @@ CREATE TABLE IF NOT EXISTS mailbox_sieve_sent (
 );
 CREATE INDEX IF NOT EXISTS mailbox_sieve_sent_expiry ON mailbox_sieve_sent(expires);
 ALTER TABLE mailbox_bodies ADD COLUMN IF NOT EXISTS orphaned_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS mailbox_pop3_leases (
+ account text PRIMARY KEY REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+ owner text NOT NULL,
+ expires timestamptz NOT NULL
+);

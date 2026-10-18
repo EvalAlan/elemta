@@ -649,19 +649,29 @@ SELECT $1,v.ms,'flags',v.uid FROM unnest($2::bigint[],$3::bigint[]) AS v(uid,ms)
 	return modified, err
 }
 func (e *Engine) Expunge(ctx context.Context, account, name string, uids []uint32) (removed []uint32, err error) {
+	return e.expunge(ctx, account, name, uids, true, "")
+}
+
+func (e *Engine) expunge(ctx context.Context, account, name string, uids []uint32, requireDeleted bool, popOwner string) (removed []uint32, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	// Set-based, like MutateFlagsIf: emptying a large Trash is a few
 	// statements, not several per message. Bodies that lose their last
 	// message are found and given their grace by cleanup.
 	err = e.tx(ctx, account, func(tx *sql.Tx) error {
+		if popOwner != "" {
+			var owner string
+			if err := tx.QueryRowContext(ctx, `SELECT owner FROM mailbox_pop3_leases WHERE account=$1 AND owner=$2 AND expires>now() FOR UPDATE`, account, popOwner).Scan(&owner); err != nil {
+				return errors.New("POP3 lease unavailable")
+			}
+		}
 		removed = removed[:0]
 		f, err := folderTx(ctx, tx, account, name)
 		if err != nil {
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT m.uid,b.size FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body
-WHERE m.folder=$1 AND m.uid=ANY($2) AND '\deleted'=ANY(m.flags) ORDER BY m.uid`, f.ID, pq.Array(uidArray(uids)))
+WHERE m.folder=$1 AND m.uid=ANY($2) AND (NOT $3::boolean OR '\deleted'=ANY(m.flags)) ORDER BY m.uid`, f.ID, pq.Array(uidArray(uids)), requireDeleted)
 		if err != nil {
 			return err
 		}

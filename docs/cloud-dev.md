@@ -18,6 +18,8 @@ domain whose mail is handled elsewhere.
 | 25   | SMTP, inbound mail (MX) |
 | 587  | Submission, STARTTLS and login required |
 | 993  | IMAPS |
+| 143  | IMAP, STARTTLS required before authentication |
+| 110  | POP3, STLS required before authentication |
 | 80, 443 | Webmail and mail-client autoconfig, through Caddy (Let's Encrypt) |
 
 Everything else is bound to 127.0.0.1 on the server:
@@ -81,7 +83,7 @@ These steps were done once for Rocky Linux 10 on a 2 vCPU / 4 GB Linode.
     trusts, which makes an open relay.
 - **Docker port guard.** `/etc/nftables/docker-guard.nft`, loaded by
   `docker-guard.service`, drops internet traffic to any published container port
-  other than 25, 80, 443, 587 and 993.
+  other than 25, 80, 110, 143, 443, 587 and 993.
 - **Swap.** A 2 GB swapfile, because ClamAV alone wants about 1.5 GB.
 
 ## Deploying
@@ -162,7 +164,8 @@ Thunderbird finds the settings by itself at
 `https://<domain>/.well-known/autoconfig/mail/config-v1.1.xml`. Other clients
 need the manual settings:
 
-- IMAP: `<domain>`, port 993, SSL/TLS
+- IMAP: `<domain>`, port 993, SSL/TLS; or port 143, STARTTLS
+- POP3: `<domain>`, port 110, STARTTLS (STLS on the wire)
 - SMTP: `<domain>`, port 587, STARTTLS
 - Username: the full address
 
@@ -196,3 +199,25 @@ and confirm the verification email before Forgot password can send reset links.
 Links expire after 15 minutes and are consumed only on form submission. Test
 verification, reset, old-password rejection, session revocation and link reuse
 with disposable accounts before relying on recovery for a real mailbox.
+
+### Public STARTTLS mailbox listeners
+
+The public IMAP listener uses `imap_starttls_listen` (container port 11143),
+separate from the internal development IMAP listener on 1143. It never permits
+plaintext authentication, regardless of `allow_plaintext_auth`. POP3 uses
+`pop3_listen` (container port 1110) and always requires STLS before USER/PASS.
+Both require the configured TLS certificate and support its existing reload
+path. Empty listener settings disable these optional endpoints. Port 993
+continues to provide implicit TLS IMAP. When upgrading an existing cloud host,
+add TCP 110 and 143 to both firewalld and the Docker guard's public port set.
+
+POP3 exposes INBOX using the same accounts, bodies and metadata as IMAP. It
+supports CAPA, USER/PASS over TLS, STAT, LIST, UIDL, RETR, TOP, DELE, RSET, NOOP
+and QUIT. UIDLs combine folder UIDVALIDITY with message UID. Each authenticated
+session sees a fixed numbering snapshot; later arrivals appear on reconnect.
+Deletion marks remain local until QUIT, when only those UIDs are deleted in
+one quota/journal transaction. Disconnecting or RSET preserves the messages.
+A shared PostgreSQL lease excludes simultaneous POP sessions across replicas;
+a crashed server's lease expires after 15 minutes. Sessions time out after
+10 minutes of inactivity. IMAP can still independently move or expunge messages;
+a concurrently removed message may become unavailable to POP retrieval.

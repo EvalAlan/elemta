@@ -1,5 +1,8 @@
 [server]
 imap_listen = ":1143"
+# Public listeners require STARTTLS/STLS before any authentication.
+imap_starttls_listen = ":11143"
+pop3_listen = ":1110"
 lmtp_listen = ":2424"
 http_listen = ":8080"
 allow_plaintext_auth = true

@@ -57,6 +57,10 @@ type MaintenanceConfig struct {
 }
 type ServerConfig struct {
 	IMAPListen string `toml:"imap_listen"`
+	// Separate public listeners always require TLS before authentication, even
+	// when the isolated development network allows plaintext on IMAPListen.
+	IMAPStartTLSListen string `toml:"imap_starttls_listen"`
+	POP3Listen         string `toml:"pop3_listen"`
 	// IMAPSListen is an implicit-TLS IMAP listener (usually :993). It
 	// needs tls_cert and tls_key.
 	IMAPSListen         string   `toml:"imaps_listen"`
@@ -201,6 +205,17 @@ func (c Config) Validate() error {
 			return fmt.Errorf("mailbox listen address: %w", err)
 		}
 	}
+	for _, addr := range []string{c.Server.IMAPStartTLSListen, c.Server.POP3Listen, c.Server.IMAPSListen} {
+		if addr != "" {
+			if _, _, err := net.SplitHostPort(addr); err != nil {
+				return fmt.Errorf("mailbox TLS listen address: %w", err)
+			}
+		}
+	}
+	if (c.Server.IMAPStartTLSListen != "" || c.Server.POP3Listen != "") && c.Server.TLSCert == "" {
+		return errors.New("public STARTTLS listeners require tls_cert and tls_key")
+	}
+
 	if c.Metadata.MaxConnections < 2 || c.Metadata.MaxConnections > 100 {
 		return errors.New("metadata max_connections must be between 2 and 100")
 	}

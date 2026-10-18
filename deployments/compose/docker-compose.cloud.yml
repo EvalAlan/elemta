@@ -7,7 +7,8 @@
 #
 # What changes, and why:
 #
-#   - Only mail and webmail face the internet: SMTP 25 and 587, IMAPS 993,
+#   - Mail and webmail face the internet: SMTP 25 and 587, IMAPS 993,
+#     mandatory STARTTLS IMAP 143 and POP3 110,
 #     HTTPS 443 (and 80 for ACME and the redirect). Every other port the dev
 #     stack publishes for convenience (LDAP, rspamd, valkey, metrics, plaintext
 #     IMAP, LMTP, ManageSieve, the admin console) is bound to 127.0.0.1 and
@@ -75,6 +76,8 @@ services:
   elemta-mailbox:
     ports: !override
       - "993:10993"
+      - "143:11143"
+      - "110:1110"
       - "127.0.0.1:14143:1143"
       - "127.0.0.1:2424:2424"
       - "127.0.0.1:4190:4190"
