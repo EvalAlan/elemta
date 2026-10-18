@@ -62,7 +62,10 @@ development only. When a reverse proxy sits in front of the webmail, route
   user has the three collections above.
 - The server doesn't support `sync-collection` (RFC 6578). Clients fall back
   to comparing ETags, which every common client supports.
-- When the webmail edits an object, it rewrites the object from the fields
-  it shows. Properties it doesn't display, such as alarms set on a phone
-  or contact photos, can be lost when the object is edited in the browser.
-  Edits made in other clients keep everything.
+- A webmail edit merges into the stored object instead of replacing it.
+  Properties the webmail doesn't display, such as contact photos, extra
+  alarms, repeating tasks and vendor extensions, are kept. A shown field
+  that wasn't changed keeps its stored form, such as a structured address,
+  a due time or 3.0 vCard syntax. Overrides of single occurrences stay in
+  their series. Editing one in the webmail updates it in place, and deleting
+  one adds an `EXDATE` to the series.

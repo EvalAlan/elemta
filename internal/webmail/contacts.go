@@ -236,16 +236,6 @@ func (s *Server) contacts(ctx context.Context, sess *Session) ([]Contact, error)
 	return out, err
 }
 
-func (s *Server) putContact(ctx context.Context, sess *Session, c Contact) error {
-	data, err := encodeCard(contactToCard(c))
-	if err != nil {
-		return err
-	}
-	return s.sessions.withStore(ctx, sess, s.dial, func(st Mailstore) error {
-		return st.PutObject(ctx, CollContacts, Object{ID: c.ID, Title: c.Display(), ContentType: "text/vcard", Data: data})
-	})
-}
-
 func newObjectID() string {
 	id, err := randomToken(18)
 	if err != nil {

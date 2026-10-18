@@ -156,16 +156,6 @@ func (s *Server) tasks(ctx context.Context, sess *Session, loc *time.Location) (
 	return out, err
 }
 
-func (s *Server) putTask(ctx context.Context, sess *Session, t Task) error {
-	data, err := encodeCalendar("", s.now(), t.toComponent(s.now()))
-	if err != nil {
-		return err
-	}
-	return s.sessions.withStore(ctx, sess, s.dial, func(st Mailstore) error {
-		return st.PutObject(ctx, CollTasks, Object{ID: t.UID, Title: t.Summary, ContentType: "text/calendar", Data: data})
-	})
-}
-
 type tasksView struct {
 	All      []Task
 	Shown    []Task

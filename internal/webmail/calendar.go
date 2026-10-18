@@ -48,23 +48,6 @@ func (s *Server) events(ctx context.Context, sess *Session, loc *time.Location) 
 	return out, err
 }
 
-func (s *Server) putEvent(ctx context.Context, sess *Session, e Event) error {
-	e.Modified = s.now().UTC()
-	data, err := encodeCalendar("", s.now(), e.toComponent(s.now()))
-	if err != nil {
-		return err
-	}
-	return s.sessions.withStore(ctx, sess, s.dial, func(st Mailstore) error {
-		return st.PutObject(ctx, CollCalendar, Object{ID: e.UID, Title: e.Summary, ContentType: "text/calendar", Data: data})
-	})
-}
-
-func (s *Server) deleteEvent(ctx context.Context, sess *Session, uid string) error {
-	return s.sessions.withStore(ctx, sess, s.dial, func(st Mailstore) error {
-		return st.DeleteObject(ctx, CollCalendar, uid)
-	})
-}
-
 func findEvent(events []Event, uid string) *Event {
 	for i := range events {
 		if events[i].UID == uid {
