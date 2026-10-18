@@ -569,49 +569,79 @@ func (e *Engine) MutateFlags(ctx context.Context, account, name string, uids []u
 func (e *Engine) MutateFlagsIf(ctx context.Context, account, name string, uids []uint32, flags []string, op int, unchangedSince uint64) (modified []uint32, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
+	// Set-based: one read, one update and one journal insert whatever the
+	// number of messages, so "mark all as read" on a large folder holds the
+	// account lock (and delays its deliveries) for milliseconds, not seconds.
+	ids := make([]int64, len(uids))
+	for i, u := range uids {
+		ids[i] = int64(u)
+	}
+	want := normalizeFlags(flags)
 	err = e.tx(ctx, account, func(tx *sql.Tx) error {
 		modified = modified[:0]
 		f, err := folderTx(ctx, tx, account, name)
 		if err != nil {
 			return err
 		}
-		for _, uid := range uids {
+		rows, err := tx.QueryContext(ctx, `SELECT uid,flags,modseq FROM mailbox_messages WHERE folder=$1 AND uid=ANY($2) ORDER BY uid`, f.ID, pq.Array(ids))
+		if err != nil {
+			return err
+		}
+		var changedUIDs, changedSeqs []int64
+		var changedFlags []string
+		for rows.Next() {
+			var uid uint32
 			var old []string
 			var modseq uint64
-			err := tx.QueryRowContext(ctx, `SELECT flags,modseq FROM mailbox_messages WHERE folder=$1 AND uid=$2`, f.ID, uid).Scan(pq.Array(&old), &modseq)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
+			if err := rows.Scan(&uid, pq.Array(&old), &modseq); err != nil {
+				rows.Close()
 				return err
 			}
 			if unchangedSince != 0 && modseq > unchangedSince {
 				modified = append(modified, uid)
 				continue
 			}
-			next := normalizeFlags(flags)
+			next := want
 			switch op {
 			case 1:
-				next = normalizeFlags(append(old, next...))
+				next = normalizeFlags(append(append([]string(nil), old...), want...))
 			case 2:
 				next = []string{}
 				for _, v := range old {
-					if !hasFlag(flags, v) {
+					if !hasFlag(want, v) {
 						next = append(next, v)
 					}
 				}
+				next = normalizeFlags(next)
 			}
-			next = normalizeFlags(next)
 			if slices.Equal(old, next) {
 				continue
 			}
+			lit, err := pq.Array(next).Value()
+			if err != nil {
+				rows.Close()
+				return err
+			}
 			f.ModSeq++
-			if _, err = tx.ExecContext(ctx, `UPDATE mailbox_messages SET flags=$3,modseq=$4 WHERE folder=$1 AND uid=$2`, f.ID, uid, pq.Array(next), f.ModSeq); err != nil {
-				return err
-			}
-			if err = change(ctx, tx, f.ID, f.ModSeq, "flags", uid); err != nil {
-				return err
-			}
+			changedUIDs = append(changedUIDs, int64(uid))
+			changedSeqs = append(changedSeqs, int64(f.ModSeq)) // #nosec G115 -- MODSEQs are BIGINT in the database
+			changedFlags = append(changedFlags, lit.(string))
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(changedUIDs) == 0 {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE mailbox_messages m SET flags=v.f::text[],modseq=v.ms
+FROM unnest($2::bigint[],$3::bigint[],$4::text[]) AS v(uid,ms,f) WHERE m.folder=$1 AND m.uid=v.uid`,
+			f.ID, pq.Array(changedUIDs), pq.Array(changedSeqs), pq.Array(changedFlags)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_changes(folder,modseq,kind,uid)
+SELECT $1,v.ms,'flags',v.uid FROM unnest($2::bigint[],$3::bigint[]) AS v(uid,ms)`, f.ID, pq.Array(changedUIDs), pq.Array(changedSeqs)); err != nil {
+			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE mailbox_folders SET modseq=$2 WHERE id=$1`, f.ID, f.ModSeq)
 		return err
@@ -621,44 +651,77 @@ func (e *Engine) MutateFlagsIf(ctx context.Context, account, name string, uids [
 func (e *Engine) Expunge(ctx context.Context, account, name string, uids []uint32) (removed []uint32, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
+	// Set-based, like MutateFlagsIf: emptying a large Trash is a few
+	// statements, not several per message. Bodies that lose their last
+	// message are found and given their grace by cleanup.
 	err = e.tx(ctx, account, func(tx *sql.Tx) error {
+		removed = removed[:0]
 		f, err := folderTx(ctx, tx, account, name)
 		if err != nil {
 			return err
 		}
-		for _, uid := range uids {
+		rows, err := tx.QueryContext(ctx, `SELECT m.uid,b.size FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body
+WHERE m.folder=$1 AND m.uid=ANY($2) AND '\deleted'=ANY(m.flags) ORDER BY m.uid`, f.ID, pq.Array(uidArray(uids)))
+		if err != nil {
+			return err
+		}
+		var freed int64
+		var ids, seqs []int64
+		for rows.Next() {
+			var uid uint32
 			var size int64
-			err := tx.QueryRowContext(ctx, `SELECT b.size FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body WHERE m.folder=$1 AND m.uid=$2 AND '\deleted'=ANY(m.flags)`, f.ID, uid).Scan(&size)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if _, err = tx.ExecContext(ctx, `UPDATE mailbox_bodies SET expires=now() WHERE key=(SELECT body FROM mailbox_messages WHERE folder=$1 AND uid=$2)`, f.ID, uid); err != nil {
-				return err
-			}
-			if _, err = tx.ExecContext(ctx, `DELETE FROM mailbox_messages WHERE folder=$1 AND uid=$2`, f.ID, uid); err != nil {
-				return err
-			}
-			if _, err = tx.ExecContext(ctx, `UPDATE mailbox_accounts SET used_bytes=used_bytes-$2 WHERE id=$1`, account, size); err != nil {
+			if err := rows.Scan(&uid, &size); err != nil {
+				rows.Close()
 				return err
 			}
 			f.ModSeq++
-			if err = change(ctx, tx, f.ID, f.ModSeq, "expunge", uid); err != nil {
-				return err
-			}
 			removed = append(removed, uid)
+			ids = append(ids, int64(uid))
+			seqs = append(seqs, int64(f.ModSeq)) // #nosec G115 -- MODSEQs are BIGINT in the database
+			freed += size
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM mailbox_messages WHERE folder=$1 AND uid=ANY($2)`, f.ID, pq.Array(ids)); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE mailbox_accounts SET used_bytes=used_bytes-$2 WHERE id=$1`, account, freed); err != nil {
+			return err
+		}
+		if err = changes(ctx, tx, f.ID, "expunge", ids, seqs); err != nil {
+			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE mailbox_folders SET modseq=$2 WHERE id=$1`, f.ID, f.ModSeq)
 		return err
 	})
 	return
 }
+
+// changes journals one change per message in one statement.
+func changes(ctx context.Context, tx *sql.Tx, folder int64, kind string, uids, modseqs []int64) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_changes(folder,modseq,kind,uid)
+SELECT $1,v.ms,$2,v.uid FROM unnest($3::bigint[],$4::bigint[]) AS v(uid,ms)`, folder, kind, pq.Array(uids), pq.Array(modseqs))
+	return err
+}
+
+func uidArray(uids []uint32) []int64 {
+	out := make([]int64, len(uids))
+	for i, u := range uids {
+		out[i] = int64(u)
+	}
+	return out
+}
+
 func (e *Engine) CopyMove(ctx context.Context, account, src, dst string, uids []uint32, move bool) (validity uint32, from, to []uint32, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	err = e.tx(ctx, account, func(tx *sql.Tx) error {
+		from, to = from[:0], to[:0]
 		s, err := folderTx(ctx, tx, account, src)
 		if err != nil {
 			return err
@@ -671,56 +734,84 @@ func (e *Engine) CopyMove(ctx context.Context, account, src, dst string, uids []
 			return errors.New("source and destination must differ")
 		}
 		validity = d.Validity
-		for _, uid := range uids {
-			var m Message
-			err := tx.QueryRowContext(ctx, `SELECT m.body,m.flags,m.internal_date,b.size FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body WHERE m.folder=$1 AND m.uid=$2`, s.ID, uid).Scan(&m.Body, pq.Array(&m.Flags), &m.Date, &m.Size)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if d.Next == ^uint32(0) {
-				return errors.New("mailbox UID space exhausted")
-			}
-			var state string
-			if err = tx.QueryRowContext(ctx, `SELECT state FROM mailbox_bodies WHERE key=$1 FOR UPDATE`, m.Body).Scan(&state); err != nil {
+		// Locking the bodies keeps cleanup from retiring one mid-copy.
+		rows, err := tx.QueryContext(ctx, `SELECT m.uid,m.body,m.flags::text,m.internal_date,b.size,b.state FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body
+WHERE m.folder=$1 AND m.uid=ANY($2) ORDER BY m.uid FOR UPDATE OF b`, s.ID, pq.Array(uidArray(uids)))
+		if err != nil {
+			return err
+		}
+		var (
+			newUIDs, destSeqs, oldUIDs, srcSeqs []int64
+			bodies, flags, dates                []string
+			total                               int64
+		)
+		for rows.Next() {
+			var uid uint32
+			var body, flagLit, state string
+			var date time.Time
+			var size int64
+			if err := rows.Scan(&uid, &body, &flagLit, &date, &size, &state); err != nil {
+				rows.Close()
 				return err
 			}
 			if state != "ready" {
+				rows.Close()
 				return errors.New("body is retiring")
 			}
-			if !move {
-				var q, u int64
-				if err = tx.QueryRowContext(ctx, `SELECT quota_bytes,used_bytes FROM mailbox_accounts WHERE id=$1`, account).Scan(&q, &u); err != nil {
-					return err
-				}
-				if q > 0 && u+m.Size > q {
-					return ErrQuota
-				}
-				if _, err = tx.ExecContext(ctx, `UPDATE mailbox_accounts SET used_bytes=used_bytes+$2 WHERE id=$1`, account, m.Size); err != nil {
-					return err
-				}
+			if d.Next == ^uint32(0) {
+				rows.Close()
+				return errors.New("mailbox UID space exhausted")
 			}
 			d.ModSeq++
-			if _, err = tx.ExecContext(ctx, `INSERT INTO mailbox_messages(folder,uid,body,flags,internal_date,modseq) VALUES($1,$2,$3,$4,$5,$6)`, d.ID, d.Next, m.Body, pq.Array(m.Flags), m.Date, d.ModSeq); err != nil {
-				return err
-			}
-			if err = change(ctx, tx, d.ID, d.ModSeq, "append", d.Next); err != nil {
-				return err
-			}
-			if move {
-				if _, err = tx.ExecContext(ctx, `DELETE FROM mailbox_messages WHERE folder=$1 AND uid=$2`, s.ID, uid); err != nil {
-					return err
-				}
-				s.ModSeq++
-				if err = change(ctx, tx, s.ID, s.ModSeq, "expunge", uid); err != nil {
-					return err
-				}
-			}
+			newUIDs = append(newUIDs, int64(d.Next))
+			destSeqs = append(destSeqs, int64(d.ModSeq)) // #nosec G115 -- MODSEQs are BIGINT in the database
+			bodies = append(bodies, body)
+			flags = append(flags, flagLit)
+			dates = append(dates, date.UTC().Format(time.RFC3339Nano))
 			from = append(from, uid)
 			to = append(to, d.Next)
+			oldUIDs = append(oldUIDs, int64(uid))
+			if move {
+				s.ModSeq++
+				srcSeqs = append(srcSeqs, int64(s.ModSeq)) // #nosec G115 -- MODSEQs are BIGINT in the database
+			}
+			total += size
 			d.Next++
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(newUIDs) == 0 {
+			return nil
+		}
+		if !move {
+			var q, u int64
+			if err = tx.QueryRowContext(ctx, `SELECT quota_bytes,used_bytes FROM mailbox_accounts WHERE id=$1`, account).Scan(&q, &u); err != nil {
+				return err
+			}
+			if q > 0 && u+total > q {
+				return ErrQuota
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE mailbox_accounts SET used_bytes=used_bytes+$2 WHERE id=$1`, account, total); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO mailbox_messages(folder,uid,body,flags,internal_date,modseq)
+SELECT $1,v.uid,v.body,v.flags::text[],v.date::timestamptz,v.ms FROM unnest($2::bigint[],$3::text[],$4::text[],$5::text[],$6::bigint[]) AS v(uid,body,flags,date,ms)`,
+			d.ID, pq.Array(newUIDs), pq.Array(bodies), pq.Array(flags), pq.Array(dates), pq.Array(destSeqs)); err != nil {
+			return err
+		}
+		if err = changes(ctx, tx, d.ID, "append", newUIDs, destSeqs); err != nil {
+			return err
+		}
+		if move {
+			if _, err = tx.ExecContext(ctx, `DELETE FROM mailbox_messages WHERE folder=$1 AND uid=ANY($2)`, s.ID, pq.Array(oldUIDs)); err != nil {
+				return err
+			}
+			if err = changes(ctx, tx, s.ID, "expunge", oldUIDs, srcSeqs); err != nil {
+				return err
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE mailbox_folders SET next_uid=$2,modseq=$3 WHERE id=$1`, d.ID, d.Next, d.ModSeq); err != nil {
 			return err
