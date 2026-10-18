@@ -136,6 +136,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "ok\n") })
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServerFS(staticFiles()))))
+	// Pages link the SVG icon, but some browsers still ask for /favicon.ico.
+	mux.Handle("GET /favicon.ico", http.RedirectHandler(assetURL("favicon.svg"), http.StatusMovedPermanently))
 	mux.HandleFunc("GET /forgot-password", s.forgotPage)
 	mux.HandleFunc("POST /forgot-password", s.forgotSubmit)
 	mux.HandleFunc("GET /reset-password", s.resetPage)

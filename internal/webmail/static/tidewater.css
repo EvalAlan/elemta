@@ -26,6 +26,8 @@
   --line-soft: #F1F5F9;
   --accent: #2563EB;
   --accent-dark: #1D4ED8;
+  /* Button hover: darker for white text, lighter for the dark teal text. */
+  --accent-hover: #1D4ED8;
   --accent-soft: #E0EAFD;
   --on-accent: #FFFFFF;
   --danger: #B91C1C;
@@ -73,6 +75,8 @@
   --line-soft: #1B2537;
   --accent: #3B82F6;
   --accent-dark: #60A5FA;
+  /* Button hover: darker for white text, lighter for the dark teal text. */
+  --accent-hover: #2563EB;
   --accent-soft: #172A4A;
   --danger: #F87171;
   --danger-soft: #3B1518;
@@ -113,6 +117,8 @@
     --line-soft: #1B2537;
     --accent: #3B82F6;
     --accent-dark: #60A5FA;
+    /* Button hover: darker for white text, lighter for the dark teal text. */
+    --accent-hover: #2563EB;
     --accent-soft: #172A4A;
     --danger: #F87171;
     --danger-soft: #3B1518;
@@ -155,6 +161,8 @@
   --line-soft: #EEF1F4;
   --accent: #0B6E66;
   --accent-dark: #08524C;
+  /* Button hover: darker for white text, lighter for the dark teal text. */
+  --accent-hover: #08524C;
   --accent-soft: #E3F1EF;
   --on-accent: #FFFFFF;
   --danger: #A1271D;
@@ -198,6 +206,8 @@
   --line-soft: #1B2536;
   --accent: #2BA597;
   --accent-dark: #5FD3C4;
+  /* Button hover: darker for white text, lighter for the dark teal text. */
+  --accent-hover: #5FD3C4;
   --accent-soft: #10302D;
   --danger: #F08A80;
   --danger-soft: #3A1714;
@@ -238,6 +248,8 @@
     --line-soft: #1B2536;
     --accent: #2BA597;
     --accent-dark: #5FD3C4;
+    /* Button hover: darker for white text, lighter for the dark teal text. */
+    --accent-hover: #5FD3C4;
     --accent-soft: #10302D;
     --danger: #F08A80;
     --danger-soft: #3A1714;
@@ -289,7 +301,7 @@ kbd { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); 
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); text-decoration: none; cursor: pointer; white-space: nowrap; }
 .button:hover { color: var(--ink); border-color: var(--muted); }
 .button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; min-height: 44px; }
-.button.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: var(--on-accent); }
+.button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
 .button.primary-soft { background: var(--accent-soft); border-color: transparent; color: var(--accent-dark); font-weight: 600; }
 .button.danger { color: var(--danger); }
 .button.ghost { border-color: transparent; background: transparent; }
