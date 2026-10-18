@@ -145,6 +145,16 @@ func (csm *CommandSecurityManager) ValidateCommand(ctx context.Context, line str
 	}
 
 	// Step 8: Validate command parameters
+	if cmd == "RCPT" {
+		// ORCPT requires a semicolon and NOTIFY lists require commas. The
+		// envelope parser validates those fields; applying shell/SQL character
+		// rules to them rejects valid DSN commands before that parser runs.
+		parsed, err := parseRCPTEnvelope(args)
+		if err != nil {
+			return err
+		}
+		args = "TO:<" + parsed.addr + ">"
+	}
 	if err := csm.validateCommandParameters(timeoutCtx, cmd, args); err != nil {
 		return err
 	}
@@ -563,7 +573,7 @@ func (csm *CommandSecurityManager) logSuspiciousActivity(ctx context.Context, or
 
 	for _, pattern := range suspiciousPatterns {
 		regex := regexp.MustCompile(pattern)
-		if regex.MatchString(originalLine) {
+		if regex.MatchString(cmd + " " + args) {
 			csm.logger.WarnContext(ctx, "Suspicious command pattern detected",
 				"original_line", originalLine,
 				"command", cmd,
