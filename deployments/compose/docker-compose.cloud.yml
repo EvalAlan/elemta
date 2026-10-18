@@ -1,0 +1,123 @@
+# Overlay that turns the development stack into a single internet-facing dev
+# server (see docs/cloud-dev.md). Applied on top of docker-compose.yml, never
+# alone, by scripts/cloud-deploy.sh:
+#
+#   docker compose --env-file .secrets/cloud.env \
+#     -f docker-compose.yml -f docker-compose.cloud.yml up -d
+#
+# What changes, and why:
+#
+#   - Only mail and webmail face the internet: SMTP 25 and 587, IMAPS 993,
+#     HTTPS 443 (and 80 for ACME and the redirect). Every other port the dev
+#     stack publishes for convenience (LDAP, rspamd, valkey, metrics, plaintext
+#     IMAP, LMTP, ManageSieve, the admin console) is bound to 127.0.0.1 and
+#     reached over SSH. Docker's published ports bypass firewalld, so the
+#     loopback binding is what keeps them private, not the host firewall.
+#   - ManageSieve stays private because the mailbox service allows plaintext
+#     logins for the webmail on the internal network; publishing 4190 would
+#     let a client send a password before STARTTLS.
+#   - One Let's Encrypt certificate for MAIL_DOMAIN, obtained by Caddy and
+#     copied by scripts/cloud-sync-certs.sh into .secrets/mailbox-tls/, serves
+#     IMAPS, SMTP STARTTLS and the internal LMTP hop alike. Directories are
+#     mounted rather than files: a renewal replaces the files, and a file bind
+#     mount keeps showing the replaced inode forever.
+#   - Configuration is rendered for MAIL_DOMAIN into .secrets/cloud/ instead
+#     of the repository's config/, which names example.com test domains.
+#   - No demo data, dev certificate, debug or test mode, and no Roundcube.
+#
+# Paths are relative to docker-compose.yml's directory, as compose resolves
+# every file's paths against the first one.
+
+services:
+  elemta:
+    ports: !override
+      - "25:2525"
+      - "587:2587"
+      - "127.0.0.1:9080:8080"
+    environment:
+      - ELEMTA_DEV_CERT=false
+      - ELEMTA_DEMO_DATA=false
+      - DEBUG=false
+      - TEST_MODE=false
+    volumes:
+      - ./.secrets/cloud/config:/app/config:ro
+      - ./.secrets/mailbox-tls:/app/tls:ro
+      - ./.secrets/cloud/dkim:/app/dkim:ro
+    networks:
+      elemta_network:
+        # The webmail submits through this name, so its STARTTLS can verify
+        # the public certificate instead of skipping verification.
+        aliases: ["${MAIL_DOMAIN:?MAIL_DOMAIN must be set}"]
+
+  elemta-web:
+    ports: !override
+      - "127.0.0.1:8025:8025"
+    environment:
+      - ELEMTA_DEV_CERT=false
+      - ELEMTA_DEMO_DATA=false
+    volumes:
+      - ./.secrets/cloud/config:/app/config:ro
+      - ./.secrets/mailbox-tls:/app/tls:ro
+      - ./.secrets/cloud/dkim:/app/dkim:ro
+
+  elemta-webmail:
+    ports: !override
+      - "127.0.0.1:8027:8027"
+    volumes:
+      - ./.secrets/cloud/config:/app/config:ro
+
+  elemta-mailbox-a: &cloud-mailbox
+    volumes: !override
+      - ./.secrets/cloud/mailbox.toml:/etc/elemta/mailbox.toml:ro
+      - ./.secrets/mailbox-tls:/etc/elemta/tls:ro
+      - mailbox_bodies:/var/lib/elemta/bodies
+  elemta-mailbox-b: *cloud-mailbox
+
+  elemta-mailbox:
+    ports: !override
+      - "993:10993"
+      - "127.0.0.1:14143:1143"
+      - "127.0.0.1:2424:2424"
+      - "127.0.0.1:4190:4190"
+
+  elemta-rspamd:
+    ports: !override
+      - "127.0.0.1:11334:11334"
+
+  elemta-ldap:
+    ports: !override
+      - "127.0.0.1:1389:389"
+
+  valkey:
+    ports: !override
+      - "127.0.0.1:6379:6379"
+
+  elemta-roundcube:
+    profiles: [roundcube]
+
+  elemta-caddy:
+    image: caddy:2-alpine
+    container_name: elemta-caddy
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - MAIL_DOMAIN=${MAIL_DOMAIN}
+    volumes:
+      - ../cloud/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    networks:
+      elemta_network:
+        # Fixed, because the webmail trusts X-Forwarded-For from this address
+        # only ([webmail] trusted_proxies in the rendered config).
+        ipv4_address: ${ELEMTA_CADDY_IP:-10.253.53.80}
+
+volumes:
+  caddy_data:
+  caddy_config:
