@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/auth"
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/gorilla/mux"
 )
@@ -29,8 +31,9 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 			writeJSON(w, map[string]any{"available": false, "reason": "Configure shared sessions and a privileged mailbox directory account to enable mail administration"})
 			return
 		}
-		writeJSON(w, map[string]any{"available": true, "min_password_length": max(10, s.provisioner.MinPasswordLength)})
+		writeJSON(w, map[string]any{"available": true, "min_password_length": max(10, s.provisioner.MinPasswordLength), "mailbox_admin": s.provisioner.Mailbox != nil})
 	}).Methods("GET")
+	s.provisionPolicyRoutes(protected)
 	protected.HandleFunc("/accounts", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		if r.Method == "GET" {
 			accounts, err := s.provisioner.List(ctx)
@@ -75,6 +78,7 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		case "DELETE":
 			var in struct {
 				Confirm string `json:"confirm"`
+				Purge   bool   `json:"purge"`
 			}
 			if !decodeJSONBody(w, r, &in) {
 				return nil
@@ -82,11 +86,27 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 			if in.Confirm != address {
 				return provision.ErrInvalid
 			}
+			if in.Purge {
+				// Checked first, so a missing admin token can't leave the
+				// account deleted and its mail behind.
+				if _, err := s.provisioner.MailboxAdmin(); err != nil {
+					return err
+				}
+			}
 			if err := s.provisioner.Delete(ctx, address); err != nil {
 				return err
 			}
 			s.provisionAudit(r, "delete", address)
-			writeJSON(w, map[string]any{"status": "account removed; mailbox files retained"})
+			if !in.Purge {
+				writeJSON(w, map[string]any{"status": "Account removed; its mailbox is retained."})
+				return nil
+			}
+			result, err := s.provisioner.Purge(ctx, address)
+			if err != nil {
+				return err
+			}
+			s.provisionAudit(r, "purge", address)
+			writeJSON(w, map[string]any{"status": fmt.Sprintf("Account removed and its mailbox purged (%d messages).", result.Messages)})
 		}
 		return nil
 	})).Methods("GET", "PATCH", "DELETE")
@@ -156,7 +176,11 @@ func (s *Server) provisionCall(fn func(context.Context, http.ResponseWriter, *ht
 		if err == nil {
 			return
 		}
+		var apiErr *mailpolicy.APIError
 		switch {
+		case errors.As(err, &apiErr) && apiErr.Status < 500:
+			// The mailbox's own refusal, which explains itself.
+			http.Error(w, apiErr.Message, apiErr.Status)
 		case errors.Is(err, provision.ErrInvalid):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		case errors.Is(err, provision.ErrExists):

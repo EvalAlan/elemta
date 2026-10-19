@@ -39,3 +39,16 @@
 @media (max-width: 600px) { .ma-heading, .ma-toolbar { align-items: stretch; flex-direction: column; } .ma-heading { gap: .75rem; } .ma-tabs { gap: .75rem; font-size: .8rem; } .ma-footer { flex-wrap: wrap; } }
 
 .mail-admin .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+.ma-heading-actions { display: flex; gap: .75rem; flex-wrap: wrap; }
+.ma-settings { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .4rem 1rem; align-items: center; }
+.ma-settings label { margin-top: 0; }
+.ma-settings h5 { grid-column: 1 / -1; margin: .75rem 0 .1rem; font-size: .75rem; letter-spacing: .08em; color: var(--text-secondary); text-transform: uppercase; }
+.ma-overrides, .ma-effective { margin-top: .5rem; }
+.ma-overrides summary, .ma-effective summary { cursor: pointer; color: var(--accent-primary); padding: .4rem 0; }
+.ma-effective td:last-child { color: var(--text-secondary); font-size: .8rem; }
+.mail-admin textarea { color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-strong); padding: .65rem .8rem; border-radius: var(--radius-sm); font: inherit; font-size: .85rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.ma-cell-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+.mail-admin td select { padding: .35rem .5rem; font-size: .8rem; }
+#ma-list-message, #ma-class-message { padding: .75rem; margin-bottom: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-sm); }
+@media (max-width: 600px) { .ma-settings { grid-template-columns: 1fr; } }

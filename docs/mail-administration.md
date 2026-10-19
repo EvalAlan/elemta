@@ -295,7 +295,14 @@ same scopes and supply their passwords from your secret store.
 ## Admin API and permissions
 
 `/api/provision/status`, `/accounts`, `/accounts/{address}`, the account
-`/password` and `/aliases` actions, and `/domains` back the console. These
+`/password`, `/aliases` and `/policy` actions, `/purge`, `/domains` with
+their `/class` and `/catch-all`, `/domain-aliases`, `/classes` and `/lists`
+back the console. The console has tabs for accounts, delivery aliases,
+distribution lists, classes of service and domains. An account's dialog
+sets its class and overrides, and shows every setting in effect with the
+layer it came from. Deleting an account offers to purge its mailbox too.
+The list, class and routing tabs appear when the mailbox admin API is
+configured (`ELEMTA_MAILBOX_ADMIN_TOKEN` on the web service). These
 routes require dashboard authentication and `system:admin`, including reads.
 They remain closed when dashboard authentication is disabled. Mutations require
 JSON and existing same-origin write protection. Successful changes record the

@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261019-notice">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261017-1">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261019-cos">
 </head>
 
 <body>
@@ -1030,7 +1030,7 @@
 
             <!-- Settings View -->
             <section class="view mail-admin" id="view-mail-admin">
-                <div class="ma-heading"><div><p class="ma-eyebrow">DIRECTORY</p><h2>Mail Administration</h2><p class="field-hint">Manage mailboxes, delivery aliases, and local domains.</p></div><button class="btn btn-primary" id="ma-create">Create account</button></div>
+                <div class="ma-heading"><div><p class="ma-eyebrow">DIRECTORY</p><h2>Mail Administration</h2><p class="field-hint">Manage mailboxes, aliases, distribution lists, classes of service and local domains.</p></div><div class="ma-heading-actions"><button class="btn btn-secondary" id="ma-purge" hidden>Purge deleted mailbox…</button><button class="btn btn-primary" id="ma-create">Create account</button><button class="btn btn-primary" id="ma-create-list" hidden>Create list</button><button class="btn btn-primary" id="ma-create-class" hidden>New class of service</button></div></div>
                 <p id="ma-notice" class="ma-notice" role="status" hidden></p>
                 <p id="ma-error" class="error-message" role="alert" hidden></p>
                 <div class="ma-workspace">
@@ -1039,10 +1039,13 @@
                         <div class="ma-tabs" role="tablist" aria-label="Directory objects">
                             <button type="button" role="tab" aria-selected="true" data-ma-tab="accounts">Accounts</button>
                             <button type="button" role="tab" aria-selected="false" data-ma-tab="aliases">Delivery aliases</button>
+                            <button type="button" role="tab" aria-selected="false" data-ma-tab="lists" data-ma-needs-mailbox hidden>Distribution lists</button>
+                            <button type="button" role="tab" aria-selected="false" data-ma-tab="classes" data-ma-needs-mailbox hidden>Classes of service</button>
                             <button type="button" role="tab" aria-selected="false" data-ma-tab="domains">Domains</button>
                         </div>
                         <div class="ma-toolbar"><label class="sr-only" for="ma-search">Search directory</label><input id="ma-search" type="search" placeholder="Search by address or display name"><label class="sr-only" for="ma-status">Account status</label><select id="ma-status"><option value="">All statuses</option><option value="active">Active</option><option value="disabled">Disabled</option></select><button class="btn btn-secondary" id="ma-refresh">Refresh</button></div>
                         <form id="ma-domain-form" class="ma-domain-form" hidden><label for="ma-new-domain">New local domain</label><input id="ma-new-domain" type="text" placeholder="example.com" required><button class="btn btn-primary" type="submit">Add domain</button><p class="field-hint">Domain routing changes require an SMTP service restart. Configure DNS separately.</p></form>
+                        <form id="ma-alias-domain-form" class="ma-domain-form" hidden><label for="ma-alias-domain">New alias domain</label><input id="ma-alias-domain" type="text" placeholder="example.net" required><label for="ma-alias-target">delivers as</label><select id="ma-alias-target" required></select><button class="btn btn-secondary" type="submit">Add alias domain</button><p class="field-hint">Every name at the alias domain delivers as the same name at the target. It becomes a local domain, so restart the SMTP service.</p></form>
                         <div class="ma-table-wrap"><table class="messages-table"><thead id="ma-table-head"></thead><tbody id="ma-table-body"></tbody></table></div>
                         <div class="ma-footer"><span id="ma-count" class="field-hint">Loading directory…</span><button type="button" class="btn btn-secondary" id="ma-more" hidden>Show more</button></div>
                     </div>
@@ -1060,6 +1063,15 @@
                         <div class="ma-form-actions"><button class="btn btn-primary" type="submit">Save account</button><button class="btn btn-danger" type="button" id="ma-delete">Delete account</button></div>
                     </form>
                     <section id="ma-account-extras">
+                        <section id="ma-account-policy" hidden>
+                            <h4>Class of service</h4>
+                            <form id="ma-policy-form" class="ma-form">
+                                <label for="ma-policy-class">Class</label><select id="ma-policy-class"></select>
+                                <details class="ma-overrides"><summary>Overrides for this account</summary><p class="field-hint">Blank or “Inherit” uses the class. 0 means unlimited.</p><div id="ma-policy-settings" class="ma-settings"></div></details>
+                                <div class="ma-form-actions"><button type="submit" class="btn btn-secondary">Save class and overrides</button></div>
+                            </form>
+                            <details class="ma-effective"><summary>What applies now</summary><table class="messages-table"><thead><tr><th>Setting</th><th>Value</th><th>From</th></tr></thead><tbody id="ma-effective"></tbody></table></details>
+                        </section>
                         <h4>Delivery aliases</h4><ul id="ma-alias-list" class="ma-alias-list"></ul>
                         <form id="ma-alias-form" class="ma-inline"><label class="sr-only" for="ma-alias">Alias address</label><input id="ma-alias" type="email" placeholder="alias@example.com" required><button class="btn btn-secondary" type="submit">Add alias</button></form>
                         <h4>Reset password</h4><form id="ma-password-form" class="ma-form">
@@ -1068,6 +1080,31 @@
                             <p class="field-hint">Existing webmail sessions end. Mail apps will need the new password.</p><button type="submit" class="btn btn-secondary">Reset password</button>
                         </form>
                     </section>
+                </dialog>
+                <dialog id="ma-list-dialog" class="ma-dialog">
+                    <div class="ma-dialog-heading"><div><p class="ma-eyebrow">DISTRIBUTION LIST</p><h3 id="ma-list-title">Create list</h3></div><button type="button" class="btn btn-secondary" id="ma-list-close">Close</button></div>
+                    <p id="ma-list-message" role="status" hidden></p>
+                    <form id="ma-list-form" class="ma-form">
+                        <label for="ma-list-address">List address</label><input id="ma-list-address" type="email" autocomplete="off" required>
+                        <label for="ma-list-name">Display name</label><input id="ma-list-name" type="text" maxlength="200" placeholder="Shown in List-Id">
+                        <label for="ma-list-description">Description</label><input id="ma-list-description" type="text" maxlength="1000">
+                        <label for="ma-list-owner">Owner</label><input id="ma-list-owner" type="email" placeholder="Receives bounces; empty drops them">
+                        <label for="ma-list-posting">Who may post</label><select id="ma-list-posting"><option value="anyone">Anyone</option><option value="members">Members (and the owner)</option><option value="domain">The list's own domain (and the owner)</option><option value="owner">Only the owner</option></select>
+                        <label for="ma-list-members">Members, one address per line</label><textarea id="ma-list-members" rows="8" spellcheck="false" placeholder="dana@example.com&#10;partner@other.example"></textarea>
+                        <p class="field-hint">Local members get mail through their own filters and limits; external members get one copy through the MTA. Lists can include other lists.</p>
+                        <div class="ma-form-actions"><button class="btn btn-primary" type="submit">Save list</button><button class="btn btn-danger" type="button" id="ma-list-delete">Delete list</button></div>
+                    </form>
+                </dialog>
+                <dialog id="ma-class-dialog" class="ma-dialog">
+                    <div class="ma-dialog-heading"><div><p class="ma-eyebrow">CLASS OF SERVICE</p><h3 id="ma-class-title">New class</h3></div><button type="button" class="btn btn-secondary" id="ma-class-close">Close</button></div>
+                    <p id="ma-class-message" role="status" hidden></p>
+                    <form id="ma-class-form" class="ma-form">
+                        <label for="ma-class-name">Name</label><input id="ma-class-name" type="text" pattern="[a-z0-9][a-z0-9_-]{0,62}" placeholder="staff" required>
+                        <label for="ma-class-description">Description</label><input id="ma-class-description" type="text" maxlength="500">
+                        <p class="field-hint">Blank or “Inherit” falls through to the domain's class, then the default class. 0 means unlimited.</p>
+                        <div id="ma-class-settings" class="ma-settings"></div>
+                        <div class="ma-form-actions"><button class="btn btn-primary" type="submit">Save class</button><button class="btn btn-danger" type="button" id="ma-class-delete">Delete class</button></div>
+                    </form>
                 </dialog>
             </section>
             <section class="view" id="view-settings">
@@ -1461,7 +1498,7 @@
     <script src="/static/app.js?v=20261017-mailadmin"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261010-users2"></script>
-    <script src="/static/mail-admin.js?v=20261017-1"></script>
+    <script src="/static/mail-admin.js?v=20261019-cos"></script>
 </body>
 
 </html>
