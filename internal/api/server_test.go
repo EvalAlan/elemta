@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/auth"
+	"github.com/EvalAlan/elemta/internal/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -757,4 +758,39 @@ func TestCreateListener(t *testing.T) {
 		_, exists := os.LookupEnv(inheritedHTTPFDEnv)
 		assert.False(t, exists, "inherited listener env should be cleared")
 	})
+}
+
+// TestAdminPagesCarryNotice pins that the server fills the copyright notice
+// into the static admin pages, so the year range comes from the build.
+func TestAdminPagesCarryNotice(t *testing.T) {
+	dir := t.TempDir()
+	page := filepath.Join(dir, "page.html")
+	if err := os.WriteFile(page, []byte("<p><!-- elemta:notice --></p>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	serveHTMLWithNotice(w, httptest.NewRequest(http.MethodGet, "/login", nil), page)
+	body := w.Body.String()
+	if w.Code != http.StatusOK || strings.Contains(body, noticeMarker) {
+		t.Fatalf("status %d, body %q", w.Code, body)
+	}
+	for _, want := range []string{version.Copyright(), "GPL-3.0", `href="` + version.SourceURL + `"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %q: %s", want, body)
+		}
+	}
+	for _, real := range []string{"../../web/login.html", "../../web/static/index.html"} {
+		b, err := os.ReadFile(real)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), noticeMarker) {
+			t.Errorf("%s has no notice marker", real)
+		}
+	}
+	w = httptest.NewRecorder()
+	serveHTMLWithNotice(w, httptest.NewRequest(http.MethodGet, "/", nil), filepath.Join(dir, "missing.html"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("missing page = %d", w.Code)
+	}
 }

@@ -561,6 +561,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .login .notice, .login .problem { margin: 0; }
 .login-links { margin: 0; text-align: center; }
 .login-footer { margin: 0; color: var(--muted); font-size: 13px; text-align: center; }
+.login-footer a, .about a { color: inherit; }
 
 /* ---- Calendar ---------------------------------------------------------- */
 .cal-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }

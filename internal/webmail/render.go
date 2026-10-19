@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/version"
 )
 
 //go:embed templates/*.html
@@ -89,6 +91,9 @@ func loadTemplates() (map[string]*template.Template, error) {
 }
 
 var templateFuncs = template.FuncMap{
+	"copyright":  version.Copyright,
+	"codeURL":    func() string { return version.SourceURL },
+	"appVersion": func() string { return version.Version },
 	"asset":      assetURL,
 	"shortDate":  shortDate,
 	"longDate":   longDate,

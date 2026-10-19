@@ -117,6 +117,11 @@
     </div>
     <div class="save-bar"><button class="button primary" type="submit">Save changes</button></div>
   </form>
+  <div class="card about" id="about">
+    <h2 class="card-title">About</h2>
+    <p class="small muted">Elemta Mail {{appVersion}}</p>
+    <p class="small muted">{{template "notice"}}</p>
+  </div>
 {{end}}
 
 {{if eq .Tab "account"}}

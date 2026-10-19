@@ -222,6 +222,22 @@ body {
 [data-theme="light"] .theme-toggle .sun { display: block; }
 [data-theme="light"] .theme-toggle .moon { display: none; }
 
+/* The copyright notice under the server status; the server fills it in. */
+.sidebar-notice {
+    margin: 0;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    color: var(--text-muted);
+}
+
+.sidebar-notice a {
+    color: inherit;
+}
+
+.sidebar.collapsed .sidebar-notice {
+    display: none;
+}
+
 .server-status {
     display: flex;
     align-items: center;

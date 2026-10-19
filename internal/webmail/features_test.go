@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/version"
 )
 
 func TestParseSearch(t *testing.T) {
@@ -766,5 +768,24 @@ func TestMailCalendarToggle(t *testing.T) {
 	toggle("0")
 	if _, page := h.get("/mail?f=INBOX&uid=7"); strings.Contains(page, `class="mail-cal"`) {
 		t.Error("toggle didn't turn the calendar off")
+	}
+}
+
+// TestCopyrightNotice pins the notice on the sign-in page and in Settings'
+// About card, with the license and source links the GPL makes worth showing.
+func TestCopyrightNotice(t *testing.T) {
+	h := newHarness(t)
+	_, login := h.get("/login")
+	h.login()
+	_, settings := h.get("/settings")
+	for name, page := range map[string]string{"sign-in": login, "settings": settings} {
+		for _, want := range []string{version.Copyright(), "free software", `href="https://www.gnu.org/licenses/gpl-3.0.html"`, `href="` + version.SourceURL + `"`} {
+			if !strings.Contains(page, want) {
+				t.Errorf("%s page lacks %q", name, want)
+			}
+		}
+	}
+	if !strings.Contains(settings, "Elemta Mail "+version.Version) {
+		t.Error("settings About card lacks the version")
 	}
 }

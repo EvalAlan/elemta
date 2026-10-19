@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
+	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -30,6 +33,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/EvalAlan/elemta/internal/runtimepaths"
 	"github.com/EvalAlan/elemta/internal/suppression"
+	"github.com/EvalAlan/elemta/internal/version"
 	"github.com/gorilla/mux"
 )
 
@@ -1227,7 +1231,42 @@ func (s *Server) handleGetQueueStorage(w http.ResponseWriter, r *http.Request) {
 // handleLoginPage serves the public login page
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	setHTMLNoCache(w)
-	http.ServeFile(w, r, "web/login.html")
+	serveHTMLWithNotice(w, r, "web/login.html")
+}
+
+// noticeMarker is where the admin pages carry the copyright notice. The
+// pages are static files, so the server fills it in, keeping the year range
+// and links in one place (internal/version) with the webmail's.
+const noticeMarker = "<!-- elemta:notice -->"
+
+func noticeHTML() string {
+	return html.EscapeString(version.Copyright()) +
+		` · Elemta is free software under the <a href="https://www.gnu.org/licenses/gpl-3.0.html" rel="license noopener" target="_blank">GPL-3.0</a>` +
+		` · <a href="` + html.EscapeString(version.SourceURL) + `" rel="noopener" target="_blank">Source</a>`
+}
+
+// serveHTMLWithNotice serves an HTML page with its notice marker replaced.
+// It keeps the file's modification time, so revalidation stays cheap.
+func serveHTMLWithNotice(w http.ResponseWriter, r *http.Request, path string) {
+	f, err := os.Open(path) // #nosec G304 -- path is one of the fixed admin pages
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	page, err := io.ReadAll(io.LimitReader(f, 4<<20))
+	if err != nil {
+		http.Error(w, "page unavailable", http.StatusInternalServerError)
+		return
+	}
+	page = bytes.Replace(page, []byte(noticeMarker), []byte(noticeHTML()), 1)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeContent(w, r, filepath.Base(path), st.ModTime(), bytes.NewReader(page))
 }
 
 // handleLogo serves the Elemta logo for the login page (public)
@@ -1257,7 +1296,7 @@ func (s *Server) handleLogo(w http.ResponseWriter, r *http.Request) {
 // handleDashboard serves the main dashboard page
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	setHTMLNoCache(w)
-	http.ServeFile(w, r, s.webRoot+"/index.html")
+	serveHTMLWithNotice(w, r, s.webRoot+"/index.html")
 }
 
 // setHTMLNoCache stops browsers reusing a stale application shell.
