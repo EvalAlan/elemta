@@ -289,3 +289,42 @@ func TestBrowserCollectsErrors(t *testing.T) {
 	}
 	t.Fatal("console.error was not collected")
 }
+
+// TestBrowserCalendarFitsWindow pins that the month, week and day views fit
+// the window without a page scrollbar, at a large and a small desktop size,
+// and that the sidebar import shows as a link rather than a file control.
+// Set CALENDAR_SHOTS to a directory to keep screenshots for a look.
+func TestBrowserCalendarFitsWindow(t *testing.T) {
+	b := newBrowser(t)
+	b.login()
+	shots := os.Getenv("CALENDAR_SHOTS")
+	for _, size := range [][2]int64{{1900, 1000}, {1280, 720}} {
+		b.run(chromedp.EmulateViewport(size[0], size[1]))
+		for _, view := range []string{"month", "week", "day"} {
+			b.run(chromedp.Navigate(b.url("/calendar?view="+view)), chromedp.WaitVisible(chromedp.CSS(".cal-body")))
+			if got := evalAs[string](b, `document.querySelector(".segmented [aria-current=page]")?.textContent || ""`); !strings.EqualFold(got, view) {
+				t.Fatalf("%s: current view link = %q", view, got)
+			}
+			if over := evalAs[float64](b, `document.documentElement.scrollHeight - innerHeight`); over > 0 {
+				t.Errorf("%dx%d %s view: page scrolls by %vpx", size[0], size[1], view, over)
+			}
+			if shots != "" {
+				ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+				png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot())
+				cancel()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(fmt.Sprintf("%s/calendar-%s-%d.png", shots, view, size[0]), png, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	if !evalAs[bool](b, `(() => { const r = document.querySelector(".import input[type=file]").getBoundingClientRect(); return r.width <= 1 && r.height <= 1 })()`) {
+		t.Error("the import file control is visible")
+	}
+	if !evalAs[bool](b, `(() => { const l = document.querySelector(".import label"); return l.offsetWidth > 0 && getComputedStyle(document.querySelector(".import button")).display === "none" })()`) {
+		t.Error("the import link is not shown in place of the control")
+	}
+}
