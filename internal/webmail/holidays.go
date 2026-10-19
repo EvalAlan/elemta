@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	holidaydata "github.com/holidays/go-holidays"
 )
@@ -137,7 +138,16 @@ func holidayEvents(p Settings, fallbackZone string, loc *time.Location, from, to
 	if p.HolidayDisabled {
 		return nil, nil
 	}
-	var events []Event
+	// Several of a user's regions often share a holiday: Christmas Day in the
+	// UK and the US is one day off, not two. Holidays with the same name on
+	// the same day are shown once, naming every region they fall in.
+	type found struct {
+		event    Event
+		regions  []string
+		informal bool
+	}
+	var all []found
+	seen := map[string]int{}
 	for _, region := range p.holidayRegions(fallbackZone) {
 		name, _ := holidaydata.RegionName(region)
 		start := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, time.UTC)
@@ -153,17 +163,49 @@ func holidayEvents(p Settings, fallbackZone string, loc *time.Location, from, to
 				continue
 			}
 			d := time.Date(h.Date.Year(), h.Date.Month(), h.Date.Day(), 0, 0, 0, 0, loc)
+			same := d.Format("20060102") + "|" + holidayNameKey(h.Name)
+			if i, ok := seen[same]; ok {
+				all[i].regions = append(all[i].regions, name)
+				all[i].event.HolidayKeys = append(all[i].event.HolidayKeys, key)
+				all[i].informal = all[i].informal && h.Informal
+				continue
+			}
 			sum := sha256.Sum256([]byte(key))
 			uid := fmt.Sprintf("holiday-%s-%s-%s", region, d.Format("20060102"), hex.EncodeToString(sum[:8]))
-			description := "Holiday in " + name + "."
-			if h.Informal {
-				description = "Informal holiday in " + name + "."
-			}
-			events = append(events, Event{UID: uid, Summary: h.Name, Description: description, Calendar: holidayCalendar,
-				Start: d, End: d.AddDate(0, 0, 1), AllDay: true, Reminder: -1, ReadOnly: true, HolidayKey: key})
+			seen[same] = len(all)
+			all = append(all, found{event: Event{UID: uid, Summary: h.Name, Calendar: holidayCalendar,
+				Start: d, End: d.AddDate(0, 0, 1), AllDay: true, Reminder: -1, ReadOnly: true,
+				HolidayKey: key, HolidayKeys: []string{key}}, regions: []string{name}, informal: h.Informal})
 		}
 	}
+	events := make([]Event, 0, len(all))
+	for _, f := range all {
+		f.event.Description = "Holiday in " + joinNames(f.regions) + "."
+		if f.informal {
+			f.event.Description = "Informal holiday in " + joinNames(f.regions) + "."
+		}
+		events = append(events, f.event)
+	}
 	return events, nil
+}
+
+// holidayNameKey compares holiday names across regions, ignoring case,
+// punctuation and spacing ("New Year's Day" and "New Years Day").
+func holidayNameKey(name string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, name)
+}
+
+// joinNames lists regions as "A", "A and B" or "A, B and C".
+func joinNames(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 func (s *Server) holidayHide(w http.ResponseWriter, r *http.Request, sess *Session) {
@@ -185,7 +227,12 @@ func (s *Server) holidayHide(w http.ResponseWriter, r *http.Request, sess *Sessi
 				http.Error(w, "too many hidden holidays", http.StatusBadRequest)
 				return
 			}
-			p.HolidayHidden = append(p.HolidayHidden, e.HolidayKey)
+			// Every region's key, so a holiday shown once is hidden once.
+			for _, key := range e.HolidayKeys {
+				if !slices.Contains(p.HolidayHidden, key) {
+					p.HolidayHidden = append(p.HolidayHidden, key)
+				}
+			}
 			if err := s.savePrefs(r.Context(), sess, p); err != nil {
 				s.fail(w, r, sess, err)
 				return

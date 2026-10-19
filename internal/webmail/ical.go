@@ -47,6 +47,9 @@ type Event struct {
 	ReadOnly bool
 	// HolidayKey identifies a holiday across years for the user's hide list.
 	HolidayKey string
+	// HolidayKeys is every region's key when the same holiday falls in more
+	// than one of the user's regions and is shown once (holidays.go).
+	HolidayKeys []string
 }
 
 // Attendee is a participant in a meeting.

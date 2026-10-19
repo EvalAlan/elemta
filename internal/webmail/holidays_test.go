@@ -116,3 +116,40 @@ func TestHolidayCalendarSettingsAndHide(t *testing.T) {
 		t.Fatal("holiday visible after disabling")
 	}
 }
+
+// A holiday several of the user's regions share is one event, naming each
+// region, and hiding it hides it everywhere it was merged from.
+func TestHolidaysSharedAcrossRegionsShownOnce(t *testing.T) {
+	loc := time.UTC
+	p := Settings{HolidayRegion: "us", HolidayExtraCountries: []string{"gb"}}
+	day := time.Date(2026, 12, 25, 0, 0, 0, 0, loc)
+	events, err := holidayEvents(p, "UTC", loc, day, day.AddDate(0, 0, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var christmas []Event
+	for _, e := range events {
+		if holidayNameKey(e.Summary) == "christmasday" {
+			christmas = append(christmas, e)
+		}
+	}
+	if len(christmas) != 1 {
+		t.Fatalf("Christmas Day shown %d times: %+v", len(christmas), events)
+	}
+	c := christmas[0]
+	if len(c.HolidayKeys) != 2 || !strings.Contains(c.Description, "United States") || !strings.Contains(c.Description, " and ") {
+		t.Fatalf("merged holiday = %q keys %v", c.Description, c.HolidayKeys)
+	}
+	// Boxing Day is the UK's alone and stays its own event.
+	boxing, err := holidayEvents(p, "UTC", loc, day.AddDate(0, 0, 1), day.AddDate(0, 0, 2))
+	if err != nil || len(boxing) != 1 || len(boxing[0].HolidayKeys) != 1 {
+		t.Fatalf("Boxing Day: %+v, %v", boxing, err)
+	}
+	p.HolidayHidden = c.HolidayKeys
+	if left, _ := holidayEvents(p, "UTC", loc, day, day.AddDate(0, 0, 1)); len(left) != len(events)-1 {
+		t.Fatalf("after hiding the merged holiday: %+v", left)
+	}
+	if holidayNameKey("New Year's Day") != holidayNameKey("New Years  day") {
+		t.Error("names differing only in punctuation and case should match")
+	}
+}
