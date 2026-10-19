@@ -19,6 +19,10 @@ Changes from upstream:
 - `imapserver/conn.go`: dispatch for the commands above.
 - `imapserver/capability.go`: advertise them.
 - `imapserver/message.go`: keyed struct literals, so `go vet` passes.
+- `#nosec G115` notes on five deliberate integer conversions (UTF-7 byte
+  splitting in `internal/utf7/encoder.go`, and IMAP number32 sizes and
+  offsets in `imapserver/fetch.go` and `message.go`), because the CI
+  security gate runs gosec over the whole repository.
 - Import paths rewritten to this module.
 
 To update: copy the new upstream release over these directories, rewrite

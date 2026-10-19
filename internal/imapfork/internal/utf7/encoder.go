@@ -50,10 +50,10 @@ func encode(s []byte) []byte {
 		}
 		s = s[size:]
 		if r1, r2 := utf16.EncodeRune(r); r1 != utf8.RuneError {
-			b = append(b, byte(r1>>8), byte(r1))
+			b = append(b, byte(r1>>8), byte(r1)) // #nosec G115 -- splitting a UTF-16 code unit into its two bytes
 			r = r2
 		}
-		b = append(b, byte(r>>8), byte(r))
+		b = append(b, byte(r>>8), byte(r)) // #nosec G115 -- splitting a UTF-16 code unit into its two bytes
 	}
 
 	// Encode as base64

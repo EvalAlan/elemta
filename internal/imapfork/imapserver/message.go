@@ -201,7 +201,7 @@ func ExtractBinarySection(r io.Reader, item *imap.FetchItemBinarySection) []byte
 func ExtractBinarySectionSize(r io.Reader, item *imap.FetchItemBinarySectionSize) uint32 {
 	// TODO: optimize
 	b := ExtractBinarySection(r, &imap.FetchItemBinarySection{Part: item.Part})
-	return uint32(len(b))
+	return uint32(len(b)) // #nosec G115 -- message size limits keep sections far below 4 GiB
 }
 
 // ExtractEnvelope returns a message envelope from its header.
@@ -286,7 +286,7 @@ func extractBodyStructure(rawHeader textproto.Header, r io.Reader) imap.BodyStru
 			ID:          header.Get("Content-Id"),
 			Description: header.Get("Content-Description"),
 			Encoding:    header.Get("Content-Transfer-Encoding"),
-			Size:        uint32(len(body)),
+			Size:        uint32(len(body)), // #nosec G115 -- message size limits keep parts far below 4 GiB
 		}
 		if mediaType == "message/rfc822" || mediaType == "message/global" {
 			br := bufio.NewReader(bytes.NewReader(body))
