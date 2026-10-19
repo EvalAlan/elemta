@@ -244,3 +244,49 @@ type DomainPolicy struct {
 	Domain string `json:"domain"`
 	Class  string `json:"class,omitempty"`
 }
+
+// Addressing (internal/mailbox/addressing.go): what an address that isn't a
+// directory account delivers to.
+
+// DomainRoute is a domain's addressing: an alias of another local domain
+// (every address there delivers as the same name at the target), and a
+// catch-all address for names nothing else claims.
+type DomainRoute struct {
+	Domain   string `json:"domain"`
+	AliasOf  string `json:"alias_of,omitempty"`
+	CatchAll string `json:"catch_all,omitempty"`
+}
+
+// Who may post to a distribution list, by envelope sender.
+const (
+	PostAnyone  = "anyone"
+	PostMembers = "members"
+	PostDomain  = "domain" // senders in the list's own domain
+	PostOwner   = "owner"
+)
+
+// PostingPolicies lists the valid posting values.
+var PostingPolicies = []string{PostAnyone, PostMembers, PostDomain, PostOwner}
+
+// List is a distribution list: mail to its address goes to every member,
+// local or external. Owner receives bounces; with no owner, list mail is
+// sent with a null sender and bounces are dropped.
+type List struct {
+	Address     string   `json:"address"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Owner       string   `json:"owner,omitempty"`
+	Posting     string   `json:"posting"`
+	Members     []string `json:"members"`
+	// MemberCount is filled in listings, which leave Members out.
+	MemberCount int `json:"member_count"`
+}
+
+// AddressInfo says what, if anything, owns an address.
+type AddressInfo struct {
+	Address string `json:"address"`
+	// Kind is "account", "alias", "list" or "" when the address is free.
+	Kind string `json:"kind"`
+	// Account is the primary address for an account or alias.
+	Account string `json:"account,omitempty"`
+}

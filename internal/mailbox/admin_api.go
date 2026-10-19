@@ -124,6 +124,52 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		}
 		return s.engine.EffectivePolicy(r.Context(), a.Address, a.Quota)
 	})
+	handle("GET /v1/admin/routes", func(r *http.Request) (any, error) {
+		return s.engine.Routes(r.Context())
+	})
+	handle("PUT /v1/admin/routes/{domain}", func(r *http.Request) (any, error) {
+		var route mailpolicy.DomainRoute
+		if err := decode(r, &route); err != nil {
+			return nil, err
+		}
+		route.Domain = r.PathValue("domain")
+		return s.engine.SetRoute(r.Context(), route)
+	})
+	handle("GET /v1/admin/lists", func(r *http.Request) (any, error) {
+		return s.engine.Lists(r.Context())
+	})
+	handle("GET /v1/admin/lists/{address}", func(r *http.Request) (any, error) {
+		return s.engine.List(r.Context(), r.PathValue("address"))
+	})
+	handle("PUT /v1/admin/lists/{address}", func(r *http.Request) (any, error) {
+		var l mailpolicy.List
+		if err := decode(r, &l); err != nil {
+			return nil, err
+		}
+		l.Address = strings.ToLower(strings.TrimSpace(r.PathValue("address")))
+		// A list can't take an address an account or alias already has:
+		// mail to it would quietly go one way or the other.
+		if taken, err := s.auth.Exists(r.Context(), l.Address); err != nil || taken {
+			if err != nil {
+				return nil, err
+			}
+			return nil, errors.Join(ErrInUse, errors.New(l.Address+" belongs to an account or alias"))
+		}
+		return s.engine.PutList(r.Context(), l)
+	})
+	handle("POST /v1/admin/lists/{address}/members", func(r *http.Request) (any, error) {
+		var in struct{ Add, Remove []string }
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return s.engine.ChangeMembers(r.Context(), r.PathValue("address"), in.Add, in.Remove)
+	})
+	handle("DELETE /v1/admin/lists/{address}", func(r *http.Request) (any, error) {
+		return map[string]bool{"ok": true}, s.engine.DeleteList(r.Context(), r.PathValue("address"))
+	})
+	handle("GET /v1/admin/addresses/{address}", func(r *http.Request) (any, error) {
+		return s.addressInfo(r.Context(), r.PathValue("address"))
+	})
 	handle("POST /v1/admin/accounts/{address}/purge", func(r *http.Request) (any, error) {
 		address := strings.ToLower(strings.TrimSpace(r.PathValue("address")))
 		if !strings.Contains(address, "@") || len(address) > 320 {
@@ -221,4 +267,35 @@ func writeAdminError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// addressInfo says what owns an address, so the provisioning tools can keep
+// accounts, aliases and lists from taking each other's addresses.
+func (s *Service) addressInfo(ctx context.Context, raw string) (mailpolicy.AddressInfo, error) {
+	address, err := normalAddress(raw)
+	if err != nil {
+		return mailpolicy.AddressInfo{}, err
+	}
+	info := mailpolicy.AddressInfo{Address: address}
+	if a, err := s.auth.Resolve(ctx, address); err == nil {
+		info.Kind, info.Account = "alias", a.Address
+		if a.Address == address {
+			info.Kind = "account"
+		}
+		return info, nil
+	} else if !errors.Is(err, ErrCredentials) {
+		return info, err
+	}
+	if exists, err := s.auth.Exists(ctx, address); err != nil {
+		return info, err
+	} else if exists {
+		info.Kind = "account" // disabled: Resolve won't say which
+		return info, nil
+	}
+	if isList, err := s.engine.isList(ctx, address); err != nil {
+		return info, err
+	} else if isList {
+		info.Kind = "list"
+	}
+	return info, nil
 }

@@ -361,11 +361,16 @@ type lmtpSession struct {
 	service    *Service
 	recipients []Account
 	addresses  []string
-	token      string
-	from       string
+	// lists holds, for each recipient, the list address it resolved to, or
+	// "" for an account (routing.go).
+	lists []string
+	token string
+	from  string
 }
 
-func (l *lmtpSession) Reset()        { l.recipients = nil; l.addresses = nil; l.token = ""; l.from = "" }
+func (l *lmtpSession) Reset() {
+	l.recipients, l.addresses, l.lists, l.token, l.from = nil, nil, nil, "", ""
+}
 func (l *lmtpSession) Logout() error { l.Reset(); return nil }
 func (l *lmtpSession) Mail(from string, options *smtp.MailOptions) error {
 	if !l.service.cfg.Server.AllowPlaintextAuth {
@@ -381,13 +386,23 @@ func (l *lmtpSession) Mail(from string, options *smtp.MailOptions) error {
 func (l *lmtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	ctx, cancel := context.WithTimeout(l.service.ctx, 10*time.Second)
 	defer cancel()
-	a, err := l.service.auth.Resolve(ctx, to)
+	r, err := l.service.resolveRecipient(ctx, to)
 	if errors.Is(err, ErrCredentials) {
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "Unknown recipient"}
 	}
 	if err != nil {
 		return &smtp.SMTPError{Code: 451, Message: "Directory unavailable"}
 	}
+	if r.list != "" {
+		// Who may post is checked with the message (deliverList): the
+		// MTA's recipient check asks with a null sender, so the real one
+		// isn't known yet.
+		l.recipients = append(l.recipients, Account{})
+		l.addresses = append(l.addresses, to)
+		l.lists = append(l.lists, r.list)
+		return nil
+	}
+	a := r.account
 	if err = l.service.applyPolicy(ctx, &a); err != nil {
 		return &smtp.SMTPError{Code: 451, Message: "Mailbox unavailable"}
 	}
@@ -396,6 +411,7 @@ func (l *lmtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	}
 	l.recipients = append(l.recipients, a)
 	l.addresses = append(l.addresses, to)
+	l.lists = append(l.lists, "")
 	return nil
 }
 func (l *lmtpSession) Data(_ io.Reader) error {
@@ -418,6 +434,18 @@ func (l *lmtpSession) LMTPData(r io.Reader, status smtp.StatusCollector) error {
 	}
 	largestAttachment := int64(-1) // measured once, if a recipient limits it
 	for i, a := range l.recipients {
+		if l.lists[i] != "" {
+			ctx, cancel := context.WithTimeout(l.service.ctx, 2*time.Minute)
+			token := l.token
+			if token != "" {
+				digest := sha256.Sum256([]byte(token + "\x00" + strings.ToLower(l.addresses[i])))
+				token = hex.EncodeToString(digest[:])
+			}
+			err := l.service.deliverList(ctx, l.lists[i], l.from, raw, token)
+			cancel()
+			status.SetStatus(l.addresses[i], lmtpResult(l.service, l.lists[i], err))
+			continue
+		}
 		if refused := sizeRefusal(a.Policy, raw, &largestAttachment); refused != nil {
 			status.SetStatus(l.addresses[i], refused)
 			continue
@@ -487,4 +515,18 @@ func sizeRefusal(p *mailpolicy.Effective, raw []byte, largest *int64) error {
 		}
 	}
 	return nil
+}
+
+// lmtpResult turns a delivery error into the recipient's LMTP status: a
+// deliberate SMTP answer as is, anything else as a temporary failure.
+func lmtpResult(s *Service, what string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var smtpErr *smtp.SMTPError
+	if errors.As(err, &smtpErr) {
+		return smtpErr
+	}
+	s.log.Warn("mailbox delivery failed", "recipient", what, "error", err)
+	return &smtp.SMTPError{Code: 451, Message: "Delivery temporarily unavailable"}
 }

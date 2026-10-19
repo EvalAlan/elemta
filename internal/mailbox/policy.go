@@ -321,5 +321,10 @@ func (e *Engine) PurgeAccount(ctx context.Context, address string) (PurgeResult,
 	if _, err := tx.ExecContext(ctx, `DELETE FROM mailbox_account_policy WHERE address=$1`, address); err != nil {
 		return out, err
 	}
+	// A purged account leaves the lists it was on, so they don't keep
+	// sending to an address that is gone.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM mailbox_list_members WHERE member=$1`, address); err != nil {
+		return out, err
+	}
 	return out, tx.Commit()
 }

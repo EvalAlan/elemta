@@ -205,3 +205,53 @@ func (c *Client) Purge(ctx context.Context, address string) (PurgeResult, error)
 	var out PurgeResult
 	return out, c.do(ctx, http.MethodPost, "/v1/admin/accounts/"+seg(address)+"/purge", nil, &out)
 }
+
+// Routes lists domains with an alias target or a catch-all.
+func (c *Client) Routes(ctx context.Context) ([]DomainRoute, error) {
+	var out []DomainRoute
+	return out, c.do(ctx, http.MethodGet, "/v1/admin/routes", nil, &out)
+}
+
+// SetRoute replaces a domain's alias target and catch-all; both empty
+// removes the route.
+func (c *Client) SetRoute(ctx context.Context, r DomainRoute) (DomainRoute, error) {
+	var out DomainRoute
+	return out, c.do(ctx, http.MethodPut, "/v1/admin/routes/"+seg(r.Domain), r, &out)
+}
+
+// Lists lists the distribution lists, without their members.
+func (c *Client) Lists(ctx context.Context) ([]List, error) {
+	var out []List
+	return out, c.do(ctx, http.MethodGet, "/v1/admin/lists", nil, &out)
+}
+
+// List returns a distribution list with its members.
+func (c *Client) List(ctx context.Context, address string) (List, error) {
+	var out List
+	return out, c.do(ctx, http.MethodGet, "/v1/admin/lists/"+seg(address), nil, &out)
+}
+
+// PutList creates a list or replaces its settings and members.
+func (c *Client) PutList(ctx context.Context, l List) (List, error) {
+	var out List
+	return out, c.do(ctx, http.MethodPut, "/v1/admin/lists/"+seg(l.Address), l, &out)
+}
+
+// ChangeMembers adds and removes members without replacing the rest.
+func (c *Client) ChangeMembers(ctx context.Context, address string, add, remove []string) (List, error) {
+	var out List
+	body := map[string][]string{"add": add, "remove": remove}
+	return out, c.do(ctx, http.MethodPost, "/v1/admin/lists/"+seg(address)+"/members", body, &out)
+}
+
+// DeleteList removes a distribution list.
+func (c *Client) DeleteList(ctx context.Context, address string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/admin/lists/"+seg(address), nil, nil)
+}
+
+// Address says what owns an address: an account, an alias, a list, or
+// nothing.
+func (c *Client) Address(ctx context.Context, address string) (AddressInfo, error) {
+	var out AddressInfo
+	return out, c.do(ctx, http.MethodGet, "/v1/admin/addresses/"+seg(address), nil, &out)
+}

@@ -19,9 +19,9 @@ var ErrCredentials = errors.New("invalid mailbox credentials")
 type Authenticator interface {
 	Login(context.Context, string, string) (Account, error)
 	Resolve(context.Context, string) (Account, error)
-	// Exists reports whether the directory still has an account with this
-	// primary address, whatever its status. Resolve can't answer that: it
-	// refuses disabled accounts like unknown ones.
+	// Exists reports whether the directory has an account with this
+	// address, primary or alias, whatever its status. Resolve can't answer
+	// that: it refuses disabled accounts like unknown ones.
 	Exists(context.Context, string) (bool, error)
 }
 type LDAPAuth struct{ Config AuthConfig }
@@ -133,7 +133,7 @@ func (a LDAPAuth) Exists(ctx context.Context, address string) (bool, error) {
 		return false, err
 	}
 	result, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 5, false,
-		"(mail="+ldap.EscapeFilter(strings.ToLower(address))+")", []string{"dn"}, nil))
+		"(|(mail="+ldap.EscapeFilter(strings.ToLower(address))+")(mailAlternateAddress="+ldap.EscapeFilter(strings.ToLower(address))+"))", []string{"dn"}, nil))
 	if err != nil {
 		return false, err
 	}

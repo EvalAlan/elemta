@@ -116,3 +116,26 @@ CREATE TABLE IF NOT EXISTS mailbox_account_policy (
  settings jsonb NOT NULL DEFAULT '{}', updated timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS mailbox_account_policy_class ON mailbox_account_policy(class);
+
+-- Addressing beyond directory accounts (addressing.go): domain aliases and
+-- catch-alls, and distribution lists. List members are addresses, local or
+-- external; mailbox_list_sent remembers which messages a list has already
+-- sent on, so an LMTP retry doesn't send them again.
+CREATE TABLE IF NOT EXISTS mailbox_domain_routes (
+ domain text PRIMARY KEY, alias_of text, catch_all text,
+ updated timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS mailbox_lists (
+ address text PRIMARY KEY, name text NOT NULL DEFAULT '', description text NOT NULL DEFAULT '',
+ owner text NOT NULL DEFAULT '', posting text NOT NULL DEFAULT 'anyone',
+ updated timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS mailbox_list_members (
+ list text NOT NULL REFERENCES mailbox_lists(address) ON DELETE CASCADE,
+ member text NOT NULL, PRIMARY KEY(list, member)
+);
+CREATE INDEX IF NOT EXISTS mailbox_list_members_member ON mailbox_list_members(member);
+CREATE TABLE IF NOT EXISTS mailbox_list_sent (
+ list text NOT NULL, key text NOT NULL, expires timestamptz NOT NULL, PRIMARY KEY(list, key)
+);
+CREATE INDEX IF NOT EXISTS mailbox_list_sent_expiry ON mailbox_list_sent(expires);
