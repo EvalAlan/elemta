@@ -59,6 +59,86 @@ Maildir or another mailbox password. Mail apps sign in using the primary
 address. An alias does not automatically grant permission to send with that
 address; outbound sender permissions remain governed by `[auth.sender_aliases]`.
 
+## Classes of service
+
+A class of service is a named set of rules for what an account may do.
+Every domain can name the class its accounts use by default, and an account
+can name its own class and override single settings. Each setting is worked
+out separately, most specific first:
+
+account override > account's class > domain's class > `default` class > built-in default
+
+The built-in default allows everything and limits nothing, so an install
+without classes behaves as before. The `default` class always exists and
+can't be deleted. A class still used by an account or domain can't be
+deleted either.
+
+| Setting | Flag | Enforced by |
+|---|---|---|
+| Quota | `--quota 5G` | mailbox: delivery, IMAP APPEND |
+| Largest message | `--max-message 25M` | mailbox for mail received, MTA for mail sent |
+| Largest attachment | `--max-attachment 10M` | the same; measured after decoding, so 10M lets a 10 MB file through |
+| Messages per hour | `--messages-per-hour 200` | MTA, for a signed-in sender |
+| Recipients per message | `--recipients-per-message 100` | MTA, at RCPT |
+| Recipients per day | `--recipients-per-day 1000` | MTA, at RCPT |
+| Protocols | `--protocols pop3=off,imap=on` | `imap`, `pop3`: mailbox sign-in; `webmail`, `dav`: webmail; `submission`: MTA |
+| External forwarding | `--external-forwarding off` | mailbox: a filter redirecting outside the server keeps the mail instead |
+| Filters | `--filters off` | mailbox: stored filters are ignored and ManageSieve refuses; turning filters back on restores them |
+| Require app passwords | `--require-app-passwords on` | mail apps must use app passwords, as if the user had chosen it |
+| Require two-step verification | `--require-two-factor on` | webmail: sign-in leads through setting it up, and it can't be turned off |
+
+Sizes accept the same suffixes as quotas; for every limit `0` means
+unlimited. Every flag also takes `inherit`, which unsets the value so the
+next layer decides. A quota set on the account itself (`--quota` on
+create-account or modify-account) outranks the classes; only the account's
+policy override beats it.
+
+```sh
+provision set-class staff --description 'Staff' --quota 10G --max-attachment 25M --messages-per-hour 500
+provision set-class interns --quota 2G --protocols pop3=off,submission=off --external-forwarding off
+provision list-classes
+provision get-class staff
+provision set-domain-class example.com staff
+provision set-policy dana@example.com --class interns --messages-per-hour 50
+provision get-policy dana@example.com     # stored policy, and what applies with where each value came from
+provision set-domain-class example.com inherit
+provision delete-class interns
+```
+
+Sending limits count messages per clock hour and recipients per UTC day, per
+user. Mail sent from the webmail counts too. With `VALKEY_ADDR` set on the
+MTA, all nodes share one count; otherwise each node counts on its own. A
+sender over a limit gets a temporary refusal (4xx), so their mail program
+tries again later. If the MTA can't read a sender's policy, it also asks
+them to try later rather than sending unchecked. Changes reach the MTA within
+a minute and the mailbox at the next sign-in or delivery.
+
+Classes and policy are kept by the mailbox service. The CLI, the dashboard
+and the MTA reach them through its admin API on the internal health port,
+which is open only to `lmtp_allowed_networks` and needs a shared token,
+`ELEMTA_MAILBOX_ADMIN_TOKEN`. Clients find the API at
+`ELEMTA_MAILBOX_ADMIN_URL`, or at `[auth] mailbox_security_url` (the same
+port). Without the token the API is off and so are classes of service.
+`scripts/dev-secrets.sh` generates the token for the development stacks.
+
+## Purging a mailbox
+
+Deleting an account keeps its mail. To remove it permanently:
+
+```sh
+provision delete-account dana@example.com --confirm dana@example.com --purge
+# or, for an account deleted earlier:
+provision purge-account dana@example.com --confirm dana@example.com
+```
+
+A purge removes the account's folders, messages, filters, delivery records,
+two-step and app-password settings, and its class-of-service policy. It is
+refused while the directory still has the account, so a live mailbox can't
+be emptied by mistake. Message files are deleted by the mailbox's cleanup
+once nothing refers to them and the backup grace period
+(`body_grace_hours`) has passed, so a restore from a recent backup still
+works and mail shared with other mailboxes is kept.
+
 ## Domains and routing
 
 ```sh

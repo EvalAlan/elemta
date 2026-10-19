@@ -11,6 +11,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
 var (
@@ -67,6 +69,9 @@ type Service struct {
 	Remove            func(context.Context, string) error
 	Reset             func(context.Context, string, string) error
 	MinPasswordLength int
+	// Mailbox is the mailbox service's admin API: classes of service and
+	// purging. Nil when it isn't configured (ELEMTA_MAILBOX_ADMIN_TOKEN).
+	Mailbox *mailpolicy.Client
 }
 
 var localPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._+-]*$`)
@@ -417,4 +422,34 @@ func (s *Service) notify() error {
 		}
 	}
 	return nil
+}
+
+// MailboxAdmin returns the mailbox admin API, or explains how to set it up.
+func (s *Service) MailboxAdmin() (*mailpolicy.Client, error) {
+	if s == nil || s.Mailbox == nil {
+		return nil, fmt.Errorf("%w: set %s (and %s if the mailbox isn't at [auth] mailbox_security_url) to manage classes of service and purge mailboxes", ErrUnavailable, mailpolicy.TokenEnv, mailpolicy.URLEnv)
+	}
+	return s.Mailbox, nil
+}
+
+// Purge removes all mailbox data for an address whose account has already
+// been deleted: messages, folders, filters, security settings and policy.
+// It refuses an account the directory still has, so a live mailbox can't be
+// emptied by mistake; deleting the account first is the deliberate step.
+func (s *Service) Purge(ctx context.Context, raw string) (mailpolicy.PurgeResult, error) {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return mailpolicy.PurgeResult{}, err
+	}
+	address, err := Address(raw)
+	if err != nil {
+		return mailpolicy.PurgeResult{}, err
+	}
+	switch _, err := s.Directory.Get(ctx, address); {
+	case err == nil:
+		return mailpolicy.PurgeResult{}, fmt.Errorf("%w: %s still exists; delete the account before purging its mailbox", ErrInvalid, address)
+	case !errors.Is(err, ErrNotFound):
+		return mailpolicy.PurgeResult{}, err
+	}
+	return mailbox.Purge(ctx, address)
 }

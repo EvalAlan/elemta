@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/EvalAlan/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/EvalAlan/elemta/internal/webmail"
 	"github.com/spf13/cobra"
@@ -43,7 +45,19 @@ func openProvision(c *config.Config, path string) (*provision.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &provision.Service{Directory: directory, Routing: provision.FileDomains{Path: path}, Revoke: mail.AdminRevokeAccount, Remove: mail.AdminRemoveAccount, Reset: mail.AdminResetPassword, MinPasswordLength: wc.MinPasswordLength}, nil
+	service := &provision.Service{Directory: directory, Routing: provision.FileDomains{Path: path}, Revoke: mail.AdminRevokeAccount, Remove: mail.AdminRemoveAccount, Reset: mail.AdminResetPassword, MinPasswordLength: wc.MinPasswordLength}
+	// The mailbox admin API is optional: account and domain commands work
+	// without it, and the class-of-service commands say how to set it up.
+	securityURL := os.Getenv("ELEMTA_AUTH_MAILBOX_SECURITY_URL")
+	if securityURL == "" && c.Auth != nil {
+		securityURL = c.Auth.MailboxSecurityURL
+	}
+	if client, err := mailpolicy.FromEnv(securityURL); err == nil {
+		service.Mailbox = client
+	} else if !errors.Is(err, mailpolicy.ErrUnavailable) {
+		return nil, err
+	}
+	return service, nil
 }
 func defaultProvisionOpen() (*provision.Service, error) {
 	path, err := config.FindConfigFile(configPath)
@@ -136,16 +150,28 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 		return map[string]string{"status": "password reset; webmail sessions ended"}, nil
 	})
 	var confirm string
-	del := add("delete-account <email>", []string{"da"}, "Remove an account while retaining its mailbox files", 1, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
+	var purgeToo bool
+	del := add("delete-account <email>", []string{"da"}, "Remove an account, retaining its mailbox unless --purge is given", 1, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
 		if !strings.EqualFold(confirm, args[0]) {
-			return nil, fmt.Errorf("repeat the email address with --confirm to delete this account; mailbox files are retained")
+			return nil, fmt.Errorf("repeat the email address with --confirm to delete this account")
+		}
+		if purgeToo {
+			// Checked first, so a missing admin token doesn't leave the
+			// account deleted and its mail behind.
+			if _, err := s.MailboxAdmin(); err != nil {
+				return nil, err
+			}
 		}
 		if err := s.Delete(ctx, args[0]); err != nil {
 			return nil, err
 		}
-		return map[string]string{"status": "account removed; mailbox files retained"}, nil
+		if !purgeToo {
+			return map[string]string{"status": "account removed; mailbox files retained (purge-account removes them)"}, nil
+		}
+		return s.Purge(ctx, args[0])
 	})
 	del.Flags().StringVar(&confirm, "confirm", "", "Repeat the exact account email to confirm removal")
+	del.Flags().BoolVar(&purgeToo, "purge", false, "Also permanently remove the account's mail, folders, filters and settings")
 	for _, operation := range []struct {
 		use, alias, short string
 		add               bool
@@ -168,10 +194,14 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 			return map[string]string{"status": "domain configuration saved; SMTP restart required"}, nil
 		})
 	}
+	addPolicyCommands(add)
 	return root
 }
 func printProvision(cmd *cobra.Command, value any) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	if printPolicy(w, value) {
+		return w.Flush()
+	}
 	switch v := value.(type) {
 	case []provision.Account:
 		fmt.Fprintln(w, "ADDRESS\tNAME\tSTATUS\tQUOTA BYTES\tALIASES")
