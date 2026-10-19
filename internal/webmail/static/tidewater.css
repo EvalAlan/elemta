@@ -434,7 +434,9 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .attachments { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; }
 .attachment { display: flex; align-items: center; gap: 10px; min-width: 220px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); text-decoration: none; }
 .attachment > span { display: flex; flex-direction: column; }
-.reader-empty { margin: auto; }
+/* Near the top, where the eye lands after choosing a folder, not adrift
+   in the middle of a tall empty pane. */
+.reader-empty { margin: 56px auto 0; }
 .details { display: grid; grid-template-columns: max-content 1fr; gap: 10px 20px; margin: 0; }
 .details dt { color: var(--muted); }
 .details dd { margin: 0; }
