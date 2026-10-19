@@ -25,15 +25,35 @@ MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DIAGRAMS = ROOT / "docs" / "diagrams"
 SCALE = 2  # device pixels per CSS pixel, so the PNGs stay sharp when zoomed
+
+# The webmail and admin console's default palette (the :root variables in
+# internal/webmail/static/tidewater.css), so the diagrams look like the product.
+ACCENT, ACCENT_SOFT, INK, MUTED = "#2563EB", "#E0EAFD", "#0F172A", "#475569"
+LINE, SURFACE, SURFACE_2 = "#CBD5E1", "#FFFFFF", "#F8FAFC"
+THEME = {
+    "fontFamily": "Helvetica, Arial, sans-serif", "fontSize": "15px",
+    "background": SURFACE,
+    # Boxes: the accent-soft fill with an accent border, like selected items.
+    "primaryColor": ACCENT_SOFT, "primaryBorderColor": ACCENT, "primaryTextColor": INK,
+    "secondaryColor": SURFACE_2, "tertiaryColor": SURFACE,
+    "lineColor": MUTED, "textColor": INK,
+    # Groups: the light card surface with a quiet border.
+    "clusterBkg": SURFACE_2, "clusterBorder": LINE, "titleColor": INK,
+    "edgeLabelBackground": SURFACE,
+    # Sequence diagrams.
+    "actorBkg": ACCENT_SOFT, "actorBorder": ACCENT, "actorTextColor": INK, "actorLineColor": LINE,
+    "signalColor": MUTED, "signalTextColor": INK,
+    "noteBkgColor": SURFACE_2, "noteBorderColor": LINE, "noteTextColor": INK,
+}
 PAD = 24
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>
 body {{ margin: 0; background: #fff; }}
 #d {{ display: inline-block; padding: {pad}px; }}
 </style></head><body><div id="d"></div><script src="{mermaid}"></script><script>
-mermaid.initialize({{startOnLoad: false, theme: "default", securityLevel: "strict",
+mermaid.initialize({{startOnLoad: false, theme: "base", securityLevel: "strict",
   flowchart: {{useMaxWidth: false, htmlLabels: true}}, sequence: {{useMaxWidth: false, actorMargin: 40, width: 130, noteMargin: 8}},
-  themeVariables: {{fontFamily: "Helvetica, Arial, sans-serif", fontSize: "15px"}}}});
+  themeVariables: {theme}}});
 mermaid.render("svg", {source}).then(r => {{
   const d = document.getElementById("d");
   d.innerHTML = r.svg;
@@ -59,7 +79,7 @@ def headless(browser, *args):
 
 def render(browser, source: pathlib.Path, work: pathlib.Path):
     page = work / (source.stem + ".html")
-    page.write_text(PAGE.format(pad=PAD, mermaid=MERMAID, source=json.dumps(source.read_text())))
+    page.write_text(PAGE.format(pad=PAD, mermaid=MERMAID, theme=json.dumps(THEME), source=json.dumps(source.read_text())))
     # First pass: lay the diagram out and read its size from the title.
     out = headless(browser, "--window-size=4000,4000", "--dump-dom", page.as_uri()).stdout
     title = re.search(r"<title>(.*?)</title>", out)
