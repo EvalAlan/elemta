@@ -88,10 +88,25 @@
         <option value=""{{if eq .Prefs.HolidayRegion ""}} selected{{end}}>Automatic from time zone ({{.HolidayDefault}})</option>
         {{range .HolidayRegions}}<option value="{{.Code}}"{{if eq .Code $.Settings.Prefs.HolidayRegion}} selected{{end}}>{{.Label}}</option>{{end}}
       </select>
-      <label for="holiday_extra_countries">Additional countries</label>
-      <span><select id="holiday_extra_countries" name="holiday_extra_countries" multiple size="6">
-        {{range .HolidayCountries}}<option value="{{.Code}}"{{if inStrings .Code $.Settings.Prefs.HolidayExtraCountries}} selected{{end}}>{{.Label}}</option>{{end}}
-      </select><span class="small muted">Hold Ctrl or Command to choose several. Leave the list empty for one region.</span></span>
+      <label for="holiday_extra_add">Additional countries</label>
+      {{/* Chips with a remove button each, and a list to add from. Without
+           script, Add and remove submit the form; app.js does both in place. */}}
+      <div class="country-picker" data-country-picker data-max="12">
+        <ul class="country-chips" aria-label="Additional countries">
+          {{range .HolidayCountries}}{{if inStrings .Code $.Settings.Prefs.HolidayExtraCountries}}
+          <li class="country-chip"><input type="hidden" name="holiday_extra_countries" value="{{.Code}}"><span>{{.Label}}</span><button type="submit" name="holiday_extra_remove" value="{{.Code}}" title="Remove {{.Label}}"><span aria-hidden="true">×</span><span class="visually-hidden">Remove {{.Label}}</span></button></li>
+          {{end}}{{end}}
+        </ul>
+        <p class="small muted country-none"{{if .Prefs.HolidayExtraCountries}} hidden{{end}}>None yet. Holidays come from the region above.</p>
+        <span class="pair">
+          <select id="holiday_extra_add" name="holiday_extra_add">
+            <option value="">Add a country…</option>
+            {{range .HolidayCountries}}<option value="{{.Code}}"{{if inStrings .Code $.Settings.Prefs.HolidayExtraCountries}} disabled{{end}}>{{.Label}}</option>{{end}}
+          </select>
+          <button class="button country-add" type="submit" name="holiday_extra_op" value="add">Add</button>
+        </span>
+        <span class="small muted">Up to 12. Remember to save changes.</span>
+      </div>
       <span class="label">Include</span>
       <span><label class="checkline"><input type="checkbox" name="holiday_observed" value="1"{{if .Prefs.HolidayObserved}} checked{{end}}> Observed dates instead of actual dates</label>
       <label class="checkline"><input type="checkbox" name="holiday_informal" value="1"{{if .Prefs.HolidayInformal}} checked{{end}}> Informal holidays</label></span>

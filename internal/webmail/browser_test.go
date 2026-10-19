@@ -335,3 +335,47 @@ func TestBrowserCalendarFitsWindow(t *testing.T) {
 		t.Error("the import link is not shown in place of the control")
 	}
 }
+
+// TestBrowserHolidayCountryPicker pins the scripted picker: choosing a
+// country adds a chip without leaving the page, × removes it, and Save
+// keeps what the chips show. Set CALENDAR_SHOTS to keep a screenshot.
+func TestBrowserHolidayCountryPicker(t *testing.T) {
+	b := newBrowser(t)
+	b.login()
+	b.run(chromedp.EmulateViewport(1400, 1000), chromedp.Navigate(b.url("/settings#holidays")), chromedp.WaitVisible(chromedp.CSS("[data-country-picker]")))
+	choose := func(code string) {
+		b.run(chromedp.Evaluate[chromedp.Void](`(() => { const s = document.querySelector("#holiday_extra_add"); s.value = "`+code+`"; s.dispatchEvent(new Event("change", {bubbles: true})) })()`, chromedp.EvalAsValue))
+	}
+	chips := func() string {
+		return evalAs[string](b, `[...document.querySelectorAll(".country-chip input")].map(i => i.value).join(",")`)
+	}
+	choose("gb")
+	choose("fr")
+	choose("de")
+	if got := chips(); got != "gb,fr,de" {
+		t.Fatalf("chips after adding = %q", got)
+	}
+	if !evalAs[bool](b, `document.querySelector('#holiday_extra_add option[value="fr"]').disabled && document.querySelector("#holiday_extra_add").value === ""`) {
+		t.Error("a chosen country is still offered, or the list didn't reset")
+	}
+	b.run(chromedp.Click(chromedp.CSS(`.country-chip button[value="fr"]`), chromedp.NodeVisible))
+	if got := chips(); got != "gb,de" {
+		t.Fatalf("chips after removing = %q", got)
+	}
+	if p := evalAs[string](b, `location.pathname`); p != "/settings" {
+		t.Fatalf("removing a chip left the page for %s", p)
+	}
+	if shots := os.Getenv("CALENDAR_SHOTS"); shots != "" {
+		ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+		png, err := chromedp.Run(ctx, chromedp.Screenshot(chromedp.CSS("#holidays")))
+		cancel()
+		if err == nil {
+			_ = os.WriteFile(shots+"/holiday-countries.png", png, 0o600)
+		}
+	}
+	b.run(chromedp.Click(chromedp.CSS(".save-bar button"), chromedp.NodeVisible), chromedp.WaitVisible(chromedp.CSS("[data-country-picker]")))
+	got := evalAs[string](b, `[...document.querySelectorAll(".country-chip input")].map(i => i.value).sort().join(",")`)
+	if got != "de,gb" {
+		t.Fatalf("saved countries = %q, want de,gb", got)
+	}
+}

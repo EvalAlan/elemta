@@ -3,6 +3,8 @@ package webmail
 import (
 	"net/http"
 	"net/url"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -151,5 +153,56 @@ func TestHolidaysSharedAcrossRegionsShownOnce(t *testing.T) {
 	}
 	if holidayNameKey("New Year's Day") != holidayNameKey("New Years  day") {
 		t.Error("names differing only in punctuation and case should match")
+	}
+}
+
+// TestHolidayCountryPicker pins the no-script path of the additional
+// countries picker: Add appends the chosen country, a chip's remove button
+// drops just that one, and both keep the others and return to the section.
+func TestHolidayCountryPicker(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	base := func() url.Values {
+		return url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "holiday_region": {"us"}, "holiday_enabled": {"1"}}
+	}
+	// The saved countries, as the settings page shows them, sorted.
+	saved := func() []string {
+		t.Helper()
+		_, page := h.get("/settings")
+		var got []string
+		for _, m := range regexp.MustCompile(`name="holiday_extra_countries" value="([a-z]+)"`).FindAllStringSubmatch(page, -1) {
+			got = append(got, m[1])
+		}
+		slices.Sort(got)
+		return got
+	}
+	form := base()
+	form["holiday_extra_countries"] = []string{"gb", "fr"}
+	form.Set("holiday_extra_add", "de")
+	form.Set("holiday_extra_op", "add")
+	resp := h.post("/settings", form)
+	if resp.StatusCode != http.StatusSeeOther || !strings.HasSuffix(resp.Header.Get("Location"), "#holidays") {
+		t.Fatalf("add = %d to %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if got := saved(); !slices.Equal(got, []string{"de", "fr", "gb"}) {
+		t.Fatalf("after add = %v", got)
+	}
+	form = base()
+	form["holiday_extra_countries"] = []string{"gb", "fr", "de"}
+	form.Set("holiday_extra_remove", "fr")
+	h.post("/settings", form)
+	if got := saved(); !slices.Equal(got, []string{"de", "gb"}) {
+		t.Fatalf("after remove = %v", got)
+	}
+	_, page := h.get("/settings")
+	for _, want := range []string{`name="holiday_extra_countries" value="gb"`, `name="holiday_extra_remove" value="de"`, `<option value="gb" disabled>`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("settings page lacks %q", want)
+		}
+	}
+	form = base()
+	form.Set("holiday_extra_add", "zz")
+	if resp := h.post("/settings", form); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("unlisted country accepted: %d", resp.StatusCode)
 	}
 }

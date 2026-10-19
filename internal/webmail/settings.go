@@ -450,6 +450,17 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 			p.HolidayExtraCountries = append(p.HolidayExtraCountries, country)
 		}
 	}
+	// Without script, the picker's Add and remove buttons submit the form.
+	if add := r.PostFormValue("holiday_extra_add"); add != "" {
+		if !validHolidayCountry(add) {
+			problem = "Choose listed holiday countries."
+		} else if add != p.HolidayRegion && !slices.Contains(p.HolidayExtraCountries, add) {
+			p.HolidayExtraCountries = append(p.HolidayExtraCountries, add)
+		}
+	}
+	if remove := r.PostFormValue("holiday_extra_remove"); remove != "" {
+		p.HolidayExtraCountries = slices.DeleteFunc(p.HolidayExtraCountries, func(v string) bool { return v == remove })
+	}
 	if len(p.HolidayExtraCountries) > 12 {
 		problem = "Choose at most 12 additional countries."
 	}
@@ -467,6 +478,10 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		return
 	}
 	s.setAppearanceCookies(w, p)
+	if r.PostFormValue("holiday_extra_op") != "" || r.PostFormValue("holiday_extra_remove") != "" {
+		http.Redirect(w, r, "/settings?n=settings-saved#holidays", http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, "/settings?n=settings-saved#general", http.StatusSeeOther)
 }
 

@@ -48,6 +48,56 @@
     if (input.files && input.files.length) input.form.submit();
   });
 
+  // ---- holiday countries ---------------------------------------------------
+  // Choosing a country adds its chip at once, and a chip's × removes it,
+  // without submitting the form: the change is kept with Save changes.
+  $$("[data-country-picker]").forEach(function (picker) {
+    var list = $(".country-chips", picker);
+    var none = $(".country-none", picker);
+    var select = $("select", picker);
+    var max = parseInt(picker.getAttribute("data-max"), 10) || 12;
+    function refresh() {
+      var n = list.children.length;
+      none.hidden = n > 0;
+      select.disabled = n >= max;
+      select.options[0].textContent = n >= max ? "Limit reached" : "Add a country…";
+    }
+    function option(code) {
+      return Array.prototype.find.call(select.options, function (o) { return o.value === code; });
+    }
+    select.addEventListener("change", function () {
+      var o = select.options[select.selectedIndex];
+      if (!o || !o.value || o.disabled) return;
+      var li = doc.createElement("li");
+      li.className = "country-chip";
+      var input = doc.createElement("input");
+      input.type = "hidden"; input.name = "holiday_extra_countries"; input.value = o.value;
+      var label = doc.createElement("span");
+      label.textContent = o.textContent;
+      var btn = doc.createElement("button");
+      btn.type = "submit"; btn.name = "holiday_extra_remove"; btn.value = o.value; btn.title = "Remove " + o.textContent;
+      btn.innerHTML = '<span aria-hidden="true">×</span><span class="visually-hidden"></span>';
+      btn.lastChild.textContent = "Remove " + o.textContent;
+      li.append(input, label, btn);
+      list.appendChild(li);
+      o.disabled = true;
+      select.value = "";
+      refresh();
+      btn.focus();
+    });
+    list.addEventListener("click", function (e) {
+      var btn = e.target.closest("button[name=holiday_extra_remove]");
+      if (!btn) return;
+      e.preventDefault();
+      var o = option(btn.value);
+      if (o) o.disabled = false;
+      btn.closest("li").remove();
+      refresh();
+      select.focus();
+    });
+    refresh();
+  });
+
   // ---- theme ---------------------------------------------------------------
   // The toggle flips whichever theme is showing, including one that came
   // from the device's setting, applies it at once and saves it in the

@@ -511,6 +511,15 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .link-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
 .import { display: flex; flex-direction: column; gap: 6px; padding: 0 4px; }
 .import input { max-width: 100%; font-size: 12px; }
+.country-picker { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.country-picker .country-none { margin: 0; }
+.country-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.country-chips:empty { display: none; }
+.country-chip { display: inline-flex; align-items: center; gap: 2px; padding: 3px 3px 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-dark); font-size: 13px; }
+.country-chip button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: 50%; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
+.country-chip button:hover, .country-chip button:focus-visible { background: color-mix(in srgb, currentColor 18%, transparent); }
+.country-picker .pair select { flex: 1 1 auto; }
+.js .country-add { display: none; }
 /* With scripts, the import is a link like its export neighbour: the label
    opens the file picker and choosing a file submits (app.js), so the
    browser's own file control, which can't be styled, stays out of sight.
