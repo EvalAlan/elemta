@@ -35,7 +35,7 @@ nfpms:
     homepage: https://github.com/EvalAlan/elemta
     maintainer: EvalAlan
     description: Elemta SMTP server
-    license: MIT
+    license: GPL-3.0-only
     formats:
       - deb
       - rpm

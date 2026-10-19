@@ -111,4 +111,6 @@ Full guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+GPL-3.0 (GPL-3.0-only). See [LICENSE](LICENSE) and
+[LICENSING.md](LICENSING.md), which also covers commercial licenses and the
+earlier MIT-licensed versions.

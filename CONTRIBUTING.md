@@ -54,3 +54,11 @@ See [SECURITY.md](SECURITY.md).
 - Avoid hidden side effects.
 - Keep API and config compatibility in mind.
 - If removing behavior, document it and provide migration guidance.
+
+## Licensing of contributions
+
+Elemta is licensed under the GPL-3.0 (see [LICENSING.md](LICENSING.md)). By
+submitting a contribution, you agree that it is licensed under the same terms.
+Commercial licenses are also offered for Elemta, so contributors may later be
+asked to sign a contributor license agreement (CLA) that allows their work to be
+included in those; a pull request will say so if that applies.
