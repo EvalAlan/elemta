@@ -716,7 +716,7 @@ func TestMailCalendarPanel(t *testing.T) {
 		"csrf": {csrf}, "op": {"save"}, "summary": {"Planning review"}, "start_date": {tomorrow.Format("2006-01-02")}, "start_time": {"10:00"},
 		"end_date": {tomorrow.Format("2006-01-02")}, "end_time": {"11:00"},
 	})
-	if _, page := h.get("/mail?f=INBOX&uid=7"); strings.Contains(page, "mail-cal") || strings.Contains(page, "with-cal") {
+	if _, page := h.get("/mail?f=INBOX&uid=7"); strings.Contains(page, `class="mail-cal"`) || strings.Contains(page, "with-cal") {
 		t.Fatal("calendar panel shown without the preference")
 	}
 	h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "mail_calendar": {"1"}})
@@ -737,5 +737,34 @@ func TestMailCalendarPanel(t *testing.T) {
 	}
 	if _, page := h.get("/settings"); !strings.Contains(page, `name="mail_calendar" value="1" checked`) {
 		t.Error("settings page doesn't show the preference as on")
+	}
+}
+
+// TestMailCalendarToggle pins the top bar's toggle: it appears on mail
+// pages only, flips the preference and returns to the page it was pressed on.
+func TestMailCalendarToggle(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	_, page := h.get("/mail?f=INBOX&uid=7")
+	if !strings.Contains(page, `action="/settings/mail-calendar"`) || !strings.Contains(page, `aria-pressed="false"`) || !strings.Contains(page, `name="back" value="/mail?`) {
+		t.Fatal("mail page has no calendar toggle, or it shows as on")
+	}
+	if _, page := h.get("/calendar"); strings.Contains(page, "/settings/mail-calendar") {
+		t.Error("calendar toggle shown outside mail")
+	}
+	toggle := func(on string) {
+		t.Helper()
+		resp := h.post("/settings/mail-calendar", url.Values{"csrf": {csrf}, "on": {on}, "back": {"/mail?f=INBOX&uid=7"}})
+		if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/mail?f=INBOX&uid=7" {
+			t.Fatalf("toggle = %d to %q", resp.StatusCode, resp.Header.Get("Location"))
+		}
+	}
+	toggle("1")
+	if _, page := h.get("/mail?f=INBOX&uid=7"); !strings.Contains(page, `class="mail-cal"`) || !strings.Contains(page, `aria-pressed="true"`) {
+		t.Error("toggle didn't turn the calendar on")
+	}
+	toggle("0")
+	if _, page := h.get("/mail?f=INBOX&uid=7"); strings.Contains(page, `class="mail-cal"`) {
+		t.Error("toggle didn't turn the calendar off")
 	}
 }

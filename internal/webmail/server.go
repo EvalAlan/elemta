@@ -230,6 +230,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/timezone", s.authed(s.timezoneSubmit))
 	mux.HandleFunc("POST /settings/theme", s.authed(s.themeSubmit))
 	mux.HandleFunc("POST /settings/conversations", s.authed(s.conversationsSubmit))
+	mux.HandleFunc("POST /settings/mail-calendar", s.authed(s.mailCalendarSubmit))
 	mux.HandleFunc("POST /settings/password", s.authed(s.passwordSubmit))
 	mux.HandleFunc("GET /contacts", s.authed(s.contactsPage))
 	mux.HandleFunc("POST /contacts", s.authed(s.contactsSubmit))

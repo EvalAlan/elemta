@@ -331,7 +331,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .search input::placeholder { color: var(--chrome-placeholder); }
 .account { display: flex; align-items: center; gap: 8px; }
 .icon-link { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 6px; color: var(--chrome-muted); }
-.icon-link:hover, .icon-link[aria-current="page"] { color: var(--chrome-strong); background: var(--chrome-2); }
+.icon-link:hover, .icon-link[aria-current="page"], .icon-link[aria-pressed="true"] { color: var(--chrome-strong); background: var(--chrome-2); }
 .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #FFFFFF; display: inline-flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px; flex: 0 0 auto; }
 .avatar.soft { width: 40px; height: 40px; background: var(--c1-bg); color: var(--c1-fg); }
 .avatar.small-avatar { width: 32px; height: 32px; font-size: 12px; }
@@ -438,7 +438,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .upcoming-item .mono { font-size: 11px; flex: 0 0 auto; }
 .upcoming-item .swatch { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: currentColor; align-self: center; }
 @media (max-width: 1399px) {
-  .mail-cal { display: none; }
+  .mail-cal, .cal-toggle { display: none; }
   .with-cal .message { max-width: none; }
 }
 .priority { color: var(--danger); font-weight: 700; }
@@ -947,6 +947,8 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 /* Theme toggle: shows a moon in the light theme (go dark) and a sun in the
    dark one (go light), whichever way the theme was chosen. */
 .theme-toggle { border: 0; background: none; cursor: pointer; padding: 0; }
+.cal-toggle button { border: 0; background: none; cursor: pointer; padding: 0; }
+.cal-toggle button:hover, .cal-toggle button[aria-pressed="true"] { background: var(--chrome-2); color: var(--chrome-strong); }
 .theme-toggle .icon-sun { display: none; }
 :root[data-theme="dark"] .theme-toggle .icon-sun { display: inline; }
 :root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }

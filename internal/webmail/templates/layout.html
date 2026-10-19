@@ -27,6 +27,12 @@
   </form>
   {{end}}
   <div class="account">
+    {{if eq .App "mail"}}
+    <form action="/settings/mail-calendar" method="post" class="inline cal-toggle">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">{{with .List}}<input type="hidden" name="back" value="{{if $.Message}}{{.MessageURL $.Message.UID}}{{else}}{{.URL}}{{end}}">{{end}}
+      <button class="icon-link" type="submit" name="on" value="{{if .Calendar}}0{{else}}1{{end}}" aria-pressed="{{if .Calendar}}true{{else}}false{{end}}" title="{{if .Calendar}}Hide{{else}}Show{{end}} the calendar beside messages">{{template "icon-panel"}}<span class="visually-hidden">{{if .Calendar}}Hide{{else}}Show{{end}} the calendar beside messages</span></button>
+    </form>
+    {{end}}
     <form action="/settings/theme" method="post" class="inline">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
       <button class="icon-link theme-toggle" type="submit" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}" title="Switch between light and dark" data-theme-toggle>{{template "icon-moon"}}{{template "icon-sun"}}<span class="visually-hidden">Switch between light and dark</span></button>

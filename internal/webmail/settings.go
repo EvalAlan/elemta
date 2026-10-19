@@ -137,6 +137,19 @@ func (s *Server) themeSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 	redirectLocal(w, r, back)
 }
 
+// mailCalendarSubmit shows or hides the calendar beside messages, from the
+// top bar's toggle. The panel is rendered by the server, so the page reloads
+// where it was: the form carries its own URL, because pages send no Referer.
+func (s *Server) mailCalendarSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
+	p := s.prefs(r.Context(), sess)
+	p.MailCalendar = r.PostFormValue("on") == "1"
+	if err := s.savePrefs(r.Context(), sess, p); err != nil {
+		s.fail(w, r, sess, err)
+		return
+	}
+	redirectLocal(w, r, localBack(r.PostFormValue("back"), "/mail"))
+}
+
 const settingsID = "preferences"
 
 // Uses24h reports whether times show as 15:04 (the default) or 3:04 PM.
