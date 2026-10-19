@@ -91,6 +91,9 @@ services:
       # (internal/smtp/app_passwords.go). Only the webmail is exempt.
       - ELEMTA_AUTH_MAILBOX_SECURITY_URL=http://elemta-mailbox:8080
       - ELEMTA_AUTH_APP_PASSWORD_EXEMPT=${ELEMTA_WEBMAIL_IP:-10.253.53.250}
+      # Class-of-service sending limits are counted here, so every MTA node
+      # counts against the same totals (internal/smtp/sender_policy.go).
+      - VALKEY_ADDR=elemta-valkey:6379
     # Security configuration for the container
     security_opt:
       - no-new-privileges:true

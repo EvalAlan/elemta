@@ -47,6 +47,14 @@ if [ -z "${MAILBOX_TOTP_KEY:-}" ]; then
     (umask 077; printf '%s\n' "MAILBOX_TOTP_KEY=$MAILBOX_TOTP_KEY" >>"$master")
 fi
 
+# The mailbox admin API's shared token (internal/mailbox/admin_api.go): the
+# MTA reads sending limits with it, and the dashboard and provisioning CLI
+# manage classes of service and purge mailboxes. Upgrades add it in place.
+if [ -z "${MAILBOX_ADMIN_TOKEN:-}" ]; then
+    MAILBOX_ADMIN_TOKEN=$(gen)
+    (umask 077; printf '%s\n' "MAILBOX_ADMIN_TOKEN=$MAILBOX_ADMIN_TOKEN" >>"$master")
+fi
+
 # A generated bootstrap credential also covers fresh directories. Existing
 # volumes retain their old hash until ldap-admin-password.sh applies this.
 if [ -z "${LDAP_ADMIN_PASSWORD:-}" ]; then
@@ -72,11 +80,13 @@ fi
 recovery_smtp="ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=$ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD"
 write ldap-admin.env "LDAP_ADMIN_PASSWORD=$LDAP_ADMIN_PASSWORD"
 
-write elemta.env "ELEMTA_AUTH_DATASOURCE_PASS=$LDAP_SMTP_PASSWORD"
+write elemta.env "ELEMTA_AUTH_DATASOURCE_PASS=$LDAP_SMTP_PASSWORD" \
+    "ELEMTA_MAILBOX_ADMIN_TOKEN=$MAILBOX_ADMIN_TOKEN"
 write mailbox.env \
     "ELEMTA_MAILBOX_LDAP_DN=cn=mailbox,ou=services,dc=example,dc=com" \
     "ELEMTA_MAILBOX_LDAP_PASSWORD=$LDAP_MAILBOX_PASSWORD" \
-    "ELEMTA_MAILBOX_TOTP_KEYS=v1:$MAILBOX_TOTP_KEY"
+    "ELEMTA_MAILBOX_TOTP_KEYS=v1:$MAILBOX_TOTP_KEY" \
+    "ELEMTA_MAILBOX_ADMIN_TOKEN=$MAILBOX_ADMIN_TOKEN"
 
 storage="$dir/mailbox-storage.env"
 if [ ! -f "$storage" ]; then
@@ -108,6 +118,8 @@ write webmail.env \
     "$recovery_smtp"
 write web.env \
     "ELEMTA_LDAP_PROVISION_PASSWORD=$LDAP_PROVISIONER_PASSWORD" \
+    "ELEMTA_MAILBOX_ADMIN_TOKEN=$MAILBOX_ADMIN_TOKEN" \
+    "ELEMTA_MAILBOX_ADMIN_URL=http://elemta-mailbox:8080" \
     "ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD=$LDAP_WEBMAIL_PASSWORD" \
     "ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD=$LDAP_WEBMAIL_RESET_PASSWORD" \
     "$recovery_smtp"
