@@ -45,6 +45,8 @@ type Event struct {
 	// ReadOnly marks events made from other data (contact birthdays),
 	// which the calendar shows but can't edit.
 	ReadOnly bool
+	// HolidayKey identifies a holiday across years for the user's hide list.
+	HolidayKey string
 }
 
 // Attendee is a participant in a meeting.

@@ -13,6 +13,7 @@
   <ul class="cal-legend">
     {{range .Calendars}}<li><span class="swatch {{calClass .}}"></span>{{.}}</li>{{end}}
   </ul>
+  <a class="small manage" href="/settings#holidays">Customize holidays</a>
   <form class="import" action="/calendar/import" method="post" enctype="multipart/form-data">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
     <label class="small" for="ics">Import an .ics file</label>
@@ -119,7 +120,12 @@
     <button class="button danger" data-confirm="{{if .Event.Recurring}}Delete every occurrence of this event?{{else}}Delete this event?{{end}}{{if and .Event.HasAttendees .Organizer}} Guests will be told it is cancelled.{{end}}">{{if .Event.Recurring}}Delete series{{else}}Delete{{end}}</button>
   </form>
   {{else}}
-  <span class="muted small">This event comes from your contacts. Edit the contact to change it.</span>
+  {{if .Event.HolidayKey}}
+  <form action="/calendar/holiday/hide" method="post" class="inline">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="uid" value="{{.Event.UID}}"><input type="hidden" name="date" value="{{.Occ.Start.Format "2006-01-02"}}"><input type="hidden" name="back" value="{{$.Calendar.PrevURL}}">
+    <button class="button" type="submit">Hide this holiday</button>
+  </form>
+  {{else}}<span class="muted small">This event comes from your contacts. Edit the contact to change it.</span>{{end}}
   {{end}}
 </div>
 <div class="event-view">

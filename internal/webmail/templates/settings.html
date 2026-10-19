@@ -75,6 +75,27 @@
         <option value="agenda"{{if eq $cv "agenda"}} selected{{end}}>Agenda</option>
       </select>
     </div>
+    <div class="card form-grid" id="holidays">
+      <h2 class="card-title">Holidays</h2>
+      <span class="label">Show holidays</span>
+      <label class="checkline"><input type="checkbox" name="holiday_enabled" value="1"{{if not .Prefs.HolidayDisabled}} checked{{end}}> Show a read-only holiday calendar</label>
+      <label for="holiday_region">Country or region</label>
+      <select id="holiday_region" name="holiday_region">
+        <option value=""{{if eq .Prefs.HolidayRegion ""}} selected{{end}}>Automatic from time zone ({{.HolidayDefault}})</option>
+        {{range .HolidayRegions}}<option value="{{.Code}}"{{if eq .Code $.Settings.Prefs.HolidayRegion}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+      <label for="holiday_extra_countries">Additional countries</label>
+      <span><select id="holiday_extra_countries" name="holiday_extra_countries" multiple size="6">
+        {{range .HolidayCountries}}<option value="{{.Code}}"{{if inStrings .Code $.Settings.Prefs.HolidayExtraCountries}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select><span class="small muted">Hold Ctrl or Command to choose several. Leave the list empty for one region.</span></span>
+      <span class="label">Include</span>
+      <span><label class="checkline"><input type="checkbox" name="holiday_observed" value="1"{{if .Prefs.HolidayObserved}} checked{{end}}> Observed dates instead of actual dates</label>
+      <label class="checkline"><input type="checkbox" name="holiday_informal" value="1"{{if .Prefs.HolidayInformal}} checked{{end}}> Informal holidays</label></span>
+      {{if .HiddenHolidays}}
+      <span class="label">Hidden holidays</span>
+      <span>{{range .HiddenHolidays}}<button class="button" type="submit" name="holiday_restore" value="{{.Key}}" title="Show this holiday again">Show {{.Label}}</button> {{end}}</span>
+      {{end}}
+    </div>
     <div class="save-bar"><button class="button primary" type="submit">Save changes</button></div>
   </form>
 {{end}}

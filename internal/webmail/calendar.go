@@ -175,10 +175,32 @@ func (s *Server) calendarPage(w http.ResponseWriter, r *http.Request, sess *Sess
 		s.fail(w, r, sess, err)
 		return
 	}
+	from, to := calendarWindow(view, date, prefs.WeekStart)
+	holidayItems, err := holidayEvents(prefs, s.defaultLoc.String(), loc, from, to)
+	if err != nil {
+		s.fail(w, r, sess, err)
+		return
+	}
+	events = append(events, holidayItems...)
 	cv := s.buildCalendar(view, date, today, now, prefs, events)
 	v := view2(sess, "Calendar", cv)
 	v.Notice = notices[q.Get("n")]
 	s.render(w, "calendar.html", http.StatusOK, v)
+}
+
+func calendarWindow(view string, date time.Time, first int) (time.Time, time.Time) {
+	switch view {
+	case "month":
+		start := weekStart(time.Date(date.Year(), date.Month(), 1, 0, 0, 0, 0, date.Location()), first)
+		return start, start.AddDate(0, 0, 42)
+	case "week":
+		start := weekStart(date, first)
+		return start, start.AddDate(0, 0, 7)
+	case "agenda":
+		return date, date.AddDate(0, 0, 30)
+	default:
+		return date, date.AddDate(0, 0, 1)
+	}
 }
 
 func view2(sess *Session, title string, cv *calendarView) view {
@@ -473,6 +495,15 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 	var occ time.Time
 	if n, err := strconv.ParseInt(q.Get("occ"), 10, 64); err == nil {
 		occ = time.Unix(n, 0).In(loc)
+	}
+	if strings.HasPrefix(q.Get("uid"), "holiday-") && !occ.IsZero() {
+		day := dayStart(occ)
+		holidayItems, err := holidayEvents(prefs, s.defaultLoc.String(), loc, day, day.AddDate(0, 0, 1))
+		if err != nil {
+			s.fail(w, r, sess, err)
+			return
+		}
+		events = append(events, holidayItems...)
 	}
 	ev := findEvent(events, q.Get("uid"))
 	if ev != nil && occ.IsZero() {

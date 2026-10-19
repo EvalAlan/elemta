@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,13 @@ type Settings struct {
 	PageSize       int    `json:"page_size,omitempty"`
 	// CalendarView is the view the calendar opens in: month, week, day or agenda.
 	CalendarView string `json:"calendar_view,omitempty"`
+	// Empty region follows the user's time zone; the overlay is on unless disabled.
+	HolidayDisabled       bool     `json:"holiday_disabled,omitempty"`
+	HolidayRegion         string   `json:"holiday_region,omitempty"`
+	HolidayExtraCountries []string `json:"holiday_extra_countries,omitempty"`
+	HolidayInformal       bool     `json:"holiday_informal,omitempty"`
+	HolidayObserved       bool     `json:"holiday_observed,omitempty"`
+	HolidayHidden         []string `json:"holiday_hidden,omitempty"`
 	// Theme is "light" or "dark", or empty to follow the device's setting.
 	Theme string `json:"theme,omitempty"`
 	// Palette is the colour scheme: empty for the default, which matches
@@ -231,10 +239,14 @@ var commonZones = []string{
 }
 
 type settingsView struct {
-	CanRecover    bool
-	RecoveryEmail string
-	Prefs         Settings
-	Zones         []string
+	CanRecover       bool
+	RecoveryEmail    string
+	Prefs            Settings
+	Zones            []string
+	HolidayRegions   []holidayRegionChoice
+	HolidayCountries []holidayRegionChoice
+	HolidayDefault   string
+	HiddenHolidays   []hiddenHolidayChoice
 	// CanChangePassword shows the password form.
 	CanChangePassword bool
 	MinPasswordLength int
@@ -328,6 +340,12 @@ func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view,
 	if card, ok := noticeCards[r.URL.Query().Get("n")]; ok {
 		v.Settings.Notice, v.Settings.NoticeCard, v.Notice = v.Notice, card, ""
 	}
+	if tab == "general" {
+		v.Settings.HolidayRegions = holidayRegionChoices(false)
+		v.Settings.HolidayCountries = holidayRegionChoices(true)
+		v.Settings.HolidayDefault = holidayRegionLabel(inferredHolidayRegion(p.Timezone, s.defaultLoc.String()))
+		v.Settings.HiddenHolidays = hiddenHolidayChoices(p.HolidayHidden)
+	}
 	if s.recovery != nil && tab == "account" {
 		rec, err := s.recoveryRecord(r.Context(), s.recoveryAccount(sess.User))
 		if err != nil {
@@ -393,8 +411,32 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	case "month", "week", "day", "agenda":
 		p.CalendarView = v
 	}
+	p.HolidayDisabled = r.PostFormValue("holiday_enabled") != "1"
+	p.HolidayInformal = r.PostFormValue("holiday_informal") == "1"
+	p.HolidayObserved = r.PostFormValue("holiday_observed") == "1"
+	if region := r.PostFormValue("holiday_region"); region == "" || validHolidayRegion(region) {
+		p.HolidayRegion = region
+	} else {
+		problem = "Choose a listed holiday region."
+	}
+	p.HolidayExtraCountries = nil
+	for _, country := range r.PostForm["holiday_extra_countries"] {
+		if !validHolidayCountry(country) {
+			problem = "Choose listed holiday countries."
+			break
+		}
+		if country != p.HolidayRegion && !slices.Contains(p.HolidayExtraCountries, country) {
+			p.HolidayExtraCountries = append(p.HolidayExtraCountries, country)
+		}
+	}
+	if len(p.HolidayExtraCountries) > 12 {
+		problem = "Choose at most 12 additional countries."
+	}
+	if key := r.PostFormValue("holiday_restore"); key != "" {
+		p.HolidayHidden = slices.DeleteFunc(p.HolidayHidden, func(v string) bool { return v == key })
+	}
 	if problem != "" {
-		v := view{Title: "Settings", Session: sess, App: "settings", SettingsTab: "general", Problem: problem, Settings: &settingsView{Tab: "general", Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength}}
+		v := view{Title: "Settings", Session: sess, App: "settings", SettingsTab: "general", Problem: problem, Settings: &settingsView{Tab: "general", Prefs: p, Zones: commonZones, CanChangePassword: s.passwords != nil, MinPasswordLength: s.cfg.MinPasswordLength, HolidayRegions: holidayRegionChoices(false), HolidayCountries: holidayRegionChoices(true), HolidayDefault: holidayRegionLabel(inferredHolidayRegion(p.Timezone, s.defaultLoc.String())), HiddenHolidays: hiddenHolidayChoices(p.HolidayHidden)}}
 		s.withFolders(r, sess, &v)
 		s.render(w, "settings.html", http.StatusBadRequest, v)
 		return

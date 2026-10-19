@@ -238,6 +238,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /calendar", s.authed(s.calendarPage))
 	mux.HandleFunc("GET /calendar/event", s.authed(s.eventPage))
 	mux.HandleFunc("POST /calendar/event", s.authed(s.eventSubmit))
+	mux.HandleFunc("POST /calendar/holiday/hide", s.authed(s.holidayHide))
 	mux.HandleFunc("POST /calendar/rsvp", s.authed(s.rsvpSubmit))
 	mux.HandleFunc("GET /calendar/export", s.authed(s.calendarExport))
 	mux.HandleFunc("POST /calendar/import", s.authed(s.calendarImport))

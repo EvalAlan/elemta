@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -108,6 +109,7 @@ var templateFuncs = template.FuncMap{
 		}
 		return false
 	},
+	"inStrings": func(s string, list []string) bool { return slices.Contains(list, s) },
 	// threadCard pairs a conversation message with the page, for the
 	// thread-card template, which needs both.
 	"threadCard": func(r Related, v view) map[string]any { return map[string]any{"R": r, "V": v} },
