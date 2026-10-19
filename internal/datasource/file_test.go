@@ -37,6 +37,31 @@ func TestModifyUsersFileSerializesIndependentWriters(t *testing.T) {
 	}
 }
 
+func TestModifyUsersFileRejectsEscapingLockSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("unchanged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "users")
+	if err := os.Symlink(outside, path+".lock"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ModifyUsersFile(path, func(map[string]FileUser) error {
+		t.Fatal("change ran with an escaping lock path")
+		return nil
+	}); err == nil {
+		t.Fatal("escaping lock path was accepted")
+	}
+	content, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "unchanged" {
+		t.Fatalf("outside file changed: %q", content)
+	}
+}
+
 func newFileSource(t *testing.T, content string) (*FileDataSource, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "users")

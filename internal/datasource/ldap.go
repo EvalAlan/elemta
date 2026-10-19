@@ -89,6 +89,7 @@ func (l *LDAP) dial() (*ldap.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
+		// #nosec G304 -- the CA path is chosen by the operator's LDAP configuration.
 		pem, err := os.ReadFile(caFile)
 		if err != nil {
 			return nil, err

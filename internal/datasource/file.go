@@ -274,7 +274,12 @@ func ModifyUsersFile(path string, change func(map[string]FileUser) error) error 
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	lockDir, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer lockDir.Close()
+	lock, err := lockDir.OpenFile(filepath.Base(path)+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
