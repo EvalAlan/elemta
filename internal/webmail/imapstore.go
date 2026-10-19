@@ -471,6 +471,8 @@ func toSummary(m *imapclient.FetchMessageBuffer) Summary {
 			sum.Draft = true
 		case strings.EqualFold(string(f), FlagForwarded):
 			sum.Forwarded = true
+		case strings.EqualFold(string(f), FlagSchedulingDone):
+			sum.SchedulingDone = true
 		case isTagKeyword(string(f)):
 			sum.Tags = append(sum.Tags, string(f))
 		}
@@ -478,8 +480,28 @@ func toSummary(m *imapclient.FetchMessageBuffer) Summary {
 	sort.Strings(sum.Tags)
 	if m.BodyStructure != nil {
 		sum.HasAttachment = hasAttachment(m.BodyStructure)
+		sum.Scheduling = schedulingMethod(m.BodyStructure)
 	}
 	return sum
+}
+
+// schedulingMethod is the method parameter of a message's text/calendar
+// part, which iMIP (RFC 6047) requires, so invitation replies can be found
+// from the list's body structures without downloading every message.
+func schedulingMethod(bs imap.BodyStructure) string {
+	method := ""
+	bs.Walk(func(_ []int, part imap.BodyStructure) bool {
+		single, ok := part.(*imap.BodyStructureSinglePart)
+		if ok && strings.EqualFold(single.Type, "text") && strings.EqualFold(single.Subtype, "calendar") {
+			for k, v := range single.Params {
+				if strings.EqualFold(k, "method") {
+					method = strings.ToUpper(strings.TrimSpace(v))
+				}
+			}
+		}
+		return method == ""
+	})
+	return method
 }
 
 // hasAttachment reports whether a body structure carries a file a user

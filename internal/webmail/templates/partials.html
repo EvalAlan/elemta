@@ -19,7 +19,7 @@
       <button class="button{{if eq .MyStatus "DECLINED"}} primary-soft{{end}}" name="op" value="DECLINED">No</button>
     {{else if eq .Method "REPLY"}}
       {{with .Reply}}<span>{{.Label}}: <span class="{{.StatusClass}}">{{.StatusLabel}}</span></span>{{end}}
-      {{if .InCalendar}}<button class="button" name="op" value="apply-reply">Record in my calendar</button>{{end}}
+      {{if .Recorded}}<span class="small muted">Recorded in your calendar.</span>{{else if .InCalendar}}<button class="button" name="op" value="apply-reply">Record in my calendar</button>{{end}}
     {{else if eq .Method "CANCEL"}}
       {{if .InCalendar}}<button class="button danger" name="op" value="apply-cancel">Remove from my calendar</button>{{else}}<span class="small muted">It isn't in your calendar.</span>{{end}}
     {{else}}

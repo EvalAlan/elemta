@@ -415,3 +415,51 @@ func TestBaseSubject(t *testing.T) {
 		}
 	}
 }
+
+// TestIMAPStoreSchedulingMethod pins that the list finds an invitation reply
+// from the body structure alone, and that marking it done round-trips as a
+// keyword the UI doesn't show as a tag.
+func TestIMAPStoreSchedulingMethod(t *testing.T) {
+	cfg := startIMAP(t)
+	st := dialTest(t, cfg)
+	ctx := context.Background()
+	appendTo(t, st, "INBOX", guestReply("priya@northwind.example", "priya@northwind.example", "ACCEPTED", "e1@example.com"))
+	appendTo(t, st, "INBOX", testMessage(2, "Plain"))
+	p, err := st.List(ctx, "INBOX", ListQuery{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	methods := map[string]string{}
+	var replyUID uint32
+	for _, m := range p.Messages {
+		methods[m.Subject] = m.Scheduling
+		if m.Scheduling == "REPLY" {
+			replyUID = m.UID
+		}
+	}
+	if methods["Accepted: Kickoff"] != "REPLY" || methods["Plain"] != "" {
+		t.Fatalf("scheduling methods = %v", methods)
+	}
+	if err := st.SetFlags(ctx, "INBOX", []uint32{replyUID}, []string{FlagSchedulingDone}, true); err != nil {
+		t.Fatal(err)
+	}
+	p, _ = st.List(ctx, "INBOX", ListQuery{Page: 1, PageSize: 10})
+	for _, m := range p.Messages {
+		if m.UID == replyUID && (!m.SchedulingDone || len(m.Tags) != 0) {
+			t.Fatalf("after marking: done=%v tags=%v", m.SchedulingDone, m.Tags)
+		}
+	}
+	tp, err := st.ListThreads(ctx, "INBOX", ListQuery{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range tp.Conversations {
+		for _, m := range c.Messages {
+			found = found || m.Scheduling == "REPLY" && m.SchedulingDone
+		}
+	}
+	if !found {
+		t.Error("conversation list lost the scheduling fields")
+	}
+}

@@ -363,3 +363,100 @@ func TestTasks(t *testing.T) {
 		t.Fatalf("after clearing finished tasks: %d left", len(objs))
 	}
 }
+
+// guestReply is an invitation reply shaped like the ones Google Calendar
+// sends: the REPLY is a text/calendar alternative inside multipart/mixed,
+// beside an invite.ics attachment.
+func guestReply(from, attendee, partstat, eventUID string) []byte {
+	cal := "BEGIN:VCALENDAR\r\nPRODID:-//Google Inc//Google Calendar 70.9054//EN\r\nVERSION:2.0\r\nCALSCALE:GREGORIAN\r\nMETHOD:REPLY\r\n" +
+		"BEGIN:VEVENT\r\nDTSTART:20261020T140000Z\r\nDTEND:20261020T150000Z\r\nDTSTAMP:20261019T070202Z\r\n" +
+		"ORGANIZER;CN=User:mailto:user@example.com\r\nUID:" + eventUID + "\r\n" +
+		"ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=" + partstat + ";X-NUM-GUESTS=0:mailto:" + attendee + "\r\n" +
+		"SEQUENCE:0\r\nSTATUS:CONFIRMED\r\nSUMMARY:Kickoff\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	return []byte("From: <" + from + ">\r\nTo: user@example.com\r\nSubject: Accepted: Kickoff\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=outer\r\n\r\n--outer\r\nContent-Type: multipart/alternative; boundary=inner\r\n\r\n" +
+		"--inner\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" + attendee + " has accepted.\r\n" +
+		"--inner\r\nContent-Type: text/calendar; charset=\"UTF-8\"; method=REPLY\r\nContent-Transfer-Encoding: 7bit\r\n\r\n" + cal +
+		"--inner--\r\n--outer\r\nContent-Type: application/ics; name=\"invite.ics\"\r\nContent-Disposition: attachment; filename=\"invite.ics\"\r\n\r\n" + cal + "--outer--\r\n")
+}
+
+// TestGuestRepliesRecordedAutomatically pins that a guest's reply updates
+// the organizer's calendar as soon as a list containing it is loaded, with
+// no button to press; that a reply only speaks for its sender; that later
+// answers win; and that each reply is marked so it is read once.
+func TestGuestRepliesRecordedAutomatically(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	postForm(t, h, "/calendar/event", url.Values{
+		"csrf": {csrf}, "op": {"save"}, "summary": {"Kickoff"}, "start_date": {"2026-10-20"}, "start_time": {"14:00"},
+		"end_date": {"2026-10-20"}, "end_time": {"15:00"}, "attendees": {"Priya Shah <priya@northwind.example>, marcus@example.com"}, "notify": {"1"},
+	})
+	objs, _ := h.store.Objects(context.Background(), CollCalendar)
+	if len(objs) != 1 {
+		t.Fatalf("%d stored events", len(objs))
+	}
+	cal, err := decodeCalendar(objs[0].Data, time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventUID := cal.Events[0].UID
+	status := func() map[string]string {
+		t.Helper()
+		objs, _ := h.store.Objects(context.Background(), CollCalendar)
+		cal, err := decodeCalendar(objs[0].Data, time.UTC)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, a := range cal.Events[0].Attendees {
+			out[a.Email] = a.Status
+		}
+		return out
+	}
+
+	inbox := func(uids ...uint32) {
+		h.store.mu.Lock()
+		defer h.store.mu.Unlock()
+		for _, uid := range uids {
+			h.store.messages["INBOX"] = append([]Summary{{UID: uid, Subject: "Accepted: Kickoff", From: []Address{{Email: "x@example.org"}}, Date: time.Now(), Scheduling: "REPLY"}}, h.store.messages["INBOX"]...)
+		}
+	}
+	h.store.raw[20] = guestReply("priya@northwind.example", "priya@northwind.example", "ACCEPTED", eventUID)
+	// A reply from someone else claiming to speak for Marcus.
+	h.store.raw[21] = guestReply("mallory@evil.example", "marcus@example.com", "DECLINED", eventUID)
+	inbox(20, 21)
+	if _, page := h.get("/mail?f=INBOX"); !strings.Contains(page, "Accepted: Kickoff") {
+		t.Fatal("inbox didn't list the replies")
+	}
+	got := status()
+	if got["priya@northwind.example"] != "ACCEPTED" {
+		t.Errorf("Priya's acceptance not recorded: %v", got)
+	}
+	if got["marcus@example.com"] == "DECLINED" {
+		t.Error("a reply from another sender changed Marcus's answer")
+	}
+	for _, uid := range []uint32{20, 21} {
+		if !h.store.flags[uid][FlagSchedulingDone] {
+			t.Errorf("reply %d not marked as dealt with", uid)
+		}
+	}
+
+	// Priya changes her mind; the later reply wins even though the list
+	// still shows the earlier one too (newest first).
+	h.store.raw[22] = guestReply("priya@northwind.example", "priya@northwind.example", "DECLINED", eventUID)
+	inbox(22)
+	h.get("/mail?f=INBOX")
+	if got := status()["priya@northwind.example"]; got != "DECLINED" {
+		t.Errorf("Priya's later answer = %q, want DECLINED", got)
+	}
+	// Opening the reply shows it as recorded, without the button.
+	_, page := h.get("/mail?f=INBOX&uid=22")
+	if !strings.Contains(page, "Recorded in your calendar.") || strings.Contains(page, `value="apply-reply"`) {
+		t.Error("open reply not shown as recorded")
+	}
+	// The event page shows the answer.
+	_, page = h.get("/calendar/event?uid=" + url.QueryEscape(eventUID))
+	if !strings.Contains(page, "Priya Shah <span class=\"small "+(Attendee{Status: "DECLINED"}).StatusClass()+"\">· "+(Attendee{Status: "DECLINED"}).StatusLabel()) {
+		t.Error("event page doesn't show Priya's answer")
+	}
+}

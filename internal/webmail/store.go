@@ -64,6 +64,12 @@ type Summary struct {
 	Draft         bool
 	HasAttachment bool
 	Tags          []string // user keywords, see isTagKeyword
+	// Scheduling is the iTIP method of the message's text/calendar part
+	// (REQUEST, REPLY, CANCEL), or empty when it has none.
+	Scheduling string
+	// SchedulingDone is set once the webmail has acted on that part, so a
+	// guest's reply is recorded once (FlagSchedulingDone).
+	SchedulingDone bool
 }
 
 // Related is a message found in another place in a conversation.
@@ -173,6 +179,9 @@ const (
 	// FlagForwarded is the keyword most clients use to mark a forwarded
 	// message (RFC 5788 registry).
 	FlagForwarded = "$Forwarded"
+	// FlagSchedulingDone marks an invitation reply already recorded in the
+	// organizer's calendar. It starts with $, so it is never shown as a tag.
+	FlagSchedulingDone = "$ITIPProcessed"
 )
 
 // Mailstore is the webmail's view of one user's mailboxes. The IMAP

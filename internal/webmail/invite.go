@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ type inviteView struct {
 	InCalendar bool
 	Outdated   bool // the calendar already has a newer version
 	Reply      *Attendee
+	Recorded   bool // the calendar already shows this reply's answer
 	Conflicts  []Occurrence
 	Folder     string
 	UID        uint32
@@ -77,6 +79,9 @@ func decorateInvite(s *Server, ctx context.Context, sess *Session, v *view) {
 			for _, a := range stored.Attendees {
 				if strings.EqualFold(a.Email, sess.Address) {
 					iv.MyStatus = a.Status
+				}
+				if iv.Reply != nil && strings.EqualFold(a.Email, iv.Reply.Email) && a.Status == iv.Reply.Status {
+					iv.Recorded = true
 				}
 			}
 		}
@@ -255,13 +260,7 @@ func (s *Server) rsvpSubmit(w http.ResponseWriter, r *http.Request, sess *Sessio
 			err = ErrNotFound
 			break
 		}
-		for _, a := range incoming.Attendees {
-			for i := range stored.Attendees {
-				if strings.EqualFold(stored.Attendees[i].Email, a.Email) {
-					stored.Attendees[i].Status = a.Status
-				}
-			}
-		}
+		applyReply(stored, incoming, "")
 		notice = "rsvp-updated"
 		err = s.putEvent(ctx, sess, *stored)
 	case "apply-cancel", "remove":
@@ -358,4 +357,119 @@ func (s *Server) sendReply(ctx context.Context, sess *Session, e Event, status s
 		Calendar: &CalendarPart{Method: "REPLY", Data: data},
 	}
 	return s.submitDraft(ctx, sess, d)
+}
+
+// Guests' replies are recorded in the organizer's calendar as they arrive,
+// the way every calendar does it, so "Not replied" changes to "Accepted"
+// without the organizer opening each reply. The webmail notices them in the
+// message lists it loads: a list's body structures name each message's
+// calendar method, so finding replies costs no extra round trips. Each
+// recorded reply is flagged FlagSchedulingDone, so it is read once.
+
+// maxRepliesPerLoad bounds the work one page load does for replies that
+// arrived while the user was away; the next load picks up the rest.
+const maxRepliesPerLoad = 20
+
+// receivedReply is an invitation reply read from a message.
+type receivedReply struct {
+	uid    uint32
+	sender string
+	event  Event
+}
+
+// pendingReplies picks the listed replies not yet recorded, oldest first,
+// so a guest who changed their mind ends with their latest answer.
+func pendingReplies(p Page, convs []Conversation) []uint32 {
+	seen := map[uint32]bool{}
+	var uids []uint32
+	add := func(m Summary) {
+		if m.Scheduling == "REPLY" && !m.SchedulingDone && !seen[m.UID] {
+			seen[m.UID] = true
+			uids = append(uids, m.UID)
+		}
+	}
+	for _, m := range p.Messages {
+		add(m)
+	}
+	for _, c := range convs {
+		for _, m := range c.Messages {
+			add(m)
+		}
+	}
+	slices.Sort(uids)
+	if len(uids) > maxRepliesPerLoad {
+		uids = uids[:maxRepliesPerLoad]
+	}
+	return uids
+}
+
+// readReplies downloads and decodes replies. A message that can't be read
+// as a reply is returned without an event, so it is still marked done and
+// not downloaded again on every load.
+func (s *Server) readReplies(ctx context.Context, st Mailstore, folder string, uids []uint32, loc *time.Location) []receivedReply {
+	var out []receivedReply
+	for _, uid := range uids {
+		r := receivedReply{uid: uid}
+		raw, err := st.Raw(ctx, folder, uid, 1<<20)
+		if err == nil {
+			if msg, err := parseMessage(raw); err == nil && len(msg.Calendar) > 0 && len(msg.From) > 0 {
+				if cal, err := decodeCalendar(msg.Calendar, loc); err == nil && strings.EqualFold(cal.Method, "REPLY") && len(cal.Events) > 0 {
+					r.sender, r.event = msg.From[0].Email, cal.Events[0]
+				}
+			}
+		} else if ctx.Err() != nil {
+			break
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// recordReplies applies replies to the user's calendar and returns the
+// messages now dealt with. A reply to an event the user didn't organize,
+// or one no longer in the calendar, is dealt with by being ignored.
+func (s *Server) recordReplies(ctx context.Context, sess *Session, replies []receivedReply, loc *time.Location) []uint32 {
+	if len(replies) == 0 {
+		return nil
+	}
+	events, err := s.events(ctx, sess, loc)
+	if err != nil {
+		return nil // try again on the next load
+	}
+	var done []uint32
+	for _, r := range replies {
+		if r.event.UID != "" {
+			stored := findEvent(events, r.event.UID)
+			if stored != nil && stored.Organizer != nil && stored.IsOrganizer(sess.Address) && applyReply(stored, r.event, r.sender) {
+				if err := s.putEvent(ctx, sess, *stored); err != nil {
+					s.log.Warn("webmail: record invitation reply", "user", sess.User, "error", err)
+					continue // not marked, so it is retried
+				}
+			}
+		}
+		done = append(done, r.uid)
+	}
+	return done
+}
+
+// applyReply copies the answers in a REPLY onto the stored event and
+// reports whether anything changed. With a sender, only the sender's own
+// answer counts: a reply speaks for the guest who sent it, and taking other
+// attendees' answers from it would let anyone set anyone's status. The
+// organizer's own "Record in my calendar" passes no sender, since they have
+// read the reply and chosen to trust it.
+func applyReply(stored *Event, reply Event, sender string) bool {
+	changed := false
+	for _, a := range reply.Attendees {
+		if a.Status == "" || sender != "" && !strings.EqualFold(a.Email, sender) {
+			continue
+		}
+		for i := range stored.Attendees {
+			if strings.EqualFold(stored.Attendees[i].Email, a.Email) && stored.Attendees[i].Status != a.Status {
+				stored.Attendees[i].Status = a.Status
+				changed = true
+			}
+		}
+	}
+	return changed
 }
