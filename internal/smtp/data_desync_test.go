@@ -88,6 +88,16 @@ func (p *smtpProbe) send(s string) {
 	}
 }
 
+// trySend writes s and reports whether it went out. After the server has
+// refused an over-long line it closes the connection on purpose, and a write
+// racing that close fails with "connection reset by peer". That is the
+// server refusing to read further, the outcome these tests want, not a
+// failure.
+func (p *smtpProbe) trySend(s string) bool {
+	_, err := p.conn.Write([]byte(s))
+	return err == nil
+}
+
 func (p *smtpProbe) cmd(c string) string {
 	p.t.Helper()
 	p.send(c + "\r\n")
@@ -150,18 +160,21 @@ func TestRejectedMessageBodyIsNotExecutedAsCommands(t *testing.T) {
 
 	// A line past the hard limit rejects the message mid-body...
 	p.send("Subject: probe\r\n")
-	p.send("X-Pad: " + strings.Repeat("A", 128*1024) + "\r\n")
-	// ...and everything after it is body content, not commands.
-	p.send("MAIL FROM:<attacker@evil.example>\r\n")
-	p.send("RCPT TO:<victim@example.com>\r\n")
-	p.send("DATA\r\n")
-	p.send("Subject: FORGED\r\n\r\ninjected\r\n")
-	p.send(".\r\n")
+	closed := !p.trySend("X-Pad: " + strings.Repeat("A", 128*1024) + "\r\n")
+	// ...and everything after it is body content, not commands. The server
+	// may already have hung up, which is as good as ignoring it.
+	for _, line := range []string{"MAIL FROM:<attacker@evil.example>\r\n", "RCPT TO:<victim@example.com>\r\n", "DATA\r\n", "Subject: FORGED\r\n\r\ninjected\r\n", ".\r\n"} {
+		if closed || !p.trySend(line) {
+			closed = true
+			break
+		}
+	}
 
 	got := p.drainFor(3 * time.Second)
 
-	// The rejection itself is expected and fine.
-	if !strings.Contains(got, "552") && !strings.Contains(got, "554") && !strings.Contains(got, "500") {
+	// The rejection itself is expected and fine. A reset can discard it
+	// in flight, so it is only required when the connection stayed open.
+	if !closed && !strings.Contains(got, "552") && !strings.Contains(got, "554") && !strings.Contains(got, "500") {
 		t.Errorf("expected the over-long line to be rejected, got:\n%s", got)
 	}
 
@@ -192,9 +205,8 @@ func TestOverlongMessageClosesUnsynchronizedConnection(t *testing.T) {
 	}
 
 	// Rejected mid-body, then the client correctly terminates the message.
-	p.send("X-Pad: " + strings.Repeat("A", 128*1024) + "\r\n")
-	p.send("some more body\r\n")
-	p.send(".\r\n")
+	// Writes after the over-long line may meet the server's close.
+	_ = p.trySend("X-Pad: "+strings.Repeat("A", 128*1024)+"\r\n") && p.trySend("some more body\r\n") && p.trySend(".\r\n")
 
 	reply := p.readReply()
 	if strings.HasPrefix(reply, "250 2.0.0") {
