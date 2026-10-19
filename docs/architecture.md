@@ -61,13 +61,11 @@ overlays. The standalone overlay runs the MTA alone from the published image.
 
 ![How the Kubernetes overlays build on base/](diagrams/kubernetes-overlays.png)
 
-The dev stack's pods and how they connect. The Elemta pod runs the MTA and
-the admin console as two containers sharing the queue and runtime
-configuration. Services keep their Compose names, so the same `elemta.toml`
-works in both.
+The dev stack's pods and how they connect. It runs the same platform as the
+Compose stack. The Elemta pod runs the MTA and the admin console as two
+containers sharing the queue and runtime configuration. The mailbox service is
+a two-replica Deployment; the `elemta-mailbox` Service spreads connections
+across the replicas, the job HAProxy does in Compose. Services keep their
+Compose names, so the same `elemta.toml` works in both.
 
 ![The Kubernetes dev stack's pods and connections](diagrams/kubernetes-pods.png)
-
-> **Kubernetes still runs Dovecot.** The Kubernetes dev overlay hasn't been
-> moved to the mailbox service and webmail yet. Until it is, use the Compose
-> stack or the cloud server for the full mail platform.

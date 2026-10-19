@@ -9,9 +9,9 @@
 // Database configuration
 $config['db_dsnw'] = 'sqlite:////var/roundcube/db/sqlite.db?mode=0646';
 
-// IMAP Configuration - Connect to Dovecot
-$config['default_host'] = 'elemta-dovecot';
-$config['default_port'] = 14143;
+// IMAP Configuration - Connect to the mailbox service
+$config['default_host'] = 'elemta-mailbox';
+$config['default_port'] = 1143;
 $config['username_domain'] = 'example.com';
 $config['imap_timeout'] = 120;
 $config['imap_auth_type'] = 'PLAIN';
@@ -124,9 +124,9 @@ $config['enable_caching'] = true;
 $config['messages_cache'] = 'db';
 $config['imap_cache'] = 'db';
 
-// Managesieve (Sieve filters) - for Dovecot integration
+// ManageSieve (Sieve filters), served by the mailbox service
 $config['managesieve_port'] = 4190;
-$config['managesieve_host'] = 'elemta-dovecot';
+$config['managesieve_host'] = 'elemta-mailbox';
 $config['managesieve_auth_type'] = null;
 $config['managesieve_auth_cid'] = null;
 $config['managesieve_auth_pw'] = null;

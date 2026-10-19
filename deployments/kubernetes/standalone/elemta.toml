@@ -2,7 +2,7 @@
 #
 # Deliberately smaller than config/elemta.toml. That file describes the full
 # compose stack, and most of it names containers that do not exist here
-# (elemta-ldap, elemta-clamav, elemta-rspamd, elemta-dovecot). Pointing at a
+# (elemta-ldap, elemta-clamav, elemta-rspamd, elemta-mailbox). Pointing at a
 # missing scanner is not harmless: every message waits out the scan timeout and
 # then goes through unscanned, which looks like a slow server rather than a
 # misconfigured one. So everything with an external dependency is off, and
@@ -66,7 +66,7 @@ enabled = false
 required = false
 
 # Local mail goes over LMTP to elemta-sink (base/sink.yaml), which accepts and
-# discards. For real mailboxes, point this at Dovecot or any LMTP server.
+# discards. For real mailboxes, point this at the mailbox service or any LMTP server.
 [delivery]
 mode = "lmtp"
 host = "elemta-sink"

@@ -3,7 +3,8 @@ flowchart TB
         direction LR
         h1["2525 · 2587"]
         h2["8025"]
-        h3["14143 · 4190"]
+        h3["8027"]
+        h4["993 · 14143 · 4190"]
     end
 
     subgraph ns["namespace elemta"]
@@ -12,17 +13,20 @@ flowchart TB
             smtp["MTA container"]
             dash["admin console<br/>container"]
         end
-        dovecot["elemta-dovecot<br/>IMAP · LMTP · Sieve"]
-        deps["elemta-dns 10.43.53.53 · elemta-ldap<br/>elemta-valkey"]
-        extras["full / bench: elemta-clamav · elemta-rspamd<br/>full: elemta-roundcube · bench: elemta-sink<br/>postgres: elemta-postgres"]
+        webmail["elemta-webmail"]
+        mailbox["elemta-mailbox Service<br/>→ 2 mailbox replicas"]
+        db[("elemta-mailbox-db<br/>Postgres")]
+        deps["shared: elemta-dns 10.43.53.53<br/>elemta-ldap · elemta-valkey"]
+        extras["optional: clamav · rspamd (full, bench)<br/>roundcube (full) · sink (bench)<br/>postgres queue (postgres)"]
     end
-    kubedns["kube-dns 10.43.0.10"]
 
     h1 --> smtp
     h2 --> dash
-    h3 --> dovecot
-    smtp -->|"LMTP"| dovecot
+    h3 --> webmail
+    h4 --> mailbox
+    webmail -->|"submission"| smtp
+    webmail -->|"IMAP · Sieve · API"| mailbox
+    smtp -->|"LMTP over TLS"| mailbox
+    mailbox --> db
     smtp --> deps
     smtp -.-> extras
-    dovecot --> deps
-    deps -->|"cluster.local"| kubedns

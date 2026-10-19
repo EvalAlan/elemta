@@ -3,7 +3,7 @@
 #
 # The standalone deployment delivers here, so it is complete on its own: mail
 # sent to a local domain is accepted, queued and delivered, and the sink's log
-# shows the count. The dev stack delivers to Dovecot and keeps this running for
+# shows the count. The dev stack delivers to the mailbox service and keeps this running for
 # `make sink-up`, as the compose stack did.
 #
 # It runs from the Elemta image, which ships the script and Python, rather than

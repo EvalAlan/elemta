@@ -22,8 +22,8 @@ spec:
           env:
             - { name: ROUNDCUBEMAIL_DB_TYPE, value: sqlite }
             - { name: ROUNDCUBEMAIL_SKIN, value: elastic }
-            - { name: ROUNDCUBEMAIL_DEFAULT_HOST, value: elemta-dovecot }
-            - { name: ROUNDCUBEMAIL_DEFAULT_PORT, value: "14143" }
+            - { name: ROUNDCUBEMAIL_DEFAULT_HOST, value: elemta-mailbox }
+            - { name: ROUNDCUBEMAIL_DEFAULT_PORT, value: "1143" }
             - { name: ROUNDCUBEMAIL_SMTP_SERVER, value: "tls://elemta" }
             - { name: ROUNDCUBEMAIL_SMTP_PORT, value: "2525" }
             - { name: ROUNDCUBEMAIL_SMTP_AUTH_TYPE, value: PLAIN }

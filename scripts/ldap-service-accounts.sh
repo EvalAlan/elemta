@@ -4,8 +4,6 @@
 # existing accounts get their passwords re-synced from the secrets file and
 # the rules are replaced as a whole.
 #
-#   cn=dovecot        Dovecot user lookups (passwords are checked by binding
-#                     as the user): read mailbox entries and address claims.
 #   cn=elemta-smtp    Elemta's SMTP AUTH and recipient lookups: read mailbox
 #                     entries, address claims and groups.
 #   cn=webmail        Webmail lookups (finding a user's entry to change their
@@ -57,7 +55,6 @@ account() { # cn, password, description
     fi
     "${EXEC[@]}" ldappasswd "${ADMIN[@]}" -s "$2" "$dn" >/dev/null
 }
-account dovecot "$LDAP_DOVECOT_PASSWORD" "Dovecot user lookups"
 account elemta-smtp "$LDAP_SMTP_PASSWORD" "Elemta SMTP authentication and recipient lookups"
 account webmail "$LDAP_WEBMAIL_PASSWORD" "Webmail user lookups"
 account mailbox "$LDAP_MAILBOX_PASSWORD" "Mailbox identity and delivery lookups"
@@ -74,8 +71,8 @@ replace: olcAccess
 olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break
 olcAccess: {1}to dn.subtree="ou=people,$BASE" attrs=userPassword,shadowLastChange by self write by $(d webmail-reset) write by $(d provisioner) write by anonymous auth by * none
 olcAccess: {2}to attrs=userPassword,shadowLastChange by self write by anonymous auth by * none
-olcAccess: {3}to dn.subtree="ou=people,$BASE" by $(d provisioner) write by $(d dovecot) read by $(d elemta-smtp) read by $(d webmail) read by $(d mailbox) read by $(d webmail-reset) read by self read by * none
-olcAccess: {4}to dn.subtree="ou=mail-addresses,$BASE" by $(d provisioner) write by $(d dovecot) read by $(d elemta-smtp) read by * none
+olcAccess: {3}to dn.subtree="ou=people,$BASE" by $(d provisioner) write by $(d elemta-smtp) read by $(d webmail) read by $(d mailbox) read by $(d webmail-reset) read by self read by * none
+olcAccess: {4}to dn.subtree="ou=mail-addresses,$BASE" by $(d provisioner) write by $(d elemta-smtp) read by * none
 olcAccess: {5}to dn.subtree="ou=groups,$BASE" by $(d elemta-smtp) read by * none
 olcAccess: {6}to dn.base="$BASE" by users read by * none
 olcAccess: {7}to * by self read by * none

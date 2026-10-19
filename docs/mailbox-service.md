@@ -284,9 +284,10 @@ account/address isolation and cross-replica IDLE. CI runs them against Postgres.
 
 ## Status and remaining gaps
 
-The mailbox service is the mail store of the development Compose stack and
-the [cloud deployment](cloud-dev.md). Dovecot is gone from both; only the
-Kubernetes dev overlay still runs it, until it is ported. The service serves
+The mailbox service is the mail store of the development Compose stack, the
+[cloud deployment](cloud-dev.md) and the Kubernetes dev overlay, where a
+Service takes HAProxy's place in front of the replicas. Dovecot is gone from
+all of them. The service serves
 the IMAP extensions mainstream clients rely on, along with POP3, Sieve,
 ManageSieve, two-step verification and app passwords. It has been exercised
 with the webmail, Thunderbird, scripted IMAP and POP3 clients, and the

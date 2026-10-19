@@ -1,4 +1,4 @@
-# elemta-ldap: the directory behind SMTP AUTH, Dovecot logins and Roundcube.
+# elemta-ldap: the directory behind SMTP AUTH, mailbox and webmail logins, and Roundcube.
 #
 # The LDIF files are mounted where the compose stack mounted them. osixia's
 # image does not load them on its own from there; scripts/init-ldap-if-needed.sh
@@ -51,7 +51,11 @@ spec:
               command:
                 - sh
                 - -c
-                - ldapsearch -x -D 'cn=admin,dc=example,dc=com' -w admin -b 'dc=example,dc=com' -s base -LLL >/dev/null
+                # Root over the local socket, as the Compose health check does:
+                # the admin password is rotated away from the image default
+                # (scripts/ldap-admin-password.sh), so a probe that binds with
+                # it marks a working directory unready.
+                - ldapsearch -Q -Y EXTERNAL -H ldapi:/// -b 'dc=example,dc=com' -s base -LLL dn >/dev/null
             initialDelaySeconds: 10
             periodSeconds: 10
           resources:

@@ -899,7 +899,7 @@ install setup:
 # above changes. See deployments/kubernetes/README.md.
 #
 # Each k8s-install-dev* target applies one overlay of deployments/kubernetes/dev:
-#   minimal   Elemta, caching DNS, LDAP, Dovecot, Valkey, LMTP sink
+#   minimal   Elemta, caching DNS, LDAP, mailbox service + Postgres, webmail, Valkey, LMTP sink
 #   full      + ClamAV, Rspamd, Roundcube
 #   bench     + ClamAV, Rspamd (delivery goes to the sink)
 #   postgres  + Postgres for the queue
@@ -933,7 +933,7 @@ DOCKER_BUILD_FLAGS ?=
 K8S_IMAGE_LOAD ?= auto
 # Deployments that run the images built here, restarted after a rebuild
 # because the tag does not change.
-K8S_OWN_IMAGES = deploy/elemta deploy/elemta-sink deploy/elemta-dovecot deploy/elemta-dns
+K8S_OWN_IMAGES = deploy/elemta deploy/elemta-sink deploy/elemta-mailbox deploy/elemta-webmail deploy/elemta-dns
 # The overlay currently applied, recorded on the namespace by k8s-apply, so
 # targets that change config on a running stack re-apply that one rather than
 # the default, which would prune the rest.
@@ -957,7 +957,7 @@ k8s-help:
 	@echo "  k8s-restart / k8s-status / k8s-logs / k8s-logs-elemta"
 	@echo "  k8s-rebuild-dev            Build, load into the cluster, restart (k8s-rebuild: no cache)"
 	@echo "  k8s-reseed                 Take config/elemta.toml again, discarding what the UI saved"
-	@echo "  k8s-sink-up / k8s-sink-down   Discard delivery, or deliver to Dovecot again"
+	@echo "  k8s-sink-up / k8s-sink-down   Discard delivery, or deliver to the mailbox service again"
 	@echo "  k8s-bootstrap-admin / k8s-reset-admin-password / k8s-bench-queue"
 	@echo "  Dashboard users: kubectl -n $(K8S_NAMESPACE) exec -it deploy/elemta -c web -- \\"
 	@echo "    /app/elemta --config /app/runtime-config/elemta.toml \\"
@@ -979,12 +979,12 @@ k8s-check:
 		exit 1; \
 	fi
 
-# The three images the stack builds rather than pulls: Elemta from this tree,
-# Dovecot with the stack's config baked in, and the caching resolver.
+# The three images the stack builds rather than pulls: Elemta (MTA, admin
+# console and webmail), the mailbox service, and the caching resolver.
 k8s-images:
 	@echo "🔨 Building images ($(IMAGE_TAG))..."
 	docker build $(DOCKER_BUILD_FLAGS) --build-arg VERSION=$$(git rev-parse --short HEAD 2>/dev/null || echo dev) -t elemta:$(IMAGE_TAG) .
-	docker build $(DOCKER_BUILD_FLAGS) -t elemta-dovecot:$(IMAGE_TAG) docker/dovecot
+	docker build $(DOCKER_BUILD_FLAGS) -t elemta-mailbox:$(IMAGE_TAG) -f docker/mailbox/Dockerfile .
 	docker build $(DOCKER_BUILD_FLAGS) -t elemta-dns:$(IMAGE_TAG) deployments/dns
 	@$(MAKE) --no-print-directory k8s-load
 
@@ -1000,7 +1000,7 @@ k8s-load:
 			case "$$context" in kind-*) mode=kind ;; *) mode=k3s ;; esac ;; \
 		esac; \
 	fi; \
-	images="elemta:$(IMAGE_TAG) elemta-dovecot:$(IMAGE_TAG) elemta-dns:$(IMAGE_TAG)"; \
+	images="elemta:$(IMAGE_TAG) elemta-mailbox:$(IMAGE_TAG) elemta-dns:$(IMAGE_TAG)"; \
 	case "$$mode" in \
 		docker|none) echo "ℹ️  The cluster runs on Docker; images are already visible to it" ;; \
 		kind) context=$$($(KUBECTL) config current-context); \
@@ -1011,7 +1011,18 @@ k8s-load:
 	esac
 
 # Apply one overlay. See K8S_PRUNE for what switching removes.
-k8s-apply:
+# The mailbox service's config is config/mailbox-main.toml, the Compose one,
+# with the cluster's pod network (k3s's 10.42.0.0/16) allowed to deliver and to
+# use the account-security API instead of the Compose network. Generated rather
+# than copied, so the two can't drift; the copy is git-ignored.
+K8S_POD_CIDR ?= 10.42.0.0/16
+k8s-mailbox-config:
+	@sed 's|^lmtp_allowed_networks = .*|lmtp_allowed_networks = ["$(K8S_POD_CIDR)", "127.0.0.0/8"]|' \
+		config/mailbox-main.toml > $(K8S_DIR)/dev/minimal/mailbox.toml
+	@grep -q '"$(K8S_POD_CIDR)"' $(K8S_DIR)/dev/minimal/mailbox.toml || \
+		{ echo "❌ config/mailbox-main.toml has no lmtp_allowed_networks line to adapt"; exit 1; }
+
+k8s-apply: k8s-mailbox-config
 	@echo "🚀 Applying deployments/kubernetes/dev/$(K8S_OVERLAY)..."
 	@$(KUSTOMIZE) $(K8S_DIR)/dev/$(K8S_OVERLAY) | $(KUBECTL) apply $(K8S_PRUNE) -f - | grep -v ' unchanged$$' || true
 	@$(KUBECTL) annotate namespace $(K8S_NAMESPACE) elemta.dev/overlay=$(K8S_OVERLAY) --overwrite >/dev/null
@@ -1048,6 +1059,12 @@ k8s-install: check-tools k8s-check ensure-dev-certs ensure-dev-secrets
 	@$(MAKE) --no-print-directory configure-queue-backend QUEUE_BACKEND=$(QUEUE_BACKEND) QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
 	@$(MAKE) --no-print-directory configure-plugins
 	@$(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$(K8S_OVERLAY)
+	@# The directory first: the MTA, mailbox service and webmail bind as their
+	@# own service accounts, so on a fresh LDAP volume they can't become ready
+	@# until those exist, and waiting for every Deployment first never ends.
+	@echo "⏳ Initializing LDAP..."
+	@$(KC) rollout status deploy/elemta-ldap --timeout=5m >/dev/null
+	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) ./scripts/init-ldap-if-needed.sh || true
 	@$(MAKE) --no-print-directory k8s-wait
 	@# This install is authoritative: without the reseed the settings configured
 	@# above would be ignored on every deploy after the first. And images are
@@ -1056,8 +1073,6 @@ k8s-install: check-tools k8s-check ensure-dev-certs ensure-dev-secrets
 	@$(KC) exec deploy/elemta -c smtp -- rm -f /app/runtime-config/elemta.toml
 	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
 	@$(MAKE) --no-print-directory k8s-wait
-	@echo "⏳ Initializing LDAP..."
-	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) ./scripts/init-ldap-if-needed.sh || true
 	@$(MAKE) --no-print-directory k8s-bootstrap-admin
 
 k8s-install-dev:
@@ -1079,7 +1094,7 @@ k8s-install-dev-bench:
 	@$(MAKE) --no-print-directory k8s-sink-up
 	@$(MAKE) --no-print-directory k8s-print-dev-summary
 	@echo "   Measure with: make k8s-bench-queue"
-	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424 >/dev/null
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-mailbox DELIVERY_PORT=2424 >/dev/null
 
 # Postgres comes up with the rest. If Elemta wins the race it exits on the
 # unreachable backend and Kubernetes restarts it until Postgres answers, so
@@ -1098,10 +1113,10 @@ k8s-sink-up:
 	@echo "   Sink rate:  kubectl -n $(K8S_NAMESPACE) logs -f deploy/elemta-sink"
 
 k8s-sink-down:
-	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-mailbox DELIVERY_PORT=2424
 	@ov=$(K8S_CURRENT_OVERLAY); $(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$${ov:-minimal} >/dev/null
 	@$(MAKE) --no-print-directory k8s-reseed >/dev/null
-	@echo "✅ Delivery goes to Dovecot; mail lands in real mailboxes."
+	@echo "✅ Delivery goes to the mailbox service; mail lands in real mailboxes."
 
 # The users file lives on the runtime volume, so these run inside the pod. The
 # server re-reads the file when it changes, so nothing needs restarting.
@@ -1156,6 +1171,7 @@ k8s-print-dev-summary:
 	@echo "   📧 SMTP:      localhost:2525"
 	@echo "   📊 Metrics:   http://localhost:9080/metrics"
 	@echo "   🌐 Web UI:    http://localhost:8025  (login required)"
+	@echo "   ✉️  Webmail:   http://localhost:8027  ·  IMAP: localhost:993 (TLS)"
 	@target=$$($(KC) exec deploy/elemta -c smtp -- sh -c "sed -n '/^\[delivery\]/,/^\[/p' /app/runtime-config/elemta.toml | grep -m1 '^host'" 2>/dev/null | sed 's/.*= *//; s/"//g'); \
 	if [ "$$target" = "elemta-sink" ]; then \
 		echo "   📭 Delivery:  a DISCARDING SINK. make k8s-sink-down for real mailboxes."; \
@@ -1169,6 +1185,8 @@ k8s-print-dev-summary:
 # the volumes; 'up' brings them back.
 k8s-up: k8s-check
 	@$(KC) scale deployment --all --replicas=1 >/dev/null
+	@# The mailbox service runs two replicas, like the Compose stack.
+	@$(KC) scale deployment elemta-mailbox --replicas=2 >/dev/null 2>&1 || true
 	@$(MAKE) --no-print-directory k8s-wait
 
 k8s-down:

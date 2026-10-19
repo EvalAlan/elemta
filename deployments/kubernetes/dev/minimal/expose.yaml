@@ -32,20 +32,38 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: elemta-dovecot-host
+  name: elemta-mailbox-host
   labels:
-    app.kubernetes.io/name: elemta-dovecot
+    app.kubernetes.io/name: elemta-mailbox
 spec:
   type: LoadBalancer
   selector:
-    app.kubernetes.io/name: elemta-dovecot
+    app.kubernetes.io/name: elemta-mailbox
   ports:
+    - name: imaps
+      port: 993
+      targetPort: imaps
     - name: imap
       port: 14143
       targetPort: imap
     - name: sieve
       port: 4190
       targetPort: sieve
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-webmail-host
+  labels:
+    app.kubernetes.io/name: elemta-webmail
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: elemta-webmail
+  ports:
+    - name: http
+      port: 8027
+      targetPort: http
 ---
 apiVersion: v1
 kind: Service

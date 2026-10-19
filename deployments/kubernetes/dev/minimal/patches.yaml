@@ -1,4 +1,4 @@
-# Baseline, not restricted: LDAP, Dovecot, ClamAV, Rspamd and Roundcube run
+# Baseline, not restricted: LDAP, Postgres, ClamAV, Rspamd and Roundcube run
 # their upstream images as root. Elemta itself still runs as an unprivileged
 # user with no capabilities.
 apiVersion: v1

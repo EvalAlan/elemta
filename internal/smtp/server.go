@@ -231,7 +231,7 @@ func initAuthenticator(config *Config, slogger *slog.Logger) (Authenticator, err
 
 // lmtpTarget is the mailbox server local mail is delivered to.
 func lmtpTarget(config *Config) (string, int) {
-	host, port := "elemta-dovecot", 2424
+	host, port := "elemta-mailbox", 2424
 	if config.Delivery != nil {
 		if config.Delivery.Host != "" {
 			host = config.Delivery.Host

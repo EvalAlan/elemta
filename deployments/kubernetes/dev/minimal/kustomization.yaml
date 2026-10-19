@@ -6,7 +6,8 @@
 # which kustomize only allows with --load-restrictor LoadRestrictionsNone, and
 # it runs images the Makefile builds and loads into the cluster.
 #
-#   make install-dev           this directory: Elemta, DNS, LDAP, Dovecot, Valkey, sink
+#   make install-dev           this directory: Elemta, DNS, LDAP, the mailbox
+#                              service and its Postgres, webmail, Valkey, sink
 #   make install-dev-full      ../full:     + ClamAV, Rspamd, Roundcube
 #   make install-dev-bench     ../bench:    + ClamAV, Rspamd; delivery to the sink
 #   make install-dev-postgres  ../postgres: + Postgres for the queue
@@ -24,7 +25,7 @@ resources:
   - ../../base
   - dns.yaml
   - ldap.yaml
-  - dovecot.yaml
+  - mailbox.yaml
   - expose.yaml
 
 # The repository's config, as the compose stack bind-mounted it. Not mounted
@@ -37,6 +38,10 @@ configMapGenerator:
   - name: elemta-dns
     files:
       - ../../../dns/unbound.conf
+  # Generated from config/mailbox-main.toml by `make k8s-mailbox-config`.
+  - name: elemta-mailbox-config
+    files:
+      - mailbox.toml
   - name: elemta-ldap-init
     files:
       - ../../../../docker/ldap/99-stress-users.ldif
@@ -57,9 +62,24 @@ secretGenerator:
   - name: elemta-ldap-web
     envs:
       - ../../../compose/.secrets/web.env
-  - name: elemta-ldap-dovecot
+  # The mailbox service's LDAP account and its Postgres login; Postgres's own
+  # credentials; the webmail's LDAP and recovery-mail accounts.
+  - name: elemta-mailbox
     envs:
-      - ../../../compose/.secrets/dovecot.env
+      - ../../../compose/.secrets/mailbox.env
+      - ../../../compose/.secrets/mailbox-client.env
+  - name: elemta-mailbox-db
+    envs:
+      - ../../../compose/.secrets/mailbox-postgres.env
+  - name: elemta-webmail
+    envs:
+      - ../../../compose/.secrets/webmail.env
+  # The mailbox service's development certificate (scripts/dev-secrets.sh).
+  # Its names include elemta-mailbox, which the MTA verifies for LMTP over TLS.
+  - name: elemta-mailbox-tls
+    files:
+      - cert.pem=../../../compose/.secrets/mailbox-tls/cert.pem
+      - key.pem=../../../compose/.secrets/mailbox-tls/key.pem
   - name: elemta-dev-tls
     type: kubernetes.io/tls
     files:
@@ -73,8 +93,8 @@ images:
   - name: elemta-dns
     newName: elemta-dns
     newTag: dev
-  - name: elemta-dovecot
-    newName: elemta-dovecot
+  - name: elemta-mailbox
+    newName: elemta-mailbox
     newTag: dev
 
 patches:
@@ -96,19 +116,6 @@ patches:
                 envFrom:
                   - secretRef:
                       name: elemta-ldap-web
-  - patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: elemta-dovecot
-      spec:
-        template:
-          spec:
-            containers:
-              - name: dovecot
-                envFrom:
-                  - secretRef:
-                      name: elemta-ldap-dovecot
   - target:
       kind: Deployment
       name: elemta
@@ -137,3 +144,36 @@ patches:
                       path: test.crt
                     - key: tls.key
                       path: test.key
+  # After the volume replacement above, which checks volume 0 by index.
+  # LMTP to the mailbox service is verified against its certificate
+  # (config/elemta.toml: lmtp_tls_ca_file), and SMTP AUTH honours users'
+  # "require app passwords" (internal/smtp/app_passwords.go). Webmail pod
+  # addresses aren't fixed here, so the whole pod network may use the account
+  # password at submission; acceptable for a dev cluster that runs only this.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: elemta
+      spec:
+        template:
+          spec:
+            containers:
+              - name: smtp
+                env:
+                  - name: ELEMTA_AUTH_MAILBOX_SECURITY_URL
+                    value: http://elemta-mailbox:8080
+                  - name: ELEMTA_AUTH_APP_PASSWORD_EXEMPT
+                    value: 10.42.0.0/16
+                volumeMounts:
+                  - name: mailbox-ca
+                    mountPath: /app/mailbox-ca.pem
+                    subPath: cert.pem
+                    readOnly: true
+            volumes:
+              - name: mailbox-ca
+                secret:
+                  secretName: elemta-mailbox-tls
+                  items:
+                    - key: cert.pem
+                      path: cert.pem

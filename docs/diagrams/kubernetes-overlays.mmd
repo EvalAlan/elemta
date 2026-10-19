@@ -1,7 +1,7 @@
 flowchart TB
     base["base/<br/>Elemta pod · sink · Valkey"]
     standalone["standalone/<br/>published image"]
-    minimal["dev/minimal<br/>+ DNS · LDAP · Dovecot"]
+    minimal["dev/minimal<br/>+ DNS · LDAP · mailbox service<br/>Postgres · webmail"]
     base --> standalone
     base --> minimal
     full["dev/full"]

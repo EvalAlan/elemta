@@ -117,7 +117,6 @@ No service uses the directory administrator.
 | Account | Used by | Access |
 |---|---|---|
 | `cn=mailbox` | mailbox service logins and delivery lookups | read people and mail addresses |
-| `cn=dovecot` | Dovecot in the Kubernetes dev stack only | read people and mail addresses |
 | `cn=elemta-smtp` | SMTP AUTH and group lookups | read people, mail addresses and groups |
 | `cn=webmail` | webmail user lookups | read people, not password hashes |
 | `cn=webmail-reset` | password recovery and the reset CLI | read people, write `userPassword` |
@@ -134,9 +133,7 @@ target depends on it. Compose loads each service's file with `env_file`, and
 the Kubernetes dev overlay builds Secrets from the same files. The
 environment variables are `ELEMTA_MAILBOX_LDAP_PASSWORD`,
 `ELEMTA_AUTH_DATASOURCE_PASS`, `ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD`,
-`ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD`, `ELEMTA_LDAP_PROVISION_PASSWORD`, and
-`LDAP_DOVECOT_PASSWORD` for the Kubernetes dev stack, which still runs
-Dovecot.
+`ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD` and `ELEMTA_LDAP_PROVISION_PASSWORD`.
 
 In production, create equivalent accounts in your directory, grant them the
 same scopes and supply their passwords from your secret store.

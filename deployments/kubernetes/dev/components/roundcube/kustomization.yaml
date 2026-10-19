@@ -1,4 +1,4 @@
-# Roundcube on localhost:8026, reading the Dovecot mailboxes and sending
+# Roundcube on localhost:8026, reading the mailbox service and sending
 # through Elemta's submission path. Log in as user@example.com / password.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
