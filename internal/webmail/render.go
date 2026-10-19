@@ -73,7 +73,7 @@ func loadTemplates() (map[string]*template.Template, error) {
 		switch p {
 		case "layout.html", "icons.html", "partials.html":
 			continue
-		case "recovery.html", "login.html", "twofactor.html", "print.html", "source.html":
+		case "recovery.html", "login.html", "twofactor.html", "twofactor_setup.html", "print.html", "source.html":
 			t, err := template.New(p).Funcs(templateFuncs).ParseFS(templateFS, path, "templates/icons.html")
 			if err != nil {
 				return nil, fmt.Errorf("webmail: template %s: %w", p, err)

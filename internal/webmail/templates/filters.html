@@ -10,6 +10,8 @@
   {{with .Filters}}
   {{if .Disabled}}
     <p class="banner subtle">Filters aren't available: this webmail has no ManageSieve server configured (set <span class="mono">sieve_addr</span> in the [webmail] table).</p>
+  {{else if .TurnedOff}}
+    <p class="banner subtle">Filters and automatic replies are turned off for your account. Ask your administrator if you need them.</p>
   {{else}}
   {{if .Foreign}}<p class="banner">Another filter script, “{{.Foreign}}”, is active on your account. Saving here makes these filters active instead.</p>{{end}}
 

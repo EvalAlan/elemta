@@ -19,6 +19,9 @@ type fakeSecurity struct {
 	appRequired bool
 	codeUsed    bool
 	created     []string
+	// The class of service the check reports.
+	protocols        map[string]bool
+	requireTwoFactor bool
 }
 
 func (f *fakeSecurity) handler(t *testing.T) http.Handler {
@@ -38,7 +41,16 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		out := map[string]any{}
 		switch r.URL.Path {
 		case "/v1/security/check":
-			out = map[string]any{"kind": kind, "totp": f.totp, "app_required": f.appRequired}
+			out = map[string]any{"kind": kind, "totp": f.totp, "app_required": f.appRequired, "protocols": f.protocols, "require_two_factor": f.requireTwoFactor}
+		case "/v1/security/totp/begin":
+			out = map[string]any{"secret": "JBSWY3DPEHPK3PXP", "uri": "otpauth://totp/x"}
+		case "/v1/security/totp/confirm":
+			if in["code"] != "123456" {
+				http.Error(w, "invalid code", http.StatusUnprocessableEntity)
+				return
+			}
+			f.totp = true
+			out = map[string]any{"recovery_codes": []string{"aaaa-bbbb", "cccc-dddd"}}
 		case "/v1/security":
 			out = map[string]any{"totp": f.totp, "app_required": f.appRequired, "recovery_left": 10, "app_passwords": []any{}}
 		case "/v1/security/verify":
@@ -259,5 +271,61 @@ func TestSettingsTabs(t *testing.T) {
 	card := page[strings.Index(page, `id="app-passwords"`):]
 	if !strings.Contains(card, notices["app-required"]) || strings.Count(page, notices["app-required"]) != 1 {
 		t.Fatal("notice not shown once, in the app passwords card")
+	}
+}
+
+// TestClassOfServiceInWebmail covers the switches the webmail applies for
+// the mailbox service: webmail access itself, DAV, and required two-step
+// verification, which is set up during sign-in before any session exists.
+func TestClassOfServiceInWebmail(t *testing.T) {
+	f := &fakeSecurity{protocols: map[string]bool{"webmail": false}}
+	h := newSecurityHarness(t, f)
+	resp, body := h.submitLogin("secret")
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "Webmail is turned off") {
+		t.Fatalf("webmail turned off: %d", resp.StatusCode)
+	}
+
+	// DAV turned off refuses sync apps with 403, even with the right password.
+	f.mu.Lock()
+	f.protocols = map[string]bool{"dav": false}
+	f.mu.Unlock()
+	if resp := davRequest(t, h, "PROPFIND", "/dav/", "dana", "secret", "", map[string]string{"Depth": "0"}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("DAV turned off = %d", resp.StatusCode)
+	}
+
+	// Required two-step verification: sign-in leads through setup.
+	f.mu.Lock()
+	f.protocols, f.requireTwoFactor = nil, true
+	f.mu.Unlock()
+	resp, _ = h.submitLogin("secret")
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login/setup" {
+		t.Fatalf("required setup = %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if resp, _ := h.get("/mail"); resp.StatusCode != http.StatusFound {
+		t.Fatalf("mail before setup = %d", resp.StatusCode)
+	}
+	_, page := h.get("/login/setup")
+	token := hiddenRE("token").FindStringSubmatch(page)
+	secret := hiddenRE("secret").FindStringSubmatch(page)
+	if token == nil || secret == nil || !strings.Contains(page, "data:image/png;base64,") {
+		t.Fatalf("setup page:\n%s", page)
+	}
+	if resp := h.post("/login/setup", url.Values{"secret": {secret[1]}, "code": {"123456"}}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("setup without the form token = %d", resp.StatusCode)
+	}
+	if resp := h.post("/login/setup", url.Values{"token": {token[1]}, "secret": {secret[1]}, "code": {"000000"}}); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("wrong setup code = %d", resp.StatusCode)
+	}
+	resp, err := h.client.PostForm(h.srv.URL+"/login/setup", url.Values{"token": {token[1]}, "secret": {secret[1]}, "code": {"123456"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(b), "aaaa-bbbb") {
+		t.Fatalf("setup confirmed = %d\n%s", resp.StatusCode, b)
+	}
+	if resp, _ := h.get("/mail"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("mail after setup = %d", resp.StatusCode)
 	}
 }

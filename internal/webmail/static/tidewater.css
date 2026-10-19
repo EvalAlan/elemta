@@ -1053,6 +1053,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .toggle-row p { margin: 4px 0 0; }
 .setup-steps ol { margin: 14px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 18px; }
 .setup-steps label { display: block; margin-bottom: 8px; }
+.login .qr { align-self: center; }
 .qr-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 10px; }
 .qr-wrap .small { max-width: 280px; }
 .setup-key { display: inline-block; margin-top: 4px; font-size: 14px; letter-spacing: .05em; user-select: all; }

@@ -437,8 +437,10 @@ type filtersView struct {
 	ShowRaw  bool
 	Problem  string
 	Disabled bool // no ManageSieve server configured
-	Conds    []FilterCondition
-	Acts     []FilterAction
+	// TurnedOff is the account's class of service turning filters off.
+	TurnedOff bool
+	Conds     []FilterCondition
+	Acts      []FilterAction
 }
 
 func (s *Server) withSieve(ctx context.Context, sess *Session, fn func(SieveConn) error) error {
@@ -516,6 +518,11 @@ func (s *Server) filtersPage(w http.ResponseWriter, r *http.Request, sess *Sessi
 		return
 	}
 	set, foreign, raw, err := s.loadFilters(r.Context(), sess)
+	if errors.Is(err, errFiltersOff) {
+		fv.TurnedOff = true
+		s.render(w, "filters.html", http.StatusOK, v)
+		return
+	}
 	if err != nil {
 		s.log.Warn("webmail: read filters", "user", sess.User, "error", err)
 		v.Problem = "The filter server didn't respond, so your filters can't be shown right now."

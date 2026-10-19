@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
 // A minimal ManageSieve client (RFC 5804): enough to list, read, store
@@ -101,6 +103,9 @@ func ManageSieveDialer(addr, mode string, insecureSkipVerify bool) SieveDialer {
 		if _, err := c.cmd(`AUTHENTICATE "PLAIN" ` + quoteSieve(auth)); err != nil {
 			_ = c.conn.Close()
 			var no *sieveNo
+			if errors.As(err, &no) && strings.Contains(no.msg, mailpolicy.FiltersOffMessage) {
+				return nil, errFiltersOff
+			}
 			if errors.As(err, &no) {
 				return nil, ErrAuthFailed
 			}
@@ -121,6 +126,10 @@ func hasCap(lines []string, name string) bool {
 
 // sieveNo is a NO or BYE response, carrying the server's explanation.
 type sieveNo struct{ msg string }
+
+// errFiltersOff is the mail server refusing filters for this account: its
+// class of service turns them off.
+var errFiltersOff = errors.New("webmail: filters are turned off for this account")
 
 func (e *sieveNo) Error() string { return "webmail: ManageSieve: " + e.msg }
 

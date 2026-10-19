@@ -39,6 +39,8 @@ import (
 	"github.com/emersion/go-webdav"
 	"github.com/emersion/go-webdav/caldav"
 	"github.com/emersion/go-webdav/carddav"
+
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
 const (
@@ -278,6 +280,14 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 			}
 			s.log.Warn("webmail: dav account security check unavailable", "user", user, "error", err)
 			http.Error(w, "Sign-in is temporarily unavailable.", http.StatusBadGateway)
+			return nil, false
+		}
+		if !check.allows(mailpolicy.DAV) {
+			if st != nil {
+				_ = st.Close()
+			}
+			s.log.Info("webmail: dav refused by class of service", "user", user, "ip", ip)
+			http.Error(w, "Calendar and contact sync is turned off for this account.", http.StatusForbidden)
 			return nil, false
 		}
 		if check.Kind == "password" && check.AppRequired {

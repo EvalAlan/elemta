@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
 const (
@@ -202,6 +204,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /login", s.loginSubmit)
 	mux.HandleFunc("GET /login/verify", s.twoFactorPage)
 	mux.HandleFunc("POST /login/verify", s.twoFactorSubmit)
+	mux.HandleFunc("GET /login/setup", s.forcedSetupPage)
+	mux.HandleFunc("POST /login/setup", s.forcedSetupSubmit)
 	mux.HandleFunc("POST /settings/2fa/begin", s.authed(s.totpBeginSubmit))
 	mux.HandleFunc("POST /settings/2fa/confirm", s.authed(s.totpConfirmSubmit))
 	mux.HandleFunc("POST /settings/2fa/disable", s.authed(s.totpDisableSubmit))
@@ -632,6 +636,19 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That's an app password. Sign in to webmail with your account password.")
 			return
 		}
+		if !check.allows(mailpolicy.Webmail) {
+			_ = store.Close()
+			s.log.Info("webmail: sign-in refused by class of service", "user", user, "ip", ip)
+			s.renderLogin(w, r, http.StatusForbidden, user, "", "Webmail is turned off for this account. Ask your administrator if you need it.")
+			return
+		}
+		if !check.TOTP && check.RequireTwoFactor {
+			// The class requires two-step verification and this account
+			// hasn't set it up: that happens now, before any session exists.
+			_ = store.Close()
+			s.startForcedSetup(w, r, user, password, userKey)
+			return
+		}
 		if check.TOTP {
 			_ = store.Close()
 			token, err := s.pending.put(user, password, s.now())
@@ -652,6 +669,14 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 
 // finishLogin turns a verified sign-in into a session.
 func (s *Server) finishLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password string, store Mailstore, next string) {
+	if s.startSession(ctx, w, r, user, password, store) {
+		http.Redirect(w, r, next, http.StatusSeeOther)
+	}
+}
+
+// startSession creates the session and its cookies, or writes an error and
+// reports false.
+func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password string, store Mailstore) bool {
 	// Every account gets the standard folders, so Junk and Trash are there
 	// to move mail to from the first sign-in. A failure here only means
 	// they're created later, when first needed.
@@ -662,13 +687,13 @@ func (s *Server) finishLogin(ctx context.Context, w http.ResponseWriter, r *http
 	if err != nil {
 		_ = store.Close()
 		http.Error(w, "Something went wrong.", http.StatusInternalServerError)
-		return
+		return false
 	}
 	s.setCookie(w, preLoginCookie, "", -1)
 	s.setCookie(w, sessionCookie, sess.ID, 0)
 	s.setAppearanceCookies(w, s.prefs(ctx, sess))
 	s.log.Info("webmail: login", "user", user, "ip", s.clientIP(r))
-	http.Redirect(w, r, next, http.StatusSeeOther)
+	return true
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, sess *Session) {

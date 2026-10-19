@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"{{with .Theme}} data-theme="{{.}}"{{end}}{{with .Palette}} data-palette="{{.}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+<title>Set up two-step verification · Elemta Mail</title>
+<link rel="stylesheet" href="{{asset "tidewater.css"}}">
+</head>
+<body class="login-body">
+<main class="login">
+  {{template "logo-art" .}}
+  {{if .RecoveryCodes}}
+  <h1 class="login-title">Two-step verification is on</h1>
+  <p>Save these recovery codes somewhere safe. Each one signs you in once if you lose your phone. They won't be shown again.</p>
+  <ul class="code-list mono">{{range .RecoveryCodes}}<li>{{.}}</li>{{end}}</ul>
+  <a class="button primary block" href="/mail">I've saved them; continue to mail</a>
+  {{else}}
+  <h1 class="login-title">Set up two-step verification</h1>
+  <p class="small">Your organization requires a code from an authenticator app each time you sign in. Scan this with the app (or type the key), then enter the code it shows.</p>
+  {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
+  <img class="qr" src="{{.QR}}" alt="QR code for your authenticator app" width="200" height="200">
+  <p class="small muted">Key: <span class="mono">{{.Secret}}</span></p>
+  <form action="/login/setup" method="post">
+    <input type="hidden" name="token" value="{{.Token}}">
+    <input type="hidden" name="secret" value="{{.Secret}}">
+    <label for="code">Code from your authenticator app</label>
+    <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="16" required autofocus>
+    <button class="button primary block" type="submit">Turn on and sign in</button>
+  </form>
+  <p class="login-links"><a href="/login">Cancel</a></p>
+  {{end}}
+</main>
+{{template "login-footer"}}
+</body>
+</html>

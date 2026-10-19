@@ -61,6 +61,19 @@ type securityCheck struct {
 	Kind        string `json:"kind"` // "password" or "app"
 	TOTP        bool   `json:"totp"`
 	AppRequired bool   `json:"app_required"`
+	// The account's class of service (internal/mailpolicy): its protocol
+	// switches, which the webmail applies to itself and to DAV, and
+	// whether two-step verification is required.
+	Protocols        map[string]bool `json:"protocols"`
+	RequireTwoFactor bool            `json:"require_two_factor"`
+}
+
+// allows reports whether the class of service lets the account use a
+// protocol. A missing switch, as from a mailbox service that predates
+// classes, allows.
+func (c securityCheck) allows(protocol string) bool {
+	allowed, set := c.Protocols[protocol]
+	return !set || allowed
 }
 
 type appPassword struct {
@@ -71,10 +84,13 @@ type appPassword struct {
 }
 
 type securityStatus struct {
-	TOTP         bool          `json:"totp"`
-	AppRequired  bool          `json:"app_required"`
-	RecoveryLeft int           `json:"recovery_left"`
-	AppPasswords []appPassword `json:"app_passwords"`
+	TOTP        bool `json:"totp"`
+	AppRequired bool `json:"app_required"`
+	// Required by the account's class of service, whatever the user picks.
+	AppRequiredByClass bool          `json:"app_required_by_class"`
+	TOTPRequired       bool          `json:"totp_required"`
+	RecoveryLeft       int           `json:"recovery_left"`
+	AppPasswords       []appPassword `json:"app_passwords"`
 }
 
 func (c *securityClient) call(ctx context.Context, method, path, user, password string, in, out any) error {

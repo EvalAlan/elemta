@@ -192,12 +192,16 @@
       {{else}}{{with .Status}}
         {{if .TOTP}}
         <p>Webmail asks for a code from your authenticator app after your password. <span class="muted">{{.RecoveryLeft}} recovery codes left.</span></p>
+        {{if .TOTPRequired}}
+        <p class="small muted">Your organization requires two-step verification, so it can't be turned off.</p>
+        {{else}}
         <form class="inline-fields" action="/settings/2fa/disable#two-step" method="post" autocomplete="off">
           <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
           <label for="totp-off" class="visually-hidden">Current code</label>
           <input id="totp-off" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="16" placeholder="Current code" required class="code-input">
           <button class="button danger" type="submit">Turn off</button>
         </form>
+        {{end}}
         {{else}}
         <p class="muted">With two-step verification, a stolen password alone can't open your webmail: you also need a code from your phone.</p>
         <form action="/settings/2fa/begin#two-step" method="post">
@@ -212,7 +216,7 @@
     <div class="card" id="app-passwords">
       <div class="card-head">
         <h2 class="card-title">App passwords</h2>
-        <span class="badge{{if .AppRequired}} on{{end}}">{{if .AppRequired}}Required{{else}}Optional{{end}}</span>
+        <span class="badge{{if or .AppRequired .AppRequiredByClass}} on{{end}}">{{if or .AppRequired .AppRequiredByClass}}Required{{else}}Optional{{end}}</span>
       </div>
       {{if eq $.Settings.NoticeCard "app-passwords"}}<p class="notice card-notice" role="status">{{$.Settings.Notice}}</p>{{end}}
       {{with $.Settings.Security}}{{if .NewAppPassword}}
@@ -237,6 +241,14 @@
         <input id="app-name" name="name" type="text" maxlength="64" placeholder="Name, e.g. Thunderbird on laptop" required>
         <button class="button" type="submit">{{template "icon-plus"}}Create app password</button>
       </form>
+      {{if .AppRequiredByClass}}
+      <div class="toggle-row">
+        <div>
+          <strong>App passwords are required for mail apps</strong>
+          <p class="small muted">Your organization requires them: mail, calendar and contacts apps must use an app password. Your account password works only in webmail.</p>
+        </div>
+      </div>
+      {{else}}
       <form class="toggle-row" action="/settings/app-required#app-passwords" method="post">
         <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
         <input type="hidden" name="required" value="{{if .AppRequired}}0{{else}}1{{end}}">
@@ -246,6 +258,7 @@
         </div>
         <button class="button{{if and .TOTP (not .AppRequired)}} primary{{end}}" type="submit">{{if .AppRequired}}Turn off{{else}}Turn on{{end}}</button>
       </form>
+      {{end}}
     </div>
     {{end}}
   {{else}}
