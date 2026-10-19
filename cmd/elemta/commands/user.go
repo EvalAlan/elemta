@@ -80,13 +80,6 @@ var userAddCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		users, err := readUsers(path)
-		if err != nil {
-			return err
-		}
-		if _, exists := users[args[0]]; exists {
-			return fmt.Errorf("user %q already exists; use `user passwd` to change the password", args[0])
-		}
 		roles := datasource.LegacyRolesFor(args[0])
 		if userRole != "" {
 			if err := checkRole(userRole); err != nil {
@@ -105,8 +98,13 @@ var userAddCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("hash password: %w", err)
 		}
-		users[args[0]] = datasource.FileUser{Hash: hash, Roles: roles}
-		if err := writeUsers(path, users); err != nil {
+		if err := datasource.ModifyUsersFile(path, func(users map[string]datasource.FileUser) error {
+			if _, exists := users[args[0]]; exists {
+				return fmt.Errorf("user %q already exists; use `user passwd` to change the password", args[0])
+			}
+			users[args[0]] = datasource.FileUser{Hash: hash, Roles: roles}
+			return nil
+		}); err != nil {
 			return err
 		}
 		fmt.Printf("Added %q (%s) to %s\n", args[0], strings.Join(roles, ","), path)
@@ -123,14 +121,6 @@ var userPasswdCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		users, err := readUsers(path)
-		if err != nil {
-			return err
-		}
-		existing, exists := users[args[0]]
-		if !exists {
-			return fmt.Errorf("user %q does not exist in %s", args[0], path)
-		}
 		password, err := readPassword(cmd, true)
 		if err != nil {
 			return err
@@ -142,9 +132,15 @@ var userPasswdCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("hash password: %w", err)
 		}
-		existing.Hash = hash
-		users[args[0]] = existing
-		if err := writeUsers(path, users); err != nil {
+		if err := datasource.ModifyUsersFile(path, func(users map[string]datasource.FileUser) error {
+			existing, exists := users[args[0]]
+			if !exists {
+				return fmt.Errorf("user %q does not exist in %s", args[0], path)
+			}
+			existing.Hash = hash
+			users[args[0]] = existing
+			return nil
+		}); err != nil {
 			return err
 		}
 		fmt.Printf("Changed the password for %q\n", args[0])
@@ -162,15 +158,13 @@ var userRemoveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		users, err := readUsers(path)
-		if err != nil {
-			return err
-		}
-		if _, exists := users[args[0]]; !exists {
-			return fmt.Errorf("user %q does not exist in %s", args[0], path)
-		}
-		delete(users, args[0])
-		if err := writeUsers(path, users); err != nil {
+		if err := datasource.ModifyUsersFile(path, func(users map[string]datasource.FileUser) error {
+			if _, exists := users[args[0]]; !exists {
+				return fmt.Errorf("user %q does not exist in %s", args[0], path)
+			}
+			delete(users, args[0])
+			return nil
+		}); err != nil {
 			return err
 		}
 		fmt.Printf("Removed %q\n", args[0])
@@ -219,17 +213,15 @@ var userRoleCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		users, err := readUsers(path)
-		if err != nil {
-			return err
-		}
-		u, exists := users[args[0]]
-		if !exists {
-			return fmt.Errorf("user %q does not exist in %s", args[0], path)
-		}
-		u.Roles = []string{args[1]}
-		users[args[0]] = u
-		if err := writeUsers(path, users); err != nil {
+		if err := datasource.ModifyUsersFile(path, func(users map[string]datasource.FileUser) error {
+			u, exists := users[args[0]]
+			if !exists {
+				return fmt.Errorf("user %q does not exist in %s", args[0], path)
+			}
+			u.Roles = []string{args[1]}
+			users[args[0]] = u
+			return nil
+		}); err != nil {
 			return err
 		}
 		fmt.Printf("%q is now %s\n", args[0], args[1])
@@ -300,10 +292,4 @@ func readPassword(cmd *cobra.Command, confirm bool) (string, error) {
 // can create it.
 func readUsers(path string) (map[string]datasource.FileUser, error) {
 	return datasource.ReadUsersFile(path)
-}
-
-// writeUsers rewrites the users file atomically and readable only by its owner:
-// it holds password hashes.
-func writeUsers(path string, users map[string]datasource.FileUser) error {
-	return datasource.WriteUsersFile(path, users)
 }

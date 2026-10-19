@@ -335,6 +335,31 @@ func TestSessionCachePolicy(t *testing.T) {
 	})
 }
 
+func TestSessionCacheTakePreservesDistinctIdleSessions(t *testing.T) {
+	now := time.Now()
+	c := newSessionCache()
+	first := &outboundSession{created: now, idleSince: now}
+	second := &outboundSession{created: now, idleSince: now}
+	third := &outboundSession{created: now, idleSince: now}
+	c.idle["mx:25"] = []*outboundSession{first, second, third}
+	c.total = 3
+
+	seen := make(map[*outboundSession]bool)
+	for range 3 {
+		s, stale := c.take("mx:25", false, false)
+		if s == nil || len(stale) != 0 {
+			t.Fatalf("take returned session %p and stale %d", s, len(stale))
+		}
+		if seen[s] {
+			t.Fatalf("session %p checked out twice", s)
+		}
+		seen[s] = true
+	}
+	if len(seen) != 3 || c.total != 0 {
+		t.Fatalf("checked out %d distinct sessions with %d still idle", len(seen), c.total)
+	}
+}
+
 // BenchmarkSessionReuse delivers sequentially to a receiver that takes 1ms per
 // reply, which stands in for a round trip to a nearby provider. Real round
 // trips are longer and include a TLS handshake, so reuse gains more in

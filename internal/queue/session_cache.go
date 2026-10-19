@@ -126,7 +126,8 @@ func (c *sessionCache) take(address string, needRequireTLS, needDANE bool) (*out
 	now := c.now()
 	list := c.idle[address]
 	var stale []*outboundSession
-	kept := list[:0]
+	// Iterating newest-first must not overwrite entries we have not read yet.
+	kept := make([]*outboundSession, 0, len(list))
 	var found *outboundSession
 	for i := len(list) - 1; i >= 0; i-- {
 		s := list[i]

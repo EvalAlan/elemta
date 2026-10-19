@@ -3,6 +3,7 @@ package webmail
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +69,29 @@ func TestDAVAuth(t *testing.T) {
 		if resp := davRequest(t, h, "PROPFIND", p, "", "", "", nil); resp.StatusCode != http.StatusMovedPermanently || resp.Header.Get("Location") != davRoot {
 			t.Fatalf("%s = %d %q", p, resp.StatusCode, resp.Header.Get("Location"))
 		}
+	}
+}
+
+func TestDAVCachedConnectionRechecksSecurityPolicy(t *testing.T) {
+	security := &fakeSecurity{}
+	h := newSecurityHarness(t, security)
+	request := func() int {
+		r := httptest.NewRequest(http.MethodGet, "/dav/", nil)
+		r.SetBasicAuth("dana", "secret")
+		w := httptest.NewRecorder()
+		if _, ok := h.server.davAuth(w, r); ok {
+			return http.StatusOK
+		}
+		return w.Code
+	}
+	if got := request(); got != http.StatusOK {
+		t.Fatalf("initial DAV request = %d", got)
+	}
+	security.mu.Lock()
+	security.appRequired = true
+	security.mu.Unlock()
+	if got := request(); got != http.StatusUnauthorized {
+		t.Fatalf("cached account password after policy change = %d", got)
 	}
 }
 
@@ -160,6 +184,12 @@ func TestCalDAV(t *testing.T) {
 		t.Fatalf("query = %+v, %v", objs, err)
 	}
 
+	if resp := davRequest(t, h, "DELETE", evPath, "user@example.com", "secret", "", withHeader("If-Match", `"stale"`)); resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("stale conditional delete = %d", resp.StatusCode)
+	}
+	if _, ok := h.store.objects[CollCalendar]["uid-1@test"]; !ok {
+		t.Fatal("stale conditional delete removed the object")
+	}
 	if resp := davRequest(t, h, "DELETE", evPath, "user@example.com", "secret", "", nil); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete = %d", resp.StatusCode)
 	}

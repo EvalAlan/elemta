@@ -77,7 +77,7 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		if a.app {
 			kind = "app"
 		}
-		return map[string]any{"kind": kind, "totp": st.TOTP, "app_required": st.AppRequired}, nil
+		return map[string]any{"kind": kind, "totp": st.TOTP, "app_required": st.AppRequired, "account_id": a.account.ID}, nil
 	})
 	handle("GET /v1/security", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		return s.engine.SecurityState(r.Context(), a.account.ID)
@@ -190,6 +190,8 @@ func writeSecurityError(w http.ResponseWriter, err error) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	case errors.Is(err, ErrBadCode):
 		http.Error(w, "invalid code", http.StatusUnprocessableEntity)
+	case errors.Is(err, ErrTOTPActive):
+		http.Error(w, "two-step verification is already enabled", http.StatusConflict)
 	case errors.Is(err, errLimited):
 		http.Error(w, "too many attempts", http.StatusTooManyRequests)
 	case errors.Is(err, ErrNotFound):

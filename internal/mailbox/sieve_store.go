@@ -155,6 +155,14 @@ ON CONFLICT(account,key) DO UPDATE SET expires=EXCLUDED.expires WHERE mailbox_si
 	return n == 1, err
 }
 
+// redirectSent only observes completed redirects. A redirect is recorded
+// after SMTP accepts it, so a crashed sender cannot leave a false success.
+func (e *Engine) redirectSent(ctx context.Context, account, key string) (bool, error) {
+	var sent bool
+	err := e.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_sieve_sent WHERE account=$1 AND key=$2 AND expires>now())`, account, key).Scan(&sent)
+	return sent, err
+}
+
 // releaseSent undoes a claim whose side effect failed, so a retry can try
 // again.
 func (e *Engine) releaseSent(ctx context.Context, account, key string) {

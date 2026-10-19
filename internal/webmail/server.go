@@ -96,6 +96,10 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now, dav: newDAVPool(),
 		defaultLoc: cfg.location(),
 	}
+	if v, ok := sessions.shared.(*valkeySessions); ok {
+		server.pending.shared = v
+		server.pending.aead = sessions.aead
+	}
 	if cfg.RecoveryURL != "" {
 		if envOr("ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD", cfg.LDAPResetPassword) == "" || envOr("ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD", cfg.RecoverySMTPPassword) == "" {
 			return nil, errors.New("webmail: recovery requires LDAP reset and SMTP service passwords")
@@ -114,6 +118,9 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		server.security = newSecurityClient(u)
 	}
 	if cfg.ObjectStore == "postgres" {
+		if server.security == nil {
+			return nil, errors.New("webmail: postgres object store requires security_url for immutable account identity")
+		}
 		dsn := envOr("ELEMTA_WEBMAIL_OBJECT_POSTGRES_DSN", cfg.ObjectPostgresDSN)
 		if dsn == "" {
 			return nil, errors.New("webmail: postgres object store needs object_postgres_dsn or ELEMTA_WEBMAIL_OBJECT_POSTGRES_DSN")
@@ -132,7 +139,13 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 			return nil, errors.New("webmail: could not initialize object database")
 		}
 		server.objectDB = db
-		server.dial = postgresObjectDialer(db, cfg, dial)
+		server.dial = postgresObjectDialer(db, server.security, dial)
+	} else {
+		coord := &objectCoordinator{}
+		if v, ok := sessions.shared.(*valkeySessions); ok {
+			coord.valkey = v
+		}
+		server.dial = coordinatedObjectDialer(coord, server.security, dial)
 	}
 	return server, nil
 }

@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -111,6 +112,9 @@ func NewMTASTSManager(config *Config) *MTASTSManager {
 		cache:        make(map[string]*MTASTSPolicy),
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return errors.New("MTA-STS policy redirects are not permitted")
+			},
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{
 					Timeout:   10 * time.Second,
@@ -261,6 +265,9 @@ func (m *MTASTSManager) fetchPolicyFromHTTPS(ctx context.Context, domain string)
 		return nil, fmt.Errorf("HTTPS request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.Request == nil || resp.Request.URL == nil || resp.Request.URL.Scheme != "https" || !strings.EqualFold(resp.Request.URL.Hostname(), "mta-sts."+domain) || (resp.Request.URL.Port() != "" && resp.Request.URL.Port() != "443") {
+		return nil, errors.New("MTA-STS policy response came from an unexpected origin")
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTPS returned status %d", resp.StatusCode)

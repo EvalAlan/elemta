@@ -74,6 +74,7 @@ func startFakeSubmission(t *testing.T) (*fakeSubmission, string) {
 type sieveRig struct {
 	t      *testing.T
 	e      *Engine
+	svc    *Service
 	a      Account
 	lmtp   string
 	sieve  string
@@ -95,7 +96,7 @@ func newSieveRig(t *testing.T) *sieveRig {
 	}
 	go func() { _ = service.serveManageSieve(ln, nil) }()
 	t.Cleanup(func() { _ = ln.Close() })
-	return &sieveRig{t: t, e: e, a: a, lmtp: lmtpAddr, sieve: ln.Addr().String(), submit: submit}
+	return &sieveRig{t: t, e: e, svc: service, a: a, lmtp: lmtpAddr, sieve: ln.Addr().String(), submit: submit}
 }
 
 // install uploads and activates a script with the webmail's own client.
@@ -239,6 +240,54 @@ func TestSieveRetryDoesntDuplicate(t *testing.T) {
 	r.deliver("bo@example.com", "loop", string(sent[0].data))
 	if len(r.submit.messages()) != 1 {
 		t.Error("redirect loop not stopped")
+	}
+}
+
+func TestSieveRedirectNeverAcknowledgesMissingSubmission(t *testing.T) {
+	r := newSieveRig(t)
+	if err := r.install(`redirect "elsewhere@example.net";`); err != nil {
+		t.Fatal(err)
+	}
+	d := delivery{account: r.a, from: "sender@example.com", rcpt: r.a.Address, raw: []byte("Subject: forwarding\r\n\r\nbody\r\n"), token: "missing-submit"}
+	r.svc.cfg.Sieve.SubmitAddr = ""
+	if err := r.svc.redirect(context.Background(), d, "elsewhere@example.net"); err == nil {
+		t.Fatal("redirect acknowledged without a submission destination")
+	}
+	if st := r.deliver(d.from, d.token, string(d.raw)); st == nil {
+		t.Fatal("redirect-only delivery acknowledged without submission")
+	}
+	if got := r.count("INBOX"); got != 1 {
+		t.Fatalf("failed redirect retained %d copies, want one", got)
+	}
+}
+
+func TestSieveRedirectOnlyKeepsRecoverableCopy(t *testing.T) {
+	r := newSieveRig(t)
+	if err := r.install(`redirect "elsewhere@example.net";`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if st := r.deliver("sender@example.com", "redirect-only", r.msg("Forward me")); st != nil {
+			t.Fatal(st)
+		}
+	}
+	if got := r.count("INBOX"); got != 1 {
+		t.Fatalf("redirect-only retained %d copies, want one", got)
+	}
+	if got := len(r.submit.messages()); got != 1 {
+		t.Fatalf("redirect-only sent %d copies, want one", got)
+	}
+}
+
+func TestSieveRedirectLoopRetainsMail(t *testing.T) {
+	r := newSieveRig(t)
+	d := delivery{account: r.a, from: "sender@example.com", rcpt: r.a.Address,
+		raw: []byte(redirectHeader + ": " + r.a.Address + "\r\nSubject: retained\r\n\r\nbody\r\n"), token: "loop-retain"}
+	if err := r.svc.redirect(context.Background(), d, "elsewhere@example.net"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.count("INBOX"); got != 1 {
+		t.Fatalf("loop marker left %d retained messages, want 1", got)
 	}
 }
 

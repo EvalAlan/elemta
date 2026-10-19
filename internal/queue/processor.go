@@ -529,7 +529,6 @@ func (p *Processor) processQueue(queueType QueueType) error {
 		// measured at exactly that: 40 messages every 20 seconds while 6,000
 		// sat in the queue. The dispatch loop below blocks on the worker
 		// semaphore, so this paces itself and does not spin.
-		leaseUntil := time.Now().Add(15 * time.Minute)
 		for {
 			select {
 			case <-p.ctx.Done():
@@ -547,6 +546,9 @@ func (p *Processor) processQueue(queueType QueueType) error {
 				}
 				continue
 			}
+			// A full queue can keep this loop alive for hours. Each batch needs
+			// its own deadline so later work never starts with an expired lease.
+			leaseUntil := time.Now().Add(15 * time.Minute)
 			batch, err := claimer.ClaimMessages(queueType, available, p.workerID, leaseUntil)
 			if err != nil {
 				return fmt.Errorf("failed to claim messages: %w", err)

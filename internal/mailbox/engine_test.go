@@ -274,6 +274,13 @@ func TestEngineQuotaIsolationAndGC(t *testing.T) {
 	if _, err := e.Append(ctx, a.ID, "INBOX", []byte("6"), nil, time.Time{}, ""); !errors.Is(err, ErrQuota) {
 		t.Fatalf("quota: %v", err)
 	}
+	var staged, reserved int64
+	if err := e.DB.QueryRow(`SELECT count(*) FROM mailbox_bodies WHERE state='staging'`).Scan(&staged); err != nil || staged != 0 {
+		t.Fatalf("rejected quota write left %d staged bodies: %v", staged, err)
+	}
+	if err := e.DB.QueryRow(`SELECT reserved_bytes FROM mailbox_accounts WHERE id=$1`, a.ID).Scan(&reserved); err != nil || reserved != 0 {
+		t.Fatalf("rejected quota write left %d reserved bytes: %v", reserved, err)
+	}
 	if _, _, err := e.Snapshot(ctx, uuid.NewString(), "INBOX"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("cross-account mailbox accessible")
 	}

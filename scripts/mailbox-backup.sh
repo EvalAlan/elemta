@@ -13,22 +13,38 @@
 set -eu
 out=${1:?usage: $0 <directory>}
 db=${MAILBOX_DB_CONTAINER:-elemta-mailbox-db}
+dbuser=${MAILBOX_DB_USER:-}
+dbname=${MAILBOX_DB_NAME:-}
 bodies=${MAILBOX_BODIES_VOLUME:-compose_mailbox_bodies}
 image=${MAILBOX_IMAGE:-elemta-mailbox:dev}
-mkdir -p "$out"
-chmod 700 "$out"
+[ ! -e "$out" ] || { echo "Backup destination already exists: $out" >&2; exit 1; }
+parent=$(dirname "$out")
+mkdir -p "$parent"
+stage=$(mktemp -d "$parent/.mailbox-backup.XXXXXXXX")
+trap 'rm -rf "$stage"' EXIT HUP INT TERM
+chmod 700 "$stage"
 
 echo "Dumping metadata from $db"
-docker exec "$db" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"$out/metadata.dump"
+docker exec -e ELEMTA_BACKUP_DB_USER="$dbuser" -e ELEMTA_BACKUP_DB_NAME="$dbname" "$db" sh -c '
+    user=${ELEMTA_BACKUP_DB_USER:-${POSTGRES_USER:-postgres}}
+    database=${ELEMTA_BACKUP_DB_NAME:-${POSTGRES_DB:-$user}}
+    pg_dump -U "$user" -d "$database" -Fc
+' >"$stage/metadata.dump"
 
 echo "Copying bodies from volume $bodies"
-docker run --rm --network none --entrypoint tar -v "$bodies:/bodies:ro" "$image" -C /bodies -czf - . >"$out/bodies.tar.gz"
+docker run --rm --network none --entrypoint tar -v "$bodies:/bodies:ro" "$image" -C /bodies -czf - . >"$stage/bodies.tar.gz"
 
-messages=$(docker exec "$db" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select count(*) from mailbox_messages"')
+docker run --rm -i --network none postgres:17-alpine pg_restore -l <"$stage/metadata.dump" >/dev/null
+tar -tzf "$stage/bodies.tar.gz" >/dev/null
 {
     echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "messages=$messages"
-    echo "metadata_bytes=$(wc -c <"$out/metadata.dump")"
-    echo "bodies_bytes=$(wc -c <"$out/bodies.tar.gz")"
-} >"$out/manifest"
+    echo "metadata_bytes=$(wc -c <"$stage/metadata.dump")"
+    echo "bodies_bytes=$(wc -c <"$stage/bodies.tar.gz")"
+    echo "metadata_sha256=$(sha256sum "$stage/metadata.dump" | cut -d ' ' -f 1)"
+    echo "bodies_sha256=$(sha256sum "$stage/bodies.tar.gz" | cut -d ' ' -f 1)"
+} >"$stage/manifest"
+: >"$stage/complete"
+[ ! -e "$out" ] || { echo "Backup destination appeared during run: $out" >&2; exit 1; }
+mv "$stage" "$out"
+trap - EXIT HUP INT TERM
 cat "$out/manifest"

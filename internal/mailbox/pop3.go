@@ -34,6 +34,8 @@ type popSession struct {
 	encrypted bool
 	user      string
 	account   Account
+	password  string
+	checkedAt time.Time
 	folder    Folder
 	messages  []Message
 	deleted   map[int]bool
@@ -101,6 +103,8 @@ func (p *popSession) login(ctx context.Context, password string) error {
 		return err
 	}
 	p.account = a
+	p.password = password
+	p.checkedAt = time.Now()
 	p.owner = owner
 	p.folder, p.messages, err = p.s.engine.Snapshot(ctx, a.ID, "INBOX")
 	return err
@@ -130,6 +134,14 @@ func (p *popSession) run(ctx context.Context) {
 		if p.owner != "" && !p.renew(ctx) {
 			_ = p.line("-ERR Maildrop lease unavailable")
 			return
+		}
+		if p.owner != "" && time.Since(p.checkedAt) >= 30*time.Second {
+			a, err := p.s.login(ctx, p.user, p.password, true)
+			if err != nil || a.ID != p.account.ID {
+				_ = p.line("-ERR Account credentials have changed")
+				return
+			}
+			p.checkedAt = time.Now()
 		}
 		if cmd == "QUIT" {
 			if arg != "" {

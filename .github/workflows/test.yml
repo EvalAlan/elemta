@@ -83,6 +83,33 @@ jobs:
           ELEMTA_TEST_MAILBOX_DSN: host=127.0.0.1 port=5432 dbname=objects user=objects password=local-test-only sslmode=disable
         run: go test -race -count=1 ./internal/mailbox/
 
+  test-webmail-valkey:
+    name: test (webmail Valkey security state)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      valkey:
+        image: valkey/valkey:8.0-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test shared security state
+        env:
+          ELEMTA_TEST_VALKEY: 127.0.0.1:6379
+        run: |
+          test -n "$ELEMTA_TEST_VALKEY"
+          go test -race -count=1 -run '^TestValkey' ./internal/webmail/
+
   test-webmail-browser:
     name: test (webmail in a browser)
     runs-on: ubuntu-latest

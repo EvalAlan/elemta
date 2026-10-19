@@ -2,9 +2,11 @@ CREATE SEQUENCE IF NOT EXISTS mailbox_uidvalidity MINVALUE 1 MAXVALUE 4294967295
 CREATE TABLE IF NOT EXISTS mailbox_accounts (
  id TEXT PRIMARY KEY, address TEXT NOT NULL,
  quota_bytes BIGINT NOT NULL DEFAULT 0, used_bytes BIGINT NOT NULL DEFAULT 0,
+ reserved_bytes BIGINT NOT NULL DEFAULT 0,
  writable BOOLEAN NOT NULL DEFAULT TRUE
 );
 ALTER TABLE mailbox_accounts DROP CONSTRAINT IF EXISTS mailbox_accounts_address_key;
+ALTER TABLE mailbox_accounts ADD COLUMN IF NOT EXISTS reserved_bytes BIGINT NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS mailbox_folders (
  id BIGSERIAL PRIMARY KEY, account TEXT NOT NULL REFERENCES mailbox_accounts(id),
  name TEXT NOT NULL, uidvalidity BIGINT NOT NULL DEFAULT nextval('mailbox_uidvalidity'),
@@ -81,10 +83,12 @@ CREATE TABLE IF NOT EXISTS mailbox_pop3_leases (
 -- Account security (security.go): two-step verification and app passwords.
 CREATE TABLE IF NOT EXISTS mailbox_security (
  account text PRIMARY KEY REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
- totp_secret text, totp_pending text, totp_last_step bigint NOT NULL DEFAULT 0,
+ totp_secret text, totp_pending text, totp_pending_at timestamptz,
+ totp_last_step bigint NOT NULL DEFAULT 0,
  app_passwords_required boolean NOT NULL DEFAULT false,
  recovery_codes text[] NOT NULL DEFAULT '{}'
 );
+ALTER TABLE mailbox_security ADD COLUMN IF NOT EXISTS totp_pending_at timestamptz;
 CREATE TABLE IF NOT EXISTS mailbox_app_passwords (
  id bigserial PRIMARY KEY,
  account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,

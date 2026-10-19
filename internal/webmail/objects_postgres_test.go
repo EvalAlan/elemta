@@ -20,15 +20,15 @@ import (
 // This opt-in test authenticates against the running Compose Dovecot and
 // exercises DAV through the same SQL wrapper used by browser sessions.
 func TestPostgresObjectsIMAP(t *testing.T) {
-	if os.Getenv("ELEMTA_TEST_OBJECT_IMAP") != "1" {
-		t.Skip("set ELEMTA_TEST_OBJECT_IMAP=1 for the running development stack")
+	if os.Getenv("ELEMTA_TEST_OBJECT_IMAP") != "1" || os.Getenv("ELEMTA_TEST_OBJECT_SECURITY_URL") == "" {
+		t.Skip("set ELEMTA_TEST_OBJECT_IMAP=1 and ELEMTA_TEST_OBJECT_SECURITY_URL for the mailbox stack")
 	}
 	dsn := os.Getenv("ELEMTA_TEST_OBJECT_POSTGRES_DSN")
 	if dsn == "" {
 		t.Fatal("ELEMTA_TEST_OBJECT_POSTGRES_DSN is required")
 	}
 	secure := false
-	cfg := Config{IMAPAddr: "127.0.0.1:14143", IMAPTLS: TLSModeNone, SubmissionAddr: "127.0.0.1:2587", SecureCookies: &secure, ObjectStore: "postgres", ObjectPostgresDSN: dsn}
+	cfg := Config{IMAPAddr: "127.0.0.1:14143", IMAPTLS: TLSModeNone, SubmissionAddr: "127.0.0.1:2587", SecureCookies: &secure, ObjectStore: "postgres", ObjectPostgresDSN: dsn, SecurityURL: os.Getenv("ELEMTA_TEST_OBJECT_SECURITY_URL")}
 	srv, err := NewServer(cfg, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -37,9 +37,13 @@ func TestPostgresObjectsIMAP(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	const user = "stressuser20@example.com"
+	owner, err := postgresObjectOwner(ctx, srv.security, user, "testpass123")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
-		_, _ = srv.objectDB.Exec(`DELETE FROM webmail_objects WHERE mailbox=$1`, user)
-		_, _ = srv.objectDB.Exec(`DELETE FROM webmail_object_users WHERE mailbox=$1`, user)
+		_, _ = srv.objectDB.Exec(`DELETE FROM webmail_objects WHERE mailbox=$1`, owner)
+		_, _ = srv.objectDB.Exec(`DELETE FROM webmail_object_users WHERE mailbox=$1`, owner)
 	}()
 	st, err := srv.dial(ctx, user, "testpass123")
 	if err != nil {
@@ -215,6 +219,37 @@ fileext = ".ics"
 	request("DELETE", "")
 }
 
+func TestPostgresObjectOwnerFollowsAccountIdentity(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, password, _ := r.BasicAuth()
+		if user != "same@example.com" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch password {
+		case "old":
+			_, _ = io.WriteString(w, `{"account_id":"account-one"}`)
+		case "new":
+			_, _ = io.WriteString(w, `{"account_id":"account-two"}`)
+		default:
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		}
+	}))
+	defer api.Close()
+	security := newSecurityClient(api.URL)
+	first, err := postgresObjectOwner(context.Background(), security, "same@example.com", "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := postgresObjectOwner(context.Background(), security, "same@example.com", "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("recreated address shares object owner %q", first)
+	}
+}
+
 type failingObjectSource struct{ ObjectStore }
 
 func (f failingObjectSource) Objects(ctx context.Context, c Collection) ([]Object, error) {
@@ -289,6 +324,36 @@ func TestPostgresObjects(t *testing.T) {
 	}
 	if err := s.PutObject(ctx, CollCalendar, Object{ID: "different-id", Name: "client-name"}); err == nil {
 		t.Fatal("duplicate resource name accepted")
+	}
+	oldTag := davETag(objects[0].Data)
+	var winners sync.WaitGroup
+	results := make(chan error, 2)
+	for i := range 2 {
+		winners.Add(1)
+		go func() {
+			defer winners.Done()
+			results <- s.transaction(ctx, func(tx ObjectStore) error {
+				current, err := tx.Objects(ctx, CollCalendar)
+				if err != nil {
+					return err
+				}
+				if davETag(current[0].Data) != oldTag {
+					return errors.New("stale version")
+				}
+				return tx.PutObject(ctx, CollCalendar, Object{ID: "same-id", Data: []byte{byte(i)}})
+			})
+		}()
+	}
+	winners.Wait()
+	close(results)
+	succeeded := 0
+	for err := range results {
+		if err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("conditional update successes: %d", succeeded)
 	}
 	isolated := postgresObjects{db: db, user: other}
 	if err := isolated.migrate(ctx, newFakeStore()); err != nil {

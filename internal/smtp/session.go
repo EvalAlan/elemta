@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -574,8 +575,13 @@ func (s *Session) processCommands(ctx context.Context) error {
 		}
 
 		// Read command line
-		line, err := s.reader.ReadString('\n')
+		commandBytes, err := readBoundedSMTPLine(s.reader, 512)
 		if err != nil {
+			if errors.Is(err, errSMTPLineTooLong) {
+				_ = s.write("500 5.5.2 Command line too long")
+				_ = s.flush()
+				return nil
+			}
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				s.logger.InfoContext(ctx, "Session timeout")
 				if writeErr := s.write("421 4.4.2 Timeout"); writeErr != nil {
@@ -595,6 +601,7 @@ func (s *Session) processCommands(ctx context.Context) error {
 		s.state.UpdateActivity(ctx)
 
 		// Process regular commands
+		line := string(commandBytes)
 		if err := s.commandHandler.ProcessCommand(ctx, line); err != nil {
 			s.logger.WarnContext(ctx, "Command processing failed",
 				"event_type", "rejection",

@@ -22,6 +22,9 @@ Recovery records must be available while IMAP authentication is unavailable, so
 recovery uses Valkey rather than the mailbox's Settings folder. Configure
 persistent Valkey storage and include it in backups; verified recovery addresses
 have no expiry. Tokens and cooldowns expire automatically.
+Run this store with `noeviction`, monitor memory headroom and write errors, and
+keep scanner cache data on a separate instance. A full store must reject new
+security writes rather than evict revocation or recovery records.
 
 Add these keys to `[webmail]`, alongside the existing IMAP, SMTP and LDAP keys:
 
@@ -34,6 +37,10 @@ ldap_reset_dn = "cn=webmail-reset,ou=services,dc=example,dc=com"
 recovery_sender = "no-reply@example.com"
 recovery_smtp_user = "no-reply@example.com"
 ```
+
+The shared session key also seals pending two-factor sign-ins in Valkey.
+All webmail replicas must use the same key; pending sign-ins expire after five
+minutes and are consumed once after successful verification.
 
 Supply `ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD` and
 `ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD` as secrets in the webmail process.

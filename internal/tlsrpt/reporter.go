@@ -89,11 +89,13 @@ func NewReporter(cfg Config, enqueue Enqueuer, logger *slog.Logger) (*Reporter, 
 		cfg:      cfg,
 		enqueue:  enqueue,
 		resolver: net.DefaultResolver,
-		http:     &http.Client{Timeout: 30 * time.Second},
-		logger:   logger.With("component", "tls-rpt"),
-		stop:     make(chan struct{}),
-		done:     make(chan struct{}),
-		retries:  make(map[string]retry),
+		http: &http.Client{Timeout: 30 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+			Transport:     reportTransport(net.DefaultResolver)},
+		logger:  logger.With("component", "tls-rpt"),
+		stop:    make(chan struct{}),
+		done:    make(chan struct{}),
+		retries: make(map[string]retry),
 	}
 	if err := r.load(); err != nil {
 		return nil, err
@@ -280,6 +282,10 @@ func parseRecord(txt string) ([]string, bool) {
 
 // post delivers a report over HTTPS (RFC 8460 §5.4).
 func (r *Reporter) post(ctx context.Context, endpoint string, gz []byte) error {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
+		return errors.New("TLS report endpoint must be HTTPS")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(gz))
 	if err != nil {
 		return err

@@ -8,10 +8,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,15 +59,22 @@ type Engine struct {
 	MaxBytes    int64
 	requireSync bool
 	bodySlots   chan struct{}
+	totpKeys    []totpKey
 	// bodyGrace is how long a body stays after it was first seen without
 	// any message referring to it. It must exceed the backup retention,
 	// or restoring an older metadata backup finds bodies already gone.
-	bodyGrace time.Duration
+	bodyGrace     time.Duration
+	readinessMu   sync.Mutex
+	lastBodyCheck time.Time
 }
 
 func NewEngine(ctx context.Context, db *sql.DB, bodies BodyStore, c Config) (*Engine, error) {
 	c = c.WithDefaults()
-	e := &Engine{DB: db, Bodies: bodies, MaxBytes: int64(c.Limits.MaxMessageMB) << 20, requireSync: c.Metadata.RequireSynchronousReplication, bodySlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), bodyGrace: time.Duration(c.Maintenance.BodyGraceHours) * time.Hour}
+	keys, err := parseTOTPKeys(os.Getenv("ELEMTA_MAILBOX_TOTP_KEYS"))
+	if err != nil {
+		return nil, err
+	}
+	e := &Engine{DB: db, Bodies: bodies, MaxBytes: int64(c.Limits.MaxMessageMB) << 20, requireSync: c.Metadata.RequireSynchronousReplication, bodySlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), bodyGrace: time.Duration(c.Maintenance.BodyGraceHours) * time.Hour, totpKeys: keys}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -75,6 +84,9 @@ func NewEngine(ctx context.Context, db *sql.DB, bodies BodyStore, c Config) (*En
 		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, schema); err != nil {
+		return nil, err
+	}
+	if err = e.migrateTOTPSecrets(ctx, tx); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -117,7 +129,16 @@ func (e *Engine) Ready(ctx context.Context) error {
 			return errors.New("no synchronous standby available")
 		}
 	}
-	return e.Bodies.Check(ctx)
+	e.readinessMu.Lock()
+	defer e.readinessMu.Unlock()
+	if time.Since(e.lastBodyCheck) < 10*time.Second {
+		return nil
+	}
+	if err := e.Bodies.Check(ctx); err != nil {
+		return err
+	}
+	e.lastBodyCheck = time.Now()
+	return nil
 }
 func (e *Engine) tx(ctx context.Context, account string, fn func(*sql.Tx) error) error {
 	conn, err := e.DB.Conn(ctx)
@@ -455,11 +476,71 @@ func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, f
 	if date.IsZero() {
 		date = time.Now().UTC()
 	}
+	// Reserve quota under the account lock before publishing a body. This
+	// keeps concurrent uploads from each passing the same free-space check.
+	var duplicate, reserved bool
+	err = e.tx(ctx, account, func(tx *sql.Tx) error {
+		if token != "" {
+			var oldHash string
+			err := tx.QueryRowContext(ctx, `SELECT checksum,uidvalidity,uid FROM mailbox_deliveries WHERE account=$1 AND token=$2`, account, token).Scan(&oldHash, &result.Validity, &result.UID)
+			if err == nil {
+				if oldHash != hash {
+					return ErrConflict
+				}
+				duplicate = true
+				return nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
+		f, err := folderTx(ctx, tx, account, name)
+		if err != nil {
+			return err
+		}
+		if f.Next == 0 || f.Next == ^uint32(0) {
+			return errors.New("mailbox UID space exhausted")
+		}
+		var quota, used, pending int64
+		if err := tx.QueryRowContext(ctx, `SELECT quota_bytes,used_bytes,reserved_bytes FROM mailbox_accounts WHERE id=$1`, account).Scan(&quota, &used, &pending); err != nil {
+			return err
+		}
+		if quota > 0 && int64(len(raw)) > quota-used-pending {
+			return ErrQuota
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE mailbox_accounts SET reserved_bytes=reserved_bytes+$2 WHERE id=$1`, account, len(raw))
+		return err
+	})
+	if err != nil || duplicate {
+		return result, err
+	}
+	reserved = true
+	defer func() {
+		if !reserved {
+			return
+		}
+		cleanup, done := context.WithTimeout(context.Background(), 10*time.Second)
+		defer done()
+		_, _ = e.DB.ExecContext(cleanup, `UPDATE mailbox_accounts SET reserved_bytes=reserved_bytes-$2 WHERE id=$1`, account, len(raw))
+	}()
+	staged, published := false, false
+	defer func() {
+		if !staged || published {
+			return
+		}
+		cleanup, done := context.WithTimeout(context.Background(), 10*time.Second)
+		defer done()
+		if e.Bodies.Delete(cleanup, key) == nil {
+			_, _ = e.DB.ExecContext(cleanup, `DELETE FROM mailbox_summaries WHERE body=$1`, key)
+			_, _ = e.DB.ExecContext(cleanup, `DELETE FROM mailbox_bodies WHERE key=$1 AND state='staging'`, key)
+		}
+	}()
 	// A staging record precedes body publication. Cleanup can fence an expired
 	// upload, and attaching the body checks that state under the same row lock.
 	if _, err = e.DB.ExecContext(ctx, `INSERT INTO mailbox_bodies(key,size,checksum,store) VALUES($1,$2,$3,$4)`, key, len(raw), hash, e.Bodies.Identity()); err != nil {
 		return result, err
 	}
+	staged = true
 	if err = e.Bodies.Put(ctx, key, raw); err != nil {
 		return result, err
 	}
@@ -478,6 +559,7 @@ func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, f
 				if oldHash != hash {
 					return ErrConflict
 				}
+				duplicate = true
 				return nil
 			}
 			if !errors.Is(err, sql.ErrNoRows) {
@@ -515,7 +597,7 @@ func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, f
 		if _, err = tx.ExecContext(ctx, `UPDATE mailbox_folders SET next_uid=next_uid+1,modseq=modseq+1 WHERE id=$1`, f.ID); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE mailbox_accounts SET used_bytes=used_bytes+$2 WHERE id=$1`, account, len(raw)); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE mailbox_accounts SET used_bytes=used_bytes+$2,reserved_bytes=reserved_bytes-$2 WHERE id=$1`, account, len(raw)); err != nil {
 			return err
 		}
 		if err = change(ctx, tx, f.ID, f.ModSeq+1, "append", f.Next); err != nil {
@@ -527,6 +609,10 @@ func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, f
 		}
 		return err
 	})
+	if err == nil && !duplicate {
+		reserved = false
+		published = true
+	}
 	return result, err
 }
 func change(ctx context.Context, tx *sql.Tx, folder int64, modseq uint64, kind string, uid uint32) error {

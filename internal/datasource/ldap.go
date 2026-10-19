@@ -2,7 +2,14 @@ package datasource
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha512"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
+	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -24,7 +31,10 @@ type LDAP struct {
 func NewLDAP(config Config) *LDAP {
 	// Set default values if not provided
 	if config.Port == 0 {
-		config.Port = 389 // Default LDAP port (use 636 for LDAPS)
+		config.Port = 389
+		if config.Options["tls_mode"] == "ldaps" {
+			config.Port = 636
+		}
 	}
 
 	// Get base DNs from options or use defaults
@@ -62,6 +72,52 @@ func NewLDAP(config Config) *LDAP {
 	}
 }
 
+// dial protects both the service bind and the separate user bind. TLS is
+// mandatory unless the operator explicitly selects plaintext for a local lab.
+func (l *LDAP) dial() (*ldap.Conn, error) {
+	mode, _ := l.config.Options["tls_mode"].(string)
+	if mode == "" {
+		mode = "starttls"
+	}
+	if mode != "starttls" && mode != "ldaps" && mode != "plaintext" {
+		return nil, fmt.Errorf("unsupported LDAP TLS mode %q", mode)
+	}
+	var roots *x509.CertPool
+	if caFile, _ := l.config.Options["ca_file"].(string); caFile != "" {
+		var err error
+		roots, err = x509.SystemCertPool()
+		if err != nil {
+			return nil, err
+		}
+		pem, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, err
+		}
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("LDAP CA file has no certificates")
+		}
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: l.config.Host, RootCAs: roots}
+	scheme := "ldap"
+	if mode == "ldaps" {
+		scheme = "ldaps"
+	}
+	address := net.JoinHostPort(l.config.Host, strconv.Itoa(l.config.Port))
+	conn, err := ldap.DialURL(scheme+"://"+address,
+		ldap.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}), ldap.DialWithTLSConfig(tlsConfig))
+	if err != nil {
+		return nil, err
+	}
+	conn.SetTimeout(30 * time.Second)
+	if mode == "starttls" {
+		if err := conn.StartTLS(tlsConfig); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("LDAP StartTLS failed: %w", err)
+		}
+	}
+	return conn, nil
+}
+
 // Connect establishes a connection to the LDAP server
 func (l *LDAP) Connect() error {
 	if l.connected {
@@ -69,14 +125,10 @@ func (l *LDAP) Connect() error {
 	}
 
 	// Connect to LDAP server using DialURL (replaces deprecated Dial)
-	ldapURL := fmt.Sprintf("ldap://%s:%d", l.config.Host, l.config.Port)
-	conn, err := ldap.DialURL(ldapURL)
+	conn, err := l.dial()
 	if err != nil {
 		return fmt.Errorf("failed to connect to LDAP server: %w", err)
 	}
-
-	// Set timeout - increase to 30 seconds for better reliability
-	conn.SetTimeout(30 * time.Second)
 
 	// Bind with service account if credentials are provided
 	if l.config.Username != "" && l.config.Password != "" {
@@ -117,6 +169,19 @@ func (l *LDAP) Name() string {
 // Type returns the type of the datasource
 func (l *LDAP) Type() string {
 	return "ldap"
+}
+
+// The supported directory accepts SSHA512 userPassword values. Salt each
+// write locally so direct attribute updates cannot persist a cleartext secret.
+func encodeLDAPPassword(password string) (string, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
+	}
+	h := sha512.New()
+	_, _ = h.Write([]byte(password))
+	_, _ = h.Write(salt)
+	return "{SSHA512}" + base64.StdEncoding.EncodeToString(append(h.Sum(nil), salt...)), nil
 }
 
 // getUserDN returns the full DN for a user
@@ -196,8 +261,7 @@ func (l *LDAP) Authenticate(ctx context.Context, username, password string) (boo
 	userDN = searchResult.Entries[0].DN
 
 	// Try to bind with the user's credentials using DialURL (replaces deprecated Dial)
-	ldapURL := fmt.Sprintf("ldap://%s:%d", l.config.Host, l.config.Port)
-	conn, err := ldap.DialURL(ldapURL)
+	conn, err := l.dial()
 	if err != nil {
 		return false, fmt.Errorf("failed to connect to LDAP server: %w", err)
 	}
@@ -206,9 +270,6 @@ func (l *LDAP) Authenticate(ctx context.Context, username, password string) (boo
 			_ = conn.Close() // Ignore error in defer cleanup
 		}
 	}()
-
-	// Set timeout - increase to 30 seconds for better reliability
-	conn.SetTimeout(30 * time.Second)
 
 	// Bind with user credentials
 	if err := conn.Bind(userDN, password); err != nil {
@@ -238,7 +299,7 @@ func (l *LDAP) GetUser(ctx context.Context, username string) (User, error) {
 		l.userDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		fmt.Sprintf("(uid=%s)", ldap.EscapeFilter(username)),
-		[]string{"uid", "cn", "mail", "objectClass", "createTimestamp", "modifyTimestamp", "shadowLastChange", "accountStatus"},
+		[]string{"uid", "cn", "mail", "objectClass", "entryUUID", "createTimestamp", "modifyTimestamp", "shadowLastChange", "accountStatus"},
 		nil,
 	)
 
@@ -264,6 +325,9 @@ func (l *LDAP) GetUser(ctx context.Context, username string) (User, error) {
 		Email:      entry.GetAttributeValue("mail"),
 		IsActive:   entry.GetAttributeValue("accountStatus") == "" || entry.GetAttributeValue("accountStatus") == "active",
 		Attributes: make(map[string]interface{}),
+	}
+	if id := entry.GetAttributeValue("entryUUID"); id != "" {
+		user.Attributes["entryUUID"] = id
 	}
 
 	// Parse timestamps
@@ -484,14 +548,16 @@ func (l *LDAP) CreateUser(ctx context.Context, user User) error {
 	}
 
 	if user.Password != "" {
-		// In a real implementation, you would use a secure password hashing algorithm
-		// This is a simplified example
-		addRequest.Attribute("userPassword", []string{user.Password})
+		encoded, err := encodeLDAPPassword(user.Password)
+		if err != nil {
+			return err
+		}
+		addRequest.Attribute("userPassword", []string{encoded})
 	}
 
 	// Add other attributes
 	for key, value := range user.Attributes {
-		if key == "objectClass" || key == "uid" || key == "cn" || key == "mail" || key == "userPassword" {
+		if key == "objectClass" || key == "uid" || key == "cn" || key == "mail" || key == "userPassword" || key == "entryUUID" {
 			continue // Skip attributes we've already set
 		}
 
@@ -602,13 +668,16 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 	}
 
 	if user.Password != "" {
-		// In a real implementation, you would use a secure password hashing algorithm
-		modifyRequest.Replace("userPassword", []string{user.Password})
+		encoded, err := encodeLDAPPassword(user.Password)
+		if err != nil {
+			return err
+		}
+		modifyRequest.Replace("userPassword", []string{encoded})
 	}
 
 	// Update other attributes
 	for key, value := range user.Attributes {
-		if key == "objectClass" || key == "uid" {
+		if key == "objectClass" || key == "uid" || key == "userPassword" || key == "entryUUID" {
 			continue // Skip attributes we shouldn't modify
 		}
 

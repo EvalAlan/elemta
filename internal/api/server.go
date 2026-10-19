@@ -608,29 +608,19 @@ func (s *Server) Start() error {
 		r.HandleFunc("/dashboard", s.handleDashboard).Methods("GET")
 	}
 
-	// pprof debugging routes (require auth when configured)
+	// Diagnostics contain process state and are available only to administrators.
 	if s.authMiddleware != nil {
-		r.Handle("/debug/pprof/", s.authMiddleware.RequireAuth(http.HandlerFunc(pprof.Index)))
-		r.Handle("/debug/pprof/cmdline", s.authMiddleware.RequireAuth(http.HandlerFunc(pprof.Cmdline)))
-		r.Handle("/debug/pprof/profile", s.authMiddleware.RequireAuth(http.HandlerFunc(pprof.Profile)))
-		r.Handle("/debug/pprof/symbol", s.authMiddleware.RequireAuth(http.HandlerFunc(pprof.Symbol)))
-		r.Handle("/debug/pprof/trace", s.authMiddleware.RequireAuth(http.HandlerFunc(pprof.Trace)))
-		r.Handle("/debug/pprof/goroutine", s.authMiddleware.RequireAuth(pprof.Handler("goroutine")))
-		r.Handle("/debug/pprof/heap", s.authMiddleware.RequireAuth(pprof.Handler("heap")))
-		r.Handle("/debug/pprof/threadcreate", s.authMiddleware.RequireAuth(pprof.Handler("threadcreate")))
-		r.Handle("/debug/pprof/block", s.authMiddleware.RequireAuth(pprof.Handler("block")))
-		r.Handle("/debug/pprof/mutex", s.authMiddleware.RequireAuth(pprof.Handler("mutex")))
-	} else {
-		r.HandleFunc("/debug/pprof/", pprof.Index)
-		r.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		r.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		r.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		r.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		r.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
-		r.Handle("/debug/pprof/heap", pprof.Handler("heap"))
-		r.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
-		r.Handle("/debug/pprof/block", pprof.Handler("block"))
-		r.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+		admin := s.authMiddleware.RequirePermission(auth.PermissionSystemAdmin)
+		r.Handle("/debug/pprof/", admin(http.HandlerFunc(pprof.Index)))
+		r.Handle("/debug/pprof/cmdline", admin(http.HandlerFunc(pprof.Cmdline)))
+		r.Handle("/debug/pprof/profile", admin(http.HandlerFunc(pprof.Profile)))
+		r.Handle("/debug/pprof/symbol", admin(http.HandlerFunc(pprof.Symbol)))
+		r.Handle("/debug/pprof/trace", admin(http.HandlerFunc(pprof.Trace)))
+		r.Handle("/debug/pprof/goroutine", admin(pprof.Handler("goroutine")))
+		r.Handle("/debug/pprof/heap", admin(pprof.Handler("heap")))
+		r.Handle("/debug/pprof/threadcreate", admin(pprof.Handler("threadcreate")))
+		r.Handle("/debug/pprof/block", admin(pprof.Handler("block")))
+		r.Handle("/debug/pprof/mutex", admin(pprof.Handler("mutex")))
 	}
 
 	// Authentication routes (if auth is enabled)
@@ -674,7 +664,7 @@ func (s *Server) Start() error {
 	// Protected logging endpoints (require auth)
 	if s.authMiddleware != nil {
 		loggingProtected := api.PathPrefix("/logging").Subrouter()
-		loggingProtected.Use(s.authMiddleware.RequireAuth)
+		loggingProtected.Use(s.authMiddleware.RequirePermission(auth.PermissionSystemConfig))
 		loggingProtected.HandleFunc("/level", s.HandleSetLogLevel).Methods("POST", "PUT")
 	} else {
 		// If no auth middleware, still allow setting log level (development mode)
@@ -1289,6 +1279,24 @@ func setHTMLNoCache(w http.ResponseWriter) {
 
 // Authentication handlers
 
+func decodeBoundedJSON(w http.ResponseWriter, r *http.Request, value any, limit int64) bool {
+	if r.ContentLength > limit {
+		http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	if err := json.NewDecoder(r.Body).Decode(value); err != nil {
+		var sizeErr *http.MaxBytesError
+		if errors.As(err, &sizeErr) {
+			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		}
+		return false
+	}
+	return true
+}
+
 // handleLogin handles user login
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Login attempt received")
@@ -1304,19 +1312,26 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Session management not available", http.StatusServiceUnavailable)
 		return
 	}
+	addr := s.loginAddr(r)
+	if wait := s.loginThrottle.retryAfter(addr, ""); wait > 0 {
+		writeThrottled(w, wait)
+		return
+	}
 
 	var loginReq struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&loginReq); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	if !decodeBoundedJSON(w, r, &loginReq, 4<<10) {
+		return
+	}
+	if len(loginReq.Username) > 320 || len(loginReq.Password) > 1024 {
+		http.Error(w, "Credentials are too long", http.StatusBadRequest)
 		return
 	}
 
 	// Authenticate user, unless this address has failed too often.
-	addr := s.loginAddr(r)
 	if wait := s.loginThrottle.retryAfter(addr, loginReq.Username); wait > 0 {
 		slog.Warn("Login refused: too many failed attempts", "username", sanitizeForLog(loginReq.Username), "remote", addr)
 		writeThrottled(w, wait)
@@ -1458,8 +1473,7 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		ExpiryDays  *int              `json:"expiry_days,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	if !decodeBoundedJSON(w, r, &req, 16<<10) {
 		return
 	}
 
@@ -1534,8 +1548,7 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 		Permissions []auth.Permission `json:"permissions"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	if !decodeBoundedJSON(w, r, &req, 16<<10) {
 		return
 	}
 
@@ -2251,8 +2264,7 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var configUpdate map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&configUpdate); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	if !decodeBoundedJSON(w, r, &configUpdate, 1<<20) {
 		return
 	}
 
@@ -2625,8 +2637,7 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 		Enabled *bool                  `json:"enabled"`
 		Config  map[string]interface{} `json:"config"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&pluginUpdate); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	if !decodeBoundedJSON(w, r, &pluginUpdate, 1<<20) {
 		return
 	}
 	if pluginUpdate.Enabled == nil && pluginUpdate.Config == nil {

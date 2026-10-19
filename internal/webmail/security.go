@@ -14,6 +14,8 @@ package webmail
 import (
 	"bytes"
 	"context"
+	"crypto/cipher"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base32"
 	"encoding/base64"
@@ -55,6 +57,7 @@ func newSecurityClient(base string) *securityClient {
 }
 
 type securityCheck struct {
+	AccountID   string `json:"account_id"`
 	Kind        string `json:"kind"` // "password" or "app"
 	TOTP        bool   `json:"totp"`
 	AppRequired bool   `json:"app_required"`
@@ -131,14 +134,32 @@ type pendingLogin struct {
 }
 
 type pendingLogins struct {
-	mu sync.Mutex
-	m  map[string]*pendingLogin
+	mu     sync.Mutex
+	m      map[string]*pendingLogin
+	shared *valkeySessions
+	aead   cipher.AEAD
 }
 
 func (p *pendingLogins) put(user, password string, now time.Time) (string, error) {
 	token, err := randomToken(24)
 	if err != nil {
 		return "", err
+	}
+	if p.shared != nil {
+		// This plaintext exists only while sealing; the shared store receives
+		// the authenticated ciphertext below.
+		plain, err := json.Marshal([3]string{user, password, now.Add(pendingLoginTTL).Format(time.RFC3339Nano)})
+		if err != nil {
+			return "", err
+		}
+		nonce := make([]byte, p.aead.NonceSize())
+		if _, err := rand.Read(nonce); err != nil {
+			return "", err
+		}
+		sealed := append(nonce, p.aead.Seal(nil, nonce, plain, []byte(token))...)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return token, p.shared.pendingPut(ctx, token, sealed, pendingLoginTTL)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -156,6 +177,28 @@ func (p *pendingLogins) put(user, password string, now time.Time) (string, error
 
 // get returns a copy, so callers never hold a pointer the map may drop.
 func (p *pendingLogins) get(token string, now time.Time) (pendingLogin, bool) {
+	if p.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		sealed, err := p.shared.pendingGet(ctx, token)
+		if err != nil || len(sealed) < p.aead.NonceSize() {
+			return pendingLogin{}, false
+		}
+		nonce := sealed[:p.aead.NonceSize()]
+		plain, err := p.aead.Open(nil, nonce, sealed[p.aead.NonceSize():], []byte(token))
+		if err != nil {
+			return pendingLogin{}, false
+		}
+		var record [3]string
+		if json.Unmarshal(plain, &record) != nil {
+			return pendingLogin{}, false
+		}
+		expires, err := time.Parse(time.RFC3339Nano, record[2])
+		if err != nil || now.After(expires) {
+			return pendingLogin{}, false
+		}
+		return pendingLogin{user: record[0], password: record[1], expires: expires}, true
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	v, ok := p.m[token]
@@ -168,6 +211,11 @@ func (p *pendingLogins) get(token string, now time.Time) (pendingLogin, bool) {
 
 // fail counts a wrong code and reports whether the pending login survives.
 func (p *pendingLogins) fail(token string) bool {
+	if p.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return p.shared.pendingFail(ctx, token, maxPendingAttempt)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	v, ok := p.m[token]
@@ -182,10 +230,17 @@ func (p *pendingLogins) fail(token string) bool {
 	return true
 }
 
-func (p *pendingLogins) drop(token string) {
+func (p *pendingLogins) drop(token string) bool {
+	if p.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return p.shared.pendingDrop(ctx, token)
+	}
 	p.mu.Lock()
+	_, ok := p.m[token]
 	delete(p.m, token)
 	p.mu.Unlock()
+	return ok
 }
 
 type twoFactorView struct {
@@ -258,7 +313,10 @@ func (s *Server) twoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 		retry(http.StatusBadGateway, "The code couldn't be checked. Try again in a moment.")
 		return
 	}
-	s.pending.drop(c.Value)
+	if !s.pending.drop(c.Value) {
+		s.renderLogin(w, r, http.StatusUnauthorized, "", "", "The sign-in expired. Sign in again.")
+		return
+	}
 	s.setCookie(w, twoFactorCookie, "", -1)
 	store, err := s.dial(ctx, p.user, p.password)
 	if err != nil {

@@ -213,16 +213,18 @@ func TestRFC5321_LengthLimits(t *testing.T) {
 		assert.Greater(t, len(longCommand), 512, "Test command should exceed limit")
 
 		response := sendCommand(conn, reader, longCommand)
-		// Should either succeed (if not enforced) or return appropriate error
-		assert.True(t,
-			strings.Contains(response, "250") || strings.Contains(response, "500"),
-			"Command exceeding limit should either succeed or return error")
+		assert.Contains(t, response, "500", "An overlong command must be rejected")
 	})
 
 	t.Run("Email_Address_Length", func(t *testing.T) {
+		// The overlong command leaves unread bytes, so that connection closes.
+		freshServer, freshConn, freshReader := setupTestServer(t)
+		defer freshServer.Close()
+		defer freshConn.Close()
+		sendCommand(freshConn, freshReader, "EHLO test.example.com\r\n")
 		// Test very long but valid email address
 		longEmail := "MAIL FROM:<" + strings.Repeat("a", 100) + "@" + strings.Repeat("b", 100) + ".com>\r\n"
-		response := sendCommand(conn, reader, longEmail)
+		response := sendCommand(freshConn, freshReader, longEmail)
 		// Should handle long addresses gracefully
 		assert.True(t,
 			strings.Contains(response, "250") || strings.Contains(response, "501"),

@@ -40,6 +40,13 @@ if [ -z "${LDAP_MAILBOX_PASSWORD:-}" ]; then
     printf '%s\n' "LDAP_MAILBOX_PASSWORD=$LDAP_MAILBOX_PASSWORD" >>"$master"
 fi
 
+# Keep this key across redeploys and backups: existing authenticator seeds
+# cannot be decrypted if it is regenerated.
+if [ -z "${MAILBOX_TOTP_KEY:-}" ]; then
+    MAILBOX_TOTP_KEY=$(openssl rand -base64 32 | tr -d '\n')
+    (umask 077; printf '%s\n' "MAILBOX_TOTP_KEY=$MAILBOX_TOTP_KEY" >>"$master")
+fi
+
 # A generated bootstrap credential also covers fresh directories. Existing
 # volumes retain their old hash until ldap-admin-password.sh applies this.
 if [ -z "${LDAP_ADMIN_PASSWORD:-}" ]; then
@@ -68,7 +75,8 @@ write ldap-admin.env "LDAP_ADMIN_PASSWORD=$LDAP_ADMIN_PASSWORD"
 write elemta.env "ELEMTA_AUTH_DATASOURCE_PASS=$LDAP_SMTP_PASSWORD"
 write mailbox.env \
     "ELEMTA_MAILBOX_LDAP_DN=cn=mailbox,ou=services,dc=example,dc=com" \
-    "ELEMTA_MAILBOX_LDAP_PASSWORD=$LDAP_MAILBOX_PASSWORD"
+    "ELEMTA_MAILBOX_LDAP_PASSWORD=$LDAP_MAILBOX_PASSWORD" \
+    "ELEMTA_MAILBOX_TOTP_KEYS=v1:$MAILBOX_TOTP_KEY"
 
 storage="$dir/mailbox-storage.env"
 if [ ! -f "$storage" ]; then

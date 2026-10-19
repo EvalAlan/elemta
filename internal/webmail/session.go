@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,14 +28,15 @@ import (
 // and is never written to the store, so reading the store alone doesn't
 // yield passwords.
 type Session struct {
-	ID       string
-	CSRF     string
-	User     string // login name as typed, used for IMAP and submission AUTH
-	Address  string // mailbox address the user sends as
-	sealed   []byte
-	nonce    []byte
-	created  time.Time
-	lastSeen time.Time
+	ID            string
+	CSRF          string
+	User          string // login name as typed, used for IMAP and submission AUTH
+	Address       string // mailbox address the user sends as
+	sealed        []byte
+	nonce         []byte
+	created       time.Time
+	lastSeen      time.Time
+	lastPersisted time.Time
 
 	// mu serialises IMAP use: one request at a time per session, because the
 	// selected mailbox is connection state.
@@ -48,11 +50,12 @@ type Session struct {
 
 // SessionManager creates, finds and expires sessions.
 type SessionManager struct {
-	mu       sync.Mutex
-	sessions map[string]*Session // this process's sessions, with their connections
-	aead     cipher.AEAD
-	ttl      time.Duration
-	now      func() time.Time
+	mu            sync.Mutex
+	sessions      map[string]*Session // this process's sessions, with their connections
+	aead          cipher.AEAD
+	ttl           time.Duration
+	now           func() time.Time
+	touchInterval time.Duration
 	// shared, when set, holds every session's record for all pods.
 	shared SessionStore
 }
@@ -68,14 +71,15 @@ type SessionStore interface {
 // SessionRecord is a session as stored: everything but the live IMAP
 // connection, with the password still sealed.
 type SessionRecord struct {
-	ID       string    `json:"id"`
-	CSRF     string    `json:"csrf"`
-	User     string    `json:"user"`
-	Address  string    `json:"address"`
-	Sealed   []byte    `json:"sealed"`
-	Nonce    []byte    `json:"nonce"`
-	Created  time.Time `json:"created"`
-	LastSeen time.Time `json:"last_seen"`
+	ID        string    `json:"id"`
+	CSRF      string    `json:"csrf"`
+	User      string    `json:"user"`
+	Address   string    `json:"address"`
+	Sealed    []byte    `json:"sealed"`
+	Nonce     []byte    `json:"nonce"`
+	Created   time.Time `json:"created"`
+	LastSeen  time.Time `json:"last_seen"`
+	SeenNanos string    `json:"seen_ns,omitempty"`
 }
 
 // touchEvery is how often a request refreshes a shared session's expiry;
@@ -106,15 +110,16 @@ func NewSharedSessionManager(ttl time.Duration, key []byte, store SessionStore) 
 	if err != nil {
 		return nil, fmt.Errorf("webmail: session cipher: %w", err)
 	}
-	return &SessionManager{sessions: make(map[string]*Session), aead: aead, ttl: ttl, now: time.Now, shared: store}, nil
+	interval := min(touchEvery, ttl/2)
+	return &SessionManager{sessions: make(map[string]*Session), aead: aead, ttl: ttl, now: time.Now, touchInterval: interval, shared: store}, nil
 }
 
 func (s *Session) record() *SessionRecord {
-	return &SessionRecord{ID: s.ID, CSRF: s.CSRF, User: s.User, Address: s.Address, Sealed: s.sealed, Nonce: s.nonce, Created: s.created, LastSeen: s.lastSeen}
+	return &SessionRecord{ID: s.ID, CSRF: s.CSRF, User: s.User, Address: s.Address, Sealed: s.sealed, Nonce: s.nonce, Created: s.created, LastSeen: s.lastSeen, SeenNanos: strconv.FormatInt(s.lastSeen.UnixNano(), 10)}
 }
 
 func sessionFromRecord(r *SessionRecord) *Session {
-	return &Session{ID: r.ID, CSRF: r.CSRF, User: r.User, Address: r.Address, sealed: r.Sealed, nonce: r.Nonce, created: r.Created, lastSeen: r.LastSeen}
+	return &Session{ID: r.ID, CSRF: r.CSRF, User: r.User, Address: r.Address, sealed: r.Sealed, nonce: r.Nonce, created: r.Created, lastSeen: r.LastSeen, lastPersisted: r.LastSeen}
 }
 
 // randomToken returns n random bytes, URL-safe base64 encoded.
@@ -147,7 +152,7 @@ func (m *SessionManager) Create(user, address, password string, store Mailstore)
 		// The session ID is the additional data, so a sealed password
 		// copied into another session won't open.
 		sealed: m.aead.Seal(nil, nonce, []byte(password), []byte(id)),
-		nonce:  nonce, created: now, lastSeen: now, store: store,
+		nonce:  nonce, created: now, lastSeen: now, lastPersisted: now, store: store,
 	}
 	if m.shared != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -173,6 +178,7 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 	m.mu.Lock()
 	s, ok := m.sessions[id]
 	m.mu.Unlock()
+	var sharedRec *SessionRecord
 	if ok && m.shared != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		rec, err := m.shared.Load(ctx, id)
@@ -184,6 +190,7 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 			m.Destroy(id)
 			return nil, false
 		}
+		sharedRec = rec
 	}
 	if !ok && m.shared != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -193,6 +200,7 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 			return nil, false
 		}
 		s = sessionFromRecord(rec)
+		sharedRec = rec
 		m.mu.Lock()
 		if existing, raced := m.sessions[id]; raced {
 			s = existing
@@ -208,19 +216,16 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 	now := m.now()
 	m.mu.Lock()
 	expired := now.Sub(s.lastSeen) > m.ttl
-	m.mu.Unlock()
-	if expired && m.shared != nil {
-		// This pod's copy looks idle, but the user may have been active on
-		// another pod since; the shared record has the last word.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		rec, err := m.shared.Load(ctx, id)
-		cancel()
-		if err == nil && rec != nil && now.Sub(rec.LastSeen) <= m.ttl {
-			expired = false
-		}
+	if sharedRec != nil && sharedRec.LastSeen.After(s.lastSeen) {
+		s.lastSeen = sharedRec.LastSeen
+		expired = now.Sub(s.lastSeen) > m.ttl
 	}
+	if sharedRec != nil && sharedRec.LastSeen.After(s.lastPersisted) {
+		s.lastPersisted = sharedRec.LastSeen
+	}
+	m.mu.Unlock()
 	m.mu.Lock()
-	touch := m.shared != nil && now.Sub(s.lastSeen) > touchEvery
+	touch := m.shared != nil && now.Sub(s.lastPersisted) > m.touchInterval
 	if expired {
 		delete(m.sessions, id)
 	} else {
@@ -239,8 +244,16 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 		m.mu.Lock()
 		rec := s.record()
 		m.mu.Unlock()
-		_ = m.shared.Save(ctx, rec, m.ttl)
+		err := m.shared.Save(ctx, rec, m.ttl)
 		cancel()
+		if err != nil {
+			return nil, false
+		}
+		m.mu.Lock()
+		if rec.LastSeen.After(s.lastPersisted) {
+			s.lastPersisted = rec.LastSeen
+		}
+		m.mu.Unlock()
 	}
 	return s, true
 }
@@ -322,12 +335,19 @@ func (m *SessionManager) UpdatePassword(s *Session, password string) error {
 	m.mu.Lock()
 	s.nonce = nonce
 	s.sealed = m.aead.Seal(nil, nonce, []byte(password), []byte(s.ID))
+	s.lastSeen = m.now()
 	rec := s.record()
 	m.mu.Unlock()
 	if m.shared != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return m.shared.Save(ctx, rec, m.ttl)
+		if err := m.shared.Save(ctx, rec, m.ttl); err != nil {
+			return err
+		}
+		m.mu.Lock()
+		s.lastPersisted = rec.LastSeen
+		m.mu.Unlock()
+		return nil
 	}
 	return nil
 }

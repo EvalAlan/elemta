@@ -3,9 +3,34 @@ package delivery
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
+
+type policyRoundTrip func(*http.Request) (*http.Response, error)
+
+func (fn policyRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return fn(r) }
+
+func TestPolicyFetchRefusesRedirectDowngrade(t *testing.T) {
+	m := NewMTASTSManager(nil)
+	var requests []string
+	m.httpClient.Transport = policyRoundTrip(func(r *http.Request) (*http.Response, error) {
+		requests = append(requests, r.URL.Scheme)
+		if r.URL.Scheme == "https" {
+			return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": {"http://mta-sts.example.com/policy"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("version: STSv1\nmode: enforce\nmx: mail.example.com\n")), Request: r}, nil
+	})
+	if policy, err := m.fetchPolicyFromHTTPS(context.Background(), "example.com"); err == nil || policy != nil {
+		t.Fatalf("accepted redirected policy: %+v %v", policy, err)
+	}
+	if len(requests) != 1 || requests[0] != "https" {
+		t.Fatalf("followed policy redirect: %v", requests)
+	}
+}
 
 func TestParsePolicyText(t *testing.T) {
 	tests := []struct {

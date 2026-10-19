@@ -169,6 +169,8 @@ func (c *davConn) withStore(ctx context.Context, dial Dialer, fn func(Mailstore)
 }
 
 type davConnKey struct{}
+type davConditionsKey struct{}
+type davConditions struct{ ifMatch, ifNoneMatch webdav.ConditionalMatch }
 
 func davFrom(ctx context.Context) *davConn {
 	c, _ := ctx.Value(davConnKey{}).(*davConn)
@@ -190,6 +192,12 @@ func (s *Server) davHandler() http.Handler {
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), davConnKey{}, conn))
+		if r.Method == http.MethodDelete {
+			r = r.WithContext(context.WithValue(r.Context(), davConditionsKey{}, davConditions{
+				ifMatch:     webdav.ConditionalMatch(r.Header.Get("If-Match")),
+				ifNoneMatch: webdav.ConditionalMatch(r.Header.Get("If-None-Match")),
+			}))
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, davMaxObjectSize+64<<10)
 		p := r.URL.Path
 		switch {
@@ -226,12 +234,16 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 		return nil, false
 	}
 	now := s.now()
-	if c := s.dav.cached(user, pw, now); c != nil {
-		return c, true
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	st, err := s.dial(ctx, user, pw)
+	c := s.dav.cached(user, pw, now)
+	var st Mailstore
+	var err error
+	// The pooled connection is only a transport optimization. Without the
+	// security service, reauthenticate against IMAP for every request.
+	if c == nil || s.security == nil {
+		st, err = s.dial(ctx, user, pw)
+	}
 	switch {
 	case errors.Is(err, ErrAuthFailed):
 		s.limiter.fail(ip)
@@ -255,18 +267,34 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 	if s.security != nil {
 		check, err := s.security.check(ctx, user, pw)
 		if err != nil {
-			_ = st.Close()
+			if st != nil {
+				_ = st.Close()
+			}
+			if errors.Is(err, errSecurityAuth) {
+				s.limiter.fail(ip)
+				s.limiter.fail(userKey)
+				challenge()
+				return nil, false
+			}
 			s.log.Warn("webmail: dav account security check unavailable", "user", user, "error", err)
 			http.Error(w, "Sign-in is temporarily unavailable.", http.StatusBadGateway)
 			return nil, false
 		}
 		if check.Kind == "password" && check.AppRequired {
-			_ = st.Close()
+			if st != nil {
+				_ = st.Close()
+			}
 			s.limiter.fail(userKey)
 			s.log.Info("webmail: dav account password refused; app password required", "user", user, "ip", ip)
 			challenge()
 			return nil, false
 		}
+	}
+	if c != nil {
+		if st != nil {
+			_ = st.Close()
+		}
+		return c, true
 	}
 	return s.dav.add(user, pw, st, now), true
 }
@@ -510,42 +538,62 @@ func (b davCalBackend) DeleteCalendarObject(ctx context.Context, p string) error
 // that differs is kept in Object.Name. One UID can't live under two names.
 func davPut(ctx context.Context, s *Server, coll Collection, obj *Object, name, ext string, ifMatch, ifNoneMatch webdav.ConditionalMatch, uidConflict error) error {
 	return davFrom(ctx).withStore(ctx, s.dial, func(st Mailstore) error {
-		objs, err := st.Objects(ctx, coll)
-		if err != nil {
-			return err
-		}
-		cur := findDAVObject(objs, name, ext)
-		if err := checkPreconditions(cur, ifMatch, ifNoneMatch); err != nil {
-			return err
-		}
-		if cur != nil && cur.ID != obj.ID {
-			return uidConflict // a resource's UID can't change (RFC 4791 5.3.2)
-		}
-		if cur == nil {
-			for _, o := range objs {
-				if o.ID == obj.ID {
-					return uidConflict
+		write := func(st ObjectStore) error {
+			objs, err := st.Objects(ctx, coll)
+			if err != nil {
+				return err
+			}
+			cur := findDAVObject(objs, name, ext)
+			if err := checkPreconditions(cur, ifMatch, ifNoneMatch); err != nil {
+				return err
+			}
+			if cur != nil && cur.ID != obj.ID {
+				return uidConflict // a resource's UID can't change (RFC 4791 5.3.2)
+			}
+			if cur == nil {
+				for _, o := range objs {
+					if o.ID == obj.ID {
+						return uidConflict
+					}
 				}
 			}
+			if name != obj.ID+ext {
+				obj.Name = name
+			}
+			return st.PutObject(ctx, coll, *obj)
 		}
-		if name != obj.ID+ext {
-			obj.Name = name
+		if atomic, ok := st.(interface {
+			DAVTransaction(context.Context, Collection, func(ObjectStore) error) error
+		}); ok {
+			return atomic.DAVTransaction(ctx, coll, write)
 		}
-		return st.PutObject(ctx, coll, *obj)
+		return write(st)
 	})
 }
 
 func davDelete(ctx context.Context, s *Server, coll Collection, name, ext string) error {
 	return davFrom(ctx).withStore(ctx, s.dial, func(st Mailstore) error {
-		objs, err := st.Objects(ctx, coll)
-		if err != nil {
-			return err
+		remove := func(st ObjectStore) error {
+			objs, err := st.Objects(ctx, coll)
+			if err != nil {
+				return err
+			}
+			cur := findDAVObject(objs, name, ext)
+			conditions, _ := ctx.Value(davConditionsKey{}).(davConditions)
+			if err := checkPreconditions(cur, conditions.ifMatch, conditions.ifNoneMatch); err != nil {
+				return err
+			}
+			if cur == nil {
+				return davNotFound("object")
+			}
+			return st.DeleteObject(ctx, coll, cur.ID)
 		}
-		cur := findDAVObject(objs, name, ext)
-		if cur == nil {
-			return davNotFound("object")
+		if atomic, ok := st.(interface {
+			DAVTransaction(context.Context, Collection, func(ObjectStore) error) error
+		}); ok {
+			return atomic.DAVTransaction(ctx, coll, remove)
 		}
-		return st.DeleteObject(ctx, coll, cur.ID)
+		return remove(st)
 	})
 }
 

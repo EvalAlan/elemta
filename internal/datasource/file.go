@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -253,14 +254,11 @@ func (f *FileDataSource) modify(change func(map[string]FileUser) error) error {
 	if f.path == "" {
 		return fmt.Errorf("file path is empty")
 	}
+	if err := ModifyUsersFile(f.path, change); err != nil {
+		return err
+	}
 	users, err := ReadUsersFile(f.path)
 	if err != nil {
-		return err
-	}
-	if err := change(users); err != nil {
-		return err
-	}
-	if err := WriteUsersFile(f.path, users); err != nil {
 		return err
 	}
 	f.users = users
@@ -268,6 +266,31 @@ func (f *FileDataSource) modify(change func(map[string]FileUser) error) error {
 		f.info = info
 	}
 	return nil
+}
+
+// ModifyUsersFile holds the same sidecar lock for CLI and server writers.
+// The lock file is stable across atomic renames of the users file.
+func ModifyUsersFile(path string, change func(map[string]FileUser) error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
+	users, err := ReadUsersFile(path)
+	if err != nil {
+		return err
+	}
+	if err := change(users); err != nil {
+		return err
+	}
+	return WriteUsersFile(path, users)
 }
 
 func (f *FileDataSource) Query(ctx context.Context, query string, args ...interface{}) (interface{}, error) {
@@ -341,13 +364,34 @@ func WriteUsersFile(path string, users map[string]FileUser) error {
 		sb.WriteString("\n")
 	}
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(sb.String()), 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", tmp, err)
+	tmpFile, err := os.CreateTemp(filepath.Dir(path), ".elemta-users-*")
+	if err != nil {
+		return err
+	}
+	tmp := tmpFile.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if _, err := tmpFile.WriteString(sb.String()); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
-	return nil
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }

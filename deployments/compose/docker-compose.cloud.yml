@@ -91,6 +91,8 @@ services:
       - "127.0.0.1:1389:389"
 
   valkey:
+    command: >
+      valkey-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy noeviction
     ports: !override
       - "127.0.0.1:6379:6379"
 

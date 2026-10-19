@@ -3,6 +3,11 @@
 Mail stays in the mailbox service. Calendar events, contacts, tasks and settings can
 use Postgres instead of the default hidden IMAP folders. Webmail and DAV
 use the same backend. Sessions continue to use their configured backend.
+With the default IMAP backend, conditional DAV writes and browser object
+writes use a per-account lock. Configure shared Valkey sessions and the same
+session key on every webmail replica so this lock spans replicas; a single
+process can use the local lock. The mailbox security URL supplies the immutable
+account ID when available, so aliases coordinate on the same account.
 
 ## Compose setup
 
@@ -40,6 +45,9 @@ network. External deployments should configure Postgres TLS and use
 Restart every webmail replica with the same settings. Startup fails if
 Postgres is unavailable or the schema cannot be initialized. It never
 silently falls back to IMAP. The pool permits ten connections per process.
+The mailbox security service must also be configured through `security_url`
+or `ELEMTA_WEBMAIL_SECURITY_URL`; it supplies the authenticated account ID.
+Postgres object storage refuses to start without it.
 
 ## Cutover and recovery
 
@@ -58,8 +66,14 @@ The migration preserves IDs, resource names, contents and timestamps. It
 keeps the hidden-folder originals intact. A completed migration is recorded
 in `webmail_object_users`; reconnecting never imports those originals again,
 so deleting an object in SQL does not resurrect it on the next login.
-Mailbox keys are the lowercased login address with `default_domain` applied.
-Account aliases must resolve to that same canonical login before use.
+Mailbox keys are immutable mailbox account IDs. An address reused by a new
+account cannot open its predecessor's objects, while an address change keeps
+the original account's objects accessible. Existing installations that used
+address keys retain those rows but cannot read them automatically after this
+change. Before upgrading, stop writers and back up the database; map each
+old address to its verified current account ID and move its user and object
+rows in one transaction. Do not map rows for deleted accounts to replacements
+that happen to hold the same address.
 
 Returning to `object_store = "imap"` exposes the retained pre-cutover
 snapshot. Changes made in Postgres are not copied back. Before rollback,
@@ -79,7 +93,8 @@ The test covers rollback, concurrent first migrations, mailbox isolation,
 resource-name uniqueness and preservation, timestamps, binary data and
 deletion without reimport. It removes its own mailbox fixtures.
 
-For the running development stack, also set `ELEMTA_TEST_OBJECT_IMAP=1`.
+For the running mailbox stack, also set `ELEMTA_TEST_OBJECT_IMAP=1` and
+`ELEMTA_TEST_OBJECT_SECURITY_URL` to its internal security API.
 This uses `stressuser20@example.com` / `testpass123`, copies its existing
 objects into the disposable database, and exercises DAV against a temporary
 HTTP server without switching the deployed webmail backend. Set

@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -111,11 +115,7 @@ func (f *FileBodies) Delete(ctx context.Context, key string) error {
 	return err
 }
 func (f *FileBodies) Check(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	_, err := f.root.Stat(".")
-	return err
+	return checkBodyCanary(ctx, f)
 }
 func (f *FileBodies) Close() error { return f.root.Close() }
 
@@ -166,6 +166,25 @@ func (s *S3Bodies) Check(ctx context.Context) error {
 	}
 	if !ok {
 		return errors.New("body bucket does not exist")
+	}
+	return checkBodyCanary(ctx, s)
+}
+func checkBodyCanary(ctx context.Context, store BodyStore) error {
+	key := strings.ReplaceAll(uuid.NewString(), "-", "")
+	want := []byte("mailbox-readiness")
+	if err := store.Put(ctx, key, want); err != nil {
+		return fmt.Errorf("body canary write: %w", err)
+	}
+	defer func() { _ = store.Delete(context.Background(), key) }()
+	got, err := store.Get(ctx, key, int64(len(want)))
+	if err != nil {
+		return fmt.Errorf("body canary read: %w", err)
+	}
+	if !bytes.Equal(got, want) {
+		return errors.New("body canary contents differ")
+	}
+	if err := store.Delete(ctx, key); err != nil {
+		return fmt.Errorf("body canary delete: %w", err)
 	}
 	return nil
 }

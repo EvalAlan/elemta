@@ -9,9 +9,10 @@ package mailbox
 //
 // LMTP may retry a delivery whose outcome was uncertain. Each store gets
 // its own delivery token (the queue's ENVID plus the target), so a retry
-// finds the earlier stores instead of duplicating them, and redirects and
-// automatic replies are claimed in mailbox_sieve_sent before they are sent,
-// so a retry doesn't send them twice either.
+// finds the earlier stores instead of duplicating them. Redirect-only rules
+// retain a local copy before forwarding; completed redirects are recorded
+// after submission, so a retry after a crash can resend but cannot silently
+// acknowledge a lost local message.
 
 import (
 	"bufio"
@@ -192,6 +193,23 @@ func (s *Service) applyActions(ctx context.Context, d delivery, actions []interp
 			}
 		}
 	}
+	// A redirect-only rule must leave a durable local disposition before
+	// submission. This also gives the user a recoverable copy if a submission
+	// acknowledgement is ambiguous and the upstream delivery is retried.
+	redirect, retained := false, false
+	for _, action := range actions {
+		switch action.(type) {
+		case interp.ActionRedirect:
+			redirect = true
+		case interp.ActionKeep, interp.ActionFileInto:
+			retained = true
+		}
+	}
+	if redirect && !retained {
+		if err := s.store(ctx, d, "INBOX", nil, false, stored); err != nil {
+			return err
+		}
+	}
 	for _, a := range actions {
 		switch a := a.(type) {
 		case interp.ActionRedirect:
@@ -249,29 +267,28 @@ func oneLine(s string) string {
 func (s *Service) redirect(ctx context.Context, d delivery, to string) error {
 	addr, err := mail.ParseAddress(to)
 	if err != nil {
-		s.log.Info("sieve redirect to an invalid address ignored", "account", d.account.ID, "address", to)
-		return nil
+		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 0}, Message: "Forwarding address is invalid"}
 	}
 	target := strings.ToLower(addr.Address)
 	if bytes.Contains(bytes.ToLower(headerBlock(d.raw)), []byte(strings.ToLower(redirectHeader+": "+d.rcpt))) {
 		s.log.Info("sieve redirect loop stopped", "account", d.account.ID, "address", target)
-		return nil
+		return s.store(ctx, d, "INBOX", nil, false, map[string]bool{})
 	}
 	if s.cfg.Sieve.SubmitAddr == "" {
 		s.log.Warn("sieve redirect needs sieve.submit_addr; not sent", "account", d.account.ID)
-		return nil
+		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 0}, Message: "Forwarding temporarily unavailable"}
 	}
-	key := "redirect:" + sum(d.token+"\x00"+checksumOf(d.raw)) + ":" + target
-	ok, err := s.engine.claimSent(ctx, d.account.ID, key, 7*24*time.Hour)
-	if err != nil || !ok {
+	key := "redirect-v2:" + sum(d.token+"\x00"+checksumOf(d.raw)) + ":" + target
+	sent, err := s.engine.redirectSent(ctx, d.account.ID, key)
+	if err != nil || sent {
 		return err
 	}
 	msg := append([]byte(redirectHeader+": "+d.rcpt+"\r\n"), d.raw...)
 	if err := s.submit(ctx, d.from, []string{target}, msg); err != nil {
-		s.engine.releaseSent(ctx, d.account.ID, key)
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 0}, Message: "Forwarding temporarily unavailable"}
 	}
-	return nil
+	_, err = s.engine.claimSent(ctx, d.account.ID, key, 7*24*time.Hour)
+	return err
 }
 
 func headerBlock(raw []byte) []byte {

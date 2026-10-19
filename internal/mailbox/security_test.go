@@ -2,8 +2,11 @@ package mailbox
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -67,6 +70,15 @@ func TestAppPasswordsByListener(t *testing.T) {
 	if _, err := s.login(ctx, a.Address, password, true); err != nil {
 		t.Fatalf("app password with the requirement: %v", err)
 	}
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	ticks := make(chan time.Time)
+	active := &imapSession{service: s, ctx: watchCtx, cancel: stopWatch, conn: serverConn,
+		account: a, user: a.Address, password: password, public: true, recheck: ticks}
+	go active.watchCredentials()
 	st, err := e.SecurityState(ctx, a.ID)
 	if err != nil || len(st.AppPasswords) != 1 || st.AppPasswords[0].LastUsed == nil || !st.AppRequired {
 		t.Fatalf("state = %+v, %v", st, err)
@@ -77,15 +89,25 @@ func TestAppPasswordsByListener(t *testing.T) {
 	if _, err := s.login(ctx, a.Address, password, true); err == nil {
 		t.Fatal("deleted app password still works")
 	}
+	ticks <- time.Now()
+	_ = clientConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, err := clientConn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("established IMAP connection remained open after revocation: %v", err)
+	}
 }
 
 func TestSecondFactor(t *testing.T) {
+	t.Setenv("ELEMTA_MAILBOX_TOTP_KEYS", "v1:"+base64.StdEncoding.EncodeToString([]byte("01234567890123456789012345678901")))
 	e, a := testEngine(t)
 	ctx := context.Background()
 	now := time.Now()
 	secret, uri, err := e.BeginTOTP(ctx, a.ID, a.Address, "Elemta Mail")
 	if err != nil || !strings.HasPrefix(uri, "otpauth://totp/") || !strings.Contains(uri, "secret="+secret) {
 		t.Fatalf("begin = %s %s %v", secret, uri, err)
+	}
+	var stored string
+	if err := e.DB.QueryRow(`SELECT totp_pending FROM mailbox_security WHERE account=$1`, a.ID).Scan(&stored); err != nil || strings.Contains(stored, secret) || !strings.HasPrefix(stored, "enc:v1:") {
+		t.Fatalf("pending seed was stored in plaintext: %v", err)
 	}
 	if _, err := e.VerifySecondFactor(ctx, a.ID, "000000", now); !errors.Is(err, ErrBadCode) {
 		t.Fatal("pending secret is already in force")
@@ -98,6 +120,12 @@ func TestSecondFactor(t *testing.T) {
 	codes, err := e.ConfirmTOTP(ctx, a.ID, totpCode(raw, step), now)
 	if err != nil || len(codes) != recoveryCodes {
 		t.Fatalf("confirm = %v %v", codes, err)
+	}
+	if err := e.DB.QueryRow(`SELECT totp_secret FROM mailbox_security WHERE account=$1`, a.ID).Scan(&stored); err != nil || strings.Contains(stored, secret) || !strings.HasPrefix(stored, "enc:v1:") {
+		t.Fatalf("active seed was stored in plaintext: %v", err)
+	}
+	if _, _, err := e.BeginTOTP(ctx, a.ID, a.Address, "Elemta Mail"); !errors.Is(err, ErrTOTPActive) {
+		t.Fatalf("active factor could be replaced: %v", err)
 	}
 	// The confirming code is spent; the next step's code works once.
 	if _, err := e.VerifySecondFactor(ctx, a.ID, totpCode(raw, step), now); !errors.Is(err, ErrBadCode) {
@@ -123,6 +151,42 @@ func TestSecondFactor(t *testing.T) {
 	}
 	if st, _ := e.SecurityState(ctx, a.ID); st.TOTP || st.RecoveryLeft != 0 {
 		t.Fatalf("state after disable = %+v", st)
+	}
+	expired, _, err := e.BeginTOTP(ctx, a.ID, a.Address, "Elemta Mail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredRaw, _ := b32.DecodeString(expired)
+	later := time.Now().Add(6 * time.Minute)
+	if _, err := e.ConfirmTOTP(ctx, a.ID, totpCode(expiredRaw, later.Unix()/totpPeriod), later); !errors.Is(err, ErrBadCode) {
+		t.Fatalf("expired enrollment was accepted: %v", err)
+	}
+}
+
+func TestTOTPPlaintextMigrationRequiresKey(t *testing.T) {
+	key := "v1:" + base64.StdEncoding.EncodeToString([]byte("01234567890123456789012345678901"))
+	t.Setenv("ELEMTA_MAILBOX_TOTP_KEYS", key)
+	e, a := testEngine(t)
+	secret := b32.EncodeToString([]byte("12345678901234567890"))
+	if _, err := e.DB.Exec(`INSERT INTO mailbox_security(account,totp_secret) VALUES($1,$2)`, a.ID, secret); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ELEMTA_MAILBOX_TOTP_KEYS", "")
+	if _, err := NewEngine(context.Background(), e.DB, e.Bodies, Config{}.WithDefaults()); err == nil {
+		t.Fatal("started with plaintext TOTP state and no external key")
+	}
+	t.Setenv("ELEMTA_MAILBOX_TOTP_KEYS", key)
+	restarted, err := NewEngine(context.Background(), e.DB, e.Bodies, Config{}.WithDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := e.DB.QueryRow(`SELECT totp_secret FROM mailbox_security WHERE account=$1`, a.ID).Scan(&stored); err != nil || !strings.HasPrefix(stored, "enc:v1:") || strings.Contains(stored, secret) {
+		t.Fatalf("migration left plaintext seed: %v", err)
+	}
+	now := time.Now()
+	if _, err := restarted.VerifySecondFactor(context.Background(), a.ID, totpCode([]byte("12345678901234567890"), now.Unix()/totpPeriod), now); err != nil {
+		t.Fatalf("migrated seed cannot verify: %v", err)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -35,19 +34,38 @@ func (s postgresMailstore) DeleteObject(ctx context.Context, c Collection, id st
 	return s.objects.DeleteObject(ctx, c, id)
 }
 
-func postgresObjectDialer(db *sql.DB, cfg Config, dial Dialer) Dialer {
+// DAVTransaction serializes the version check and mutation with all SQL
+// object writers for this account, including writes from other replicas.
+func (s postgresMailstore) DAVTransaction(ctx context.Context, _ Collection, fn func(ObjectStore) error) error {
+	return s.objects.transaction(ctx, fn)
+}
+
+func postgresObjectDialer(db *sql.DB, security *securityClient, dial Dialer) Dialer {
 	return func(ctx context.Context, user, password string) (Mailstore, error) {
 		st, err := dial(ctx, user, password)
 		if err != nil {
 			return nil, err
 		}
-		objects := postgresObjects{db: db, user: strings.ToLower(cfg.address(user))}
+		owner, err := postgresObjectOwner(ctx, security, user, password)
+		if err != nil {
+			_ = st.Close()
+			return nil, err
+		}
+		objects := postgresObjects{db: db, user: owner}
 		if err := objects.migrate(ctx, st); err != nil {
 			_ = st.Close()
 			return nil, fmt.Errorf("webmail: object migration failed: %w", err)
 		}
 		return postgresMailstore{Mailstore: st, objects: objects}, nil
 	}
+}
+
+func postgresObjectOwner(ctx context.Context, security *securityClient, user, password string) (string, error) {
+	check, err := security.check(ctx, user, password)
+	if err != nil || check.AccountID == "" {
+		return "", errors.New("webmail: could not resolve immutable mailbox account")
+	}
+	return check.AccountID, nil
 }
 
 // initObjectSchema is deliberately separate from opening the pool so startup
@@ -129,18 +147,67 @@ func putPostgresObject(ctx context.Context, exec objectExecutor, user string, c 
 }
 
 func (s postgresObjects) PutObject(ctx context.Context, c Collection, obj Object) error {
-	// Modified is the last write time, even when the caller read an older
-	// version first. Migration alone preserves the source timestamp.
-	obj.Modified = time.Now().UTC()
-	return putPostgresObject(ctx, s.db, s.user, c, obj)
+	return s.transaction(ctx, func(tx ObjectStore) error { return tx.PutObject(ctx, c, obj) })
 }
 
 func (s postgresObjects) DeleteObject(ctx context.Context, c Collection, id string) error {
+	return s.transaction(ctx, func(tx ObjectStore) error { return tx.DeleteObject(ctx, c, id) })
+}
+
+type postgresObjectTransaction struct {
+	postgresObjects
+	tx *sql.Tx
+}
+
+func (s postgresObjectTransaction) Objects(ctx context.Context, c Collection) ([]Object, error) {
+	if !validCollection(c) {
+		return nil, errors.New("webmail: invalid object collection")
+	}
+	rows, err := s.tx.QueryContext(ctx, `SELECT id, name, title, content_type, data, modified FROM webmail_objects WHERE mailbox=$1 AND collection=$2 ORDER BY id`, s.user, c)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var objects []Object
+	for rows.Next() {
+		var obj Object
+		if err := rows.Scan(&obj.ID, &obj.Name, &obj.Title, &obj.ContentType, &obj.Data, &obj.Modified); err != nil {
+			return nil, err
+		}
+		objects = append(objects, obj)
+	}
+	return objects, rows.Err()
+}
+
+func (s postgresObjectTransaction) PutObject(ctx context.Context, c Collection, obj Object) error {
+	obj.Modified = time.Now().UTC()
+	return putPostgresObject(ctx, s.tx, s.user, c, obj)
+}
+
+func (s postgresObjectTransaction) DeleteObject(ctx context.Context, c Collection, id string) error {
 	if !validCollection(c) {
 		return errors.New("webmail: invalid object collection")
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM webmail_objects WHERE mailbox=$1 AND collection=$2 AND id=$3`, s.user, c, objectID(id))
+	_, err := s.tx.ExecContext(ctx, `DELETE FROM webmail_objects WHERE mailbox=$1 AND collection=$2 AND id=$3`, s.user, c, objectID(id))
 	return err
+}
+
+func (s postgresObjects) transaction(ctx context.Context, fn func(ObjectStore) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// The account row exists after migration. Its row lock is shared by every
+	// replica and avoids a check/write race even for conditional creation.
+	var owner string
+	if err := tx.QueryRowContext(ctx, `SELECT mailbox FROM webmail_object_users WHERE mailbox=$1 FOR UPDATE`, s.user).Scan(&owner); err != nil {
+		return err
+	}
+	if err := fn(postgresObjectTransaction{postgresObjects: s, tx: tx}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // migrate copies all four collections in one transaction and keeps the IMAP

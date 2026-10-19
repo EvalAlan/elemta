@@ -1,8 +1,7 @@
 #!/bin/sh
 # Restores a mailbox backup into throwaway containers, beside the running
 # stack and touching none of its data, then checks it: every body a
-# message refers to must exist with its checksum, and the message count
-# must match the backup's manifest.
+# message refers to must exist with its checksum.
 #
 #   scripts/mailbox-restore-drill.sh <backup directory>
 #
@@ -10,6 +9,11 @@
 # with the mailbox replicas stopped.
 set -eu
 in=${1:?usage: $0 <backup directory>}
+[ -f "$in/complete" ] || { echo "Backup is incomplete" >&2; exit 1; }
+metadata_hash=$(sed -n 's/^metadata_sha256=//p' "$in/manifest")
+bodies_hash=$(sed -n 's/^bodies_sha256=//p' "$in/manifest")
+[ "$(sha256sum "$in/metadata.dump" | cut -d ' ' -f 1)" = "$metadata_hash" ] || { echo "Metadata checksum differs" >&2; exit 1; }
+[ "$(sha256sum "$in/bodies.tar.gz" | cut -d ' ' -f 1)" = "$bodies_hash" ] || { echo "Bodies checksum differs" >&2; exit 1; }
 image=${MAILBOX_IMAGE:-elemta-mailbox:dev}
 root="$(cd "$(dirname "$0")/.." && pwd)"
 secrets="$root/deployments/compose/.secrets"
@@ -49,8 +53,6 @@ docker run --rm --network "$net" --env-file "$secrets/mailbox.env" \
     -v "$secrets/mailbox-tls/key.pem:/etc/elemta/tls/key.pem:ro" \
     -v "$vol:/var/lib/elemta/bodies" "$image" mailbox verify --config /etc/elemta/mailbox.toml
 
-want=$(sed -n 's/^messages=//p' "$in/manifest")
 got=$(docker exec "$dbc" psql -U mailbox -d mailbox -tAc "select count(*) from mailbox_messages")
-echo "messages: backup $want, restored $got"
-[ "$want" = "$got" ] || { echo "message count differs"; exit 1; }
+echo "restored messages: $got"
 echo "Restore drill passed"

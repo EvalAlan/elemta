@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/datasource"
 )
 
 // API key errors
@@ -22,18 +25,19 @@ var (
 
 // APIKey represents an API key
 type APIKey struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	KeyHash     string            `json:"key_hash"` // SHA256 hash of the key
-	Username    string            `json:"username"` // Associated user
-	Permissions []Permission      `json:"permissions"`
-	Metadata    map[string]string `json:"metadata"`
-	CreatedAt   time.Time         `json:"created_at"`
-	ExpiresAt   *time.Time        `json:"expires_at,omitempty"`
-	LastUsedAt  *time.Time        `json:"last_used_at,omitempty"`
-	IsActive    bool              `json:"is_active"`
-	IsRevoked   bool              `json:"is_revoked"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description"`
+	KeyHash      string            `json:"key_hash"` // SHA256 hash of the key
+	Username     string            `json:"username"` // Associated user
+	Permissions  []Permission      `json:"permissions"`
+	Metadata     map[string]string `json:"metadata"`
+	CreatedAt    time.Time         `json:"created_at"`
+	ExpiresAt    *time.Time        `json:"expires_at,omitempty"`
+	LastUsedAt   *time.Time        `json:"last_used_at,omitempty"`
+	IsActive     bool              `json:"is_active"`
+	IsRevoked    bool              `json:"is_revoked"`
+	ownerBinding string
 }
 
 // APIKeyManager manages API keys
@@ -66,6 +70,17 @@ func (m *APIKeyManager) hashAPIKey(key string) string {
 
 // CreateAPIKey creates a new API key
 func (m *APIKeyManager) CreateAPIKey(username, name, description string, permissions []Permission, expiryDuration *time.Duration) (*APIKey, string, error) {
+	if m.rbac == nil {
+		return nil, "", ErrInvalidAPIKey
+	}
+	owner, err := m.rbac.auth.GetUser(context.Background(), username)
+	if err != nil || !owner.IsActive {
+		return nil, "", ErrInvalidAPIKey
+	}
+	binding, ok := apiKeyOwnerBinding(owner)
+	if !ok {
+		return nil, "", ErrInvalidAPIKey
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -105,17 +120,18 @@ func (m *APIKeyManager) CreateAPIKey(username, name, description string, permiss
 
 	// Create API key
 	apiKey := &APIKey{
-		ID:          keyID,
-		Name:        name,
-		Description: description,
-		KeyHash:     keyHash,
-		Username:    username,
-		Permissions: permissions,
-		Metadata:    make(map[string]string),
-		CreatedAt:   time.Now(),
-		ExpiresAt:   expiresAt,
-		IsActive:    true,
-		IsRevoked:   false,
+		ID:           keyID,
+		Name:         name,
+		Description:  description,
+		KeyHash:      keyHash,
+		Username:     username,
+		Permissions:  permissions,
+		Metadata:     make(map[string]string),
+		CreatedAt:    time.Now(),
+		ExpiresAt:    expiresAt,
+		IsActive:     true,
+		IsRevoked:    false,
+		ownerBinding: binding,
 	}
 
 	// Store the key
@@ -127,10 +143,10 @@ func (m *APIKeyManager) CreateAPIKey(username, name, description string, permiss
 // ValidateAPIKey validates an API key and returns the associated key info
 func (m *APIKeyManager) ValidateAPIKey(keyString string) (*APIKey, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	// Check key format
 	if !strings.HasPrefix(keyString, "elemta_") {
+		m.mu.Unlock()
 		return nil, ErrInvalidAPIKey
 	}
 
@@ -140,21 +156,25 @@ func (m *APIKeyManager) ValidateAPIKey(keyString string) (*APIKey, error) {
 	// Find the key
 	apiKey, exists := m.keys[keyHash]
 	if !exists {
+		m.mu.Unlock()
 		return nil, ErrAPIKeyNotFound
 	}
 
 	// Check if key is active
 	if !apiKey.IsActive {
+		m.mu.Unlock()
 		return nil, ErrAPIKeyRevoked
 	}
 
 	// Check if key is revoked
 	if apiKey.IsRevoked {
+		m.mu.Unlock()
 		return nil, ErrAPIKeyRevoked
 	}
 
 	// Check if key is expired
 	if apiKey.ExpiresAt != nil && time.Now().After(*apiKey.ExpiresAt) {
+		m.mu.Unlock()
 		return nil, ErrAPIKeyExpired
 	}
 
@@ -166,8 +186,45 @@ func (m *APIKeyManager) ValidateAPIKey(keyString string) (*APIKey, error) {
 	keyCopy := *apiKey
 	keyCopy.Permissions = make([]Permission, len(apiKey.Permissions))
 	copy(keyCopy.Permissions, apiKey.Permissions)
+	m.mu.Unlock()
+
+	if m.rbac == nil {
+		return nil, ErrAPIKeyRevoked
+	}
+	owner, err := m.rbac.auth.GetUser(context.Background(), keyCopy.Username)
+	if err != nil || !owner.IsActive {
+		return nil, ErrAPIKeyRevoked
+	}
+	binding, ok := apiKeyOwnerBinding(owner)
+	if !ok || binding != keyCopy.ownerBinding {
+		return nil, ErrAPIKeyRevoked
+	}
+	current, err := m.rbac.GetUserPermissions(context.Background(), keyCopy.Username)
+	if err != nil {
+		return nil, ErrAPIKeyRevoked
+	}
+	allowed := make(map[Permission]bool, len(current))
+	for _, permission := range current {
+		allowed[permission] = true
+	}
+	requested := keyCopy.Permissions
+	keyCopy.Permissions = make([]Permission, 0, len(requested))
+	for _, permission := range requested {
+		if allowed[permission] {
+			keyCopy.Permissions = append(keyCopy.Permissions, permission)
+		}
+	}
 
 	return &keyCopy, nil
+}
+
+func apiKeyOwnerBinding(user datasource.User) (string, bool) {
+	entryID, _ := user.Attributes["entryUUID"].(string)
+	if user.CreatedAt == 0 && user.Password == "" && entryID == "" {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s", user.Username, user.CreatedAt, user.Password, entryID)))
+	return fmt.Sprintf("%x", sum), true
 }
 
 // HasPermission checks if an API key has a specific permission

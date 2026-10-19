@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,6 +92,16 @@ func TestNewServer(t *testing.T) {
 	})
 }
 
+func TestDecodeBoundedJSONRejectsStreamingOversize(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"username":"`+strings.Repeat("x", 16<<10)+`"}`))
+	r.ContentLength = -1
+	w := httptest.NewRecorder()
+	var value map[string]any
+	if decodeBoundedJSON(w, r, &value, 4<<10) || w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized JSON returned %d", w.Code)
+	}
+}
+
 func TestServerQueueEndpoints(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping API endpoint tests in short mode")
@@ -160,6 +172,36 @@ func TestInitializeAuthPrefersExplicitAuthFile(t *testing.T) {
 	}, (*MainConfig)(nil), t.TempDir(), 0, "")
 	require.NoError(t, err)
 	require.NotNil(t, server.authSystem)
+}
+
+func TestAPIKeyTracksOwnerAuthorityAndIdentity(t *testing.T) {
+	usersFile := filepath.Join(t.TempDir(), "users.txt")
+	require.NoError(t, os.WriteFile(usersFile, []byte("owner:original:admin\n"), 0600))
+	server, err := NewServer(&Config{
+		Enabled: true, ListenAddr: "127.0.0.1:0", WebRoot: t.TempDir(),
+		AuthEnabled: true, AuthFile: usersFile,
+	}, (*MainConfig)(nil), t.TempDir(), 0, "")
+	require.NoError(t, err)
+	_, key, err := server.apiKeyManager.CreateAPIKey("owner", "test", "", []auth.Permission{auth.PermissionSystemAdmin}, nil)
+	require.NoError(t, err)
+
+	check := func(wantPermission bool, wantError bool) {
+		t.Helper()
+		got, err := server.authMiddleware.authenticateAPIKey(key)
+		if wantError {
+			require.Error(t, err)
+			return
+		}
+		require.NoError(t, err)
+		assert.Equal(t, wantPermission, slices.Contains(got.Permissions, auth.PermissionSystemAdmin))
+	}
+	check(true, false)
+	require.NoError(t, os.WriteFile(usersFile, []byte("owner:original:readonly\n"), 0600))
+	check(false, false)
+	require.NoError(t, os.WriteFile(usersFile, nil, 0600))
+	check(false, true)
+	require.NoError(t, os.WriteFile(usersFile, []byte("owner:replacement:admin\n"), 0600))
+	check(false, true)
 }
 
 func TestInitializeAuth_RespectsMainConfigLegacyHashPolicy(t *testing.T) {

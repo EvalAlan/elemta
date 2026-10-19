@@ -4,10 +4,38 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+func TestModifyUsersFileSerializesIndependentWriters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "users")
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := ModifyUsersFile(path, func(users map[string]FileUser) error {
+				users[strconv.Itoa(i)] = FileUser{Hash: "hash", Roles: []string{"user"}}
+				return nil
+			})
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	users, err := ReadUsersFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 20 {
+		t.Fatalf("retained %d of 20 independent updates", len(users))
+	}
+}
 
 func newFileSource(t *testing.T, content string) (*FileDataSource, string) {
 	t.Helper()

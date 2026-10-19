@@ -47,7 +47,8 @@ var (
 	// the user requires app passwords on this listener.
 	ErrAppPasswordRequired = errors.New("app password required")
 	// ErrBadCode is a wrong, reused or expired verification code.
-	ErrBadCode = errors.New("invalid verification code")
+	ErrBadCode    = errors.New("invalid verification code")
+	ErrTOTPActive = errors.New("two-step verification is already enabled")
 )
 
 // SecurityState is what a user sees and changes in the webmail's settings.
@@ -259,8 +260,23 @@ func (e *Engine) BeginTOTP(ctx context.Context, account, address, issuer string)
 		return "", "", err
 	}
 	secret = b32.EncodeToString(raw)
-	if _, err := e.DB.ExecContext(ctx, `INSERT INTO mailbox_security(account,totp_pending) VALUES($1,$2)
-ON CONFLICT(account) DO UPDATE SET totp_pending=excluded.totp_pending`, account, secret); err != nil {
+	sealed, err := e.sealTOTP(account, "pending", secret)
+	if err != nil {
+		return "", "", err
+	}
+	err = e.tx(ctx, account, func(tx *sql.Tx) error {
+		var active bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_security WHERE account=$1 AND totp_secret IS NOT NULL)`, account).Scan(&active); err != nil {
+			return err
+		}
+		if active {
+			return ErrTOTPActive
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_security(account,totp_pending,totp_pending_at) VALUES($1,$2,now())
+ON CONFLICT(account) DO UPDATE SET totp_pending=excluded.totp_pending,totp_pending_at=excluded.totp_pending_at`, account, sealed)
+		return err
+	})
+	if err != nil {
 		return "", "", err
 	}
 	label := url.PathEscape(issuer + ":" + address)
@@ -283,10 +299,19 @@ func (e *Engine) ConfirmTOTP(ctx context.Context, account, code string, now time
 	}
 	err := e.tx(ctx, account, func(tx *sql.Tx) error {
 		var pending sql.NullString
-		if err := tx.QueryRowContext(ctx, `SELECT totp_pending FROM mailbox_security WHERE account=$1 FOR UPDATE`, account).Scan(&pending); err != nil || !pending.Valid {
+		var pendingAt sql.NullTime
+		var active bool
+		if err := tx.QueryRowContext(ctx, `SELECT totp_pending,totp_pending_at,totp_secret IS NOT NULL FROM mailbox_security WHERE account=$1 FOR UPDATE`, account).Scan(&pending, &pendingAt, &active); err != nil || !pending.Valid || !pendingAt.Valid || now.Sub(pendingAt.Time) > 5*time.Minute {
 			return ErrBadCode
 		}
-		raw, err := b32.DecodeString(pending.String)
+		if active {
+			return ErrTOTPActive
+		}
+		plain, err := e.openTOTP(account, "pending", pending.String)
+		if err != nil {
+			return err
+		}
+		raw, err := b32.DecodeString(plain)
 		if err != nil {
 			return ErrBadCode
 		}
@@ -294,7 +319,11 @@ func (e *Engine) ConfirmTOTP(ctx context.Context, account, code string, now time
 		if !ok {
 			return ErrBadCode
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE mailbox_security SET totp_secret=totp_pending,totp_pending=NULL,totp_last_step=$2,recovery_codes=$3 WHERE account=$1`, account, step, pq.Array(hashed))
+		sealed, err := e.sealTOTP(account, "active", plain)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE mailbox_security SET totp_secret=$4,totp_pending=NULL,totp_pending_at=NULL,totp_last_step=$2,recovery_codes=$3 WHERE account=$1`, account, step, pq.Array(hashed), sealed)
 		return err
 	})
 	if err != nil {
@@ -315,7 +344,11 @@ func (e *Engine) VerifySecondFactor(ctx context.Context, account, code string, n
 			Scan(&secret, &last, pq.Array(&codes)); err != nil || !secret.Valid {
 			return ErrBadCode
 		}
-		raw, err := b32.DecodeString(secret.String)
+		plain, err := e.openTOTP(account, "active", secret.String)
+		if err != nil {
+			return err
+		}
+		raw, err := b32.DecodeString(plain)
 		if err != nil {
 			return ErrBadCode
 		}
@@ -339,6 +372,6 @@ func (e *Engine) VerifySecondFactor(ctx context.Context, account, code string, n
 // DisableTOTP turns two-step verification off. The caller has checked a
 // current code.
 func (e *Engine) DisableTOTP(ctx context.Context, account string) error {
-	_, err := e.DB.ExecContext(ctx, `UPDATE mailbox_security SET totp_secret=NULL,totp_pending=NULL,totp_last_step=0,recovery_codes='{}' WHERE account=$1`, account)
+	_, err := e.DB.ExecContext(ctx, `UPDATE mailbox_security SET totp_secret=NULL,totp_pending=NULL,totp_pending_at=NULL,totp_last_step=0,recovery_codes='{}' WHERE account=$1`, account)
 	return err
 }

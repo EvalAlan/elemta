@@ -475,12 +475,15 @@ type Occurrence struct {
 	Start, End time.Time
 }
 
-// maxOccurrences bounds the expansion of one rule within one view, so a
-// FREQ=MINUTELY import can't make a page enormous.
-const maxOccurrences = 500
+// Both result count and iterator work are bounded: imported dense rules can
+// otherwise spend unbounded time before reaching the requested date.
+const (
+	maxOccurrences     = 500
+	maxViewOccurrences = 2000
+	maxRecurrenceSteps = 20000
+)
 
-// occurrences returns the instances of e that overlap [from, to).
-func (e *Event) occurrences(from, to time.Time) []Occurrence {
+func (e *Event) occurrencesBudget(from, to time.Time, budget *int, deadline time.Time) []Occurrence {
 	dur := e.Duration()
 	if e.RRule == "" {
 		if e.Start.Before(to) && (e.End.After(from) || (dur == 0 && !e.Start.Before(from))) {
@@ -493,14 +496,14 @@ func (e *Event) occurrences(from, to time.Time) []Occurrence {
 		// An unreadable rule still shows the first occurrence.
 		cp := *e
 		cp.RRule = ""
-		return cp.occurrences(from, to)
+		return cp.occurrencesBudget(from, to, budget, deadline)
 	}
 	opt.Dtstart = e.Start
 	rule, err := rrule.NewRRule(*opt)
 	if err != nil {
 		cp := *e
 		cp.RRule = ""
-		return cp.occurrences(from, to)
+		return cp.occurrencesBudget(from, to, budget, deadline)
 	}
 	var set rrule.Set
 	set.RRule(rule)
@@ -508,10 +511,16 @@ func (e *Event) occurrences(from, to time.Time) []Occurrence {
 		set.ExDate(x)
 	}
 	var out []Occurrence
-	starts := set.Between(from.Add(-dur), to, true)
-	for _, s := range starts {
-		if len(out) >= maxOccurrences {
+	next := set.Iterator()
+	searchFrom := from.Add(-dur)
+	for *budget > 0 && len(out) < maxOccurrences && time.Now().Before(deadline) {
+		*budget--
+		s, ok := next()
+		if !ok || !s.Before(to) {
 			break
+		}
+		if s.Before(searchFrom) {
+			continue
 		}
 		end := s.Add(dur)
 		if e.AllDay {
@@ -529,9 +538,22 @@ func (e *Event) occurrences(from, to time.Time) []Occurrence {
 // expand returns every occurrence of events overlapping [from, to), in
 // start order, all-day events first on each day.
 func expand(events []Event, from, to time.Time) []Occurrence {
+	if to.Sub(from) > 366*24*time.Hour {
+		to = from.Add(366 * 24 * time.Hour)
+	}
 	var out []Occurrence
+	budget := maxRecurrenceSteps
+	deadline := time.Now().Add(100 * time.Millisecond)
 	for i := range events {
-		out = append(out, events[i].occurrences(from, to)...)
+		if budget <= 0 || len(out) >= maxViewOccurrences || time.Now().After(deadline) {
+			break
+		}
+		remaining := maxViewOccurrences - len(out)
+		instances := events[i].occurrencesBudget(from, to, &budget, deadline)
+		if len(instances) > remaining {
+			instances = instances[:remaining]
+		}
+		out = append(out, instances...)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if !out[i].Start.Equal(out[j].Start) {

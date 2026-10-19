@@ -107,11 +107,11 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	s.imap = imapserver.New(&imapserver.Options{Caps: caps, TLSConfig: tlsConfig, InsecureAuth: c.Server.AllowPlaintextAuth, NewSession: func(conn *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 		_, public := conn.NetConn().(*tls.Conn)
 		ctx, cancel := context.WithCancel(s.ctx)
-		return &imapSession{service: s, ctx: ctx, cancel: cancel, public: public}, nil, nil
+		return &imapSession{service: s, ctx: ctx, cancel: cancel, public: public, conn: conn.NetConn()}, nil, nil
 	}})
-	s.imapStartTLS = imapserver.New(&imapserver.Options{Caps: caps, TLSConfig: tlsConfig, InsecureAuth: false, NewSession: func(_ *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+	s.imapStartTLS = imapserver.New(&imapserver.Options{Caps: caps, TLSConfig: tlsConfig, InsecureAuth: false, NewSession: func(conn *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 		ctx, cancel := context.WithCancel(s.ctx)
-		return &imapSession{service: s, ctx: ctx, cancel: cancel, public: true}, nil, nil
+		return &imapSession{service: s, ctx: ctx, cancel: cancel, public: true, conn: conn.NetConn()}, nil, nil
 	}})
 
 	s.lmtp = smtp.NewServer(smtp.BackendFunc(func(conn *smtp.Conn) (smtp.Session, error) {

@@ -178,10 +178,9 @@ func TestRejectedMessageBodyIsNotExecutedAsCommands(t *testing.T) {
 	}
 }
 
-// TestRejectedMessageResynchronisesForLegitimateReuse checks the fix did not
-// simply break connection reuse: after a rejection that *can* be drained, a
-// well-behaved client that finishes its body may carry on.
-func TestRejectedMessageResynchronisesForLegitimateReuse(t *testing.T) {
+// An overlong DATA line cannot be safely drained without letting a peer
+// stream unbounded bytes, so the connection must close at that point.
+func TestOverlongMessageClosesUnsynchronizedConnection(t *testing.T) {
 	server := startDesyncTestServer(t)
 	p := dialProbe(t, server.Addr().String())
 
@@ -202,12 +201,9 @@ func TestRejectedMessageResynchronisesForLegitimateReuse(t *testing.T) {
 		t.Fatalf("over-long line should have been rejected, got %q", reply)
 	}
 
-	// The connection is back at a command boundary, so a new transaction works.
-	if got := p.cmd("RSET"); !strings.HasPrefix(got, "250") {
-		t.Fatalf("RSET after a drained rejection: %q", got)
-	}
-	if got := p.cmd("MAIL FROM:<second@example.com>"); !strings.HasPrefix(got, "250") {
-		t.Fatalf("MAIL FROM after a drained rejection: %q", got)
+	_, _ = p.conn.Write([]byte("RSET\r\n"))
+	if got := p.readReply(); strings.HasPrefix(got, "250") {
+		t.Fatalf("overlong line left connection usable: %q", got)
 	}
 }
 

@@ -323,6 +323,8 @@ services:
     depends_on:
       elemta-dns:
         condition: service_healthy
+      rspamd-valkey:
+        condition: service_healthy
     networks:
       - elemta_network
     volumes:
@@ -525,7 +527,26 @@ services:
     volumes:
       - valkey_data:/data
     command: >
-      valkey-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy allkeys-lru
+      valkey-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy noeviction
+    networks:
+      - elemta_network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "valkey-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Scanner state has a separate capacity/eviction policy from session,
+  # recovery, throttling, and revocation state.
+  rspamd-valkey:
+    image: valkey/valkey:8.0-alpine
+    container_name: elemta-rspamd-valkey
+    command: >
+      valkey-server --appendonly yes --appendfsync everysec --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - rspamd_valkey_data:/data
     networks:
       - elemta_network
     restart: unless-stopped
@@ -633,6 +654,8 @@ volumes:
   rspamd_data:
     driver: local
   valkey_data:
+    driver: local
+  rspamd_valkey_data:
     driver: local
   prometheus_data:
     driver: local

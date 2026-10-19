@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net"
 	"slices"
 	"sort"
 	"strings"
@@ -26,9 +27,13 @@ type imapSession struct {
 	readOnly bool
 	// public is a listener mail apps connect to, where a user's app-password
 	// requirement applies.
-	public bool
-	ctx    context.Context
-	cancel context.CancelFunc
+	public   bool
+	conn     net.Conn
+	user     string
+	password string
+	recheck  <-chan time.Time
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 var _ imapserver.SessionIMAP4rev2 = (*imapSession)(nil)
@@ -43,7 +48,33 @@ func (s *imapSession) Login(user, password string) error {
 		return protocolError(err)
 	}
 	s.account = a
+	s.user, s.password = user, password
+	go s.watchCredentials()
 	return nil
+}
+
+// Revalidate established connections against shared credential and directory
+// state, so a reset or app-password deletion reaches idle clients on every
+// replica without waiting for them to reconnect.
+func (s *imapSession) watchCredentials() {
+	ticks := s.recheck
+	if ticks == nil {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		ticks = ticker.C
+	}
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticks:
+			a, err := s.service.login(s.ctx, s.user, s.password, s.public)
+			if err != nil || a.ID != s.account.ID {
+				_ = s.conn.Close()
+				return
+			}
+		}
+	}
 }
 
 // login checks a user's credentials for a mail protocol. On a public
@@ -102,6 +133,9 @@ func (s *Service) authenticate(ctx context.Context, user, password string) (Acco
 			if errors.Is(err, ErrCredentials) {
 				s.failLogin(user)
 			}
+			return Account{}, false, err
+		}
+		if err := s.engine.EnsureAccount(ctx, a); err != nil {
 			return Account{}, false, err
 		}
 		return a, true, nil

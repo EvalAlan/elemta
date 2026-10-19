@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"github.com/EvalAlan/elemta/internal/antispam"
 	"github.com/EvalAlan/elemta/internal/antivirus"
@@ -207,8 +208,12 @@ func (dh *DataHandler) drainToEndOfData(ctx context.Context) {
 	var drained int64
 	atLineStart := true
 	for {
-		line, err := dh.reader.ReadBytes('\n')
+		line, err := readBoundedSMTPLine(dh.reader, 64*1024)
 		drained += int64(len(line))
+		if errors.Is(err, errSMTPLineTooLong) {
+			dh.dataSyncLost = true
+			return
+		}
 
 		// A lone "." on its own line ends the message. Check before the error
 		// branch so a marker arriving with the final read still counts.
@@ -322,8 +327,13 @@ func (dh *DataHandler) readData(ctx context.Context) (*MessageSpool, error) {
 	lastMemoryCheck := int64(0)
 
 	for {
-		line, err := dh.reader.ReadBytes('\n')
+		line, err := readBoundedSMTPLine(dh.reader, 64*1024)
 		if err != nil {
+			if errors.Is(err, errSMTPLineTooLong) {
+				dh.dataSyncLost = true
+				dh.state.ClearDataTransferMode(ctx)
+				return nil, fmt.Errorf("552 5.3.4 Line too long (maximum %d octets)", 64*1024)
+			}
 			if err == io.EOF {
 				dh.logger.WarnContext(ctx, "Unexpected EOF while reading message data")
 				return nil, fmt.Errorf("unexpected end of data")
@@ -983,14 +993,6 @@ func (dh *DataHandler) validateLineContent(ctx context.Context, line string, sta
 	isInternal := dh.isInternalConnection()
 
 	if isInternal {
-		// For internal connections, only check for obvious security threats
-		if strings.Contains(line, "'; DROP TABLE") ||
-			strings.Contains(line, "\"; DROP TABLE") ||
-			strings.Contains(line, "UNION SELECT") ||
-			strings.Contains(line, "<script") {
-			return fmt.Errorf("500 5.5.2 Security violation detected")
-		}
-
 		dh.logger.DebugContext(ctx, "Using permissive security validation for internal connection",
 			"remote_addr", dh.conn.RemoteAddr().String(),
 			"in_headers", state.InHeaders,
@@ -1039,13 +1041,6 @@ func (dh *DataHandler) validateLineContent(ctx context.Context, line string, sta
 			"remote_addr", dh.conn.RemoteAddr().String(),
 		)
 
-		// Basic security checks for long lines
-		if strings.Contains(line, "'; DROP TABLE") ||
-			strings.Contains(line, "\"; DROP TABLE") ||
-			strings.Contains(line, "UNION SELECT") ||
-			strings.Contains(line, "<script") {
-			return fmt.Errorf("500 5.5.2 Security violation detected")
-		}
 	}
 
 	// Additional header-specific validation for external connections (only for lines within MUST limit)
@@ -1974,17 +1969,6 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, view *scanCon
 			"remote_addr", dh.conn.RemoteAddr().String(),
 		)
 
-		// Only check for obvious security threats in internal connections
-		if strings.Contains(content, "'; DROP TABLE") ||
-			strings.Contains(content, "\"; DROP TABLE") ||
-			strings.Contains(content, "UNION SELECT") ||
-			strings.Contains(content, "<script") {
-			result.Passed = false
-			result.Threats = append(result.Threats, "Basic security violation detected")
-			dh.logger.WarnContext(ctx, "Basic security violation detected in internal connection",
-				"remote_addr", dh.conn.RemoteAddr().String(),
-			)
-		}
 		return nil
 	}
 

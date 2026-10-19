@@ -122,6 +122,61 @@ type memSessions struct {
 	recs map[string]SessionRecord
 }
 
+type expiringSessions struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	recs    map[string]SessionRecord
+	expires map[string]time.Time
+}
+
+func (m *expiringSessions) Load(_ context.Context, id string) (*SessionRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.now().Before(m.expires[id]) {
+		delete(m.recs, id)
+		return nil, nil
+	}
+	rec := m.recs[id]
+	return &rec, nil
+}
+func (m *expiringSessions) Save(_ context.Context, rec *SessionRecord, ttl time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recs[rec.ID] = *rec
+	m.expires[rec.ID] = m.now().Add(ttl)
+	return nil
+}
+func (m *expiringSessions) Delete(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.recs, id)
+	delete(m.expires, id)
+	return nil
+}
+
+func TestFrequentActivityRenewsSharedSession(t *testing.T) {
+	now := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
+	store := &expiringSessions{now: func() time.Time { return now }, recs: map[string]SessionRecord{}, expires: map[string]time.Time{}}
+	m, err := NewSharedSessionManager(2*time.Minute, make([]byte, 32), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.now = func() time.Time { return now }
+	s, err := m.Create("dana", "dana@example.com", "pw", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		now = now.Add(30 * time.Second)
+		if _, ok := m.Get(s.ID); !ok {
+			t.Fatalf("active session expired after %s", time.Duration(i+1)*30*time.Second)
+		}
+	}
+	if stored, err := store.Load(context.Background(), s.ID); err != nil || stored == nil || !stored.LastSeen.After(s.created) {
+		t.Fatalf("shared session was not renewed: %+v %v", stored, err)
+	}
+}
+
 func (m *memSessions) Load(_ context.Context, id string) (*SessionRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
