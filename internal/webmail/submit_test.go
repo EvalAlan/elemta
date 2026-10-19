@@ -26,8 +26,16 @@ func TestDraftBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(raw)
-	if strings.Contains(strings.ToLower(s), "bcc") || strings.Contains(s, "archive@example.com") {
-		t.Fatalf("Bcc leaked into the message:\n%s", s)
+	// The hidden recipients must not appear anywhere. Checked by address and
+	// by header name, not by searching for "bcc": the multipart boundary is
+	// random hex and contains "bcc" in about one build in sixty.
+	if strings.Contains(strings.ToLower(s), "archive@example.com") {
+		t.Fatalf("Bcc recipient leaked into the message:\n%s", s)
+	}
+	for _, line := range strings.Split(s[:strings.Index(s, "\r\n\r\n")], "\r\n") {
+		if strings.HasPrefix(strings.ToLower(line), "bcc:") {
+			t.Fatalf("Bcc header in the message:\n%s", s)
+		}
 	}
 	if strings.Contains(strings.ReplaceAll(s, "\r\n", ""), "\n") {
 		t.Fatal("message contains a bare LF; Elemta rejects those")
