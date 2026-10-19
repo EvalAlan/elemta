@@ -1,7 +1,9 @@
 # Proposed mailbox engine and local development deployment
 
-Status: design proposal, 2026-10-18. The mailbox engine, commands and config
-below do not exist yet. Dovecot remains the running mailbox server. The
+Status: architecture target, 2026-10-18. A first [mailbox service](mailbox-service.md)
+now implements the core engine and is the default in the development Compose
+stack, which no longer includes Dovecot. The remaining
+sections describe the broader target and optional isolated labs. The
 existing optional Postgres ObjectStore holds calendar/contact/task/settings
 objects; it is not a mail metadata engine or an HA deployment.
 
@@ -174,7 +176,11 @@ metadata snapshots, protect credentials/keys, and rehearse restores into an
 isolated cell. Coordinate garbage collection with the backup retention
 window so a database restore does not reference already deleted bodies.
 
-## Minimal daily development on this system
+## Original isolated lab on this system
+
+The section below records the proposal and its separate test project. The
+normal development stack now uses the same two-engine pattern with its own
+metadata/body volumes, and Dovecot has been removed from it.
 
 Observed during this proposal: 14 logical CPUs, about 31 GiB RAM with 18 GiB
 available, and about 4.5 TiB free on the repository filesystem. Docker's
@@ -182,12 +188,12 @@ root is `/var/lib/docker`, on a different filesystem with about 503 GiB
 free. Named volumes consume that smaller disk unless explicitly relocated;
 budget body/index/backup space there before large-message tests. These
 observations are not a capacity benchmark. The
-current eight Elemta services remain running, including Dovecot.
+then-current eight Elemta services included Dovecot.
 
 Add a separate four-container project alongside them:
 
 ```text
-Existing SMTP/webmail/Dovecot/LDAP/Valkey stack remains unchanged
+Original SMTP/webmail/Dovecot/LDAP/Valkey stack during isolated testing
                            |
             existing Docker network (LDAP access only)
                            |
@@ -211,35 +217,12 @@ workstation. Add an optional single-node S3 fixture when implementing the
 S3 contract, or point test accounts at a dedicated AWS/Ceph test bucket.
 The S3 fixture is test infrastructure and provides no additional HA.
 
-The proposed manifests are in
-[`deployments/compose/mailbox-proposal`](../deployments/compose/mailbox-proposal/compose.yml.example).
-They use an explicit proposed image `elemta-mailbox:dev`, an unimplemented
-`elemta mailbox --config ...` command and an example TOML contract. They are
-not runnable application software today. No new TOML fields have been added
-to the Go configuration; implementation must give every field a `toml` tag.
-Image release tags are starting candidates and need digest pinning during
-implementation. Development LDAP/IMAP/LMTP traffic here is plaintext;
-production requires verified TLS and an explicitly provisioned service role.
-
-These commands can validate the proposal's Compose shape now, without
-starting anything (the value below is only a parser fixture):
-
-```sh
-MAILBOX_DEV_DB_PASSWORD=configuration-check-only docker compose \
-  -f deployments/compose/mailbox-proposal/compose.yml.example config --quiet
-```
-
-After the engine exists, supply a protected `--env-file` with
-`MAILBOX_DEV_DB_PASSWORD`, `ELEMTA_MAILBOX_LDAP_DN` and
-`ELEMTA_MAILBOX_LDAP_PASSWORD`; provision that least-privilege directory
-account first. Set `ELEMTA_EXISTING_NETWORK` if the current network differs
-from `compose_elemta_network`. The proposed file can then start independently:
-
-```sh
-# Future command: requires the implemented engine and its built image.
-docker compose --env-file /path/to/protected/mailbox-dev.env \
-  -f deployments/compose/mailbox-proposal/compose.yml.example up -d
-```
+The implemented daily deployment is
+[`docker-compose.mailbox.yml`](../deployments/compose/docker-compose.mailbox.yml),
+with [`config/mailbox.toml`](../config/mailbox.toml). Start it with
+`make mailbox-dev-up`; operation, verification and known limits are documented
+in [mailbox-service.md](mailbox-service.md). An optional webmail instance on
+18037 exercises the new mailbox without changing the main stack.
 
 Both exposed ports bind to localhost and differ from current ports 14143
 and 2424. The proposed IMAP port 11443 carries plaintext development IMAP,
@@ -277,7 +260,9 @@ entry. This does not pretend a shared localhost port is a redundant ingress.
 | Optional S3 fixture | 1 | 1 GiB |
 | Total | 10, or 11 with S3 | 7.125 GiB, or 8.125 GiB with S3 |
 
-This is a budgeting proposal, not a supplied Patroni deployment. It leaves
+The [implemented HA lab](../deployments/compose/docker-compose.mailbox-ha.yml)
+starts with `make mailbox-ha-dev-up`. Its shared filesystem body volume is a
+container-failure fixture, not replicated host storage. The budget leaves
 headroom on this machine for the current stack, compiler and browser tests,
 but sustained load may need lower concurrency or stopped development tools.
 Do not run a full Ceph cluster by default here. Validate the S3 driver against
@@ -315,5 +300,7 @@ multiple mailbox shards within their assigned cells.
    movement, and expand gradually. Millions of mailboxes is the aggregate
    design target; no present deployment has demonstrated that capacity.
 
-No Dovecot replacement, data migration, running-stack reconfiguration or
-HA guarantee is introduced by accepting this proposal alone.
+The service now replaces Dovecot in the Compose and cloud stacks, but it
+doesn't yet migrate existing mail. See
+[status and remaining gaps](mailbox-service.md#status-and-remaining-gaps)
+for the functionality and qualification still required.

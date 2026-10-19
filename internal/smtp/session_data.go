@@ -11,6 +11,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/antivirus"
 	"io"
 	"net"
+	"net/mail"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -696,7 +697,7 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 	// Rejects only when the operator has asked for DMARC to be enforced;
 	// otherwise the verdict is recorded and written into a header below.
 	if dh.session != nil {
-		if err := dh.session.VerifyAuthentication(ctx, metadata.From, head); err != nil {
+		if err := dh.session.verifyAuthenticationContent(ctx, metadata.From, head, body); err != nil {
 			return err
 		}
 	}
@@ -1150,7 +1151,24 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 	// claims to be from, and what it found. Written whatever the outcome —
 	// omitting it when nothing passed leaves a reader unable to tell that from
 	// "never looked".
-	if dh.session != nil {
+	if dh.state != nil && dh.state.IsAuthenticated() {
+		// Report the identity we actually checked at submission (RFC 8601).
+		// SPF/DKIM/DMARC are evaluated by the receiving hop after signing.
+		value := sanitizeEmailForHeader(dh.config.Hostname) + "; auth=pass"
+		username := dh.state.GetUsername()
+		// Some readers split even quoted values at semicolons. Omit unusual
+		// identities instead of letting their punctuation create extra results.
+		for _, c := range username {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("@._+-", c)) {
+				username = ""
+				break
+			}
+		}
+		if username != "" {
+			value += " smtp.auth=" + username
+		}
+		additionalHeaders = append(additionalHeaders, "Authentication-Results: "+value)
+	} else if dh.session != nil {
 		if results, ok := dh.session.AuthResults(); ok {
 			additionalHeaders = append(additionalHeaders,
 				"Authentication-Results: "+results.Header(dh.config.Hostname))
@@ -1484,21 +1502,31 @@ func (dh *DataHandler) validateEmailAddressesInHeaders(ctx context.Context, head
 
 	for _, headerName := range emailHeaders {
 		if headerValue, exists := headers[headerName]; exists {
-			// Use enhanced validator to validate email addresses
-			validationResult := dh.enhancedValidator.ValidateSMTPParameter("MAIL_FROM", headerValue)
+			// Header fields carry address lists with display names; SMTP envelope
+			// validation applies only to each parsed addr-spec.
+			if headerName == "bcc" && strings.TrimSpace(headerValue) == "" {
+				continue
+			}
+			addresses, err := mail.ParseAddressList(headerValue)
+			if err != nil {
+				return fmt.Errorf("invalid email address in %s header: %w", headerName, err)
+			}
+			for _, address := range addresses {
+				validationResult := dh.enhancedValidator.ValidateSMTPParameter("MAIL_FROM", address.Address)
 
-			if !validationResult.Valid {
-				LogSecurityEvent(dh.logger, "email_header_validation_failed", validationResult.SecurityThreat,
-					validationResult.ErrorMessage, headerValue, dh.conn.RemoteAddr().String())
+				if !validationResult.Valid {
+					LogSecurityEvent(dh.logger, "email_header_validation_failed", validationResult.SecurityThreat,
+						validationResult.ErrorMessage, headerValue, dh.conn.RemoteAddr().String())
 
-				dh.logger.WarnContext(ctx, "Email header validation failed",
-					"header", headerName,
-					"error_type", validationResult.ErrorType,
-					"error_message", validationResult.ErrorMessage,
-					"security_threat", validationResult.SecurityThreat,
-				)
+					dh.logger.WarnContext(ctx, "Email header validation failed",
+						"header", headerName,
+						"error_type", validationResult.ErrorType,
+						"error_message", validationResult.ErrorMessage,
+						"security_threat", validationResult.SecurityThreat,
+					)
 
-				return fmt.Errorf("invalid email address in %s header: %s", headerName, validationResult.ErrorMessage)
+					return fmt.Errorf("invalid email address in %s header: %s", headerName, validationResult.ErrorMessage)
+				}
 			}
 		}
 	}

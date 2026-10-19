@@ -1,0 +1,49 @@
+[server]
+imap_listen = ":1143"
+# Public listeners require STARTTLS/STLS before any authentication.
+imap_starttls_listen = ":11143"
+pop3_listen = ":1110"
+lmtp_listen = ":2424"
+http_listen = ":8080"
+allow_plaintext_auth = true
+# TLS for IMAP (STARTTLS, and implicit TLS on imaps_listen), ManageSieve and
+# LMTP. The dev certificate is self-signed (scripts/dev-secrets.sh); the
+# files are re-read when they change, so renewals need no restart.
+tls_cert = "/etc/elemta/tls/cert.pem"
+tls_key = "/etc/elemta/tls/key.pem"
+# Containers can't bind ports below 1024; the host publishes this as 993.
+imaps_listen = ":10993"
+# Only the isolated development network may deliver. This is not an open relay.
+lmtp_allowed_networks = ["10.253.53.0/24", "127.0.0.0/8"]
+
+[metadata]
+max_connections = 8
+require_synchronous_replication = false
+
+[bodies]
+driver = "file"
+root = "/var/lib/elemta/bodies"
+endpoint = "object-store:8333"
+bucket = "mailbox-dev"
+region = "us-east-1"
+secure = false
+
+[auth]
+ldap_url = "ldap://elemta-ldap:389"
+ldap_base = "ou=people,dc=example,dc=com"
+ldap_user_filter = "(&(objectClass=posixAccount)(mail=%s))"
+default_domain = "example.com"
+
+[limits]
+max_connections = 256
+max_message_mb = 25
+max_concurrent_bodies = 8
+
+[sieve]
+# ManageSieve for the webmail and mail clients' filter editors.
+listen = ":4190"
+# Redirects and out-of-office replies go through Elemta's submission port,
+# which relays for the private dev network without a login.
+submit_addr = "elemta:2587"
+submit_tls = "none"
+hostname = "mail.example.com"

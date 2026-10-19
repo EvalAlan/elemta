@@ -507,7 +507,7 @@ func (s *Server) saveFilters(ctx context.Context, sess *Session, fs FilterSet) e
 func (s *Server) filtersPage(w http.ResponseWriter, r *http.Request, sess *Session) {
 	q := r.URL.Query()
 	fv := &filtersView{EditIdx: -1}
-	v := view{Title: "Filters", Session: sess, App: "settings", Filters: fv, Notice: notices[q.Get("n")]}
+	v := view{Title: "Filters", Session: sess, App: "settings", SettingsTab: "filters", Filters: fv, Notice: notices[q.Get("n")]}
 	s.withFolders(r, sess, &v)
 	fv.Folders = v.Folders
 	if s.sieve == nil {

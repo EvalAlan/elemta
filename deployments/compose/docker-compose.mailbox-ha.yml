@@ -1,0 +1,156 @@
+name: elemta-mailbox-ha
+
+x-etcd: &etcd
+  image: quay.io/coreos/etcd:v3.6.5
+  entrypoint: [/usr/local/bin/etcd]
+  restart: unless-stopped
+  mem_limit: 128m
+  networks: [mailbox]
+  environment: &etcd-env
+    ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+    ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+    ETCD_INITIAL_CLUSTER: etcd-a=http://etcd-a:2380,etcd-b=http://etcd-b:2380,etcd-c=http://etcd-c:2380
+    ETCD_INITIAL_CLUSTER_TOKEN: elemta-mailbox-ha
+    ETCD_DATA_DIR: /etcd-data
+
+x-pg: &pg
+  image: elemta-mailbox-postgres:dev
+  build:
+    context: ../../docker/mailbox/postgres
+  restart: unless-stopped
+  mem_limit: 1536m
+  networks: [mailbox]
+  environment: &pg-env
+    PATRONI_SUPERUSER_USERNAME: postgres
+    PATRONI_SUPERUSER_PASSWORD: ${MAILBOX_HA_SUPERUSER_PASSWORD:?Run make ensure-dev-secrets}
+    PATRONI_REPLICATION_USERNAME: replicator
+    PATRONI_REPLICATION_PASSWORD: ${MAILBOX_HA_REPLICATION_PASSWORD:?Run make ensure-dev-secrets}
+    MAILBOX_DB_PASSWORD: ${MAILBOX_DB_PASSWORD:?Run make ensure-dev-secrets}
+  depends_on: [etcd-a, etcd-b, etcd-c]
+  healthcheck:
+    test: [CMD-SHELL, pg_isready -U postgres]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+
+x-mailbox: &mailbox
+  image: elemta-mailbox:dev
+  restart: unless-stopped
+  mem_limit: 1g
+  env_file:
+    - path: .secrets/mailbox.env
+      required: true
+  environment: &mailbox-env
+    PGDATABASE: mailbox_dev
+    PGUSER: mailbox_dev
+    PGPASSWORD: ${MAILBOX_DB_PASSWORD:?Run make ensure-dev-secrets}
+    PGSSLMODE: disable
+    PGCONNECT_TIMEOUT: '5'
+  volumes:
+    - ../../config/mailbox-ha.toml:/etc/elemta/mailbox.toml:ro
+    - bodies:/var/lib/elemta/bodies
+  networks: [mailbox, existing]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  healthcheck:
+    test: [CMD, curl, -fsS, http://localhost:8080/readyz]
+    interval: 5s
+    timeout: 3s
+    retries: 40
+
+x-edge: &edge
+  image: haproxy:3.0-alpine
+  restart: unless-stopped
+  mem_limit: 128m
+  volumes:
+    - ./mailbox/haproxy-ha.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+  networks: [mailbox]
+  depends_on: [pg-a, pg-b, pg-c]
+
+services:
+  etcd-a:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd-a
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-a:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-a:2380
+    volumes: [etcd-a:/etcd-data]
+  etcd-b:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd-b
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-b:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-b:2380
+    volumes: [etcd-b:/etcd-data]
+  etcd-c:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd-c
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-c:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-c:2380
+    volumes: [etcd-c:/etcd-data]
+
+  pg-a:
+    <<: *pg
+    environment:
+      <<: *pg-env
+      PATRONI_NAME: pg-a
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-a:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg-a:8008
+    volumes: [pg-a:/var/lib/postgresql/data]
+  pg-b:
+    <<: *pg
+    environment:
+      <<: *pg-env
+      PATRONI_NAME: pg-b
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-b:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg-b:8008
+    volumes: [pg-b:/var/lib/postgresql/data]
+  pg-c:
+    <<: *pg
+    environment:
+      <<: *pg-env
+      PATRONI_NAME: pg-c
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-c:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg-c:8008
+    volumes: [pg-c:/var/lib/postgresql/data]
+
+  edge-a:
+    <<: *edge
+    ports: [127.0.0.1:11445:1143, 127.0.0.1:12426:2424, 127.0.0.1:18035:8080]
+  edge-b:
+    <<: *edge
+    ports: [127.0.0.1:11446:1143, 127.0.0.1:12427:2424, 127.0.0.1:18036:8080]
+
+  mailbox-a:
+    <<: *mailbox
+    environment:
+      <<: *mailbox-env
+      PGHOST: edge-a
+    depends_on: [edge-a]
+  mailbox-b:
+    <<: *mailbox
+    environment:
+      <<: *mailbox-env
+      PGHOST: edge-b
+    depends_on: [edge-b]
+
+networks:
+  mailbox:
+    ipam:
+      config:
+        - subnet: 172.30.81.0/24
+  existing:
+    external: true
+    name: ${ELEMTA_EXISTING_NETWORK:-compose_elemta_network}
+volumes:
+  etcd-a:
+  etcd-b:
+  etcd-c:
+  pg-a:
+  pg-b:
+  pg-c:
+  bodies:

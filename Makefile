@@ -1,24 +1,49 @@
-.PHONY: test-webmail-browser all help gotchas dovecot-index ensure-dev-secrets ldap-service-accounts build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
+.PHONY: mailbox-dev-up mailbox-dev-down mailbox-dev-status mailbox-dev-s3 test-mailbox test-webmail-browser all help gotchas ensure-dev-secrets ldap-service-accounts build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
 	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
-	install-dev-bench uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
-	rebuild rebuild-dev docker docker-build docker-setup docker-down update lint lint-fix fmt
+	install-dev-bench setup run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
+	rebuild rebuild-dev docker-build lint lint-fix fmt
 
 # Core paths/config
+.DEFAULT_GOAL := all
+.PHONY: mailbox-ha-dev-up mailbox-ha-dev-down mailbox-ha-dev-status
+
+mailbox-ha-dev-up: ensure-dev-secrets ldap-service-accounts
+	./scripts/mailbox-ha-dev.sh up
+
+mailbox-ha-dev-down:
+	./scripts/mailbox-ha-dev.sh down
+
+mailbox-ha-dev-status:
+	./scripts/mailbox-ha-dev.sh ps
+mailbox-dev-up: ensure-dev-secrets ldap-service-accounts
+	./scripts/mailbox-dev.sh up
+
+mailbox-dev-down:
+	./scripts/mailbox-dev.sh down
+
+mailbox-dev-status:
+	./scripts/mailbox-dev.sh ps
+
+mailbox-dev-s3: ensure-dev-secrets ldap-service-accounts
+	./scripts/mailbox-dev.sh s3
+
+test-mailbox:
+	go test -race ./internal/mailbox/...
+
 COMPOSE_FILE ?= deployments/compose/docker-compose.yml
 MAILAUTH_COMPOSE_FILE ?= deployments/compose/docker-compose-mailauth.yml
 ELK_COMPOSE_FILE ?= deployments/compose/docker-compose-elk.yml
 MAILAUTH_LAB_DIR ?= /tmp/elemta-mailauth-lab
 DEV_ENV_FILE ?= .env
-# elemta-sink runs in every dev stack but is not the delivery target: keeping it
-# up means 'make sink-up' is a restart rather than a deploy, and mail still goes
-# to a real mailbox until someone asks otherwise.
-DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-webmail elemta-dovecot elemta-ldap valkey elemta-sink
+# The normal dev stack keeps only services used by mail delivery and webmail.
+# The discarding sink is started explicitly by the benchmark targets.
+DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-webmail elemta-mailbox-db elemta-mailbox-a elemta-mailbox-b elemta-mailbox elemta-ldap valkey
 DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-roundcube
 # The benchmarking stack: everything that scans, nothing that stores. Roundcube
 # is pointless here because delivery is discarded.
-DEV_BENCH_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd
+DEV_BENCH_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-sink
 
 # Development TLS certificate.
 #
@@ -68,7 +93,7 @@ all: build
 # gets read.
 gotchas:
 	@echo "💡 Things that surprise people:"
-	@echo "  • Benchmarks against Dovecot measure Dovecot (~70/s: maildir writes, indexing)."
+	@echo "  • Benchmarks against mailbox storage include its metadata and body-write costs."
 	@echo "    'make sink-up' points delivery at a sink that absorbs ~4500/s, so the number"
 	@echo "    is about Elemta. Mail is discarded while it is on; 'make sink-down' undoes it."
 	@echo "  • Editing config/elemta.toml does not change a running stack. The services read a"
@@ -79,7 +104,7 @@ gotchas:
 	@echo "    backend and ARC sealing need a restart; the UI and logs say so."
 	@echo "  • 'install-dev-mailauth' is a different stack, not an add-on. Delivery mode is a"
 	@echo "    single global setting, so it sends over remote SMTP to a sink at :8029 instead"
-	@echo "    of over LMTP to Roundcube. That is what makes DKIM signing and ARC sealing"
+	@echo "    of over LMTP to the mailbox service. That is what makes DKIM signing and ARC sealing"
 	@echo "    visible. Run any other install-dev target to go back; it cleans up for you."
 	@echo "  • Logs are line-delimited JSON on stdout and in /app/logs/elemta.log. Only"
 	@echo "    'level' from [logging] is read; type/output/file are ignored and the server"
@@ -123,8 +148,8 @@ certs:
 		-keyout config/test.key \
 		-out config/test.crt \
 		-days $(CERT_DAYS) \
-		-subj '/CN=mail.dev.evil-admin.com/O=Elemta Dev/C=US' \
-		-addext 'subjectAltName=DNS:mail.dev.evil-admin.com,DNS:*.dev.evil-admin.com' 2>/dev/null
+		-subj '/CN=mail.dev.example.net/O=Elemta Dev/C=US' \
+		-addext 'subjectAltName=DNS:mail.dev.example.net,DNS:*.dev.example.net' 2>/dev/null
 	@chmod 600 config/test.key
 	@chmod 644 config/test.crt
 	@echo "✅ TLS certificates generated at config/test.{crt,key} (valid $(CERT_DAYS) days)"
@@ -149,21 +174,10 @@ run: build
 test-webmail-browser:
 	go test -tags browser -run Browser -count=1 ./internal/webmail/
 
+# The same unit tests CI runs. Packages that need Postgres (the mailbox
+# service) skip without ELEMTA_TEST_MAILBOX_DSN; see docs/testing.md.
 test:
-	@echo "Running Go tests..."
-	@echo "⚠️  Note: Some packages require Docker services to be running"
-	@echo "For complete integration tests, run: make test-docker"
-	@go test -v -short -timeout 60s ./internal/antispam ./internal/api ./internal/auth ./internal/datasource ./internal/delivery ./internal/plugin ./internal/queue 2>&1; \
-	status=$$?; \
-	echo ""; \
-	if [ $$status -eq 0 ]; then \
-		echo "✅ All unit tests passed"; \
-	else \
-		echo "⚠️  Some unit tests failed (exit code: $$status)"; \
-		echo "Note: Integration tests may require Docker services"; \
-	fi; \
-	echo "💡 Run 'make test-docker' for full integration test suite (21 tests)"; \
-	exit $$status
+	go test -short ./...
 
 test-centralized:
 	@echo "Running centralized test suite..."
@@ -180,7 +194,7 @@ test-docker: init-test-env
 
 test-auth: ## Quick authentication test
 	@echo "Running authentication test..."
-	./install/test-auth.sh
+	./scripts/dev/test-auth.sh
 
 test-security:
 	@echo "Running security tests..."
@@ -188,7 +202,7 @@ test-security:
 
 test-load:
 	@echo "Running SMTP load tests..."
-	@echo "⚠️  Note: Requires Docker services running (make docker-setup)"
+	@echo "⚠️  Note: Requires Docker services running (make install-dev)"
 	python3 tests/performance/smtp_load_test.py
 
 test-race-smoke:
@@ -230,21 +244,10 @@ fmt:
 		echo "⚠️  goimports not installed. Install with: go install golang.org/x/tools/cmd/goimports@latest"; \
 	fi
 
-# Docker targets
-docker: docker-build up
-
 docker-build:
 	@echo "Building Docker image..."
 	docker compose -f $(COMPOSE_FILE) build
 
-# Advanced/internal targets (not shown in help)
-
-# Legacy CLI targets (cli tools built by main 'build' target)
-cli-install: build
-	@echo "Installing elemta-cli to $(GOPATH)/bin..."
-	@cp bin/elemta-cli $(GOPATH)/bin/ 2>/dev/null || echo "⚠️  GOPATH not set, skipping install"
-
-# Legacy docker targets (use 'up'/'down' instead)
 configure-queue-backend:
 	@echo "⚙️  Configuring queue backend: $(QUEUE_BACKEND)"
 	@if [ "$(QUEUE_BACKEND)" != "file" ] && [ "$(QUEUE_BACKEND)" != "sqlite" ] && [ "$(QUEUE_BACKEND)" != "postgres" ]; then \
@@ -375,14 +378,14 @@ ensure-dev-env:
 		echo "📝 Creating $(DEV_ENV_FILE) for development..."; \
 		printf "# Elemta Development Environment - Auto-generated\n" > $(DEV_ENV_FILE); \
 		printf "ENVIRONMENT=development\n" >> $(DEV_ENV_FILE); \
-		printf "HOSTNAME=mail.dev.evil-admin.com\n" >> $(DEV_ENV_FILE); \
+		printf "HOSTNAME=mail.dev.example.net\n" >> $(DEV_ENV_FILE); \
 		printf "LISTEN_PORT=2525\n" >> $(DEV_ENV_FILE); \
 		printf "LOG_LEVEL=DEBUG\n" >> $(DEV_ENV_FILE); \
 		printf "DEV_MODE=true\n" >> $(DEV_ENV_FILE); \
 		printf "TEST_MODE=true\n" >> $(DEV_ENV_FILE); \
 		printf "AUTH_REQUIRED=false\n" >> $(DEV_ENV_FILE); \
 		printf "LDAP_HOST=elemta-ldap\n" >> $(DEV_ENV_FILE); \
-		printf "DELIVERY_HOST=elemta-dovecot\n" >> $(DEV_ENV_FILE); \
+		printf "DELIVERY_HOST=elemta-mailbox\n" >> $(DEV_ENV_FILE); \
 		printf "COMPOSE_PROJECT_NAME=elemta\n" >> $(DEV_ENV_FILE); \
 		printf "COMPOSE_FILE=$(COMPOSE_FILE)\n" >> $(DEV_ENV_FILE); \
 		echo "✅ $(DEV_ENV_FILE) created"; \
@@ -436,15 +439,28 @@ print-dev-summary:
 
 # Help target
 help:
-	@echo "Elemta - High Performance SMTP Server"
+	@echo "Elemta - self-hosted email: MTA, mailbox service, webmail and admin console"
 	@echo ""
 	@echo "⚡ Quick Start:"
-	@echo "  make install-dev              # Minimal dev stack, plugins on, prints a dashboard login"
+	@echo "  make install                  # Setup wizard: a dev stack, or a mail server for a real domain"
+	@echo "  make install-dev              # Dev stack: MTA, mailbox service, webmail; prints a dashboard login"
 	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
 	@echo "  make install-dev-bench        # Scanners on, delivery DISCARDED — for throughput work"
 	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
 	@echo "  make install-dev-mailauth     # Dev stack for SPF/DKIM/DMARC/ARC: fixed DNS, mail lands at :8029"
-	@echo "  make install                  # Interactive production setup"
+	@echo ""
+	@echo "📬 Mail and webmail (dev stack):"
+	@echo "  Webmail           http://localhost:8027  (user@example.com / password)"
+	@echo "  IMAP / SMTP       localhost:993 (TLS) / localhost:2525, submission :2587"
+	@echo "  test-mailbox          - Mailbox service tests (set ELEMTA_TEST_MAILBOX_DSN for Postgres)"
+	@echo "  test-webmail-browser  - Drive the webmail in headless Chromium"
+	@echo "  mailbox-dev-up / -down / -status   - Isolated mailbox service lab (own ports)"
+	@echo "  mailbox-ha-dev-up / -down / -status - Isolated high-availability lab"
+	@echo ""
+	@echo "☁️  One internet-facing server (docs/cloud-dev.md):"
+	@echo "  make install, choose 2   - Checks DNS and the host, secures Docker and the firewall,"
+	@echo "                             deploys with Let's Encrypt, creates the first accounts"
+	@echo "  scripts/cloud-deploy.sh  - Redeploy after an update (run on the server)"
 	@echo ""
 	@echo "🔑 Accounts & Access:"
 	@echo "  Web UI            http://localhost:8025  (login required — there is no guest access)"
@@ -480,7 +496,7 @@ help:
 	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
 	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
 	@echo "  sink-up        - Discard delivered mail (~4500/s) so benchmarks measure Elemta"
-	@echo "  sink-down      - Delivery to real mailboxes + Roundcube at :8026"
+	@echo "  sink-down      - Delivery to the mailbox service again"
 	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
 	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
 	@echo "  elk-status     - Cluster health and how many events are indexed"
@@ -490,7 +506,7 @@ help:
 	@echo ""
 	@echo "🔧 Build & Test:"
 	@echo "  build          - Build all binaries (server, queue, cli)   clean - Remove artifacts"
-	@echo "  test           - Go unit tests            test-docker    - Integration suite"
+	@echo "  test           - Go unit tests, as CI     test-docker    - Integration suite"
 	@echo "  test-load      - SMTP load tests          test-race-smoke - Session race checks"
 	@echo "  test-auth      - Authentication tests     test-security  - Security tests"
 	@echo "  lint / lint-fix / fmt   - Code quality"
@@ -567,7 +583,7 @@ install-dev-bench: check-tools ensure-dev-secrets docker-build ensure-dev-certs 
 	@# The repo config stays as shipped: the sink lives in the seeded copy the
 	@# server reads, and a benchmarking run should not rewrite the default
 	@# everyone else gets.
-	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424 >/dev/null
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-mailbox DELIVERY_PORT=2424 >/dev/null
 
 install-dev-postgres:
 	@echo "🐘 Elemta Development Setup (Postgres Queue)"
@@ -746,12 +762,9 @@ rspamd-train:
 elk-dashboard-check:
 	@python3 scripts/dev/check_elk_dashboard.py
 
-# Point delivery at a discarding LMTP sink instead of Dovecot.
-#
-# Benchmarking against Dovecot measures Dovecot — maildir writes, indexing and
-# sieve, saturating near 70/s. The sink accepts and discards at ~4,500/s, so it
-# cannot be the thing being measured. Dovecot and Roundcube keep running; only
-# where the queue delivers changes.
+# Point delivery at a discarding LMTP sink instead of mailbox storage.
+# This isolates SMTP/queue throughput from storage work; the mailbox engines
+# keep running so switching back does not require another deployment.
 sink-up:
 	@docker compose -f $(COMPOSE_FILE) up -d elemta-sink
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
@@ -762,17 +775,17 @@ sink-up:
 	@echo "   Benchmark:  make bench-queue"
 	@echo "   Sink rate:  docker logs -f elemta-sink"
 
-# Real mailboxes: deliver to Dovecot and start Roundcube to read the result.
+# Real mailboxes: restore the development mailbox service and its reader.
 sink-down:
-	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-dovecot DELIVERY_PORT=2424
+	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-mailbox DELIVERY_PORT=2424
 	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
-	@docker compose -f $(COMPOSE_FILE) up -d elemta-roundcube >/dev/null 2>&1 || true
-	@echo "✅ Delivery goes to Dovecot; mail lands in real mailboxes."
-	@echo "   ✉️  Roundcube: http://localhost:8026  (user@example.com / password)"
+	@docker compose -f $(COMPOSE_FILE) stop elemta-sink >/dev/null
+	@echo "✅ Delivery goes to the mailbox service; mail lands in real mailboxes."
+	@echo "   ✉️  Webmail: http://localhost:8027  (user@example.com / password)"
 
 # Rewrites [delivery] host/port. Same approach as configure-plugins: the repo
 # config is the source that gets seeded, so it is what has to change.
-DELIVERY_HOST ?= elemta-dovecot
+DELIVERY_HOST ?= elemta-mailbox
 DELIVERY_PORT ?= 2424
 configure-delivery-target:
 	@python3 scripts/dev/set_delivery_target.py "$(DELIVERY_HOST)" "$(DELIVERY_PORT)"
@@ -819,13 +832,6 @@ elk-down:
 stop-mailauth-services:
 	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) rm -sf elemta-mailauth-dns elemta-mailauth-sink >/dev/null 2>&1 || true
 
-# Build the full-text search index for every mailbox in the background.
-# New mail is indexed on delivery; this covers mail that predates the index
-# (see docker/dovecot/README.md).
-dovecot-index:
-	@docker exec elemta-dovecot doveadm index -A -q '*'
-	@echo "Indexing queued for every mailbox; Dovecot works through it in the background."
-
 mailauth-check:
 	@printf 'EHLO lab\r\nMAIL FROM:<sender@pass.auth.test>\r\nRCPT TO:<user@receiver.auth.test>\r\nDATA\r\nFrom: sender@pass.auth.test\r\nTo: user@receiver.auth.test\r\nSubject: Elemta mail-auth lab\r\nDate: Tue, 11 Aug 2026 12:00:00 -0400\r\nMessage-ID: <mailauth-lab@pass.auth.test>\r\n\r\nSPF, DKIM and DMARC lab message.\r\n.\r\nQUIT\r\n' | nc localhost 2525
 	@echo "Message queued. The remote SMTP worker signs it; inspect http://localhost:8029"
@@ -834,8 +840,6 @@ mailauth-check-fail:
 	@printf 'EHLO lab-fail\r\nMAIL FROM:<sender@fail.auth.test>\r\nRCPT TO:<user@receiver.auth.test>\r\nDATA\r\nFrom: sender@fail.auth.test\r\nTo: user@receiver.auth.test\r\nSubject: Elemta mail-auth negative lab\r\nDate: Tue, 11 Aug 2026 12:01:00 -0400\r\nMessage-ID: <mailauth-fail@fail.auth.test>\r\n\r\nExpected SPF and DMARC failure in reporting mode.\r\n.\r\nQUIT\r\n' | nc localhost 2525
 	@echo "Failure example queued. SPF/DMARC fail but reporting mode accepts it."
 
-
-docker-setup: install-dev-full
 
 # Modern Docker commands
 up:
@@ -873,85 +877,21 @@ status:
 rebuild:
 	@echo "🔨 Rebuilding and restarting Elemta..."
 	@$(MAKE) down
-	docker compose -f $(COMPOSE_FILE) build --no-cache elemta elemta-web
+	docker compose -f $(COMPOSE_FILE) build --no-cache elemta elemta-mailbox-a
 	@$(MAKE) up
 	@echo "✅ Rebuild complete"
 
 rebuild-dev:
 	@echo "🔨 Quick rebuild for development..."
 	@$(MAKE) down
-	docker compose -f $(COMPOSE_FILE) build elemta elemta-web
+	docker compose -f $(COMPOSE_FILE) build elemta elemta-mailbox-a
 	@$(MAKE) up
 	@echo "✅ Development rebuild complete"
 
-docker-down: down-volumes
-
-# Installation and update targets
-install:
-	@echo "🚀 Elemta Production Installation"
-	@echo "=================================="
-	@if [ -f .env ]; then \
-		echo "⚠️  .env file already exists."; \
-		read -p "Overwrite? (y/N): " confirm; \
-		if [ "$$confirm" != "y" ] && [ "$$confirm" != "Y" ]; then \
-			echo "Installation cancelled."; \
-			exit 1; \
-		fi; \
-	fi
-	@echo ""
-	@echo "📝 Production Configuration"
-	@echo "This will create a production-ready .env file."
-	@echo ""
-	@read -p "Hostname [mail.example.com]: " hostname; \
-	hostname=$${hostname:-mail.example.com}; \
-	read -p "SMTP Port [25]: " smtp_port; \
-	smtp_port=$${smtp_port:-25}; \
-	read -p "Admin Email [admin@example.com]: " admin_email; \
-	admin_email=$${admin_email:-admin@example.com}; \
-	read -p "Enable Let's Encrypt? (y/N): " letsencrypt; \
-	if [ "$$letsencrypt" = "y" ] || [ "$$letsencrypt" = "Y" ]; then \
-		letsencrypt_enabled=true; \
-	else \
-		letsencrypt_enabled=false; \
-	fi; \
-	read -p "LDAP Host [ldap]: " ldap_host; \
-	ldap_host=$${ldap_host:-ldap}; \
-	read -p "LDAP Base DN [dc=example,dc=com]: " ldap_base; \
-	ldap_base=$${ldap_base:-dc=example,dc=com}; \
-	echo ""; \
-	echo "📝 Generating .env..."; \
-	cat .env.example | sed \
-		-e "s/HOSTNAME=.*/HOSTNAME=$$hostname/" \
-		-e "s/LISTEN_PORT=.*/LISTEN_PORT=$$smtp_port/" \
-		-e "s/LETSENCRYPT_EMAIL=.*/LETSENCRYPT_EMAIL=$$admin_email/" \
-		-e "s/LETSENCRYPT_DOMAIN=.*/LETSENCRYPT_DOMAIN=$$hostname/" \
-		-e "s/LETSENCRYPT_ENABLED=.*/LETSENCRYPT_ENABLED=$$letsencrypt_enabled/" \
-		-e "s/LDAP_HOST=.*/LDAP_HOST=$$ldap_host/" \
-		-e "s/LDAP_BASE_DN=.*/LDAP_BASE_DN=$$ldap_base/" \
-		> .env
-	@echo "✅ .env created successfully"
-	@echo ""
-	@echo "📋 Next Steps:"
-	@echo "   1. Review and edit .env for your environment"
-	@echo "   2. Configure TLS certificates (or enable Let's Encrypt)"
-	@echo "   3. Update LDAP credentials in .env"
-	@echo "   4. Run: make up"
-	@echo ""
-	@echo "🔐 Security Reminders:"
-	@echo "   • Change default passwords in .env"
-	@echo "   • Configure TLS certificates for production"
-	@echo "   • Review memory and connection limits"
-	@echo "   • Set up monitoring and alerts"
-
-
-uninstall:
-	@echo "🗑️  Uninstalling Elemta..."
-	./install/uninstall.sh
-
-# Legacy update targets (use 'make rebuild' instead)
-# Kept because install/README.md and deployments/compose/README.md name them.
-update: rebuild
-update-restart: restart
+# The setup wizard: a development stack, or a mail server for a real domain
+# on an internet-facing host (scripts/setup.sh, docs/installation.md).
+install setup:
+	@./scripts/setup.sh
 
 # ---------------------------------------------------------------------------
 # Kubernetes: the same dev stack on a local cluster (k3s on the dev box), as an

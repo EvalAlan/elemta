@@ -25,6 +25,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
@@ -132,6 +133,21 @@ func (p *Plugin) Verify(ctx context.Context, message []byte) Result {
 	ctx, cancel := context.WithTimeout(ctx, p.config.Timeout)
 	defer cancel()
 	value, reason := verifyChain(ctx, message, p.resolver)
+	return Result{Value: value, Reason: reason}
+}
+
+// VerifyReader verifies a complete spooled message without retaining its body.
+func (p *Plugin) VerifyReader(ctx context.Context, reader io.Reader) Result {
+	if p == nil || !p.config.Enabled || !p.config.Verify {
+		return Result{Value: ChainNone, Reason: "ARC verification disabled"}
+	}
+	ctx, cancel := context.WithTimeout(ctx, p.config.Timeout)
+	defer cancel()
+	msg, err := parseMessageReader(reader)
+	if err != nil {
+		return Result{Value: ChainFail, Reason: err.Error()}
+	}
+	value, reason := verifyMessage(ctx, msg, p.resolver)
 	return Result{Value: value, Reason: reason}
 }
 

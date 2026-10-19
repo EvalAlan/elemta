@@ -166,7 +166,7 @@ func (s *Server) passwordSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		s.log.Warn("webmail: reseal session password", "user", sess.User, "error", err)
 	}
 	s.log.Info("webmail: password changed", "user", sess.User, "ip", s.clientIP(r))
-	http.Redirect(w, r, "/settings?n=password-changed", http.StatusSeeOther)
+	http.Redirect(w, r, "/settings/account?n=password-changed#password", http.StatusSeeOther)
 }
 
 // PasswordResetter requires a directory account authorized to reset passwords.

@@ -8,8 +8,9 @@
 # up with env_file in docker-compose.yml. ldap-services.env holds them all
 # and is used only on the host, to create the accounts.
 #
-# Passwords are random per checkout. Re-running keeps existing ones; delete
-# the directory to rotate everything (then run `make ldap-service-accounts`).
+# Passwords are random per checkout. Re-running keeps existing ones; rotate
+# individual service accounts through the protected master file. Existing
+# directories need scripts/ldap-admin-password.sh to apply the admin secret.
 set -eu
 
 dir="$(dirname "$0")/../deployments/compose/.secrets"
@@ -34,6 +35,20 @@ fi
 # shellcheck disable=SC1090
 . "$master"
 
+# Upgrades add a mailbox-service role without rotating existing services.
+if [ -z "${LDAP_MAILBOX_PASSWORD:-}" ]; then
+    LDAP_MAILBOX_PASSWORD=$(gen)
+    printf '%s\n' "LDAP_MAILBOX_PASSWORD=$LDAP_MAILBOX_PASSWORD" >>"$master"
+fi
+
+# A generated bootstrap credential also covers fresh directories. Existing
+# volumes retain their old hash until ldap-admin-password.sh applies this.
+if [ -z "${LDAP_ADMIN_PASSWORD:-}" ]; then
+    LDAP_ADMIN_PASSWORD=$(gen)
+    (umask 077; printf '%s\n' "LDAP_ADMIN_PASSWORD=$LDAP_ADMIN_PASSWORD" >>"$master")
+fi
+chmod 600 "$master"
+
 write() { # file, then lines
     f="$dir/$1"
     shift
@@ -43,10 +58,44 @@ write() { # file, then lines
 
 # The recovery mail is sent from the dev sender@example.com mailbox, whose
 # password is the fixture's own (docker/ldap/99-stress-users.ldif).
-recovery_smtp="ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=password"
+ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=password
+# A deployment override must survive subsequent credential regeneration.
+if [ -f "$dir/recovery-smtp.env" ]; then
+    . "$dir/recovery-smtp.env"
+fi
+recovery_smtp="ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=$ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD"
+write ldap-admin.env "LDAP_ADMIN_PASSWORD=$LDAP_ADMIN_PASSWORD"
 
 write dovecot.env "LDAP_DOVECOT_PASSWORD=$LDAP_DOVECOT_PASSWORD"
 write elemta.env "ELEMTA_AUTH_DATASOURCE_PASS=$LDAP_SMTP_PASSWORD"
+write mailbox.env \
+    "ELEMTA_MAILBOX_LDAP_DN=cn=mailbox,ou=services,dc=example,dc=com" \
+    "ELEMTA_MAILBOX_LDAP_PASSWORD=$LDAP_MAILBOX_PASSWORD"
+
+storage="$dir/mailbox-storage.env"
+if [ ! -f "$storage" ]; then
+    umask 077
+    {
+        echo "MAILBOX_DB_PASSWORD=$(gen)"
+        echo "MAILBOX_S3_ACCESS_KEY=$(gen)"
+        echo "MAILBOX_S3_SECRET_KEY=$(gen)"
+    } >"$storage"
+fi
+if [ -z "$(sed -n 's/^MAILBOX_HA_SUPERUSER_PASSWORD=//p' "$storage")" ]; then
+    printf '%s\n' "MAILBOX_HA_SUPERUSER_PASSWORD=$(gen)" >>"$storage"
+fi
+if [ -z "$(sed -n 's/^MAILBOX_HA_REPLICATION_PASSWORD=//p' "$storage")" ]; then
+    printf '%s\n' "MAILBOX_HA_REPLICATION_PASSWORD=$(gen)" >>"$storage"
+fi
+# Main development metadata uses separate volumes from the optional labs.
+# The app receives its own protected env file, avoiding resolved Compose output.
+. "$storage"
+write mailbox-postgres.env \
+    "POSTGRES_DB=mailbox" "POSTGRES_USER=mailbox" \
+    "POSTGRES_PASSWORD=$MAILBOX_DB_PASSWORD"
+write mailbox-client.env \
+    "PGHOST=elemta-mailbox-db" "PGPORT=5432" "PGDATABASE=mailbox" \
+    "PGUSER=mailbox" "PGPASSWORD=$MAILBOX_DB_PASSWORD" "PGSSLMODE=disable"
 write webmail.env \
     "ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD=$LDAP_WEBMAIL_PASSWORD" \
     "ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD=$LDAP_WEBMAIL_RESET_PASSWORD" \
@@ -56,3 +105,23 @@ write web.env \
     "ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD=$LDAP_WEBMAIL_PASSWORD" \
     "ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD=$LDAP_WEBMAIL_RESET_PASSWORD" \
     "$recovery_smtp"
+
+# A self-signed certificate for the mailbox service's IMAP (STARTTLS and
+# implicit TLS on 993), ManageSieve and LMTP. Elemta's LMTP client pins it
+# as its CA, so delivery is verified TLS even in dev. Mail clients will
+# warn about it; production uses a real certificate. The key is readable
+# inside this 0700 directory so the mailbox container (uid 1001) can read
+# its bind mount.
+tlsdir="$dir/mailbox-tls"
+if [ ! -f "$tlsdir/cert.pem" ] && command -v openssl >/dev/null 2>&1; then
+    mkdir -p "$tlsdir"
+    san="DNS:elemta-mailbox,DNS:mail.example.com,DNS:localhost,IP:127.0.0.1"
+    for ip in $(hostname -I 2>/dev/null || ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1); do
+        case "$ip" in *:*) ;; *) san="$san,IP:$ip" ;; esac
+    done
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 \
+        -subj "/CN=mail.example.com" -addext "subjectAltName=$san" \
+        -keyout "$tlsdir/key.pem" -out "$tlsdir/cert.pem" 2>/dev/null
+    chmod 644 "$tlsdir/cert.pem" "$tlsdir/key.pem"
+    echo "🔐 Generated the dev mailbox TLS certificate ($san)"
+fi

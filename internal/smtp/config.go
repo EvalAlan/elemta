@@ -216,6 +216,18 @@ type DeliveryConfig struct {
 	// (RFC 7672). Off by default because it needs a validating resolver
 	// (DANEResolver), and because a DNSSEC lookup that fails defers mail.
 	DANE bool `toml:"dane" json:"dane"`
+	// LMTPTLS is "starttls" to require STARTTLS on every LMTP session (mail
+	// delivery and RCPT-time verification), or "none" (the default) for the
+	// plaintext a private mailbox network allows. With STARTTLS required, a
+	// server that doesn't offer it is a temporary failure, never a downgrade.
+	LMTPTLS string `toml:"lmtp_tls" json:"lmtp_tls,omitempty"`
+	// LMTPTLSCAFile is a PEM bundle the mailbox server's certificate must
+	// chain to; empty means the system roots.
+	LMTPTLSCAFile string `toml:"lmtp_tls_ca_file" json:"lmtp_tls_ca_file,omitempty"`
+	// LMTPTLSServerName is the name to verify; empty means [delivery] host.
+	LMTPTLSServerName string `toml:"lmtp_tls_server_name" json:"lmtp_tls_server_name,omitempty"`
+	// LMTPTLSInsecureSkipVerify skips certificate checks. Development only.
+	LMTPTLSInsecureSkipVerify bool `toml:"lmtp_tls_insecure_skip_verify" json:"lmtp_tls_insecure_skip_verify,omitempty"`
 	// DANEResolver is host:port of a DNSSEC-validating resolver whose AD bit
 	// is trusted. Keep it on loopback: an AD bit is only as trustworthy as the
 	// path it travelled. Default 127.0.0.1:53.
@@ -339,6 +351,16 @@ type AuthConfig struct {
 	// Keys are logins; values are addresses ("sales@example.com") or whole
 	// domains ("@example.org").
 	SenderAliases map[string][]string `json:"sender_aliases,omitempty" toml:"sender_aliases"`
+	// MailboxSecurityURL is the mailbox service's internal account-security
+	// API (for example http://elemta-mailbox:8080). When set, SMTP AUTH
+	// accepts app passwords and honours a user's choice to require them
+	// (app_passwords.go). ELEMTA_AUTH_MAILBOX_SECURITY_URL overrides it.
+	MailboxSecurityURL string `json:"mailbox_security_url,omitempty" toml:"mailbox_security_url"`
+	// AppPasswordExemptNetworks may still use the account password when the
+	// user requires app passwords: the webmail, which asks for its own
+	// second step first. Addresses or CIDRs; ELEMTA_AUTH_APP_PASSWORD_EXEMPT
+	// (comma-separated) overrides it.
+	AppPasswordExemptNetworks []string `json:"app_password_exempt_networks,omitempty" toml:"app_password_exempt_networks"`
 }
 
 // TLSConfig represents TLS configuration

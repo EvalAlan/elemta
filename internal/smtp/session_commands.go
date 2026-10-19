@@ -957,6 +957,10 @@ func (ch *CommandHandler) parseRcptTo(ctx context.Context, args string) (string,
 }
 
 func (ch *CommandHandler) parseRcptToParams(args string) (rcptToParams, error) {
+	return parseRCPTEnvelope(args)
+}
+
+func parseRCPTEnvelope(args string) (rcptToParams, error) {
 	var p rcptToParams
 	addr, fields, err := parseSMTPPath(args, "TO:", false)
 	if err != nil {

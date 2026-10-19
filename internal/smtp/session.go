@@ -3,8 +3,10 @@ package smtp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"runtime/debug"
@@ -333,9 +335,23 @@ func (s *Session) SetAuthVerifier(verifier *authresult.Verifier) {
 // message is accepted — which is what lets an operator see what enforcement
 // would have done before turning it on.
 func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, message []byte) error {
-	s.mu.RLock()
+	return s.verifyAuthenticationContent(ctx, mailFrom, message, func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(message)), nil
+	})
+}
+
+func (s *Session) verifyAuthenticationContent(ctx context.Context, mailFrom string, head []byte, open func() (io.ReadCloser, error)) error {
+	s.mu.Lock()
 	verifier := s.authVerifier
-	s.mu.RUnlock()
+	s.authResults = authresult.Results{}
+	s.authChecked = false
+	s.mu.Unlock()
+	// A logged-in client submits before outbound DKIM signing, and its peer
+	// address is not the domain's public sending IP. Receiver-side checks here
+	// would invent failures and can reject valid submissions under DMARC.
+	if s.state != nil && s.state.IsAuthenticated() {
+		return nil
+	}
 	if !verifier.Enabled() {
 		return nil
 	}
@@ -346,7 +362,7 @@ func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, mes
 	}
 	clientIP := net.ParseIP(host)
 
-	results := verifier.Check(ctx, clientIP, s.state.HeloName(), mailFrom, message)
+	results := verifier.CheckWithOpener(ctx, clientIP, s.state.HeloName(), mailFrom, head, open)
 	metrics := GetMetrics()
 	metrics.MailAuthResults.WithLabelValues("spf", orMetricNone(results.SPF.Value)).Inc()
 	if len(results.DKIM) == 0 {
@@ -368,7 +384,7 @@ func (s *Session) VerifyAuthentication(ctx context.Context, mailFrom string, mes
 	if reports != nil {
 		// Counted before any rejection below: a report exists to tell the
 		// domain owner what was refused in its name.
-		if eval, ok := dmarcEvaluation(results, clientIP, mailFrom, message); ok {
+		if eval, ok := dmarcEvaluation(results, clientIP, mailFrom, head); ok {
 			reports.Record(eval)
 		}
 	}

@@ -202,7 +202,7 @@ func (s *Server) recoverySubmit(w http.ResponseWriter, r *http.Request, sess *Se
 			s.fail(w, r, sess, err)
 			return
 		}
-		http.Redirect(w, r, "/settings?n=recovery-removed", http.StatusSeeOther)
+		http.Redirect(w, r, "/settings/account?n=recovery-removed#recovery", http.StatusSeeOther)
 		return
 	}
 	if !validRecoveryEmail(email, address) {
@@ -233,7 +233,7 @@ func (s *Server) recoverySubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		s.renderProblem(w, r, sess, http.StatusBadGateway, "The verification email could not be sent. Try again later.")
 		return
 	}
-	http.Redirect(w, r, "/settings?n=recovery-sent", http.StatusSeeOther)
+	http.Redirect(w, r, "/settings/account?n=recovery-sent#recovery", http.StatusSeeOther)
 }
 func (s *Server) resetPage(w http.ResponseWriter, r *http.Request)  { s.tokenPage(w, r, "reset") }
 func (s *Server) verifyPage(w http.ResponseWriter, r *http.Request) { s.tokenPage(w, r, "verify") }

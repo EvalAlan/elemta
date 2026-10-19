@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"{{with .Theme}} data-theme="{{.}}"{{end}}{{with .Palette}} data-palette="{{.}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+<title>Two-step verification · Elemta Mail</title>
+<link rel="stylesheet" href="{{asset "tidewater.css"}}">
+</head>
+<body class="login-body">
+<main class="login">
+  {{template "logo-art" .}}
+  <h1 class="login-title">Two-step verification</h1>
+  {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
+  <form action="/login/verify" method="post">
+    <input type="hidden" name="token" value="{{.Token}}">
+    <label for="code">Code from your authenticator app</label>
+    <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="16" required autofocus>
+    <p class="small muted">Lost your phone? Enter one of your recovery codes instead.</p>
+    <button class="button primary block" type="submit">{{template "icon-signin"}}Verify</button>
+  </form>
+  <p class="login-links"><a href="/login">Cancel and sign in again</a></p>
+</main>
+{{template "login-footer"}}
+</body>
+</html>

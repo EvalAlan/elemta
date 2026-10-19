@@ -29,3 +29,20 @@
   </form>
 </section>
 {{end}}
+
+{{/* The settings sections. Settings, Filters and Folders share it, so they
+     read as one place; on phones it becomes a scrolling tab strip. */}}
+{{define "settings-sidebar"}}
+  <a class="small back-link" href="/mail">{{template "icon-back"}}Back to mail</a>
+  <nav aria-label="Settings">
+    <h2 class="sidebar-title">Settings</h2>
+    <ul class="folders settings-nav">
+      <li><a class="folder" href="/settings"{{if eq .SettingsTab "general"}} aria-current="page"{{end}}><span class="folder-name">General</span></a></li>
+      <li><a class="folder" href="/settings/account"{{if eq .SettingsTab "account"}} aria-current="page"{{end}}><span class="folder-name">Account</span></a></li>
+      <li><a class="folder" href="/settings/security"{{if eq .SettingsTab "security"}} aria-current="page"{{end}}><span class="folder-name">Security</span></a></li>
+      <li><a class="folder" href="/settings/devices"{{if eq .SettingsTab "devices"}} aria-current="page"{{end}}><span class="folder-name">Mail apps and sync</span></a></li>
+      <li><a class="folder" href="/filters"{{if eq .SettingsTab "filters"}} aria-current="page"{{end}}><span class="folder-name">Filters and out-of-office</span></a></li>
+      <li><a class="folder" href="/folders"{{if eq .SettingsTab "folders"}} aria-current="page"{{end}}><span class="folder-name">Folders</span></a></li>
+    </ul>
+  </nav>
+{{end}}

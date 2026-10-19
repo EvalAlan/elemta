@@ -1,3 +1,37 @@
+# Mail is stored by Elemta's own mailbox service (IMAP, LMTP and
+# ManageSieve), with Postgres metadata and file or S3 message bodies.
+x-mailbox: &mailbox
+  image: elemta-mailbox:dev
+  build:
+    context: ../..
+    dockerfile: docker/mailbox/Dockerfile
+  restart: unless-stopped
+  mem_limit: 512m
+  env_file:
+    - path: .secrets/mailbox.env
+      required: true
+    - path: .secrets/mailbox-client.env
+      required: true
+  volumes:
+    - ../../config/mailbox-main.toml:/etc/elemta/mailbox.toml:ro
+    - ./.secrets/mailbox-tls/cert.pem:/etc/elemta/tls/cert.pem:ro
+    - ./.secrets/mailbox-tls/key.pem:/etc/elemta/tls/key.pem:ro
+    - mailbox_bodies:/var/lib/elemta/bodies
+  tmpfs: [/tmp:size=64m]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  depends_on:
+    elemta-mailbox-db:
+      condition: service_healthy
+    elemta-ldap:
+      condition: service_healthy
+  networks: [elemta_network]
+  healthcheck:
+    test: [CMD, curl, -fsS, http://localhost:8080/readyz]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+
 services:
   elemta:
     image: elemta:latest
@@ -25,6 +59,8 @@ services:
       # never reads — the toggle would report success and do nothing.
       - ../../config:/app/config:ro
       - elemta_config:/app/runtime-config:rw
+      # The dev mailbox certificate, pinned as the CA for LMTP over STARTTLS.
+      - ./.secrets/mailbox-tls/cert.pem:/app/mailbox-ca.pem:ro
       # Disable plugins mount for now due to Docker file sharing issues
       # - ./plugins:/app/plugins:ro
     environment:
@@ -49,8 +85,12 @@ services:
       - TEST_MODE=true
       - ELEMTA_CONFIG_PATH=/app/config/elemta.toml
       - API_PORT=8081 # Used internally only
-      - DELIVERY_HOST=elemta-dovecot
+      - DELIVERY_HOST=elemta-mailbox
       - DELIVERY_PORT=2424
+      # App passwords and users' "require app passwords" setting at SMTP AUTH
+      # (internal/smtp/app_passwords.go). Only the webmail is exempt.
+      - ELEMTA_AUTH_MAILBOX_SECURITY_URL=http://elemta-mailbox:8080
+      - ELEMTA_AUTH_APP_PASSWORD_EXEMPT=${ELEMTA_WEBMAIL_IP:-10.253.53.250}
     # Security configuration for the container
     security_opt:
       - no-new-privileges:true
@@ -81,7 +121,7 @@ services:
         condition: service_healthy
       elemta-rspamd:
         condition: service_healthy
-      elemta-dovecot:
+      elemta-mailbox:
         condition: service_healthy
       elemta-ldap:
         condition: service_healthy
@@ -193,6 +233,10 @@ services:
       - TZ=UTC
       - ELEMTA_CONFIG_RESEED=${ELEMTA_CONFIG_RESEED:-}
       - NODE_ID=webmail
+      # Two-step verification and app passwords live in the mailbox
+      # service; its internal API is on the proxy's health port, which is
+      # never published ([webmail] security_url).
+      - ELEMTA_WEBMAIL_SECURITY_URL=http://elemta-mailbox:8080
       # Sessions are kept in Valkey, so a restart or a second webmail
       # container doesn't sign anyone out ([webmail] session_store).
       - VALKEY_ADDR=elemta-valkey:6379
@@ -205,10 +249,14 @@ services:
       - ALL
     entrypoint: []
     networks:
-      - elemta_network
+      elemta_network:
+        # Fixed, because SMTP AUTH exempts this address from users' "require
+        # app passwords" setting: the webmail signs in with the account
+        # password after its own second step ([auth] app_password_exempt_networks).
+        ipv4_address: ${ELEMTA_WEBMAIL_IP:-10.253.53.250}
     depends_on:
       - elemta
-      - elemta-dovecot
+      - elemta-mailbox
       - valkey
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8027/healthz" ]
@@ -317,13 +365,18 @@ services:
     image: osixia/openldap:latest
     container_name: elemta-ldap
     hostname: elemta-ldap
+    # Everything authenticates against the directory, so it must come back
+    # after a reboot like the services that depend on it.
+    restart: unless-stopped
     ports:
       - "1389:389" # LDAP port
       - "1636:636" # LDAPS port  
+    env_file:
+      - path: .secrets/ldap-admin.env
+        required: true
     environment:
       - LDAP_ORGANISATION=Example Corp
       - LDAP_DOMAIN=example.com
-      - LDAP_ADMIN_PASSWORD=admin
       - LDAP_BASE_DN=dc=example,dc=com
       - LDAP_TLS_VERIFY_CLIENT=never
       - LDAP_RFC2307BIS_SCHEMA=true
@@ -336,48 +389,63 @@ services:
     networks:
       - elemta_network
     healthcheck:
-      test: [ "CMD", "sh", "-c", "ldapsearch -x -H ldapi:/// -Y EXTERNAL -b 'ou=people,dc=example,dc=com' '(uid=user)' 2>&1 | grep -q 'uid: user' || ldapsearch -x -D 'cn=admin,dc=example,dc=com' -w admin -b 'dc=example,dc=com' -s base -LLL" ]
+      test: [ "CMD", "ldapsearch", "-Q", "-Y", "EXTERNAL", "-H", "ldapi:///", "-b", "dc=example,dc=com", "-s", "base", "-LLL", "dn" ]
       interval: 10s
       timeout: 10s
       retries: 30
       start_period: 45s
 
-  elemta-dovecot:
-    image: elemta_dovecot:latest
-    build:
-      context: ../../docker/dovecot
-      dockerfile: Dockerfile
-    container_name: elemta-dovecot
-    # IMAP hibernation keeps thousands of idle connections in one process,
-    # which needs a file descriptor each.
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    # This service's own LDAP service-account credentials, generated by
-    # scripts/dev-secrets.sh (make ensure-dev-secrets). Optional, so a bare
-    # `docker compose up` still starts; see scripts/ldap-service-accounts.sh.
-    env_file:
-      - path: .secrets/dovecot.env
-        required: false
-    hostname: elemta-dovecot
-    ports:
-      - "14143:14143" # IMAP port
-      - "2424:2424" # LMTP port
-      - "4190:4190" # ManageSieve port
-    volumes:
-      - dovecot_data:/var/mail
-    networks:
-      - elemta_network
+  elemta-mailbox-db:
+    image: postgres:17-alpine
+    container_name: elemta-mailbox-db
     restart: unless-stopped
-    depends_on:
-      - elemta-ldap
+    mem_limit: 1g
+    env_file:
+      - path: .secrets/mailbox-postgres.env
+        required: true
+    volumes: [mailbox_metadata:/var/lib/postgresql/data]
+    networks: [elemta_network]
     healthcheck:
-      test: [ "CMD", "nc", "-z", "localhost", "14143" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      test: [CMD-SHELL, pg_isready -U mailbox -d mailbox]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  elemta-mailbox-a:
+    <<: *mailbox
+    container_name: elemta-mailbox-a
+  elemta-mailbox-b:
+    <<: *mailbox
+    container_name: elemta-mailbox-b
+
+  elemta-mailbox:
+    image: haproxy:3.0-alpine
+    container_name: elemta-mailbox
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "14143:1143"
+      - "127.0.0.1:143:11143"
+      - "127.0.0.1:110:1110"
+      - "993:10993"
+      - "2424:2424"
+      - "4190:4190"
+    volumes:
+      - ./mailbox/main-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks: [elemta_network]
+    depends_on:
+      elemta-mailbox-a:
+        condition: service_healthy
+      elemta-mailbox-b:
+        condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/readyz]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # Monitoring services
 
   # prometheus:
@@ -468,20 +536,12 @@ services:
       retries: 3
       start_period: 10s
 
-  # Webmail Interface
-  # The default delivery destination: accepts LMTP and discards.
-  #
-  # Delivering to Dovecot measures Dovecot — maildir writes, indexing and sieve,
-  # around 100ms a message and saturating near 70/s. That is the right number
-  # for "how fast does this stack reach a real mailbox" and the wrong one for
-  # everything else, so the default destination is a sink that cannot be the
-  # bottleneck (~4,500/s for 10KB messages).
-  #
-  # Mail sent to the sink is GONE. Dovecot still runs and still holds accounts;
-  # 'make sink-down' points delivery back at it and starts Roundcube, which is
-  # what to use when you want to read what was delivered.
+  # Explicit benchmark-only destination. Mail accepted by this service is
+  # discarded, so it must never be the normal development delivery target.
+  # make sink-up starts it; make sink-down restores real mailbox delivery.
 
   elemta-sink:
+    profiles: [benchmark]
     # A stock Python image running one mounted script, rather than a build.
     # There is nothing to compile and nothing to keep up to date, and the whole
     # implementation is readable in one sitting — which matters for a thing
@@ -514,8 +574,8 @@ services:
     environment:
       - ROUNDCUBEMAIL_DB_TYPE=sqlite
       - ROUNDCUBEMAIL_SKIN=elastic
-      - ROUNDCUBEMAIL_DEFAULT_HOST=elemta-dovecot
-      - ROUNDCUBEMAIL_DEFAULT_PORT=14143
+      - ROUNDCUBEMAIL_DEFAULT_HOST=elemta-mailbox
+      - ROUNDCUBEMAIL_DEFAULT_PORT=1143
       - ROUNDCUBEMAIL_SMTP_SERVER=tls://elemta
       - ROUNDCUBEMAIL_SMTP_PORT=2525
       - ROUNDCUBEMAIL_SMTP_AUTH_TYPE=PLAIN
@@ -533,7 +593,7 @@ services:
       - elemta_network
     restart: unless-stopped
     depends_on:
-      - elemta-dovecot
+      - elemta-mailbox
       - elemta
       - elemta-ldap
     healthcheck:
@@ -556,6 +616,8 @@ networks:
     driver: bridge
 
 volumes:
+  mailbox_metadata:
+  mailbox_bodies:
   elemta_queue:
     driver: local
   # The configuration the services actually read. Shared so a change saved in
@@ -577,8 +639,6 @@ volumes:
   grafana_data:
     driver: local
   alertmanager_data:
-    driver: local
-  dovecot_data:
     driver: local
   ldap_data:
     driver: local

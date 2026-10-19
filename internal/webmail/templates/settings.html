@@ -1,110 +1,255 @@
+{{define "search"}}<div class="search-spacer"></div>{{end}}
+{{define "sidebar"}}{{template "settings-sidebar" .}}{{end}}
 {{define "content"}}
-<section class="page">
-  <h1>Settings</h1>
-  {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
-  {{with .Settings}}
-  <form class="card form-grid" action="/settings" method="post">
+<section class="page settings">
+{{with .Settings}}
+
+{{if eq .Tab "general"}}
+  <header class="page-head">
+    <h1>General</h1>
+    <p class="muted">How you appear to others, and how mail and the calendar look.</p>
+  </header>
+  {{if $.Problem}}<p class="problem" role="alert">{{$.Problem}}</p>{{end}}
+  <form class="settings-form" id="general" action="/settings#general" method="post">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-    <h2 class="card-title">Identity</h2>
-    <span class="label">Address</span><span class="mono">{{$.Session.Address}}</span>
-    <label for="display_name">Your name</label>
-    <input id="display_name" name="display_name" type="text" value="{{.Prefs.DisplayName}}" maxlength="120" placeholder="Shown to people you write to">
-    <label for="reply_to">Reply-to address</label>
-    <input id="reply_to" name="reply_to" type="email" value="{{.Prefs.ReplyTo}}" placeholder="Optional: where replies should go">
-    <label for="signature">Signature</label>
-    <textarea id="signature" name="signature" rows="5">{{.Prefs.Signature}}</textarea>
-    <span></span>
-    <label class="checkline"><input type="checkbox" name="signature_above" value="1"{{if .Prefs.SignatureAbove}} checked{{end}}> In replies, put the signature above the quoted message</label>
-
-    <h2 class="card-title">Date and time</h2>
-    <label for="timezone">Time zone</label>
-    <span>
-      <input id="timezone" name="timezone" type="text" list="zones" value="{{.Prefs.Timezone}}" placeholder="e.g. America/New_York">
-      <datalist id="zones">{{range .Zones}}<option value="{{.}}">{{end}}</datalist>
-    </span>
-    <label for="clock">Time format</label>
-    <select id="clock" name="clock">
-      <option value="24"{{if .Prefs.Uses24h}} selected{{end}}>24-hour (15:30)</option>
-      <option value="12"{{if not .Prefs.Uses24h}} selected{{end}}>12-hour (3:30 PM)</option>
-    </select>
-    <label for="week_start">Week starts on</label>
-    <select id="week_start" name="week_start">
-      <option value="0"{{if eq .Prefs.WeekStart 0}} selected{{end}}>Sunday</option>
-      <option value="1"{{if eq .Prefs.WeekStart 1}} selected{{end}}>Monday</option>
-    </select>
-
-    <h2 class="card-title">Appearance</h2>
-    <label for="theme">Theme</label>
-    <select id="theme" name="theme">
-      <option value=""{{if eq .Prefs.Theme ""}} selected{{end}}>Match my device</option>
-      <option value="light"{{if eq .Prefs.Theme "light"}} selected{{end}}>Light</option>
-      <option value="dark"{{if eq .Prefs.Theme "dark"}} selected{{end}}>Dark</option>
-    </select>
-    <label for="palette">Colour scheme</label>
-    <select id="palette" name="palette">
-      <option value=""{{if eq .Prefs.Palette ""}} selected{{end}}>Elemta (matches the admin console)</option>
-      <option value="tidewater"{{if eq .Prefs.Palette "tidewater"}} selected{{end}}>Tidewater (teal)</option>
-    </select>
-
-    <h2 class="card-title">Mail and calendar</h2>
-    <span class="label">Message list</span>
-    <label class="checkline"><input type="checkbox" name="conversations" value="1"{{if .Prefs.GroupConversations}} checked{{end}}> Group messages into conversations</label>
-    <label for="page_size">Messages per page</label>
-    <select id="page_size" name="page_size">
-      {{$ps := .Prefs.PageSize}}
-      {{range $n := pageSizes}}<option value="{{$n}}"{{if eq $n $ps}} selected{{end}}>{{$n}}</option>{{end}}
-    </select>
-    <label for="calendar_view">Calendar opens in</label>
-    <select id="calendar_view" name="calendar_view">
-      {{$cv := .Prefs.CalendarView}}
-      <option value="month"{{if or (eq $cv "month") (eq $cv "")}} selected{{end}}>Month</option>
-      <option value="week"{{if eq $cv "week"}} selected{{end}}>Week</option>
-      <option value="day"{{if eq $cv "day"}} selected{{end}}>Day</option>
-      <option value="agenda"{{if eq $cv "agenda"}} selected{{end}}>Agenda</option>
-    </select>
-    <div class="form-actions"><button class="button primary" type="submit">Save settings</button></div>
+    {{if eq .NoticeCard "general"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
+    <div class="card form-grid">
+      <h2 class="card-title">Identity</h2>
+      <span class="label">Address</span><span class="mono">{{$.Session.Address}}</span>
+      <label for="display_name">Your name</label>
+      <input id="display_name" name="display_name" type="text" value="{{.Prefs.DisplayName}}" maxlength="120" placeholder="Shown to people you write to">
+      <label for="reply_to">Reply-to address</label>
+      <input id="reply_to" name="reply_to" type="email" value="{{.Prefs.ReplyTo}}" placeholder="Optional: where replies should go">
+      <label for="signature">Signature</label>
+      <textarea id="signature" name="signature" rows="5">{{.Prefs.Signature}}</textarea>
+      <span></span>
+      <label class="checkline"><input type="checkbox" name="signature_above" value="1"{{if .Prefs.SignatureAbove}} checked{{end}}> In replies, put the signature above the quoted message</label>
+    </div>
+    <div class="card form-grid">
+      <h2 class="card-title">Appearance</h2>
+      <label for="theme">Theme</label>
+      <select id="theme" name="theme">
+        <option value=""{{if eq .Prefs.Theme ""}} selected{{end}}>Match my device</option>
+        <option value="light"{{if eq .Prefs.Theme "light"}} selected{{end}}>Light</option>
+        <option value="dark"{{if eq .Prefs.Theme "dark"}} selected{{end}}>Dark</option>
+      </select>
+      <label for="palette">Colour scheme</label>
+      <select id="palette" name="palette">
+        <option value=""{{if eq .Prefs.Palette ""}} selected{{end}}>Elemta (matches the admin console)</option>
+        <option value="tidewater"{{if eq .Prefs.Palette "tidewater"}} selected{{end}}>Tidewater (teal)</option>
+      </select>
+    </div>
+    <div class="card form-grid">
+      <h2 class="card-title">Date and time</h2>
+      <label for="timezone">Time zone</label>
+      <span>
+        <input id="timezone" name="timezone" type="text" list="zones" value="{{.Prefs.Timezone}}" placeholder="e.g. America/New_York">
+        <datalist id="zones">{{range .Zones}}<option value="{{.}}">{{end}}</datalist>
+      </span>
+      <label for="clock">Time format</label>
+      <select id="clock" name="clock">
+        <option value="24"{{if .Prefs.Uses24h}} selected{{end}}>24-hour (15:30)</option>
+        <option value="12"{{if not .Prefs.Uses24h}} selected{{end}}>12-hour (3:30 PM)</option>
+      </select>
+      <label for="week_start">Week starts on</label>
+      <select id="week_start" name="week_start">
+        <option value="0"{{if eq .Prefs.WeekStart 0}} selected{{end}}>Sunday</option>
+        <option value="1"{{if eq .Prefs.WeekStart 1}} selected{{end}}>Monday</option>
+      </select>
+    </div>
+    <div class="card form-grid">
+      <h2 class="card-title">Mail and calendar</h2>
+      <span class="label">Message list</span>
+      <label class="checkline"><input type="checkbox" name="conversations" value="1"{{if .Prefs.GroupConversations}} checked{{end}}> Group messages into conversations</label>
+      <label for="page_size">Messages per page</label>
+      <select id="page_size" name="page_size">
+        {{$ps := .Prefs.PageSize}}
+        {{range $n := pageSizes}}<option value="{{$n}}"{{if eq $n $ps}} selected{{end}}>{{$n}}</option>{{end}}
+      </select>
+      <label for="calendar_view">Calendar opens in</label>
+      <select id="calendar_view" name="calendar_view">
+        {{$cv := .Prefs.CalendarView}}
+        <option value="month"{{if or (eq $cv "month") (eq $cv "")}} selected{{end}}>Month</option>
+        <option value="week"{{if eq $cv "week"}} selected{{end}}>Week</option>
+        <option value="day"{{if eq $cv "day"}} selected{{end}}>Day</option>
+        <option value="agenda"{{if eq $cv "agenda"}} selected{{end}}>Agenda</option>
+      </select>
+    </div>
+    <div class="save-bar"><button class="button primary" type="submit">Save changes</button></div>
   </form>
-  {{end}}
-  {{if .Settings.CanChangePassword}}
-  <form class="card form-grid" action="/settings/password" method="post" autocomplete="off">
-    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+{{end}}
+
+{{if eq .Tab "account"}}
+  <header class="page-head">
+    <h1>Account</h1>
+    <p class="muted">Your password, and how to get back in if you forget it.</p>
+  </header>
+  {{if .CanChangePassword}}
+  <form class="card form-grid" id="password" action="/settings/password#password" method="post" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
     <h2 class="card-title">Password</h2>
-    <input type="text" name="username" value="{{.Session.Address}}" autocomplete="username" hidden>
+    {{if eq .NoticeCard "password"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
+    <input type="text" name="username" value="{{$.Session.Address}}" autocomplete="username" hidden>
     <label for="pw-current">Current password</label><input id="pw-current" name="current" type="password" autocomplete="current-password" required>
-    <label for="pw-new">New password</label><input id="pw-new" name="new" type="password" autocomplete="new-password" minlength="{{.Settings.MinPasswordLength}}" required>
-    <label for="pw-confirm">Repeat new password</label><input id="pw-confirm" name="confirm" type="password" autocomplete="new-password" minlength="{{.Settings.MinPasswordLength}}" required>
-    <span></span><span class="small muted">At least {{.Settings.MinPasswordLength}} characters. The new password works at once for webmail, phone and desktop mail apps; they will ask for it again.</span>
+    <label for="pw-new">New password</label><input id="pw-new" name="new" type="password" autocomplete="new-password" minlength="{{.MinPasswordLength}}" required>
+    <label for="pw-confirm">Repeat new password</label><input id="pw-confirm" name="confirm" type="password" autocomplete="new-password" minlength="{{.MinPasswordLength}}" required>
+    <span></span><span class="small muted">At least {{.MinPasswordLength}} characters. Mail apps that use your account password will ask for the new one; app passwords keep working.</span>
     <div class="form-actions"><button class="button primary" type="submit">Change password</button></div>
   </form>
   {{end}}
-  {{if .Settings.CanRecover}}
-  <form class="card form-grid" action="/settings/recovery" method="post">
-    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  {{if .CanRecover}}
+  <form class="card form-grid" id="recovery" action="/settings/recovery#recovery" method="post">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
     <h2 class="card-title">Password recovery</h2>
-    <span class="label">Verified recovery email</span><span>{{if .Settings.RecoveryEmail}}{{.Settings.RecoveryEmail}}{{else}}None{{end}}</span>
-    <label for="recovery-email">Recovery email</label><input id="recovery-email" name="email" type="email" placeholder="An address outside this mailbox">
+    {{if eq .NoticeCard "recovery"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
+    <span class="label">Recovery email</span><span>{{if .RecoveryEmail}}{{.RecoveryEmail}} <span class="badge">Verified</span>{{else}}<span class="muted">None set</span>{{end}}</span>
+    <label for="recovery-email">New recovery email</label><input id="recovery-email" name="email" type="email" placeholder="An address outside this mailbox">
     <label for="recovery-current">Current password</label><input id="recovery-current" name="current" type="password" autocomplete="current-password" required>
-    <span></span><span class="small muted">Verify the link sent to the new address. Leave the address empty to remove recovery.</span>
+    <span></span><span class="small muted">We send a link to the new address to confirm it. Leave the address empty to remove recovery.</span>
     <div class="form-actions"><button class="button primary" type="submit">Update recovery email</button></div>
   </form>
   {{end}}
-  <div class="card">
-    <h2 class="card-title">Calendar and contacts on other devices</h2>
-    <p class="muted">Phones and desktop apps (DAVx⁵, Thunderbird, Apple Calendar and Contacts) can sync your calendar, tasks and contacts. Add a CalDAV or CardDAV account with:</p>
+  {{if not (or .CanChangePassword .CanRecover)}}<p class="card muted">Your administrator manages your password.</p>{{end}}
+{{end}}
+
+{{if eq .Tab "security"}}
+  <header class="page-head">
+    <h1>Security</h1>
+    <p class="muted">Protect your account beyond your password.</p>
+  </header>
+  {{with .Security}}
+    {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
+    {{if .Unavailable}}<p class="problem" role="alert">These settings can't be loaded right now. Try again in a moment.</p>{{end}}
+
+    <div class="card" id="two-step">
+      <div class="card-head">
+        <h2 class="card-title">Two-step verification</h2>
+        {{with .Status}}<span class="badge{{if .TOTP}} on{{end}}">{{if .TOTP}}On{{else}}Off{{end}}</span>{{end}}
+      </div>
+      {{if eq $.Settings.NoticeCard "two-step"}}<p class="notice card-notice" role="status">{{$.Settings.Notice}}</p>{{end}}
+      {{if .RecoveryCodes}}
+      <p class="notice" role="status">Two-step verification is on. Save these recovery codes somewhere safe, away from your phone. Each one signs you in once if you lose your authenticator. They won't be shown again.</p>
+      <ul class="code-list mono">{{range .RecoveryCodes}}<li>{{.}}</li>{{end}}</ul>
+      {{end}}
+      {{if .SetupSecret}}
+      <form class="setup-steps" action="/settings/2fa/confirm#two-step" method="post" autocomplete="off">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+        <input type="hidden" name="secret" value="{{.SetupSecret}}">
+        <ol>
+          <li><strong>Scan this code</strong> with an authenticator app such as Aegis, 2FAS, Google Authenticator or 1Password.
+            <div class="qr-wrap"><img class="qr" src="{{.SetupQR}}" alt="QR code for your authenticator app" width="200" height="200">
+            <span class="small muted">Can't scan it? Enter this key instead:<br><code class="setup-key">{{.SetupSecret}}</code></span></div></li>
+          <li><label for="totp-code"><strong>Enter the 6-digit code</strong> your app shows.</label>
+            <div class="inline-fields"><input id="totp-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required autofocus class="code-input">
+            <button class="button primary" type="submit">Turn on</button></div></li>
+        </ol>
+      </form>
+      {{else}}{{with .Status}}
+        {{if .TOTP}}
+        <p>Webmail asks for a code from your authenticator app after your password. <span class="muted">{{.RecoveryLeft}} recovery codes left.</span></p>
+        <form class="inline-fields" action="/settings/2fa/disable#two-step" method="post" autocomplete="off">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+          <label for="totp-off" class="visually-hidden">Current code</label>
+          <input id="totp-off" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="16" placeholder="Current code" required class="code-input">
+          <button class="button danger" type="submit">Turn off</button>
+        </form>
+        {{else}}
+        <p class="muted">With two-step verification, a stolen password alone can't open your webmail: you also need a code from your phone.</p>
+        <form action="/settings/2fa/begin#two-step" method="post">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+          <button class="button primary" type="submit">Set up two-step verification</button>
+        </form>
+        {{end}}
+      {{end}}{{end}}
+    </div>
+
+    {{with .Status}}
+    <div class="card" id="app-passwords">
+      <div class="card-head">
+        <h2 class="card-title">App passwords</h2>
+        <span class="badge{{if .AppRequired}} on{{end}}">{{if .AppRequired}}Required{{else}}Optional{{end}}</span>
+      </div>
+      {{if eq $.Settings.NoticeCard "app-passwords"}}<p class="notice card-notice" role="status">{{$.Settings.Notice}}</p>{{end}}
+      {{with $.Settings.Security}}{{if .NewAppPassword}}
+      <div class="secret-box" role="status">
+        <p>Your app password for <strong>{{.NewAppName}}</strong>. Enter it in the app in place of your account password. It won't be shown again.</p>
+        <p class="mono app-password">{{.NewAppPassword}}</p>
+      </div>
+      {{end}}{{end}}
+      <p class="muted">Give each mail, calendar or contacts app its own password. Deleting one signs out only that app.</p>
+      {{if .AppPasswords}}
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>App</th><th>Created</th><th>Last used</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody>{{range .AppPasswords}}
+        <tr><td>{{.Name}}</td><td>{{.Created.Format "2 Jan 2006"}}</td><td>{{with .LastUsed}}{{.Format "2 Jan 2006 15:04"}}{{else}}<span class="muted">Never</span>{{end}}</td>
+        <td class="num"><form action="/settings/app-passwords/delete#app-passwords" method="post"><input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button danger small-button" type="submit">Delete</button></form></td></tr>
+        {{end}}</tbody>
+      </table></div>
+      {{end}}
+      <form class="inline-fields add-row" action="/settings/app-passwords#app-passwords" method="post" autocomplete="off">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+        <label for="app-name" class="visually-hidden">App name</label>
+        <input id="app-name" name="name" type="text" maxlength="64" placeholder="Name, e.g. Thunderbird on laptop" required>
+        <button class="button" type="submit">{{template "icon-plus"}}Create app password</button>
+      </form>
+      <form class="toggle-row" action="/settings/app-required#app-passwords" method="post">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+        <input type="hidden" name="required" value="{{if .AppRequired}}0{{else}}1{{end}}">
+        <div>
+          <strong>Require app passwords for mail apps</strong>
+          <p class="small muted">{{if .AppRequired}}Mail, calendar and contacts apps must use an app password. Your account password works only in webmail.{{else}}Apps can still sign in with your account password.{{if .TOTP}} With two-step verification on, turn this on too, or a stolen password can still read and send your mail through a mail app.{{end}}{{end}}</p>
+        </div>
+        <button class="button{{if and .TOTP (not .AppRequired)}} primary{{end}}" type="submit">{{if .AppRequired}}Turn off{{else}}Turn on{{end}}</button>
+      </form>
+    </div>
+    {{end}}
+  {{else}}
+  <p class="card muted">Security settings aren't available on this server.</p>
+  {{end}}
+{{end}}
+
+{{if eq .Tab "devices"}}
+  <header class="page-head">
+    <h1>Mail apps and sync</h1>
+    <p class="muted">Use your mail, calendar and contacts in other apps.</p>
+  </header>
+  {{$app := and .Security .Security.Status .Security.Status.AppRequired}}
+  <div class="card" id="mail-apps">
+    <h2 class="card-title">Mail apps</h2>
+    <p class="muted">Thunderbird and other apps that support automatic setup only need your address. For others, use:</p>
+    <div class="table-wrap"><table class="table settings-table">
+      <thead><tr><th>Protocol</th><th>Server</th><th>Port</th><th>Security</th></tr></thead>
+      <tbody>
+        <tr><td>IMAP <span class="muted small">(recommended)</span></td><td class="mono">{{.MailHost}}</td><td>993</td><td>SSL/TLS</td></tr>
+        <tr><td>IMAP</td><td class="mono">{{.MailHost}}</td><td>143</td><td>STARTTLS</td></tr>
+        <tr><td>POP3</td><td class="mono">{{.MailHost}}</td><td>110</td><td>STARTTLS</td></tr>
+        <tr><td>SMTP (sending)</td><td class="mono">{{.MailHost}}</td><td>587</td><td>STARTTLS</td></tr>
+      </tbody>
+    </table></div>
     <dl class="kv-list">
-      <dt>Server</dt><dd><code>{{.Settings.DAVURL}}</code></dd>
-      <dt>User name</dt><dd><code>{{.Session.Address}}</code></dd>
-      <dt>Password</dt><dd>your mail password</dd>
+      <dt>User name</dt><dd class="mono">{{$.Session.Address}}</dd>
+      <dt>Password</dt><dd>{{if $app}}An <a href="/settings/security#app-passwords">app password</a> (required for this account){{else}}Your account password, or an <a href="/settings/security#app-passwords">app password</a>{{end}}</dd>
     </dl>
   </div>
-  <div class="card links-card">
-    <h2 class="card-title">More</h2>
-    <ul class="link-list">
-      <li><a href="/filters">Mail filters and out-of-office reply</a></li>
-      <li><a href="/folders">Manage folders</a></li>
-      <li><a href="/contacts/export">Export contacts (.vcf)</a></li>
-      <li><a href="/calendar/export">Export calendar (.ics)</a></li>
-    </ul>
+  <div class="card" id="sync">
+    <h2 class="card-title">Calendar and contacts</h2>
+    <p class="muted">Phones and desktop apps (DAVx⁵, Thunderbird, Apple Calendar and Contacts) can sync your calendar, tasks and contacts. Add a CalDAV or CardDAV account with:</p>
+    <dl class="kv-list">
+      <dt>Server</dt><dd class="mono">{{.DAVURL}}</dd>
+      <dt>User name</dt><dd class="mono">{{$.Session.Address}}</dd>
+      <dt>Password</dt><dd>{{if $app}}An app password{{else}}Your account password, or an app password{{end}}</dd>
+    </dl>
   </div>
+  <div class="card" id="export">
+    <h2 class="card-title">Export</h2>
+    <p class="muted">Download a copy to import into another app.</p>
+    <div class="form-actions">
+      <a class="button" href="/contacts/export">Contacts (.vcf)</a>
+      <a class="button" href="/calendar/export">Calendar (.ics)</a>
+    </div>
+  </div>
+{{end}}
+
+{{end}}
 </section>
 {{end}}

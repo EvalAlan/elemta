@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/mail"
 	"strings"
@@ -162,6 +163,15 @@ func New(config Config) *Verifier {
 // its own plugin timeout, but none can run past Timeout, so a resolver that
 // stops answering costs one Timeout rather than one per check in turn.
 func (v *Verifier) Check(ctx context.Context, clientIP net.IP, heloName, mailFrom string, message []byte) Results {
+	return v.CheckWithOpener(ctx, clientIP, heloName, mailFrom, message, func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(message)), nil
+	})
+}
+
+// CheckWithOpener uses the bounded head for identity parsing and independent
+// complete readers for body signatures. Verifying a preview invents body-hash
+// failures for every message larger than that preview.
+func (v *Verifier) CheckWithOpener(ctx context.Context, clientIP net.IP, heloName, mailFrom string, message []byte, open func() (io.ReadCloser, error)) Results {
 	results := Results{Disposition: "accept"}
 	if !v.Enabled() {
 		return results
@@ -194,7 +204,13 @@ func (v *Verifier) Check(ctx context.Context, clientIP net.IP, heloName, mailFro
 	}
 	if v.config.DKIMEnabled {
 		run(v.config.Timeout, func(ctx context.Context) {
-			results.DKIM = verifyDKIM(ctx, message, v.resolver.LookupTXT)
+			reader, err := open()
+			if err != nil {
+				results.DKIM = []Result{{Method: "dkim", Value: "temperror", Reason: err.Error()}}
+				return
+			}
+			defer reader.Close()
+			results.DKIM = verifyDKIMReader(ctx, message, contextReader{ctx, reader}, v.resolver.LookupTXT)
 		})
 	}
 	if v.config.DMARCEnabled && shouldLookUp(authors, authorErr) {
@@ -206,7 +222,14 @@ func (v *Verifier) Check(ctx context.Context, clientIP net.IP, heloName, mailFro
 	}
 	if v.config.ARCEnabled {
 		run(v.config.ARCTimeout, func(ctx context.Context) {
-			results.ARC = v.VerifyARC(ctx, message)
+			reader, err := open()
+			if err != nil {
+				results.ARC = Result{Method: "arc", Value: "fail", Reason: err.Error()}
+				return
+			}
+			defer reader.Close()
+			result := v.arc.VerifyReader(ctx, contextReader{ctx, reader})
+			results.ARC = Result{Method: "arc", Value: result.Value, Reason: result.Reason}
 		})
 	} else {
 		results.ARC = v.VerifyARC(ctx, message)
@@ -220,6 +243,18 @@ func (v *Verifier) Check(ctx context.Context, clientIP net.IP, heloName, mailFro
 	}
 	v.applyPolicy(&results)
 	return results
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 
 func (v *Verifier) Enabled() bool {
@@ -651,7 +686,11 @@ func VerifyDKIM(ctx context.Context, message []byte) []Result {
 // answers would hold the client at end-of-DATA for as long as the system
 // resolver keeps retrying.
 func verifyDKIM(ctx context.Context, message []byte, lookupTXT func(context.Context, string) ([]string, error)) []Result {
-	verifications, err := dkim.VerifyWithOptions(bytes.NewReader(message), &dkim.VerifyOptions{
+	return verifyDKIMReader(ctx, message, bytes.NewReader(message), lookupTXT)
+}
+
+func verifyDKIMReader(ctx context.Context, head []byte, reader io.Reader, lookupTXT func(context.Context, string) ([]string, error)) []Result {
+	verifications, err := dkim.VerifyWithOptions(reader, &dkim.VerifyOptions{
 		LookupTXT: func(name string) ([]string, error) {
 			return lookupTXT(ctx, name)
 		},
@@ -666,7 +705,7 @@ func verifyDKIM(ctx context.Context, message []byte, lookupTXT func(context.Cont
 		return nil
 	}
 
-	selectors := dkimSelectors(message)
+	selectors := dkimSelectors(head)
 	results := make([]Result, 0, len(verifications))
 	for i, verification := range verifications {
 		result := Result{Method: "dkim", Domain: verification.Domain, Value: "pass"}

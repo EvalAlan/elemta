@@ -11,7 +11,7 @@ This document covers the outbound **signing** path. Inbound DKIM/DMARC/ARC
 ## How it works
 
 - Signing happens on the **remote SMTP delivery path** (delivery to a remote
-  MX), inside `SMTPDeliveryHandler`. Local LMTP delivery (e.g. to Dovecot) is
+  MX), inside `SMTPDeliveryHandler`. Local LMTP delivery (to the mailbox service) is
   intentionally **not** signed, because a locally delivered copy never crosses
   an administrative boundary where DKIM matters.
 - A message is signed **once**, before recipients are grouped by domain, so the

@@ -1,9 +1,9 @@
 # Elemta SMTP Server Configuration
 
 # Top-level configuration (used by SMTP server)
-hostname = "mail.dev.evil-admin.com"
+hostname = "mail.dev.example.net"
 listen_addr = ":2525"
-local_domains = ["example.com", "evil-admin.com", "localhost", "mail.example.com"]
+local_domains = ["example.com", "example.com", "localhost", "mail.example.com"]
 max_size = 52428800  # 50MB
 
 # Who may send to domains outside local_domains without logging in. Loopback
@@ -178,19 +178,18 @@ datasource_user = "cn=elemta-smtp,ou=services,dc=example,dc=com"
 datasource_db = "dc=example,dc=com"
 
 [delivery]
-# Delivery goes to a real mailbox server, because a mail server that discards
-# mail by default is a bad thing to hand someone.
-#
-# For throughput work this is the wrong destination: Dovecot's maildir writes
-# and indexing cost ~100ms a message and saturate near 70/s, so a benchmark
-# against it measures Dovecot. 'make sink-up' repoints delivery at a sink that
-# absorbs ~4,500/s and therefore cannot be what is being measured;
-# 'make sink-down' brings it back here. The sink container runs either way, so
-# switching costs a restart and nothing else.
+# The normal development stack delivers to Elemta's mailbox engine. The
+# optional benchmark sink discards mail; make sink-down restores this target.
 mode = "lmtp"
 max_messages_per_minute_per_domain = 0  # 0 = no limit
-host = "elemta-dovecot"
+host = "elemta-mailbox"
 port = 2424
+# Delivery and RCPT-time checks use STARTTLS, verified against the dev
+# mailbox certificate (scripts/dev-secrets.sh). A mailbox server without
+# STARTTLS is then a temporary failure, never a plaintext fallback.
+lmtp_tls = "starttls"
+lmtp_tls_ca_file = "/app/mailbox-ca.pem"
+lmtp_tls_server_name = "elemta-mailbox"
 timeout = 30
 retry_delay = 60
 
@@ -496,14 +495,15 @@ max_age = 86400  # 24 hours
 [webmail]
 enabled = true
 listen = ":8027"
-# Dev Dovecot has TLS off; production should use "starttls" or "tls".
-imap_addr = "elemta-dovecot:14143"
+# Dev mailbox authentication is plaintext on the isolated network.
+imap_addr = "elemta-mailbox:1143"
 imap_tls = "none"
 submission_addr = "elemta:2587"
 submission_tls = "starttls"
-# Filters and the out-of-office reply are stored here over ManageSieve.
-# Dev Dovecot has TLS off, as for IMAP.
-sieve_addr = "elemta-dovecot:4190"
+# Filters and out-of-office replies are stored by the mailbox service's
+# ManageSieve (RFC 5804) and run at delivery. Plaintext on the isolated dev
+# network only.
+sieve_addr = "elemta-mailbox:4190"
 sieve_tls = "none"
 # The dev stack's certificate is self-signed. Never set this in production.
 insecure_skip_verify = true

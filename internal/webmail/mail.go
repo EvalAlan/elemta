@@ -645,7 +645,7 @@ func moveToRole(ctx context.Context, st Mailstore, folder string, uids []uint32,
 var folderNameRE = regexp.MustCompile(`^[^/.\\%*"\x00-\x1f]{1,80}$`)
 
 func (s *Server) foldersPage(w http.ResponseWriter, r *http.Request, sess *Session) {
-	v := view{Title: "Folders", Session: sess, Notice: notices[r.URL.Query().Get("n")]}
+	v := view{Title: "Folders", Session: sess, App: "settings", SettingsTab: "folders", Notice: notices[r.URL.Query().Get("n")]}
 	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		var err error
 		v.Folders, err = st.Folders(r.Context())

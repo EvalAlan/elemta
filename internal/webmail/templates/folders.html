@@ -1,6 +1,11 @@
+{{define "search"}}<div class="search-spacer"></div>{{end}}
+{{define "sidebar"}}{{template "settings-sidebar" .}}{{end}}
 {{define "content"}}
-<section class="page">
-  <h1>Folders</h1>
+<section class="page settings">
+  <header class="page-head">
+    <h1>Folders</h1>
+    <p class="muted">Create, rename and remove your mail folders.</p>
+  </header>
   {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
   <form class="card form-grid" action="/folders" method="post">
     <input type="hidden" name="csrf" value="{{.Session.CSRF}}"><input type="hidden" name="op" value="create">
@@ -14,16 +19,18 @@
     </select>
     <div class="form-actions"><button class="button primary" type="submit">Create folder</button></div>
   </form>
+  <div class="card">
+  <h2 class="card-title">Your folders</h2>
   <table class="table">
     <thead><tr><th scope="col">Folder</th><th scope="col" class="num">Messages</th><th scope="col" class="num">Unread</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
     <tbody>
     {{range .Folders}}
       <tr>
-        <td class="{{depthClass .Depth}} folder-cell"><a href="{{folderURL .Name 1 ""}}">{{.Display}}</a>{{if .Role}} <span class="muted small">({{.Role}})</span>{{end}}</td>
+        <td class="{{depthClass .Depth}} folder-cell"><a href="{{folderURL .Name 1 ""}}">{{.Display}}</a></td>
         <td class="num mono">{{.Total}}</td>
         <td class="num mono">{{.Unread}}</td>
-        <td class="row-actions">
-          {{if not .Role}}
+        <td class="num"><div class="row-actions">
+          {{if .Role}}<span class="muted small">Built-in</span>{{else}}
           <details class="menu">
             <summary class="button small-button">Rename</summary>
             <form class="menu-body" action="/folders" method="post">
@@ -38,10 +45,11 @@
             <button class="button small-button danger" data-confirm="Delete the folder {{.Name}} and every message in it?">Delete</button>
           </form>
           {{end}}
-        </td>
+        </div></td>
       </tr>
     {{end}}
     </tbody>
   </table>
+  </div>
 </section>
 {{end}}

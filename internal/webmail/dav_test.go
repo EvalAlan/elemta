@@ -224,7 +224,7 @@ func TestCardDAV(t *testing.T) {
 		t.Fatalf("stored = %+v", o)
 	}
 	h.login()
-	if _, page := h.get("/settings"); !strings.Contains(page, h.srv.URL+davRoot) {
+	if _, page := h.get("/settings/devices"); !strings.Contains(page, h.srv.URL+davRoot) {
 		t.Error("settings don't show the sync address")
 	}
 	if _, page := h.get("/contacts"); !strings.Contains(page, "Ana Phone") {

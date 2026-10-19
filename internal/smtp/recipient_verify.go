@@ -3,6 +3,7 @@ package smtp
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -57,6 +58,8 @@ type recipientVerifier struct {
 	// unavailableUntil skips probing for a while after one fails, so a
 	// mailbox server outage does not add the probe timeout to every RCPT.
 	unavailableUntil time.Time
+	// tlsConfig, when set, requires STARTTLS on every probe.
+	tlsConfig *tls.Config
 }
 
 const rcptProbeBackoff = 30 * time.Second
@@ -195,6 +198,26 @@ func (v *recipientVerifier) probe(ctx context.Context, rcpt string) (rcptVerdict
 	}
 	if code, line, err := send("LHLO " + v.heloName); err != nil || code != 250 {
 		return rcptUnknown, "", fmt.Errorf("LHLO: %d %q %v", code, line, err)
+	}
+	if v.tlsConfig != nil {
+		// Same rule as delivery: STARTTLS or nothing, never a downgrade. The
+		// probe needn't check the LHLO reply for STARTTLS; a server without
+		// it refuses the command.
+		if code, line, err := send("STARTTLS"); err != nil || code != 220 {
+			return rcptUnknown, "", fmt.Errorf("STARTTLS: %d %q %v", code, line, err)
+		}
+		cfg := v.tlsConfig.Clone()
+		if cfg.ServerName == "" {
+			cfg.ServerName, _, _ = net.SplitHostPort(v.addr)
+		}
+		tc := tls.Client(conn, cfg)
+		if err := tc.HandshakeContext(ctx); err != nil {
+			return rcptUnknown, "", fmt.Errorf("TLS handshake: %w", err)
+		}
+		conn, r = tc, bufio.NewReader(tc)
+		if code, line, err := send("LHLO " + v.heloName); err != nil || code != 250 {
+			return rcptUnknown, "", fmt.Errorf("LHLO after TLS: %d %q %v", code, line, err)
+		}
 	}
 	if code, line, err := send("MAIL FROM:<>"); err != nil || code != 250 {
 		return rcptUnknown, "", fmt.Errorf("MAIL FROM: %d %q %v", code, line, err)

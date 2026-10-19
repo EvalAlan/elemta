@@ -647,8 +647,9 @@ func (v *EnhancedValidator) validateDataLineParameter(line string) *EnhancedVali
 		return result
 	}
 
-	// Security pattern validation for non-header content
-	if securityResult := v.validateSecurityPatterns(line); !securityResult.Valid {
+	// DATA carries message text, including folded header values. Quotes and
+	// semicolons are ordinary content, not SQL or shell command parameters.
+	if securityResult := v.validateHeaderValueRelaxed(strings.TrimRight(line, "\r\n")); !securityResult.Valid {
 		return securityResult
 	}
 
@@ -689,35 +690,11 @@ func (v *EnhancedValidator) validateGenericParameter(param string) *EnhancedVali
 	return result
 }
 
-// validateHeaderSecurityPatterns checks header values against security threats with header-specific exceptions
-func (v *EnhancedValidator) validateHeaderSecurityPatterns(headerName, headerValue string) *EnhancedValidationResult {
-	// Convert header name to lowercase for comparison
-	headerNameLower := strings.ToLower(headerName)
-
-	// Headers that commonly contain semicolons and other characters that might trigger false positives
-	safeHeaders := map[string]bool{
-		"content-type":               true,
-		"content-disposition":        true,
-		"content-transfer-encoding":  true,
-		"mime-version":               true,
-		"user-agent":                 true,
-		"x-mailer":                   true,
-		"x-originating-ip":           true,
-		"received":                   true,
-		"authentication-results":     true,
-		"dkim-signature":             true,
-		"arc-seal":                   true,
-		"arc-message-signature":      true,
-		"arc-authentication-results": true,
-	}
-
-	// For safe headers, use relaxed validation (only check for actual injection patterns)
-	if safeHeaders[headerNameLower] {
-		return v.validateHeaderValueRelaxed(headerValue)
-	}
-
-	// For other headers, use standard security validation
-	return v.validateSecurityPatterns(headerValue)
+// validateHeaderSecurityPatterns uses the header grammar for every field.
+// Extension fields and display names can contain the same punctuation as DKIM
+// and MIME fields; SQL/command parameter rules reject ordinary mail here.
+func (v *EnhancedValidator) validateHeaderSecurityPatterns(_, headerValue string) *EnhancedValidationResult {
+	return v.validateHeaderValueRelaxed(headerValue)
 }
 
 // validateHeaderValueRelaxed performs relaxed validation for safe headers
@@ -727,15 +704,12 @@ func (v *EnhancedValidator) validateHeaderValueRelaxed(headerValue string) *Enha
 		SecurityScore:     100,
 	}
 
-	// Only check for actual dangerous patterns, not legitimate header syntax
+	// Mail text is never executed here. HTML entities, URLs, source snippets
+	// and quoted SQL belong to the message; scanners and rendering boundaries
+	// handle their content. Only framing and control bytes violate this layer.
 	dangerousPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)\r\n|\n\r|\r|\n`),                                              // Line breaks (header injection)
-		regexp.MustCompile(`\x00|\x01|\x02|\x03|\x04|\x05|\x06|\x07|\x08|\x0B|\x0C|\x0E|\x0F`), // Control chars
-		regexp.MustCompile(`(?i)<script[^>]*>.*?</script>`),                                    // Script tags
-		regexp.MustCompile(`(?i)javascript:`),                                                  // JavaScript protocol
-		regexp.MustCompile(`(?i)eval\s*\(`),                                                    // eval() function
-		regexp.MustCompile(`(?i)\b(union\s+select.*from|drop\s+table|delete\s+from)\b`),        // Obvious SQL injection
-		regexp.MustCompile(`[|&` + "`" + `$]\s*[a-zA-Z/]`),                                     // Command injection (but not legitimate syntax)
+		regexp.MustCompile(`[\r\n]`),
+		regexp.MustCompile(`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]`),
 	}
 
 	for _, pattern := range dangerousPatterns {

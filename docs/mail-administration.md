@@ -102,12 +102,10 @@ class and an explicit field allowlist rather than accepting arbitrary LDAP
 attribute writes. Existing accounts with no accountStatus are treated as active;
 missing mailQuotaSize means unlimited.
 
-The development Dovecot configuration maps aliases to the primary `mail`
-attribute for LMTP, rejects inactive accounts, and reads `mailQuotaSize` for its
-count quota backend. External mailbox servers need equivalent mappings; see
-[Dovecot LDAP mappings](https://doc.dovecot.org/2.4.1/core/config/auth/databases/ldap.html),
-[quota configuration](https://doc.dovecot.org/2.4.1/core/plugins/quota.html), and
-[default values in variable expansion](https://doc.dovecot.org/2.4.1/core/settings/variables.html).
+The mailbox service delivers mail for an alias (`mailAlternateAddress`) to the
+account's mailbox, identifies accounts by `entryUUID` so a renamed address
+keeps its mail, refuses inactive accounts, and enforces `mailQuotaSize` as a
+storage quota in bytes. An external mailbox server needs equivalent mappings.
 The SMTP LDAP authenticator applies the same active-status rule.
 
 ## LDAP service accounts
@@ -118,7 +116,8 @@ No service uses the directory administrator.
 
 | Account | Used by | Access |
 |---|---|---|
-| `cn=dovecot` | Dovecot user and password lookups | read people and mail addresses |
+| `cn=mailbox` | mailbox service logins and delivery lookups | read people and mail addresses |
+| `cn=dovecot` | Dovecot in the Kubernetes dev stack only | read people and mail addresses |
 | `cn=elemta-smtp` | SMTP AUTH and group lookups | read people, mail addresses and groups |
 | `cn=webmail` | webmail user lookups | read people, not password hashes |
 | `cn=webmail-reset` | password recovery and the reset CLI | read people, write `userPassword` |
@@ -133,11 +132,11 @@ The dev passwords are random and live in `deployments/compose/.secrets/`
 (git-ignored). `make ensure-dev-secrets` creates them once and every install
 target depends on it. Compose loads each service's file with `env_file`, and
 the Kubernetes dev overlay builds Secrets from the same files. The
-environment variables are `LDAP_DOVECOT_PASSWORD`, `ELEMTA_AUTH_DATASOURCE_PASS`,
-`ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD`, `ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD` and
-`ELEMTA_LDAP_PROVISION_PASSWORD`. If Dovecot starts without its password it
-logs a warning and falls back to the dev administrator, so a bare
-`docker compose up` still works.
+environment variables are `ELEMTA_MAILBOX_LDAP_PASSWORD`,
+`ELEMTA_AUTH_DATASOURCE_PASS`, `ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD`,
+`ELEMTA_WEBMAIL_LDAP_RESET_PASSWORD`, `ELEMTA_LDAP_PROVISION_PASSWORD`, and
+`LDAP_DOVECOT_PASSWORD` for the Kubernetes dev stack, which still runs
+Dovecot.
 
 In production, create equivalent accounts in your directory, grant them the
 same scopes and supply their passwords from your secret store.
