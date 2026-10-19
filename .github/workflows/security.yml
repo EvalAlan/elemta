@@ -173,8 +173,18 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      # Pinned, and retried: installing it fetches dozens of modules and
+      # their checksums, and a dropped stream from the module proxy or the
+      # checksum database failed this job three times on one day with
+      # nothing wrong in the repository.
       - name: Install go-licenses
-        run: go install github.com/google/go-licenses@latest
+        run: |
+          for attempt in 1 2 3; do
+            go install github.com/google/go-licenses@v1.6.0 && exit 0
+            echo "go-licenses install failed (attempt $attempt); retrying" >&2
+            sleep $((attempt * 15))
+          done
+          exit 1
 
       - name: Check licenses
         continue-on-error: true
