@@ -240,6 +240,15 @@ func (ch *CommandHandler) checkSubmissionSender() error {
 	return fmt.Errorf("530 5.7.0 Authentication required")
 }
 
+// senderPolicies is the class-of-service sending rules for this session's
+// user, or nil when there is no signed-in user or the rules are off.
+func (ch *CommandHandler) senderPolicies() *senderPolicies {
+	if ch.session == nil || ch.session.senderPolicies == nil || !ch.state.IsAuthenticated() || ch.state.GetUsername() == "" {
+		return nil
+	}
+	return ch.session.senderPolicies
+}
+
 func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 	ch.logger.DebugContext(ctx, "Processing MAIL command", "args", args)
 
@@ -310,6 +319,12 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 			declaredSize, ch.config.MaxSize)
 	}
 
+	if sp := ch.senderPolicies(); sp != nil {
+		if err := sp.checkMail(ctx, ch.state.GetUsername(), declaredSize); err != nil {
+			return err
+		}
+	}
+
 	var dsn *DSNParams
 	if parsed.hasDSN {
 		dsn = parsed.dsn
@@ -366,6 +381,12 @@ func (ch *CommandHandler) HandleRCPT(ctx context.Context, args string) error {
 			ch.logger.InfoContext(ctx, "Recipient refused: no such mailbox",
 				"event_type", "rejection", "recipient", rcptTo, "mailbox_server_reply", reply)
 			return fmt.Errorf("550 5.1.1 <%s>: Recipient address rejected: User unknown", sanitizeEmailForHeader(rcptTo))
+		}
+	}
+
+	if sp := ch.senderPolicies(); sp != nil {
+		if err := sp.checkRcpt(ctx, ch.state.GetUsername(), ch.state.GetRecipientCount()); err != nil {
+			return err
 		}
 	}
 

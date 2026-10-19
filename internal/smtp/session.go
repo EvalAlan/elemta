@@ -24,6 +24,9 @@ import (
 type Session struct {
 	// rcptVerifier, when set, refuses unknown local mailboxes at RCPT time.
 	rcptVerifier *recipientVerifier
+	// senderPolicies, when set, applies the signed-in user's class of
+	// service to what they send (sender_policy.go).
+	senderPolicies *senderPolicies
 	// submission marks a session on the submission port: it must
 	// authenticate (or come from allowed_relays) before MAIL FROM.
 	submission bool

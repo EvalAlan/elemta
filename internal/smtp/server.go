@@ -47,7 +47,10 @@ type Server struct {
 	authSecurity *AuthenticationSecurityManager
 	// rcptVerifier refuses unknown local mailboxes at RCPT time; nil when
 	// local delivery is not LMTP or verification is off.
-	rcptVerifier    *recipientVerifier
+	rcptVerifier *recipientVerifier
+	// senderPolicies applies class-of-service sending rules; nil when the
+	// mailbox admin API isn't configured (sender_policy.go).
+	senderPolicies  *senderPolicies
 	metricsManager  *MetricsManager    // Extracted metrics management
 	queueManager    queue.QueueManager // Unified queue system
 	queueProcessor  *queue.Processor   // Queue processor for message delivery
@@ -911,6 +914,7 @@ func NewServer(config *Config) (*Server, error) {
 	server := &Server{
 		authSecurity:    NewAuthenticationSecurityManager(authSecurityConfig, slogger),
 		rcptVerifier:    newRecipientVerifierFor(config, slogger),
+		senderPolicies:  newSenderPolicies(config, slogger),
 		config:          config,
 		pluginManager:   pluginManager,
 		authenticator:   authenticator,
@@ -1412,6 +1416,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	session := NewSession(context.Background(), conn, s.config, s.authenticator)
 	session.useAuthSecurity(s.authSecurity)
 	session.rcptVerifier = s.rcptVerifier
+	session.senderPolicies = s.senderPolicies
 	if _, ok := conn.(submissionConn); ok {
 		session.submission = true
 	}

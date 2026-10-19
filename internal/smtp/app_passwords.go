@@ -30,6 +30,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
 // clientAuthenticator is an Authenticator that also weighs where the client
@@ -47,6 +49,9 @@ type mailboxSecurity struct {
 type securityCheckResult struct {
 	Kind        string `json:"kind"` // "password" or "app"
 	AppRequired bool   `json:"app_required"`
+	// Protocols is the class of service's protocol switches; a missing
+	// entry, or a mailbox service that predates them, allows.
+	Protocols map[string]bool `json:"protocols"`
 }
 
 var errSecurityRefused = errors.New("mailbox security: credentials refused")
@@ -142,6 +147,10 @@ func (a *SMTPAuthenticator) AuthenticateFrom(ctx context.Context, username, pass
 	case err != nil:
 		a.logger.Warn("mailbox security check unavailable; refusing login", "username", username, "error", err)
 		return false, err
+	}
+	if allowed, set := check.Protocols[mailpolicy.Submission]; set && !allowed {
+		a.logger.Info("SMTP submission refused by class of service", "username", username, "client", client.String())
+		return false, nil
 	}
 	if check.Kind == "app" {
 		// Accepted by the mailbox service as an app password. The directory

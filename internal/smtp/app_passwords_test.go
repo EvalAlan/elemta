@@ -16,7 +16,7 @@ import (
 
 // The directory knows only the account password; the fake mailbox security
 // API also knows one app password, and whether this user requires them.
-func appPasswordAuthenticator(t *testing.T, required *atomic.Bool, apiUp *atomic.Bool) *SMTPAuthenticator {
+func appPasswordAuthenticator(t *testing.T, required *atomic.Bool, apiUp *atomic.Bool, submissionOff ...*atomic.Bool) *SMTPAuthenticator {
 	t.Helper()
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !apiUp.Load() {
@@ -29,7 +29,11 @@ func appPasswordAuthenticator(t *testing.T, required *atomic.Bool, apiUp *atomic
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"kind": kind, "app_required": required.Load()})
+		out := map[string]any{"kind": kind, "app_required": required.Load()}
+		if len(submissionOff) > 0 && submissionOff[0].Load() {
+			out["protocols"] = map[string]bool{"submission": false, "imap": true}
+		}
+		_ = json.NewEncoder(w).Encode(out)
 	}))
 	t.Cleanup(api.Close)
 
@@ -97,4 +101,24 @@ func TestSubmissionAppPasswordsConfig(t *testing.T) {
 	t.Setenv("ELEMTA_AUTH_APP_PASSWORD_EXEMPT", "not-an-address")
 	_, err = newMailboxSecurity(&AuthConfig{})
 	assert.Error(t, err)
+}
+
+// TestSubmissionSwitch pins the class of service's submission switch: a mail
+// app is refused even with the right password, while the webmail, which
+// sends on the user's behalf from an exempt network, still can.
+func TestSubmissionSwitch(t *testing.T) {
+	var required, apiUp, off atomic.Bool
+	apiUp.Store(true)
+	a := appPasswordAuthenticator(t, &required, &apiUp, &off)
+	ctx := context.Background()
+	phone, webmail := net.ParseIP("203.0.113.9"), net.ParseIP("10.253.53.250")
+	ok, _ := a.AuthenticateFrom(ctx, "dana@example.com", "account-pw", phone)
+	assert.True(t, ok, "submission allowed by default")
+	off.Store(true)
+	ok, _ = a.AuthenticateFrom(ctx, "dana@example.com", "account-pw", phone)
+	assert.False(t, ok, "submission turned off by the class of service")
+	ok, _ = a.AuthenticateFrom(ctx, "dana@example.com", "app-pw", phone)
+	assert.False(t, ok, "an app password doesn't get round it")
+	ok, _ = a.AuthenticateFrom(ctx, "dana@example.com", "account-pw", webmail)
+	assert.True(t, ok, "the webmail still sends")
 }

@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/mail"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -681,6 +682,23 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 		return fmt.Errorf("451 4.3.0 Message processing failed")
 	}
 
+	// The signed-in sender's class of service: size and attachment limits.
+	sendingUser := ""
+	if dh.session != nil && dh.session.senderPolicies != nil && dh.state.IsAuthenticated() {
+		sendingUser = dh.state.GetUsername()
+	}
+	if sendingUser != "" {
+		readRaw := func() ([]byte, error) {
+			if view.body != nil {
+				return view.body, nil
+			}
+			return os.ReadFile(view.path) // #nosec G304 -- the session's own spool file
+		}
+		if err := dh.session.senderPolicies.checkContent(ctx, sendingUser, size, readRaw); err != nil {
+			return err
+		}
+	}
+
 	// Validate message headers
 	if err := dh.validateMessageHeaders(ctx, metadata); err != nil {
 		dh.logger.WarnContext(ctx, "Message header validation failed", "error", err)
@@ -727,6 +745,10 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 	if err := dh.saveMessage(ctx, headerPrefix, body, metadata); err != nil {
 		dh.logger.ErrorContext(ctx, "Failed to save message", "error", err)
 		return fmt.Errorf("451 4.3.0 Message processing failed")
+	}
+
+	if sendingUser != "" {
+		dh.session.senderPolicies.record(ctx, sendingUser, len(dh.state.GetRecipients()))
 	}
 
 	// Reset session state for next transaction
