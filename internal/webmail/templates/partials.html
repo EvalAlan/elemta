@@ -46,3 +46,32 @@
     </ul>
   </nav>
 {{end}}
+
+{{/* cal-panel is the calendar's sidebar: new event, the month, the
+     calendars and their import and export. The calendar page shows it on
+     the left, and the mail page beside the message when the user turns
+     that on in Settings. It takes the page's view. */}}
+{{define "cal-panel"}}
+  {{with .Calendar}}
+  <a class="button primary block" href="/calendar/event?new=1&amp;date={{.Date.Format "2006-01-02"}}">{{template "icon-plus"}}New event</a>
+  <table class="mini">
+    <caption>{{.Mini.Title}}</caption>
+    <thead><tr>{{range .Weekdays}}<th scope="col" abbr="{{.}}">{{slice . 0 1}}</th>{{end}}</tr></thead>
+    <tbody>
+    {{range .Mini.Weeks}}<tr>{{range .}}<td class="{{if .Other}}other {{end}}{{if .Today}}today {{end}}{{if .Chosen}}chosen{{end}}"><a href="{{.URL}}">{{.Day}}</a></td>{{end}}</tr>{{end}}
+    </tbody>
+  </table>
+  <h3 class="small muted">Calendars</h3>
+  <ul class="cal-legend">
+    {{range .Calendars}}<li><span class="swatch {{calClass .}}"></span>{{.}}</li>{{end}}
+  </ul>
+  <a class="small manage" href="/settings#holidays">Customize holidays</a>
+  <form class="import" action="/calendar/import" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <label class="small" for="ics">Import calendar (.ics)</label>
+    <input id="ics" name="file" type="file" accept=".ics,text/calendar" required>
+    <button class="button" type="submit">Import</button>
+  </form>
+  <a class="small manage" href="/calendar/export">Export calendar (.ics)</a>
+  {{end}}
+{{end}}

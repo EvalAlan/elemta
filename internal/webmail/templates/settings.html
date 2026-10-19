@@ -61,6 +61,8 @@
       <h2 class="card-title">Mail and calendar</h2>
       <span class="label">Message list</span>
       <label class="checkline"><input type="checkbox" name="conversations" value="1"{{if .Prefs.GroupConversations}} checked{{end}}> Group messages into conversations</label>
+      <span class="label">Reading pane</span>
+      <label class="checkline"><input type="checkbox" name="mail_calendar" value="1"{{if .Prefs.MailCalendar}} checked{{end}}> Show a calendar beside messages on wide screens</label>
       <span class="label">Images</span>
       <label class="checkline"><input type="checkbox" name="load_images" value="1"{{if .Prefs.LoadImages}} checked{{end}}> Load remote images automatically (never in Junk)</label>
       <label for="page_size">Messages per page</label>

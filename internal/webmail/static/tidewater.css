@@ -420,7 +420,27 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .toolbar form.inline { display: contents; }
 .toolbar .back { display: none; }
 .nav-arrows { display: inline-flex; gap: 6px; }
-.message { padding: 24px 32px; display: flex; flex-direction: column; gap: 16px; max-width: 980px; }
+.message { padding: 24px 32px; display: flex; flex-direction: column; gap: 16px; }
+/* A message uses the whole reading pane unless the user asked for the
+   calendar beside it (Settings), which keeps the message at a reading
+   width and puts the calendar panel in the space that frees. The panel
+   needs room, so narrower windows drop it and the message widens again. */
+.with-cal .message { max-width: 980px; }
+.mail-cal { flex: 0 0 260px; padding: 16px 12px; border-left: 1px solid var(--line); background: var(--ground); display: flex; flex-direction: column; gap: 14px; min-width: 0; overflow-y: auto; }
+.mail-cal h3 { margin: 4px 0 -6px; }
+.upcoming, .upcoming ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.upcoming { gap: 10px; }
+.upcoming > li > a { color: var(--ink); text-decoration: none; }
+.upcoming > li > a.today { color: var(--accent-dark); }
+.upcoming-item { display: flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--ink); text-decoration: none; padding: 2px 4px; border-radius: 4px; overflow: hidden; white-space: nowrap; }
+.upcoming-item:hover { background: var(--line-soft); }
+.upcoming-item > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.upcoming-item .mono { font-size: 11px; flex: 0 0 auto; }
+.upcoming-item .swatch { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: currentColor; align-self: center; }
+@media (max-width: 1399px) {
+  .mail-cal { display: none; }
+  .with-cal .message { max-width: none; }
+}
 .priority { color: var(--danger); font-weight: 700; }
 .sender { display: flex; align-items: flex-start; gap: 12px; }
 .sender-text { flex: 1; min-width: 0; }

@@ -46,6 +46,9 @@ type Settings struct {
 	// LoadImages shows remote images without asking, except in Junk. Off by
 	// default: loading an image tells its sender the message was opened.
 	LoadImages bool `json:"load_images,omitempty"`
+	// MailCalendar keeps messages at a reading width and shows the calendar
+	// panel beside them on wide screens. Off, a message uses the full pane.
+	MailCalendar bool `json:"mail_calendar,omitempty"`
 }
 
 // GroupConversations reports whether lists are grouped by thread.
@@ -411,6 +414,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	conv := r.PostFormValue("conversations") == "1"
 	p.Conversations = &conv
 	p.LoadImages = r.PostFormValue("load_images") == "1"
+	p.MailCalendar = r.PostFormValue("mail_calendar") == "1"
 	switch v := r.PostFormValue("calendar_view"); v {
 	case "month", "week", "day", "agenda":
 		p.CalendarView = v

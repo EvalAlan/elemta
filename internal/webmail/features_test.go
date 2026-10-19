@@ -703,3 +703,39 @@ func TestLoadImagesPreference(t *testing.T) {
 		t.Error("settings page doesn't show the preference as on")
 	}
 }
+
+// TestMailCalendarPanel pins the reading-pane preference: by default the
+// mail page has no calendar and the message takes the full pane; with it
+// on, the calendar panel and the coming week appear beside the message.
+func TestMailCalendarPanel(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}})
+	tomorrow := time.Now().UTC().AddDate(0, 0, 1)
+	h.post("/calendar/event", url.Values{
+		"csrf": {csrf}, "op": {"save"}, "summary": {"Planning review"}, "start_date": {tomorrow.Format("2006-01-02")}, "start_time": {"10:00"},
+		"end_date": {tomorrow.Format("2006-01-02")}, "end_time": {"11:00"},
+	})
+	if _, page := h.get("/mail?f=INBOX&uid=7"); strings.Contains(page, "mail-cal") || strings.Contains(page, "with-cal") {
+		t.Fatal("calendar panel shown without the preference")
+	}
+	h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "mail_calendar": {"1"}})
+	for _, path := range []string{"/mail?f=INBOX&uid=7", "/mail?f=INBOX"} {
+		_, page := h.get(path)
+		for _, want := range []string{`class="panes has-message with-cal"`, `class="mail-cal"`, `class="mini"`, "New event", "Coming up", "Planning review"} {
+			if path == "/mail?f=INBOX" && want == `class="panes has-message with-cal"` {
+				want = `class="panes with-cal"`
+			}
+			if !strings.Contains(page, want) {
+				t.Errorf("%s lacks %q", path, want)
+			}
+		}
+	}
+	// The calendar page still has the panel in its own sidebar.
+	if _, page := h.get("/calendar"); !strings.Contains(page, `class="mini"`) || !strings.Contains(page, "Import calendar (.ics)") {
+		t.Error("calendar sidebar lost its panel")
+	}
+	if _, page := h.get("/settings"); !strings.Contains(page, `name="mail_calendar" value="1" checked`) {
+		t.Error("settings page doesn't show the preference as on")
+	}
+}

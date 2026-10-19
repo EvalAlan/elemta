@@ -1,5 +1,5 @@
 {{define "content"}}
-<div class="panes{{if .Message}} has-message{{end}}">
+<div class="panes{{if .Message}} has-message{{end}}{{if .Calendar}} with-cal{{end}}">
   <section class="list" aria-label="Messages">
     <form id="bulk" class="bulk" action="/mail/action" method="post">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
@@ -220,6 +220,22 @@
     <p class="empty reader-empty">Select a message to read it.<br><span class="small">Press <kbd>?</kbd> for keyboard shortcuts.</span></p>
   {{end}}
   </article>
+  {{with .Calendar}}
+  <aside class="mail-cal" aria-label="Calendar">
+    {{template "cal-panel" $}}
+    <h3 class="small muted">Coming up</h3>
+    {{if not .Upcoming}}<p class="small muted">Nothing in the next 7 days.</p>{{end}}
+    <ul class="upcoming">
+    {{range .Upcoming}}
+      <li><a class="small strong{{if .Today}} today{{end}}" href="{{.URL}}">{{if .Today}}Today{{else}}{{.Date.Format "Mon, Jan 2"}}{{end}}</a>
+        <ul>{{range .AllDay}}
+          <li><a class="upcoming-item" href="{{.URL}}"><span class="swatch {{.Class}}" aria-hidden="true"></span><span class="mono muted">{{if .Occ.Event.AllDay}}All day{{else}}{{.TimeLabel}}{{end}}</span> <span>{{.Occ.Event.Summary}}</span></a></li>
+        {{end}}</ul>
+      </li>
+    {{end}}
+    </ul>
+  </aside>
+  {{end}}
 </div>
 {{end}}
 {{define "thread-card"}}

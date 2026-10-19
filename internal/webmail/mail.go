@@ -110,6 +110,9 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	lq.Sort, lq.Reverse, lq.Page, lq.PageSize = ls.Sort, ls.Reverse, ls.Page, s.pageSize(sess)
 
 	v := view{Title: ls.Folder, Session: sess, Folder: ls.Folder, Query: ls.Query, List: &ls, Notice: notices[q.Get("n")], Remote: remote}
+	if s.prefsCached(sess).MailCalendar {
+		v.Calendar = s.mailCalendar(r.Context(), sess)
+	}
 	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		if hasUID {
 			raw, err := st.Raw(r.Context(), ls.Folder, uid, s.maxMessage())

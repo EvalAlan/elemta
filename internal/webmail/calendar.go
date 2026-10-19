@@ -86,6 +86,8 @@ type calendarView struct {
 	Form      *eventForm
 	// NowQ is the current quarter hour, for the red line in day and week.
 	NowQ int
+	// Upcoming is the next week's events, for the panel beside mail.
+	Upcoming []calDay
 }
 
 type calDay struct {
@@ -186,6 +188,38 @@ func (s *Server) calendarPage(w http.ResponseWriter, r *http.Request, sess *Sess
 	v := view2(sess, "Calendar", cv)
 	v.Notice = notices[q.Get("n")]
 	s.render(w, "calendar.html", http.StatusOK, v)
+}
+
+// mailCalendar builds the calendar panel shown beside mail: this month and
+// the coming week. It is a convenience, so a calendar that can't be read
+// leaves the panel out rather than failing the mail page.
+func (s *Server) mailCalendar(ctx context.Context, sess *Session) *calendarView {
+	loc := s.loc(sess)
+	prefs := s.prefsCached(sess)
+	now := s.now().In(loc)
+	today := dayStart(now)
+	events, err := s.calendarEvents(ctx, sess, loc)
+	if err != nil {
+		return nil
+	}
+	if hol, err := holidayEvents(prefs, s.defaultLoc.String(), loc, today, today.AddDate(0, 0, 30)); err == nil {
+		events = append(events, hol...)
+	}
+	cv := s.buildCalendar("agenda", today, today, now, prefs, events)
+	week := today.AddDate(0, 0, 7)
+	shown := 0
+	for _, d := range cv.Agenda {
+		if !d.Date.Before(week) || shown >= 8 {
+			break
+		}
+		if len(d.AllDay) > 8-shown {
+			d.AllDay = d.AllDay[:8-shown]
+		}
+		shown += len(d.AllDay)
+		cv.Upcoming = append(cv.Upcoming, d)
+	}
+	cv.Agenda = nil
+	return cv
 }
 
 func calendarWindow(view string, date time.Time, first int) (time.Time, time.Time) {
