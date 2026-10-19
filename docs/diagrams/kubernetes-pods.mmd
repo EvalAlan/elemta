@@ -1,0 +1,36 @@
+flowchart LR
+    subgraph lb["k3s LoadBalancer (host ports)"]
+        h1["2525 · 2587"]
+        h2["8025"]
+        h3["14143 · 4190"]
+        h4["8026 (full)"]
+    end
+
+    subgraph ns["namespace elemta"]
+        subgraph pod["Elemta pod"]
+            smtp["MTA container"]
+            dash["admin console container"]
+        end
+        dns["elemta-dns<br/>10.43.53.53"]
+        ldap[("elemta-ldap")]
+        dovecot["elemta-dovecot<br/>IMAP · LMTP · Sieve"]
+        valkey[("elemta-valkey")]
+        sink["elemta-sink<br/>(bench)"]
+        clamav["elemta-clamav (full, bench)"]
+        rspamd["elemta-rspamd (full, bench)"]
+        rc["elemta-roundcube (full)"]
+        pg[("elemta-postgres<br/>(postgres overlay)")]
+    end
+    kubedns["kube-dns 10.43.0.10"]
+
+    h1 --> smtp
+    h2 --> dash
+    h3 --> dovecot
+    h4 --> rc
+    smtp -->|"LMTP"| dovecot
+    smtp -.->|"bench: discard"| sink
+    smtp --> clamav & rspamd & dns & valkey & ldap
+    smtp -.-> pg
+    dns -->|"cluster.local"| kubedns
+    dovecot --> ldap
+    rc --> dovecot & smtp

@@ -15,23 +15,7 @@ mailbox count.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    clients[IMAP clients and webmail] --> edge[Redundant protocol endpoints]
-    smtp[Elemta SMTP and durable queue] --> edge
-    edge --> a[Mailbox replica A]
-    edge --> b[Mailbox replica B]
-    a --> meta[Cell metadata: HA Postgres]
-    b --> meta
-    a --> body[Body storage: S3, Ceph RGW, or filesystem]
-    b --> body
-    a --> auth[Replicated account directory]
-    b --> auth
-    meta --> jobs[Durable jobs and change log]
-    jobs --> workers[Search, notification and cleanup workers]
-    workers --> search[Rebuildable search indexes]
-    placement[Replicated mailbox placement directory] -. routing .-> edge
-```
+![Target mailbox engine architecture: protocol endpoints, replicas, HA Postgres, body storage, workers and placement](diagrams/mailbox-engine-target.png)
 
 Keep the mailbox engine independent of IMAP: a shared internal API powers
 IMAP, LMTP delivery and eventually direct webmail access. Initially retain
@@ -192,15 +176,7 @@ then-current eight Elemta services included Dovecot.
 
 Add a separate four-container project alongside them:
 
-```text
-Original SMTP/webmail/Dovecot/LDAP/Valkey stack during isolated testing
-                           |
-            existing Docker network (LDAP access only)
-                           |
-localhost:11443 IMAP --> mailbox edge --> mailbox-a ---+
-localhost:12424 LMTP -->              --> mailbox-b ---+--> Postgres metadata
-                                                     +--> shared body volume
-```
+![The isolated four-container mailbox lab beside the original stack](diagrams/mailbox-lab.png)
 
 | Added container | Memory limit | CPU limit | Role |
 |---|---:|---:|---|

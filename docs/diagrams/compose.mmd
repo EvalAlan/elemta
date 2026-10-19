@@ -1,0 +1,44 @@
+flowchart TB
+    subgraph host["Host ports"]
+        p2525["2525 SMTP"]
+        p2587["2587 submission"]
+        p993["993 IMAPS"]
+        p8027["8027 webmail"]
+        p8025["8025 admin console"]
+        p8026["8026 Roundcube (full)"]
+    end
+
+    subgraph net["elemta_network 10.253.53.0/24"]
+        node0["elemta-node0<br/>MTA"]
+        web["elemta-web<br/>admin console"]
+        webmail["elemta-webmail<br/>10.253.53.250"]
+        dns["elemta-dns<br/>Unbound resolver 10.253.53.53"]
+        haproxy["elemta-mailbox<br/>HAProxy"]
+        mba["elemta-mailbox-a"]
+        mbb["elemta-mailbox-b"]
+        db[("elemta-mailbox-db<br/>Postgres")]
+        valkey[("elemta-valkey")]
+        clamav["elemta-clamav (full)"]
+        rspamd["elemta-rspamd (full)"]
+        rc["elemta-roundcube (full)"]
+    end
+
+    p2525 & p2587 --> node0
+    p993 --> haproxy
+    p8027 --> webmail
+    p8025 --> web
+    p8026 --> rc
+
+    node0 -->|"LMTP 2424"| haproxy
+    node0 --> dns
+    node0 --> clamav
+    node0 --> rspamd
+    rspamd --> dns
+    node0 & web --> valkey
+    webmail -->|"IMAP 1143 · Sieve 4190 · API 8080"| haproxy
+    webmail -->|"submission 2587"| node0
+    webmail -->|"sessions"| valkey
+    rc --> haproxy
+    rc --> node0
+    haproxy --> mba & mbb
+    mba & mbb --> db

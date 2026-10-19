@@ -8,26 +8,11 @@ admin console, built to work together and deployed as one stack.
 
 ## What's in the stack
 
-```text
-                 Internet                                 People
-                    │                           ┌────────────┼──────────────┐
-            SMTP 25 │ submission 587            │ HTTPS      │ IMAP 993/143 │ CalDAV/CardDAV
-                    ▼                           ▼            │ POP3 110     ▼
-  ┌──────────────────────────────┐   ┌──────────────────┐    │   ┌───────────────────┐
-  │ Elemta MTA                   │   │ Webmail          │    │   │ Admin console     │
-  │ SPF · DKIM · DMARC · ARC     │   │ mail · calendar  │    │   │ queue · domains   │
-  │ ClamAV · Rspamd · RBLs       │   │ contacts · tasks │    │   │ accounts · health │
-  │ rate limits · queue          │   │ filters · 2FA    │    │   └───────────────────┘
-  └──────────────┬───────────────┘   └────────┬─────────┘    │
-        LMTP over│TLS                   IMAP, │ManageSieve   │
-                 ▼                            ▼              ▼
-  ┌──────────────────────────────────────────────────────────────────┐
-  │ Mailbox service (two or more replicas behind HAProxy)            │
-  │ IMAP · POP3 · LMTP · Sieve · ManageSieve · app passwords · TOTP  │
-  │ Postgres metadata · file or S3 message bodies                    │
-  └──────────────────────────────────────────────────────────────────┘
-                 LDAP directory: accounts, aliases, quotas, groups
-```
+![Elemta components and how mail moves between them](docs/diagrams/overview.png)
+
+The LDAP directory holds accounts, aliases, quotas and groups for every part.
+More diagrams, of the Docker Compose stack, the cloud server and Kubernetes,
+are in [Architecture](docs/architecture.md).
 
 ### Mail server (MTA)
 

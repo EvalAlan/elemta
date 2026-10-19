@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant S as Sending server
+    participant M as Elemta MTA
+    participant Q as Queue
+    participant B as Mailbox service
+    participant U as User's mail app
+    S->>M: SMTP on 25: MAIL FROM, RCPT TO
+    M->>M: RCPT checked against LDAP (unknown users refused)
+    S->>M: DATA
+    M->>M: SPF, DKIM, DMARC, ARC, antivirus, spam
+    M->>Q: accepted (250)
+    Q->>B: LMTP over STARTTLS
+    B->>B: Sieve: filters, out-of-office, redirects
+    B->>B: store metadata (Postgres) and body (file/S3)
+    U->>B: IMAP IDLE wakes, client fetches

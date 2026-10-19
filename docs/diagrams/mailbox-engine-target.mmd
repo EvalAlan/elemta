@@ -1,0 +1,15 @@
+flowchart TB
+    clients[IMAP clients and webmail] --> edge[Redundant protocol endpoints]
+    smtp[Elemta SMTP and durable queue] --> edge
+    edge --> a[Mailbox replica A]
+    edge --> b[Mailbox replica B]
+    a --> meta[Cell metadata: HA Postgres]
+    b --> meta
+    a --> body[Body storage: S3, Ceph RGW, or filesystem]
+    b --> body
+    a --> auth[Replicated account directory]
+    b --> auth
+    meta --> jobs[Durable jobs and change log]
+    jobs --> workers[Search, notification and cleanup workers]
+    workers --> search[Rebuildable search indexes]
+    placement[Replicated mailbox placement directory] -. routing .-> edge

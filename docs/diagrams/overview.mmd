@@ -1,0 +1,40 @@
+flowchart LR
+    internet(["Sending mail servers"])
+    remote(["Recipients' mail servers"])
+    apps(["Mail apps<br/>Thunderbird, phones"])
+    browser(["Web browser"])
+    admin(["Administrator"])
+
+    subgraph mta["Elemta MTA"]
+        smtp["SMTP 25<br/>submission 587"]
+        checks["SPF · DKIM · DMARC · ARC<br/>ClamAV · Rspamd · RBLs"]
+        queue[("Queue")]
+        smtp --> checks --> queue
+    end
+
+    subgraph mailbox["Mailbox service"]
+        lmtp["LMTP + Sieve filters"]
+        imap["IMAP 993/143 · POP3 110"]
+        msieve["ManageSieve"]
+        secapi["Security API<br/>2FA · app passwords"]
+    end
+
+    pg[("Postgres<br/>metadata")]
+    bodies[("File or S3<br/>message bodies")]
+    webmail["Webmail<br/>mail · calendar · contacts · tasks"]
+    console["Admin console"]
+
+    internet -->|"inbound mail"| smtp
+    apps -->|"send"| smtp
+    queue -->|"local recipients, LMTP over TLS"| lmtp
+    queue -->|"remote recipients, DKIM-signed"| remote
+    apps -->|"read"| imap
+    browser -->|"HTTPS"| webmail
+    webmail -->|"IMAP, internal"| imap
+    webmail -->|"ManageSieve"| msieve
+    webmail -->|"submission"| smtp
+    webmail -->|"2FA, app passwords"| secapi
+    admin --> console
+    console --> queue
+    lmtp & imap & secapi --> pg
+    lmtp & imap --> bodies
