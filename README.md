@@ -10,7 +10,7 @@ admin console, built to work together and deployed as one stack.
 
 ![Elemta components and how mail moves between them](docs/diagrams/overview.png)
 
-The LDAP directory holds accounts, aliases, quotas and groups for every part.
+Every part uses the LDAP directory for accounts, aliases, quotas and groups.
 More diagrams, of the Docker Compose stack, the cloud server and Kubernetes,
 are in [Architecture](docs/architecture.md).
 

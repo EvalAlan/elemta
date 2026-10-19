@@ -1,15 +1,15 @@
 flowchart TB
-    clients[IMAP clients and webmail] --> edge[Redundant protocol endpoints]
-    smtp[Elemta SMTP and durable queue] --> edge
+    clients["IMAP clients<br/>and webmail"] --> edge["Redundant protocol<br/>endpoints"]
+    smtp["Elemta SMTP and<br/>durable queue"] --> edge
     edge --> a[Mailbox replica A]
     edge --> b[Mailbox replica B]
-    a --> meta[Cell metadata: HA Postgres]
+    a --> meta["Cell metadata:<br/>HA Postgres"]
     b --> meta
-    a --> body[Body storage: S3, Ceph RGW, or filesystem]
+    a --> body["Body storage: S3,<br/>Ceph RGW or filesystem"]
     b --> body
-    a --> auth[Replicated account directory]
+    a --> auth["Replicated account<br/>directory"]
     b --> auth
-    meta --> jobs[Durable jobs and change log]
-    jobs --> workers[Search, notification and cleanup workers]
-    workers --> search[Rebuildable search indexes]
-    placement[Replicated mailbox placement directory] -. routing .-> edge
+    meta --> jobs["Durable jobs<br/>and change log"]
+    jobs --> workers["Search, notification<br/>and cleanup workers"]
+    workers --> search["Rebuildable<br/>search indexes"]
+    placement["Replicated mailbox<br/>placement directory"] -. routing .-> edge

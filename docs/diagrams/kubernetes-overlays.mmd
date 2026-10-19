@@ -1,17 +1,17 @@
 flowchart TB
-    base["base/<br/>namespace · Elemta pod · sink · Valkey · volumes"]
-    minimal["dev/minimal<br/>+ DNS · LDAP · Dovecot · host ports"]
+    base["base/<br/>Elemta pod · sink · Valkey"]
+    standalone["standalone/<br/>published image"]
+    minimal["dev/minimal<br/>+ DNS · LDAP · Dovecot"]
+    base --> standalone
+    base --> minimal
     full["dev/full"]
     bench["dev/bench"]
     postgres["dev/postgres"]
-    standalone["standalone/<br/>published image · own config"]
-    scanners[["component: scanners<br/>ClamAV · Rspamd"]]
-    roundcube[["component: roundcube"]]
-    pgc[["component: postgres<br/>queue backend"]]
-
-    base --> minimal
-    base --> standalone
     minimal --> full & bench & postgres
-    scanners --> full & bench
-    roundcube --> full
-    pgc --> postgres
+    scanners[["scanners component<br/>ClamAV · Rspamd"]]
+    roundcube[["roundcube<br/>component"]]
+    pgc[["postgres component<br/>queue backend"]]
+    full --- scanners
+    full --- roundcube
+    bench --- scanners
+    postgres --- pgc

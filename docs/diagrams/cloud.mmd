@@ -1,30 +1,27 @@
 flowchart TB
     internet(["Internet"])
-
-    subgraph hostfw["Host"]
-        fw["firewalld<br/>ssh · 25 · 80 · 443 · 587 · 993 · 143 · 110"]
-        guard["nftables docker-guard<br/>drops any other published port"]
-    end
+    fw["firewalld<br/>ssh · 25 · 80 · 443 · 587 · 993 · 143 · 110"]
+    guard["nftables docker-guard<br/>drops any other published port"]
+    internet --> fw --> guard
 
     subgraph stack["Compose stack + cloud overlay"]
-        caddy["Caddy<br/>Let's Encrypt · HTTPS · autoconfig"]
+        direction TB
+        caddy["Caddy<br/>Let's Encrypt · HTTPS"]
         node0["MTA<br/>25 → 2525 · 587 → 2587"]
         haproxy["HAProxy<br/>993 · 143 · 110"]
         webmail["Webmail"]
         mailbox["Mailbox replicas"]
-        private["Admin console 8025 · LDAP · Postgres<br/>Valkey · Rspamd · metrics · ManageSieve<br/>(127.0.0.1 only)"]
+        tls[("Certificate<br/>.secrets/mailbox-tls")]
     end
 
-    certs[("Certificate<br/>.secrets/mailbox-tls")]
-    timer["elemta-cert-sync.timer<br/>twice a day"]
-
-    internet --> fw --> guard
     guard -->|"80, 443"| caddy
     guard -->|"25, 587"| node0
     guard -->|"993, 143, 110"| haproxy
     caddy --> webmail
     haproxy --> mailbox
-    caddy -. "issues and renews" .-> timer
-    timer -->|"copies"| certs
-    certs -->|"read on change"| node0 & mailbox
+    caddy -.->|"cert-sync timer,<br/>twice a day"| tls
+    node0 & mailbox -.->|"read on change"| tls
+
+    private["127.0.0.1 only: admin console 8025, LDAP,<br/>Postgres, Valkey, Rspamd, metrics, ManageSieve"]
     admin(["Administrator"]) -->|"ssh -L 8025"| private
+    tls ~~~ admin

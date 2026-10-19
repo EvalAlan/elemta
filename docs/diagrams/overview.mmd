@@ -1,40 +1,27 @@
-flowchart LR
-    internet(["Sending mail servers"])
-    remote(["Recipients' mail servers"])
+flowchart TB
+    senders(["Sending<br/>mail servers"])
     apps(["Mail apps<br/>Thunderbird, phones"])
     browser(["Web browser"])
     admin(["Administrator"])
 
-    subgraph mta["Elemta MTA"]
-        smtp["SMTP 25<br/>submission 587"]
-        checks["SPF · DKIM · DMARC · ARC<br/>ClamAV · Rspamd · RBLs"]
-        queue[("Queue")]
-        smtp --> checks --> queue
-    end
+    webmail["<b>Webmail</b><br/>mail · calendar · contacts · tasks<br/>filters · 2FA · app passwords"]
+    console["<b>Admin console</b><br/>queue · domains · accounts · health"]
+    mta["<b>Elemta MTA</b><br/>SMTP 25 · submission 587<br/>SPF · DKIM · DMARC · ARC<br/>ClamAV · Rspamd · RBLs · queue"]
+    mailbox["<b>Mailbox service</b><br/>IMAP 993 / 143 · POP3 110<br/>LMTP + Sieve filters · ManageSieve<br/>2FA and app-password API"]
 
-    subgraph mailbox["Mailbox service"]
-        lmtp["LMTP + Sieve filters"]
-        imap["IMAP 993/143 · POP3 110"]
-        msieve["ManageSieve"]
-        secapi["Security API<br/>2FA · app passwords"]
-    end
-
+    remote(["Recipients'<br/>mail servers"])
     pg[("Postgres<br/>metadata")]
     bodies[("File or S3<br/>message bodies")]
-    webmail["Webmail<br/>mail · calendar · contacts · tasks"]
-    console["Admin console"]
+    ldap[("LDAP<br/>accounts")]
 
-    internet -->|"inbound mail"| smtp
-    apps -->|"send"| smtp
-    queue -->|"local recipients, LMTP over TLS"| lmtp
-    queue -->|"remote recipients, DKIM-signed"| remote
-    apps -->|"read"| imap
     browser -->|"HTTPS"| webmail
-    webmail -->|"IMAP, internal"| imap
-    webmail -->|"ManageSieve"| msieve
-    webmail -->|"submission"| smtp
-    webmail -->|"2FA, app passwords"| secapi
     admin --> console
-    console --> queue
-    lmtp & imap & secapi --> pg
-    lmtp & imap --> bodies
+    senders -->|"inbound"| mta
+    apps -->|"send"| mta
+    webmail -->|"submission"| mta
+    console --> mta
+    apps -->|"read"| mailbox
+    webmail -->|"IMAP · Sieve · 2FA"| mailbox
+    mta -->|"local mail,<br/>LMTP over TLS"| mailbox
+    mta -->|"remote mail,<br/>DKIM-signed"| remote
+    mailbox --> pg & bodies & ldap

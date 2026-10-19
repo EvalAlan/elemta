@@ -1,7 +1,6 @@
-flowchart LR
-    imap(["localhost:11443 IMAP"])
-    lmtp(["localhost:12424 LMTP"])
-    subgraph lab["Isolated mailbox lab: four containers"]
+flowchart TB
+    ports(["localhost:11443 IMAP · localhost:12424 LMTP"])
+    subgraph lab["Isolated lab: four containers"]
         edge["mailbox edge"]
         a["mailbox-a"]
         b["mailbox-b"]
@@ -10,9 +9,8 @@ flowchart LR
     bodies[("shared body volume")]
     stack["Original SMTP, webmail, Dovecot,<br/>LDAP and Valkey stack"]
 
-    imap --> edge
-    lmtp --> edge
+    ports --> edge
     edge --> a & b
     a & b --> pg
     a & b --> bodies
-    lab -. "LDAP only, over the existing Docker network" .-> stack
+    lab -. "LDAP only, over the<br/>existing Docker network" .-> stack

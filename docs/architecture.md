@@ -16,8 +16,9 @@ console** runs the server. An **LDAP directory** holds the accounts.
 
 ![Elemta components and how mail moves between them](diagrams/overview.png)
 
-Every part looks accounts up in the **LDAP directory** (addresses, aliases,
-quotas, groups and passwords), so it is left out of the diagram. SMTP AUTH
+The **LDAP directory** (addresses, aliases, quotas, groups and passwords) is
+drawn under the mailbox service, but the MTA, webmail and admin console use
+it too; those lines are left out to keep the diagram readable. SMTP AUTH
 also asks the mailbox service's security API whether a user requires app
 passwords.
 

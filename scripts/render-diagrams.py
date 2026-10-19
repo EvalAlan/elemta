@@ -32,7 +32,7 @@ body {{ margin: 0; background: #fff; }}
 #d {{ display: inline-block; padding: {pad}px; }}
 </style></head><body><div id="d"></div><script src="{mermaid}"></script><script>
 mermaid.initialize({{startOnLoad: false, theme: "default", securityLevel: "strict",
-  flowchart: {{useMaxWidth: false, htmlLabels: true}}, sequence: {{useMaxWidth: false}},
+  flowchart: {{useMaxWidth: false, htmlLabels: true}}, sequence: {{useMaxWidth: false, actorMargin: 40, width: 130, noteMargin: 8}},
   themeVariables: {{fontFamily: "Helvetica, Arial, sans-serif", fontSize: "15px"}}}});
 mermaid.render("svg", {source}).then(r => {{
   const d = document.getElementById("d");
