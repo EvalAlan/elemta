@@ -290,7 +290,7 @@ func TestBrowserCollectsErrors(t *testing.T) {
 	t.Fatal("console.error was not collected")
 }
 
-// TestBrowserCalendarFitsWindow pins that the month, week and day views fit
+// TestBrowserCalendarFitsWindow pins that the month, week, day and agenda views fit
 // the window without a page scrollbar, at a large and a small desktop size,
 // and that the sidebar import shows as a link rather than a file control.
 // Set CALENDAR_SHOTS to a directory to keep screenshots for a look.
@@ -300,10 +300,17 @@ func TestBrowserCalendarFitsWindow(t *testing.T) {
 	shots := os.Getenv("CALENDAR_SHOTS")
 	for _, size := range [][2]int64{{1900, 1000}, {1280, 720}} {
 		b.run(chromedp.EmulateViewport(size[0], size[1]))
-		for _, view := range []string{"month", "week", "day"} {
+		for _, view := range []string{"month", "week", "day", "agenda"} {
 			b.run(chromedp.Navigate(b.url("/calendar?view="+view)), chromedp.WaitVisible(chromedp.CSS(".cal-body")))
 			if got := evalAs[string](b, `document.querySelector(".segmented [aria-current=page]")?.textContent || ""`); !strings.EqualFold(got, view) {
 				t.Fatalf("%s: current view link = %q", view, got)
+			}
+			if view == "agenda" {
+				// A long agenda must scroll inside its list, not the page.
+				// The harness has few events, so repeat them.
+				if !evalAs[bool](b, `(() => { const a = document.querySelector(".agenda"); const html = a.innerHTML; for (let i = 0; i < 40; i++) a.insertAdjacentHTML("beforeend", html); return a.scrollHeight > a.clientHeight })()`) {
+					t.Errorf("%dx%d agenda: a long list does not scroll inside itself", size[0], size[1])
+				}
 			}
 			if over := evalAs[float64](b, `document.documentElement.scrollHeight - innerHeight`); over > 0 {
 				t.Errorf("%dx%d %s view: page scrolls by %vpx", size[0], size[1], view, over)
