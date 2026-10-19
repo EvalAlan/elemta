@@ -2,79 +2,109 @@
 
 # Elemta
 
-Elemta is a high-performance SMTP server written in Go with a modular pipeline, queue management, API/web surfaces, and production-focused security controls.
+Elemta is a self-hosted email platform written in Go: a mail server (MTA),
+its own mailbox server, webmail with calendar, contacts and tasks, and an
+admin console, built to work together and deployed as one stack.
 
-## Highlights
+## What's in the stack
 
-- SMTP server with extensible processing pipeline
-- Queue backends: `file` (default), `sqlite`, `postgres` (multi-node) and `indexedfs`
-- Built-in queue/API/web tooling for operational visibility
-- Delivery/auth integrations (file, LDAP, SQL backends)
-- Docker Compose deployment, with an SSH deploy workflow that health-checks and rolls back
-- Prometheus/Grafana-ready metrics and health endpoints
+```text
+                 Internet                                 People
+                    │                           ┌────────────┼──────────────┐
+            SMTP 25 │ submission 587            │ HTTPS      │ IMAP 993/143 │ CalDAV/CardDAV
+                    ▼                           ▼            │ POP3 110     ▼
+  ┌──────────────────────────────┐   ┌──────────────────┐    │   ┌───────────────────┐
+  │ Elemta MTA                   │   │ Webmail          │    │   │ Admin console     │
+  │ SPF · DKIM · DMARC · ARC     │   │ mail · calendar  │    │   │ queue · domains   │
+  │ ClamAV · Rspamd · RBLs       │   │ contacts · tasks │    │   │ accounts · health │
+  │ rate limits · queue          │   │ filters · 2FA    │    │   └───────────────────┘
+  └──────────────┬───────────────┘   └────────┬─────────┘    │
+        LMTP over│TLS                   IMAP, │ManageSieve   │
+                 ▼                            ▼              ▼
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ Mailbox service (two or more replicas behind HAProxy)            │
+  │ IMAP · POP3 · LMTP · Sieve · ManageSieve · app passwords · TOTP  │
+  │ Postgres metadata · file or S3 message bodies                    │
+  └──────────────────────────────────────────────────────────────────┘
+                 LDAP directory: accounts, aliases, quotas, groups
+```
 
-## Quick Start
+### Mail server (MTA)
 
-### 1) Local development (recommended)
+- Inbound MX and authenticated submission (STARTTLS, LDAP, file or SQL users)
+- SPF, DKIM verification and signing, DMARC, ARC sealing, DNS blocklists
+- ClamAV and Rspamd scanning, per-sender and per-destination rate limits
+- Queue backends: `file` (default), `sqlite`, `indexedfs`, and `postgres` for
+  multiple nodes; delivery over LMTP (with TLS) or SMTP, sending IP pools
+- Defences against SMTP smuggling and command injection; plugin pipeline
+
+### Mailbox service
+
+- IMAP4rev1 on 993 (implicit TLS) and 143 (STARTTLS required), POP3
+  on 110 (STLS required)
+- IDLE, MOVE, CONDSTORE/QRESYNC, SORT, THREAD, QUOTA and indexed full-text
+  search, so phones and desktop clients resynchronise quickly
+- Sieve filtering at delivery (fileinto, vacation, regex, redirect) and
+  ManageSieve for filter editors
+- Postgres metadata with file or S3 message storage; stateless replicas behind
+  HAProxy; backups, a restore drill and a consistency check
+
+### Webmail
+
+- Mail with conversations, search, rich-text compose and attachments
+- Calendar with invitations, contacts and tasks, synced to phones over CalDAV
+  and CardDAV
+- Mail filters and out-of-office replies
+- Two-step verification (TOTP), app passwords for mail apps, password
+  recovery, light and dark themes
+
+### Administration
+
+- Web admin console for the queue, domains, accounts, plugins and health
+- `elemta provision` CLI for domains, accounts, aliases and quotas
+- Prometheus metrics, health endpoints and structured logs
+
+## Quick start
 
 ```bash
 git clone https://github.com/EvalAlan/elemta.git
 cd elemta
-
-# Minimal stack (fast)
 make install-dev
-
-# Full stack (clamav/rspamd/roundcube included)
-# make install-dev-full
 ```
 
-Useful commands:
+This starts the development stack. When it's ready:
 
-```bash
-make status
-make logs-elemta
-make test
-make test-load
-```
+| What | Where |
+|---|---|
+| Webmail | http://localhost:8027 (sign in as `user@example.com`, password `password`) |
+| Admin console | http://localhost:8025 (login printed by the install) |
+| SMTP / submission | `localhost:2525` / `localhost:2587` |
+| IMAP | `localhost:993` (TLS, self-signed development certificate) |
 
-### 2) Run from source
+`make install-dev-full` adds ClamAV, Rspamd and Roundcube. Day to day:
+`make status`, `make logs-elemta`, `make test`.
 
-```bash
-make build
-./bin/elemta server --config ./config/elemta.toml
-```
+Other ways to run it:
 
-### 3) Docker Compose directly
+- **One internet-facing server** with real certificates, the public mail ports
+  and a hardened host: [Cloud dev server](docs/cloud-dev.md).
+- **From source:** `make build`, then `./bin/elemta server --config ./config/elemta.toml`.
+- **Kubernetes:** `make k8s-install-dev-full`, or Elemta alone with
+  `kubectl apply -k deployments/kubernetes/standalone`. See
+  [deployments/kubernetes](deployments/kubernetes/README.md).
 
-```bash
-docker compose -f deployments/compose/docker-compose.yml up -d
-```
-
-### 4) Kubernetes (optional)
-
-The same dev stack on a local cluster (k3s), next to the Compose one:
-
-```bash
-make k8s-install-dev-full     # make k8s-help for the rest
-```
-
-Or Elemta on its own from the published image:
-`kubectl apply -k deployments/kubernetes/standalone`. See
-[deployments/kubernetes](deployments/kubernetes/README.md).
-
-## Core Docs
+## Documentation
 
 - [Documentation index](docs/README.md)
-- [Installation](docs/installation.md)
-- [Configuration](docs/configuration.md)
-- [Queue backend operator runbook](docs/queue-backend-runbook.md)
-- [Queue management](docs/queue_management.md)
-- [Testing](docs/testing.md)
-- [Production deployment](docs/production-deployment.md)
-- [Production readiness — honest assessment & limitations](docs/production-readiness.md)
-- [API reference](docs/api-reference.md)
+- [User guide](docs/user-guide.md): webmail, mail apps, two-step verification
+- [Installation](docs/installation.md) and [Configuration](docs/configuration.md)
+- [Mailbox service](docs/mailbox-service.md)
+- [Mail administration](docs/mail-administration.md)
+- [Cloud dev server](docs/cloud-dev.md)
+- [Production deployment](docs/production-deployment.md) and
+  [production readiness: honest assessment and limitations](docs/production-readiness.md)
 
-## Security & Project Governance
+## Security and project governance
 
 - [Security policy](SECURITY.md)
 - [Contributing guide](CONTRIBUTING.md)
@@ -86,7 +116,7 @@ Or Elemta on its own from the published image:
 PRs are welcome. Before opening one:
 
 1. Run tests and lint locally (`make test` and `make lint`)
-2. Update docs when behavior/config changes
+2. Update docs when behaviour or configuration changes
 3. Keep changes focused and scoped
 
 Full guide: [CONTRIBUTING.md](CONTRIBUTING.md)

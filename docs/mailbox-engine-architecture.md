@@ -300,6 +300,7 @@ multiple mailbox shards within their assigned cells.
    movement, and expand gradually. Millions of mailboxes is the aggregate
    design target; no present deployment has demonstrated that capacity.
 
-The first service does not replace Dovecot or migrate existing mail.
-See [remaining replacement gates](mailbox-service.md#remaining-replacement-gates)
+The service now replaces Dovecot in the Compose and cloud stacks, but it
+doesn't yet migrate existing mail. See
+[status and remaining gaps](mailbox-service.md#status-and-remaining-gaps)
 for the functionality and qualification still required.

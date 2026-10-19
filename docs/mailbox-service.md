@@ -282,16 +282,26 @@ Core tests cover independent writer pools, UID allocation, restart state,
 quotas, copy/move/expunge, interrupted writes, expired upload fencing, cleanup,
 account/address isolation and cross-replica IDLE. CI runs them against Postgres.
 
-## Remaining replacement gates
+## Status and remaining gaps
 
-This service can receive and serve mail; it is not yet a complete Dovecot
-replacement or a demonstrated million-mailbox deployment. Keep the existing
-server until these remaining gates are met:
+The mailbox service is the mail store of the development Compose stack and
+the [cloud deployment](cloud-dev.md). Dovecot is gone from both; only the
+Kubernetes dev overlay still runs it, until it is ported. The service serves
+the IMAP extensions mainstream clients rely on, along with POP3, Sieve,
+ManageSieve, two-step verification and app passwords. It has been exercised
+with the webmail, Thunderbird, scripted IMAP and POP3 clients, and the
+backup and restore drill.
 
-- Backend/account migration, UID-preserving import, placement automation,
-  tenant/cell management and live ownership fencing administration.
-- Production fencing administration.
-- Real Ceph testing, sustained load and additional desktop/mobile client QA.
+It has not yet been demonstrated as a large production deployment. Before
+relying on it at scale:
+
+- Migration tooling: import from an existing server that preserves UIDs, and
+  account placement, tenant and cell management.
+- Production fencing administration across replicas.
+- Real Ceph or other S3 testing, sustained load, and wider desktop and mobile
+  client QA.
+- A production Compose file or chart that includes the service
+  (`docker-compose.prod.yml` doesn't yet).
 
 The PostgreSQL and body-storage HA requirements are described in the
 [architecture proposal](mailbox-engine-architecture.md); the local lab does

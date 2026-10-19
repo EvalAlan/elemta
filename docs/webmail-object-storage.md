@@ -1,6 +1,6 @@
 # Postgres object storage
 
-Mail remains in Dovecot. Calendar events, contacts, tasks and settings can
+Mail stays in the mailbox service. Calendar events, contacts, tasks and settings can
 use Postgres instead of the default hidden IMAP folders. Webmail and DAV
 use the same backend. Sessions continue to use their configured backend.
 
@@ -79,7 +79,7 @@ The test covers rollback, concurrent first migrations, mailbox isolation,
 resource-name uniqueness and preservation, timestamps, binary data and
 deletion without reimport. It removes its own mailbox fixtures.
 
-For the running development Dovecot, also set `ELEMTA_TEST_OBJECT_IMAP=1`.
+For the running development stack, also set `ELEMTA_TEST_OBJECT_IMAP=1`.
 This uses `stressuser20@example.com` / `testpass123`, copies its existing
 objects into the disposable database, and exercises DAV against a temporary
 HTTP server without switching the deployed webmail backend. Set

@@ -25,7 +25,7 @@ cd elemta
 make install-dev
 ```
 
-Starts the core services (Elemta + web + Dovecot + LDAP + Valkey + a caching DNS resolver) and bootstraps local dev defaults. The dashboard is on http://localhost:8025, SMTP on 2525, submission on 2587.
+Starts the core services and bootstraps local dev defaults: the Elemta MTA, the admin console, the mailbox service (two replicas behind HAProxy, with Postgres), webmail, LDAP, Valkey and a caching DNS resolver. Webmail is on http://localhost:8027 (`user@example.com` / `password`), the admin console on http://localhost:8025, SMTP on 2525, submission on 2587 and IMAP on 993.
 
 ### Full dev stack
 
@@ -33,7 +33,7 @@ Starts the core services (Elemta + web + Dovecot + LDAP + Valkey + a caching DNS
 make install-dev-full
 ```
 
-Includes extra services (ClamAV, Rspamd, Roundcube on http://localhost:8026) in addition to the core stack.
+Adds ClamAV and Rspamd scanning, and Roundcube on http://localhost:8026 as a second webmail client reading the same mailboxes.
 
 Other variants: `make install-dev-postgres` (Postgres queue), `make install-dev-mailauth` (outbound DKIM signing and ARC sealing lab, delivering to a local sink), and `make install-dev-bench` (delivers to a discarding LMTP sink, for benchmarks only).
 

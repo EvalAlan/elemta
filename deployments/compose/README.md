@@ -5,8 +5,9 @@ targets set the environment the files expect.
 
 | File | What it is | How to run |
 |---|---|---|
-| `docker-compose.yml` | Dev stack: Elemta, dashboard, caching resolver, Dovecot, LDAP, Valkey, LMTP sink, and optionally ClamAV, Rspamd, Roundcube | `make install-dev`, `make install-dev-full` |
-| `docker-compose.prod.yml` | Production stack, run from the ghcr.io image | Deploy workflow; see [Production Deployment](../../docs/production-deployment.md) |
+| `docker-compose.yml` | Dev stack: Elemta, admin console, mailbox service (two replicas, HAProxy, Postgres), webmail, caching resolver, LDAP, Valkey, and optionally ClamAV, Rspamd, Roundcube and an LMTP sink | `make install-dev`, `make install-dev-full` |
+| `docker-compose.cloud.yml` | Overlay: the dev stack on one internet-facing server, with Let's Encrypt and only the public mail ports | `scripts/cloud-deploy.sh`; see [Cloud dev server](../../docs/cloud-dev.md) |
+| `docker-compose.prod.yml` | Production MTA and admin console, run from the ghcr.io image | Deploy workflow; see [Production Deployment](../../docs/production-deployment.md) |
 | `docker-compose-mailauth.yml` | Overlay: DKIM signing / ARC sealing lab with its own DNS zone | `make install-dev-mailauth` |
 | `docker-compose-elk.yml` | Overlay: Filebeat, Elasticsearch and Kibana log shipping | `make elk-up` |
 | `docker-compose-full.yml` | Older ELK overlay used by `scripts/setup-elk.sh` | `scripts/setup-elk.sh` |
@@ -22,12 +23,15 @@ targets set the environment the files expect.
 | 2587 | Submission |
 | 8025 | Dashboard and API |
 | 8026 | Roundcube (full stack) |
+| 8027 | Webmail |
 | 9080 | Prometheus metrics (container port 8080) |
 | 11334 | Rspamd web UI (full stack) |
 | 1389 / 1636 | LDAP / LDAPS |
-| 14143 | IMAP (Dovecot) |
-| 2424 | LMTP (Dovecot) |
-| 4190 | ManageSieve |
+| 993 | IMAPS (mailbox service) |
+| 14143 | IMAP, plaintext, internal (mailbox service) |
+| 143 / 110 | IMAP STARTTLS / POP3, loopback only |
+| 2424 | LMTP (mailbox service) |
+| 4190 | ManageSieve (mailbox service) |
 | 6379 | Valkey |
 
 All services share `elemta_network`, which has a fixed subnet

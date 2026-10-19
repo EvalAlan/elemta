@@ -136,7 +136,8 @@ metrics_path = "/metrics"
 health_path = "/health"
 
 # Use remote SMTP delivery for outbound mail. DKIM signing is intentionally not
-# applied when mode is "lmtp" because that path is local delivery to Dovecot.
+# applied when mode is "lmtp" because that path is local delivery to the
+# mailbox server.
 [delivery]
 mode = "smtp"
 
