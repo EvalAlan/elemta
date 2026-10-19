@@ -32,7 +32,7 @@ print_info() {
 print_header
 
 # Change to the parent directory (Elemta project root)
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 # Test SMTP connection
 print_info "Testing SMTP connection..."

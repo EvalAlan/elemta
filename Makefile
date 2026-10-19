@@ -2,8 +2,8 @@
 	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
-	install-dev-bench uninstall run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
-	rebuild rebuild-dev docker docker-build docker-setup docker-down update lint lint-fix fmt
+	install-dev-bench setup run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
+	rebuild rebuild-dev docker-build lint lint-fix fmt
 
 # Core paths/config
 .DEFAULT_GOAL := all
@@ -104,7 +104,7 @@ gotchas:
 	@echo "    backend and ARC sealing need a restart; the UI and logs say so."
 	@echo "  • 'install-dev-mailauth' is a different stack, not an add-on. Delivery mode is a"
 	@echo "    single global setting, so it sends over remote SMTP to a sink at :8029 instead"
-	@echo "    of over LMTP to Roundcube. That is what makes DKIM signing and ARC sealing"
+	@echo "    of over LMTP to the mailbox service. That is what makes DKIM signing and ARC sealing"
 	@echo "    visible. Run any other install-dev target to go back; it cleans up for you."
 	@echo "  • Logs are line-delimited JSON on stdout and in /app/logs/elemta.log. Only"
 	@echo "    'level' from [logging] is read; type/output/file are ignored and the server"
@@ -174,21 +174,10 @@ run: build
 test-webmail-browser:
 	go test -tags browser -run Browser -count=1 ./internal/webmail/
 
+# The same unit tests CI runs. Packages that need Postgres (the mailbox
+# service) skip without ELEMTA_TEST_MAILBOX_DSN; see docs/testing.md.
 test:
-	@echo "Running Go tests..."
-	@echo "⚠️  Note: Some packages require Docker services to be running"
-	@echo "For complete integration tests, run: make test-docker"
-	@go test -v -short -timeout 60s ./internal/antispam ./internal/api ./internal/auth ./internal/datasource ./internal/delivery ./internal/plugin ./internal/queue 2>&1; \
-	status=$$?; \
-	echo ""; \
-	if [ $$status -eq 0 ]; then \
-		echo "✅ All unit tests passed"; \
-	else \
-		echo "⚠️  Some unit tests failed (exit code: $$status)"; \
-		echo "Note: Integration tests may require Docker services"; \
-	fi; \
-	echo "💡 Run 'make test-docker' for full integration test suite (21 tests)"; \
-	exit $$status
+	go test -short ./...
 
 test-centralized:
 	@echo "Running centralized test suite..."
@@ -205,7 +194,7 @@ test-docker: init-test-env
 
 test-auth: ## Quick authentication test
 	@echo "Running authentication test..."
-	./install/test-auth.sh
+	./scripts/dev/test-auth.sh
 
 test-security:
 	@echo "Running security tests..."
@@ -213,7 +202,7 @@ test-security:
 
 test-load:
 	@echo "Running SMTP load tests..."
-	@echo "⚠️  Note: Requires Docker services running (make docker-setup)"
+	@echo "⚠️  Note: Requires Docker services running (make install-dev)"
 	python3 tests/performance/smtp_load_test.py
 
 test-race-smoke:
@@ -255,21 +244,10 @@ fmt:
 		echo "⚠️  goimports not installed. Install with: go install golang.org/x/tools/cmd/goimports@latest"; \
 	fi
 
-# Docker targets
-docker: docker-build up
-
 docker-build:
 	@echo "Building Docker image..."
 	docker compose -f $(COMPOSE_FILE) build
 
-# Advanced/internal targets (not shown in help)
-
-# Legacy CLI targets (cli tools built by main 'build' target)
-cli-install: build
-	@echo "Installing elemta-cli to $(GOPATH)/bin..."
-	@cp bin/elemta-cli $(GOPATH)/bin/ 2>/dev/null || echo "⚠️  GOPATH not set, skipping install"
-
-# Legacy docker targets (use 'up'/'down' instead)
 configure-queue-backend:
 	@echo "⚙️  Configuring queue backend: $(QUEUE_BACKEND)"
 	@if [ "$(QUEUE_BACKEND)" != "file" ] && [ "$(QUEUE_BACKEND)" != "sqlite" ] && [ "$(QUEUE_BACKEND)" != "postgres" ]; then \
@@ -461,15 +439,28 @@ print-dev-summary:
 
 # Help target
 help:
-	@echo "Elemta - High Performance SMTP Server"
+	@echo "Elemta - self-hosted email: MTA, mailbox service, webmail and admin console"
 	@echo ""
 	@echo "⚡ Quick Start:"
-	@echo "  make install-dev              # Minimal dev stack, plugins on, prints a dashboard login"
+	@echo "  make install                  # Setup wizard: a dev stack, or a mail server for a real domain"
+	@echo "  make install-dev              # Dev stack: MTA, mailbox service, webmail; prints a dashboard login"
 	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
 	@echo "  make install-dev-bench        # Scanners on, delivery DISCARDED — for throughput work"
 	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
 	@echo "  make install-dev-mailauth     # Dev stack for SPF/DKIM/DMARC/ARC: fixed DNS, mail lands at :8029"
-	@echo "  make install                  # Interactive production setup"
+	@echo ""
+	@echo "📬 Mail and webmail (dev stack):"
+	@echo "  Webmail           http://localhost:8027  (user@example.com / password)"
+	@echo "  IMAP / SMTP       localhost:993 (TLS) / localhost:2525, submission :2587"
+	@echo "  test-mailbox          - Mailbox service tests (set ELEMTA_TEST_MAILBOX_DSN for Postgres)"
+	@echo "  test-webmail-browser  - Drive the webmail in headless Chromium"
+	@echo "  mailbox-dev-up / -down / -status   - Isolated mailbox service lab (own ports)"
+	@echo "  mailbox-ha-dev-up / -down / -status - Isolated high-availability lab"
+	@echo ""
+	@echo "☁️  One internet-facing server (docs/cloud-dev.md):"
+	@echo "  make install, choose 2   - Checks DNS and the host, secures Docker and the firewall,"
+	@echo "                             deploys with Let's Encrypt, creates the first accounts"
+	@echo "  scripts/cloud-deploy.sh  - Redeploy after an update (run on the server)"
 	@echo ""
 	@echo "🔑 Accounts & Access:"
 	@echo "  Web UI            http://localhost:8025  (login required — there is no guest access)"
@@ -505,7 +496,7 @@ help:
 	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
 	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
 	@echo "  sink-up        - Discard delivered mail (~4500/s) so benchmarks measure Elemta"
-	@echo "  sink-down      - Delivery to real mailboxes + Roundcube at :8026"
+	@echo "  sink-down      - Delivery to the mailbox service again"
 	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
 	@echo "                   SPAM_DIR=/path/to/spam [HAM_DIR=... TRAIN=2000 TEST=200]"
 	@echo "  elk-status     - Cluster health and how many events are indexed"
@@ -515,7 +506,7 @@ help:
 	@echo ""
 	@echo "🔧 Build & Test:"
 	@echo "  build          - Build all binaries (server, queue, cli)   clean - Remove artifacts"
-	@echo "  test           - Go unit tests            test-docker    - Integration suite"
+	@echo "  test           - Go unit tests, as CI     test-docker    - Integration suite"
 	@echo "  test-load      - SMTP load tests          test-race-smoke - Session race checks"
 	@echo "  test-auth      - Authentication tests     test-security  - Security tests"
 	@echo "  lint / lint-fix / fmt   - Code quality"
@@ -789,9 +780,8 @@ sink-down:
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-mailbox DELIVERY_PORT=2424
 	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
 	@docker compose -f $(COMPOSE_FILE) stop elemta-sink >/dev/null
-	@docker compose -f $(COMPOSE_FILE) up -d elemta-roundcube >/dev/null 2>&1 || true
-	@echo "✅ Delivery goes to Elemta mailbox storage; mail lands in real mailboxes."
-	@echo "   ✉️  Roundcube: http://localhost:8026  (user@example.com / password)"
+	@echo "✅ Delivery goes to the mailbox service; mail lands in real mailboxes."
+	@echo "   ✉️  Webmail: http://localhost:8027  (user@example.com / password)"
 
 # Rewrites [delivery] host/port. Same approach as configure-plugins: the repo
 # config is the source that gets seeded, so it is what has to change.
@@ -851,8 +841,6 @@ mailauth-check-fail:
 	@echo "Failure example queued. SPF/DMARC fail but reporting mode accepts it."
 
 
-docker-setup: install-dev-full
-
 # Modern Docker commands
 up:
 	@echo "🚀 Starting Elemta services..."
@@ -889,85 +877,21 @@ status:
 rebuild:
 	@echo "🔨 Rebuilding and restarting Elemta..."
 	@$(MAKE) down
-	docker compose -f $(COMPOSE_FILE) build --no-cache elemta elemta-web
+	docker compose -f $(COMPOSE_FILE) build --no-cache elemta elemta-mailbox-a
 	@$(MAKE) up
 	@echo "✅ Rebuild complete"
 
 rebuild-dev:
 	@echo "🔨 Quick rebuild for development..."
 	@$(MAKE) down
-	docker compose -f $(COMPOSE_FILE) build elemta elemta-web
+	docker compose -f $(COMPOSE_FILE) build elemta elemta-mailbox-a
 	@$(MAKE) up
 	@echo "✅ Development rebuild complete"
 
-docker-down: down-volumes
-
-# Installation and update targets
-install:
-	@echo "🚀 Elemta Production Installation"
-	@echo "=================================="
-	@if [ -f .env ]; then \
-		echo "⚠️  .env file already exists."; \
-		read -p "Overwrite? (y/N): " confirm; \
-		if [ "$$confirm" != "y" ] && [ "$$confirm" != "Y" ]; then \
-			echo "Installation cancelled."; \
-			exit 1; \
-		fi; \
-	fi
-	@echo ""
-	@echo "📝 Production Configuration"
-	@echo "This will create a production-ready .env file."
-	@echo ""
-	@read -p "Hostname [mail.example.com]: " hostname; \
-	hostname=$${hostname:-mail.example.com}; \
-	read -p "SMTP Port [25]: " smtp_port; \
-	smtp_port=$${smtp_port:-25}; \
-	read -p "Admin Email [admin@example.com]: " admin_email; \
-	admin_email=$${admin_email:-admin@example.com}; \
-	read -p "Enable Let's Encrypt? (y/N): " letsencrypt; \
-	if [ "$$letsencrypt" = "y" ] || [ "$$letsencrypt" = "Y" ]; then \
-		letsencrypt_enabled=true; \
-	else \
-		letsencrypt_enabled=false; \
-	fi; \
-	read -p "LDAP Host [ldap]: " ldap_host; \
-	ldap_host=$${ldap_host:-ldap}; \
-	read -p "LDAP Base DN [dc=example,dc=com]: " ldap_base; \
-	ldap_base=$${ldap_base:-dc=example,dc=com}; \
-	echo ""; \
-	echo "📝 Generating .env..."; \
-	cat .env.example | sed \
-		-e "s/HOSTNAME=.*/HOSTNAME=$$hostname/" \
-		-e "s/LISTEN_PORT=.*/LISTEN_PORT=$$smtp_port/" \
-		-e "s/LETSENCRYPT_EMAIL=.*/LETSENCRYPT_EMAIL=$$admin_email/" \
-		-e "s/LETSENCRYPT_DOMAIN=.*/LETSENCRYPT_DOMAIN=$$hostname/" \
-		-e "s/LETSENCRYPT_ENABLED=.*/LETSENCRYPT_ENABLED=$$letsencrypt_enabled/" \
-		-e "s/LDAP_HOST=.*/LDAP_HOST=$$ldap_host/" \
-		-e "s/LDAP_BASE_DN=.*/LDAP_BASE_DN=$$ldap_base/" \
-		> .env
-	@echo "✅ .env created successfully"
-	@echo ""
-	@echo "📋 Next Steps:"
-	@echo "   1. Review and edit .env for your environment"
-	@echo "   2. Configure TLS certificates (or enable Let's Encrypt)"
-	@echo "   3. Update LDAP credentials in .env"
-	@echo "   4. Run: make up"
-	@echo ""
-	@echo "🔐 Security Reminders:"
-	@echo "   • Change default passwords in .env"
-	@echo "   • Configure TLS certificates for production"
-	@echo "   • Review memory and connection limits"
-	@echo "   • Set up monitoring and alerts"
-
-
-uninstall:
-	@echo "🗑️  Uninstalling Elemta..."
-	./install/uninstall.sh
-
-# Legacy update targets (use 'make rebuild' instead)
-# Kept because install/README.md and deployments/compose/README.md name them.
-update: rebuild
-update-restart: restart
+# The setup wizard: a development stack, or a mail server for a real domain
+# on an internet-facing host (scripts/setup.sh, docs/installation.md).
+install setup:
+	@./scripts/setup.sh
 
 # ---------------------------------------------------------------------------
 # Kubernetes: the same dev stack on a local cluster (k3s on the dev box), as an

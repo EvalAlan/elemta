@@ -88,8 +88,20 @@ These steps were done once for Rocky Linux 10 on a 2 vCPU / 4 GB Linode.
 
 ## Deploying
 
-From a checkout on your workstation, send the committed tree to the server and
-run the deploy script there:
+The simplest way is the setup wizard, on the server itself:
+
+```
+git clone https://github.com/EvalAlan/elemta.git && cd elemta
+make install        # choose 2, "a mail server for a real domain"
+```
+
+It checks DNS and the host, applies the host preparation above (asking
+first), deploys, and creates the first accounts. `scripts/setup.sh --check`
+runs only the checks.
+
+To deploy by hand, or to update a server from a checkout on your
+workstation, send the committed tree to the server and run the deploy script
+there:
 
 ```
 git archive HEAD | ssh you@dev.example.net 'mkdir -p ~/elemta && tar -x -C ~/elemta'

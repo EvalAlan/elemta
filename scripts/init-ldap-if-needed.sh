@@ -1,6 +1,6 @@
 #!/bin/bash
 # Initialize LDAP users if they don't exist
-# This script runs after docker-setup to ensure users are loaded
+# Run by the install-dev targets to make sure the users are loaded
 
 set -e
 

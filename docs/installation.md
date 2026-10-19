@@ -10,14 +10,38 @@ This guide reflects the **current** install and run paths in this repository.
 
 ---
 
-## 1) Recommended: Docker-based development setup
-
-Clone and enter the repo:
+## The setup wizard
 
 ```bash
 git clone https://github.com/EvalAlan/elemta.git
 cd elemta
+make install
 ```
+
+`make install` (or `make setup`) runs `scripts/setup.sh`, which asks what you
+are setting up:
+
+1. **A development stack on this machine.** It runs `make install-dev`, or
+   `make install-dev-full` if you also want the scanners and Roundcube.
+2. **A mail server for a real domain, on an internet-facing host.** It:
+   - checks the prerequisites, memory and disk;
+   - checks that the domain's A record points at this host, and checks the MX
+     record, reverse DNS, outbound port 25 and that the mail ports are free;
+   - turns off Docker's userland proxy, which would otherwise make the server
+     an open relay over IPv6;
+   - opens the mail and web ports in firewalld or ufw, and installs the Docker
+     port guard;
+   - optionally lets one IP address reach the admin console over HTTPS;
+   - deploys with `scripts/cloud-deploy.sh`;
+   - creates the admin console login and your first mailbox.
+
+   Each host change is explained and asks first.
+   `scripts/setup.sh --check` runs the checks and changes nothing, which is
+   useful before pointing DNS at a new host. `--yes` takes every default, for
+   unattended installs. The rest of this guide covers the steps the wizard runs,
+   for doing them by hand.
+
+## 1) Docker-based development setup
 
 ### Minimal dev stack (fast)
 

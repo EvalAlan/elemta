@@ -69,10 +69,11 @@ admin console, built to work together and deployed as one stack.
 ```bash
 git clone https://github.com/EvalAlan/elemta.git
 cd elemta
-make install-dev
+make install        # setup wizard: a dev stack, or a mail server for your domain
 ```
 
-This starts the development stack. When it's ready:
+`make install-dev` skips the questions and starts the development stack. When
+it's ready:
 
 | What | Where |
 |---|---|
