@@ -55,6 +55,10 @@ type Domain struct {
 	Accounts   int    `json:"accounts"`
 	Aliases    int    `json:"aliases"`
 	Configured bool   `json:"configured"`
+	// AliasOf and CatchAll come from the mailbox service's routes, when
+	// its admin API is configured.
+	AliasOf  string `json:"alias_of,omitempty"`
+	CatchAll string `json:"catch_all,omitempty"`
 }
 type Domains interface {
 	List(context.Context) ([]string, error)
@@ -190,6 +194,9 @@ func (s *Service) Create(ctx context.Context, in Create) (Account, error) {
 	if err = s.configured(ctx, address); err != nil {
 		return Account{}, err
 	}
+	if err = s.notList(ctx, address); err != nil {
+		return Account{}, err
+	}
 	account, err := s.Directory.Create(ctx, in)
 	return account, errors.Join(err, s.notify())
 }
@@ -308,6 +315,9 @@ func (s *Service) Alias(ctx context.Context, raw, alias string, add bool) (Accou
 		if err = s.configured(ctx, alias); err != nil {
 			return Account{}, err
 		}
+		if err = s.notList(ctx, alias); err != nil {
+			return Account{}, err
+		}
 	}
 	account, err := s.Directory.Alias(ctx, address, alias, add)
 	return account, errors.Join(err, s.notify())
@@ -345,6 +355,16 @@ func (s *Service) Domains(ctx context.Context) ([]Domain, error) {
 			}
 		}
 	}
+	if s.Mailbox != nil {
+		// Routes are a nicety in this listing; without them it still works.
+		if routes, err := s.Mailbox.Routes(ctx); err == nil {
+			for _, r := range routes {
+				if d := values[r.Domain]; d != nil {
+					d.AliasOf, d.CatchAll = r.AliasOf, r.CatchAll
+				}
+			}
+		}
+	}
 	out := make([]Domain, 0, len(values))
 	for _, d := range values {
 		out = append(out, *d)
@@ -358,7 +378,11 @@ func (s *Service) Domain(ctx context.Context, raw string, add bool) error {
 		return err
 	}
 	defer unlock()
+	return s.setDomain(ctx, raw, add)
+}
 
+// setDomain adds or removes a local domain; the caller holds the lock.
+func (s *Service) setDomain(ctx context.Context, raw string, add bool) error {
 	name, err := DomainName(raw)
 	if err != nil {
 		return err

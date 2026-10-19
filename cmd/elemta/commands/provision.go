@@ -195,11 +195,12 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 		})
 	}
 	addPolicyCommands(add)
+	addAddressingCommands(add)
 	return root
 }
 func printProvision(cmd *cobra.Command, value any) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	if printPolicy(w, value) {
+	if printPolicy(w, value) || printAddressing(w, value) {
 		return w.Flush()
 	}
 	switch v := value.(type) {
@@ -214,9 +215,9 @@ func printProvision(cmd *cobra.Command, value any) error {
 			fmt.Fprintf(w, "Alias:\t%s\n", a)
 		}
 	case []provision.Domain:
-		fmt.Fprintln(w, "DOMAIN\tCONFIGURED\tACCOUNTS\tALIASES")
+		fmt.Fprintln(w, "DOMAIN\tCONFIGURED\tACCOUNTS\tALIASES\tALIAS OF\tCATCH-ALL")
 		for _, d := range v {
-			fmt.Fprintf(w, "%s\t%t\t%d\t%d\n", d.Name, d.Configured, d.Accounts, d.Aliases)
+			fmt.Fprintf(w, "%s\t%t\t%d\t%d\t%s\t%s\n", d.Name, d.Configured, d.Accounts, d.Aliases, d.AliasOf, d.CatchAll)
 		}
 	case map[string]string:
 		fmt.Fprintln(w, v["status"])

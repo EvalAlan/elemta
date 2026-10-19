@@ -121,6 +121,80 @@ which is open only to `lmtp_allowed_networks` and needs a shared token,
 port). Without the token the API is off and so are classes of service.
 `scripts/dev-secrets.sh` generates the token for the development stacks.
 
+## Distribution lists, domain aliases and catch-all
+
+Beyond accounts and their aliases, an address can be a distribution list, a
+name at an alias domain, or fall through to a domain's catch-all. The
+mailbox service resolves every local recipient in this order:
+
+1. an account, or one of its aliases (the directory);
+2. a distribution list;
+3. the same name at the domain this one is an alias of (its accounts,
+   aliases and lists);
+4. that domain's catch-all.
+
+The MTA's recipient check asks the mailbox, so these rules also decide what
+the MTA accepts. A disabled account keeps its address: its mail is refused,
+not handed to the catch-all.
+
+```sh
+provision create-list team@example.com --name 'Team' --owner dana@example.com --posting members \
+  --members 'dana@example.com,lee@example.com,partner@other.example'
+provision add-members team@example.com sam@example.com
+provision remove-members team@example.com partner@other.example
+provision set-list team@example.com --posting domain
+provision get-list team@example.com
+provision list-lists
+provision delete-list team@example.com
+
+provision create-domain-alias example.net example.com   # SMTP restart required
+provision delete-domain-alias example.net
+provision set-catch-all example.com dana@example.com
+provision set-catch-all example.com none
+provision list-domains                                   # shows alias targets and catch-alls
+```
+
+**Lists.** A list delivers to its local members directly. Each copy goes
+through that member's own filters, quota and size limits, and a member
+whose mailbox can't take it (full, or over their limit) is skipped
+without bouncing the message for everyone else. One copy goes on to the
+external members through SMTP submission, signed and queued like any
+mail, with the list's owner as envelope sender, so bounces reach the
+person who can fix the member list. A list without an owner sends with a
+null sender, and bounces are dropped.
+
+Lists can contain lists, up to five deep, and every address receives one
+copy, aliases included. Messages get a `List-Id` header (RFC 2919) for
+mail programs to file by, and a loop marker: a list that sees its own
+marker again stops, so lists that include each other can't loop. A
+retried delivery doesn't send twice.
+
+`--posting` decides who may post, by envelope sender:
+
+| Value | Who may post |
+|---|---|
+| `anyone` (default) | everyone, including bounces |
+| `members` | the list's direct members, and its owner |
+| `domain` | senders in the list's own domain, and its owner |
+| `owner` | only the owner |
+
+Other senders get a permanent refusal. A list address can't be an
+account's or alias's, and the reverse; the commands check both ways. Lists
+hold up to 10,000 members. External delivery needs `[sieve] submit_addr`
+on the mailbox service, which filter redirects use too.
+
+**Domain aliases.** `create-domain-alias example.net example.com` makes
+every name at example.net deliver as the same name at example.com, its
+lists and catch-all included. The alias becomes a local domain, so it
+needs an SMTP restart like any new domain. Aliases are one step: an alias
+can't point at another alias.
+
+**Catch-all.** Mail for names nothing else claims goes to the catch-all
+address, which must be an existing account, alias or list. Catch-alls
+attract spam, so use them sparingly.
+
+Per-account aliases stay in the directory (`add-alias`), as before.
+
 ## Purging a mailbox
 
 Deleting an account keeps its mail. To remove it permanently:
@@ -225,8 +299,8 @@ same scopes and supply their passwords from your secret store.
 routes require dashboard authentication and `system:admin`, including reads.
 They remain closed when dashboard authentication is disabled. Mutations require
 JSON and existing same-origin write protection. Successful changes record the
-actor, action and target, without passwords or recovery tokens. Distribution
-lists and delegated administration are outside this version's command surface.
+actor, action and target, without passwords or recovery tokens. Delegated
+administration is outside this version's command surface.
 
 Verification includes service validation and configuration-lock tests, admin
 API permissions and lifecycle tests, CLI output/alias tests, SMTP cache tests,
