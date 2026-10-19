@@ -361,13 +361,14 @@ func (s *Server) sendReply(ctx context.Context, sess *Session, e Event, status s
 
 // Guests' replies are recorded in the organizer's calendar as they arrive,
 // the way every calendar does it, so "Not replied" changes to "Accepted"
-// without the organizer opening each reply. The webmail notices them in the
-// message lists it loads: a list's body structures name each message's
-// calendar method, so finding replies costs no extra round trips. Each
-// recorded reply is flagged FlagSchedulingDone, so it is read once.
+// without the organizer opening each reply. They are noticed in the inbox
+// whenever the webmail loads a message list or a CalDAV client syncs the
+// calendar: a list's body structures name each message's calendar method,
+// so finding replies costs no extra round trips. Each reply dealt with is
+// flagged FlagSchedulingDone, so it is read once.
 
-// maxRepliesPerLoad bounds the work one page load does for replies that
-// arrived while the user was away; the next load picks up the rest.
+// maxRepliesPerLoad bounds the work one request does for replies that
+// arrived while the user was away; the next request picks up the rest.
 const maxRepliesPerLoad = 20
 
 // receivedReply is an invitation reply read from a message.
@@ -406,7 +407,7 @@ func pendingReplies(p Page, convs []Conversation) []uint32 {
 // readReplies downloads and decodes replies. A message that can't be read
 // as a reply is returned without an event, so it is still marked done and
 // not downloaded again on every load.
-func (s *Server) readReplies(ctx context.Context, st Mailstore, folder string, uids []uint32, loc *time.Location) []receivedReply {
+func readReplies(ctx context.Context, st Mailstore, folder string, uids []uint32, loc *time.Location) []receivedReply {
 	var out []receivedReply
 	for _, uid := range uids {
 		r := receivedReply{uid: uid}
@@ -425,31 +426,60 @@ func (s *Server) readReplies(ctx context.Context, st Mailstore, folder string, u
 	return out
 }
 
-// recordReplies applies replies to the user's calendar and returns the
-// messages now dealt with. A reply to an event the user didn't organize,
-// or one no longer in the calendar, is dealt with by being ignored.
-func (s *Server) recordReplies(ctx context.Context, sess *Session, replies []receivedReply, loc *time.Location) []uint32 {
-	if len(replies) == 0 {
-		return nil
+// recordReplies records the replies among uids in the calendar of address,
+// the owner of st, and flags the messages dealt with. A reply to an event
+// the user didn't organize, or one no longer in the calendar, is dealt with
+// by being ignored; one whose event couldn't be saved stays unflagged and is
+// retried next time. It runs on the store the caller already holds, so the
+// webmail list and a CalDAV sync can each do it within their own request.
+func (s *Server) recordReplies(ctx context.Context, st Mailstore, folder, address string, uids []uint32, loc *time.Location) {
+	if len(uids) == 0 {
+		return
 	}
-	events, err := s.events(ctx, sess, loc)
+	replies := readReplies(ctx, st, folder, uids, loc)
+	objs, err := st.Objects(ctx, CollCalendar)
 	if err != nil {
-		return nil // try again on the next load
+		return // try again next time
 	}
+	events := eventsFrom(objs, loc)
 	var done []uint32
 	for _, r := range replies {
 		if r.event.UID != "" {
 			stored := findEvent(events, r.event.UID)
-			if stored != nil && stored.Organizer != nil && stored.IsOrganizer(sess.Address) && applyReply(stored, r.event, r.sender) {
-				if err := s.putEvent(ctx, sess, *stored); err != nil {
-					s.log.Warn("webmail: record invitation reply", "user", sess.User, "error", err)
-					continue // not marked, so it is retried
+			if stored != nil && stored.Organizer != nil && stored.IsOrganizer(address) && applyReply(stored, r.event, r.sender) {
+				now := s.now()
+				e := *stored
+				e.Modified = now.UTC()
+				data, id, err := mergeEvent(findStoredEvent(objs, e.UID), e, now)
+				if err == nil {
+					err = st.PutObject(ctx, CollCalendar, Object{ID: id, Title: e.Summary, ContentType: "text/calendar", Data: data})
+				}
+				if err != nil {
+					s.log.Warn("webmail: record invitation reply", "user", address, "error", err)
+					continue
+				}
+				if objs, err = st.Objects(ctx, CollCalendar); err != nil {
+					return
 				}
 			}
 		}
 		done = append(done, r.uid)
 	}
-	return done
+	if len(done) > 0 {
+		if err := st.SetFlags(ctx, folder, done, []string{FlagSchedulingDone}, true); err != nil {
+			s.log.Warn("webmail: mark invitation replies recorded", "user", address, "error", err)
+		}
+	}
+}
+
+// recordInboxReplies looks for new replies in the inbox and records them,
+// for requests that don't otherwise list mail (a CalDAV sync).
+func (s *Server) recordInboxReplies(ctx context.Context, st Mailstore, address string, loc *time.Location) {
+	p, err := st.List(ctx, "INBOX", ListQuery{Sort: SortDate, Page: 1, PageSize: 50})
+	if err != nil {
+		return
+	}
+	s.recordReplies(ctx, st, "INBOX", address, pendingReplies(p, nil), loc)
 }
 
 // applyReply copies the answers in a REPLY onto the stored event and

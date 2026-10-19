@@ -458,6 +458,14 @@ func (b davCalBackend) ListCalendarObjects(ctx context.Context, p string, _ *cal
 	if c == nil || name != "" {
 		return nil, davNotFound("calendar")
 	}
+	if c.coll == CollCalendar {
+		// A phone that only syncs the calendar still sees guests' answers.
+		conn := davFrom(ctx)
+		_ = conn.withStore(ctx, b.s.dial, func(st Mailstore) error {
+			b.s.recordInboxReplies(ctx, st, conn.user, b.s.defaultLoc)
+			return nil
+		})
+	}
 	objs, err := b.objects(ctx, c)
 	if err != nil {
 		return nil, err

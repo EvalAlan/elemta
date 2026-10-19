@@ -278,3 +278,41 @@ func TestCardDAV(t *testing.T) {
 		t.Fatalf("delete = %d", resp.StatusCode)
 	}
 }
+
+// TestCalDAVSyncRecordsReplies pins that a CalDAV client syncing the
+// calendar sees a guest's answer even if the organizer never opens the
+// webmail: the sync records pending replies from the inbox first.
+func TestCalDAVSyncRecordsReplies(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	e := Event{UID: "meet-1", Summary: "Kickoff", Start: now, End: now.Add(time.Hour), Busy: true, Reminder: -1,
+		Organizer: &Attendee{Email: "user@example.com"}, Attendees: []Attendee{{Email: "priya@northwind.example", Status: "NEEDS-ACTION"}}}
+	data, err := encodeCalendar("", now, e.toComponent(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.PutObject(ctx, CollCalendar, Object{ID: e.UID, Title: e.Summary, ContentType: "text/calendar", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	h.store.raw[30] = guestReply("priya@northwind.example", "priya@northwind.example", "ACCEPTED", "meet-1")
+	h.store.messages["INBOX"] = append([]Summary{{UID: 30, Subject: "Accepted: Kickoff", Scheduling: "REPLY"}}, h.store.messages["INBOX"]...)
+	cl, err := caldav.NewClient(webdav.HTTPClientWithBasicAuth(http.DefaultClient, "user@example.com", "secret"), h.srv.URL+davRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs, err := cl.QueryCalendar(ctx, davCalendarHome+"events/", &caldav.CalendarQuery{CompFilter: caldav.CompFilter{Name: "VCALENDAR"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	for _, o := range objs {
+		_ = ical.NewEncoder(&b).Encode(o.Data)
+	}
+	if !strings.Contains(b.String(), "PARTSTAT=ACCEPTED") {
+		t.Fatalf("synced calendar doesn't carry Priya's answer:\n%s", b.String())
+	}
+	if !h.store.flags[30][FlagSchedulingDone] {
+		t.Error("reply not marked as dealt with")
+	}
+}

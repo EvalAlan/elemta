@@ -29,23 +29,30 @@ func (s *Server) events(ctx context.Context, sess *Session, loc *time.Location) 
 		if err != nil {
 			return err
 		}
-		for _, o := range objs {
-			cal, err := decodeCalendar(o.Data, loc)
-			if err != nil {
-				continue
-			}
-			for _, e := range cal.Events {
-				// Storage is keyed by the object ID; an event carried in
-				// an object named otherwise (a split override) keeps its own.
-				if e.Calendar == "" {
-					e.Calendar = defaultCalendar
-				}
-				out = append(out, e)
-			}
-		}
+		out = eventsFrom(objs, loc)
 		return nil
 	})
 	return out, err
+}
+
+// eventsFrom decodes the events in stored calendar objects.
+func eventsFrom(objs []Object, loc *time.Location) []Event {
+	var out []Event
+	for _, o := range objs {
+		cal, err := decodeCalendar(o.Data, loc)
+		if err != nil {
+			continue
+		}
+		for _, e := range cal.Events {
+			// Storage is keyed by the object ID; an event carried in
+			// an object named otherwise (a split override) keeps its own.
+			if e.Calendar == "" {
+				e.Calendar = defaultCalendar
+			}
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func findEvent(events []Event, uid string) *Event {

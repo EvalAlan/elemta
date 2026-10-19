@@ -110,7 +110,6 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	lq.Sort, lq.Reverse, lq.Page, lq.PageSize = ls.Sort, ls.Reverse, ls.Page, s.pageSize(sess)
 
 	v := view{Title: ls.Folder, Session: sess, Folder: ls.Folder, Query: ls.Query, List: &ls, Notice: notices[q.Get("n")], Remote: remote}
-	var replies []receivedReply
 	if s.prefsCached(sess).MailCalendar {
 		v.Calendar = s.mailCalendar(r.Context(), sess)
 	}
@@ -181,9 +180,9 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 			}
 		}
 		v.Page = &p
-		if uids := pendingReplies(p, v.Conversations); len(uids) > 0 {
-			replies = s.readReplies(r.Context(), st, ls.Folder, uids, loc)
-		}
+		// Recorded before the open message is decorated, so an open reply
+		// already shows as recorded.
+		s.recordReplies(r.Context(), st, ls.Folder, sess.Address, pendingReplies(p, v.Conversations), loc)
 		for _, c := range v.Conversations {
 			for _, m := range c.Messages {
 				if v.Message != nil && m.UID == uid {
@@ -209,16 +208,6 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	if err != nil {
 		s.fail(w, r, sess, err)
 		return
-	}
-	// Recorded before the open message is decorated, so an open reply
-	// already shows as recorded. The calendar is written outside the list's
-	// store call because both need the session's connection.
-	if done := s.recordReplies(r.Context(), sess, replies, loc); len(done) > 0 {
-		if err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-			return st.SetFlags(r.Context(), ls.Folder, done, []string{FlagSchedulingDone}, true)
-		}); err != nil {
-			s.log.Warn("webmail: mark invitation replies recorded", "user", sess.User, "error", err)
-		}
 	}
 	if v.Message != nil {
 		s.decorateMessage(r.Context(), sess, &v)
