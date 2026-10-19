@@ -42,7 +42,7 @@ func TestAppPasswordsByListener(t *testing.T) {
 	e, a := testEngine(t)
 	s, _, _ := startTestService(t, e, a)
 	ctx := context.Background()
-	if _, err := s.login(ctx, a.Address, "testpass", true); err != nil {
+	if _, err := s.login(ctx, a.Address, "testpass", true, ""); err != nil {
 		t.Fatalf("account password before any requirement: %v", err)
 	}
 	_, password, err := e.CreateAppPassword(ctx, a.ID, "Phone")
@@ -51,23 +51,23 @@ func TestAppPasswordsByListener(t *testing.T) {
 	}
 	// Apps differ in how they let people paste: case and dashes don't matter.
 	for _, typed := range []string{password, strings.ToUpper(strings.ReplaceAll(password, "-", " "))} {
-		if got, err := s.login(ctx, a.Address, typed, true); err != nil || got.ID != a.ID {
+		if got, err := s.login(ctx, a.Address, typed, true, ""); err != nil || got.ID != a.ID {
 			t.Fatalf("app password %q: %v", typed, err)
 		}
 	}
-	if _, err := s.login(ctx, "someone-else@example.com", password, true); err == nil {
+	if _, err := s.login(ctx, "someone-else@example.com", password, true, ""); err == nil {
 		t.Fatal("app password accepted for another address")
 	}
 	if err := e.SetAppPasswordsRequired(ctx, a.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.login(ctx, a.Address, "testpass", true); !errors.Is(err, ErrCredentials) {
+	if _, err := s.login(ctx, a.Address, "testpass", true, ""); !errors.Is(err, ErrCredentials) {
 		t.Fatalf("account password on a public listener with the requirement: %v", err)
 	}
-	if _, err := s.login(ctx, a.Address, "testpass", false); err != nil {
+	if _, err := s.login(ctx, a.Address, "testpass", false, ""); err != nil {
 		t.Fatalf("account password on the internal listener: %v", err)
 	}
-	if _, err := s.login(ctx, a.Address, password, true); err != nil {
+	if _, err := s.login(ctx, a.Address, password, true, ""); err != nil {
 		t.Fatalf("app password with the requirement: %v", err)
 	}
 	serverConn, clientConn := net.Pipe()
@@ -86,7 +86,7 @@ func TestAppPasswordsByListener(t *testing.T) {
 	if err := e.DeleteAppPassword(ctx, a.ID, st.AppPasswords[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.login(ctx, a.Address, password, true); err == nil {
+	if _, err := s.login(ctx, a.Address, password, true, ""); err == nil {
 		t.Fatal("deleted app password still works")
 	}
 	ticks <- time.Now()

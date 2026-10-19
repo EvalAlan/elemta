@@ -19,6 +19,10 @@ var ErrCredentials = errors.New("invalid mailbox credentials")
 type Authenticator interface {
 	Login(context.Context, string, string) (Account, error)
 	Resolve(context.Context, string) (Account, error)
+	// Exists reports whether the directory still has an account with this
+	// primary address, whatever its status. Resolve can't answer that: it
+	// refuses disabled accounts like unknown ones.
+	Exists(context.Context, string) (bool, error)
 }
 type LDAPAuth struct{ Config AuthConfig }
 
@@ -110,4 +114,28 @@ func (a LDAPAuth) Login(ctx context.Context, user, password string) (Account, er
 func (a LDAPAuth) Resolve(ctx context.Context, address string) (Account, error) {
 	account, _, err := a.lookup(ctx, address, true)
 	return account, err
+}
+
+func (a LDAPAuth) Exists(ctx context.Context, address string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	c, err := a.dial()
+	if err != nil {
+		return false, err
+	}
+	defer c.Close()
+	dn, pw := os.Getenv(a.Config.BindDNEnv), os.Getenv(a.Config.BindPasswordEnv)
+	if dn == "" || pw == "" {
+		return false, errors.New("LDAP service credentials are required")
+	}
+	if err = c.Bind(dn, pw); err != nil {
+		return false, err
+	}
+	result, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 5, false,
+		"(mail="+ldap.EscapeFilter(strings.ToLower(address))+")", []string{"dn"}, nil))
+	if err != nil {
+		return false, err
+	}
+	return len(result.Entries) > 0, nil
 }

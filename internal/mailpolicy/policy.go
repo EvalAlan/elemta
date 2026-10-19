@@ -1,0 +1,246 @@
+// Package mailpolicy describes what a mailbox account may do: its class of
+// service and the per-account overrides on top of it.
+//
+// A class of service is a named set of settings (quota, size and sending
+// limits, which protocols may be used, which features are on). Every domain
+// can name a class its accounts use by default, and an account can name its
+// own class and override single settings. An account's effective policy is
+// worked out field by field, most specific first:
+//
+//	account override > account's class > domain's class > "default" class > built-in default
+//
+// The mailbox service stores the classes and assignments and answers for
+// them (internal/mailbox/policy.go); the MTA, the provisioning CLI and the
+// dashboard use the types and the client in this package. Keeping the types
+// here, with no other dependencies, lets all of them agree on one wire
+// format.
+package mailpolicy
+
+import (
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+// DefaultClass is the class every account falls back to. It always exists
+// and can't be deleted, so "no class set" has one meaning everywhere.
+const DefaultClass = "default"
+
+// Protocol names, as used in Settings and Effective.Allows.
+const (
+	IMAP       = "imap"
+	POP3       = "pop3"
+	Webmail    = "webmail"
+	DAV        = "dav" // CalDAV and CardDAV
+	Submission = "submission"
+)
+
+// FiltersOffMessage is the ManageSieve refusal for an account whose class
+// turns filters off. The webmail recognises it to explain the empty filters
+// page, so both sides use this one string.
+const FiltersOffMessage = "Filters are turned off for this account"
+
+// Protocols lists every protocol a policy can allow or refuse.
+// ManageSieve isn't among them: it only serves the webmail's filter editor,
+// so the Filters feature decides it.
+var Protocols = []string{IMAP, POP3, Webmail, DAV, Submission}
+
+// Settings is one layer of policy: a class of service, or an account's own
+// overrides. A nil field is unset and falls through to the next layer. For
+// the limits, 0 means unlimited, which is different from unset.
+type Settings struct {
+	QuotaBytes           *int64 `json:"quota_bytes,omitempty"`
+	MaxMessageBytes      *int64 `json:"max_message_bytes,omitempty"`
+	MaxAttachmentBytes   *int64 `json:"max_attachment_bytes,omitempty"`
+	MessagesPerHour      *int   `json:"messages_per_hour,omitempty"`
+	RecipientsPerMessage *int   `json:"recipients_per_message,omitempty"`
+	RecipientsPerDay     *int   `json:"recipients_per_day,omitempty"`
+
+	// Protocols maps a protocol name to whether it is allowed. A missing
+	// entry is unset.
+	Protocols map[string]bool `json:"protocols,omitempty"`
+
+	// ExternalForwarding lets filters redirect mail outside the server.
+	ExternalForwarding *bool `json:"external_forwarding,omitempty"`
+	// Filters lets the user keep Sieve filters, vacation replies included.
+	Filters *bool `json:"filters,omitempty"`
+	// RequireAppPasswords makes mail apps sign in with app passwords, as if
+	// every account in the class had chosen it themselves.
+	RequireAppPasswords *bool `json:"require_app_passwords,omitempty"`
+	// RequireTwoFactor makes webmail users set up two-step verification
+	// before they can use the webmail.
+	RequireTwoFactor *bool `json:"require_two_factor,omitempty"`
+}
+
+// Effective is a fully worked-out policy. Source names the layer each
+// setting came from ("account", "class <name>", "domain class <name>",
+// "default class", "built-in"), for administrators asking "why".
+type Effective struct {
+	Address              string            `json:"address"`
+	Class                string            `json:"class"`
+	QuotaBytes           int64             `json:"quota_bytes"`
+	MaxMessageBytes      int64             `json:"max_message_bytes"`
+	MaxAttachmentBytes   int64             `json:"max_attachment_bytes"`
+	MessagesPerHour      int               `json:"messages_per_hour"`
+	RecipientsPerMessage int               `json:"recipients_per_message"`
+	RecipientsPerDay     int               `json:"recipients_per_day"`
+	Protocols            map[string]bool   `json:"protocols"`
+	ExternalForwarding   bool              `json:"external_forwarding"`
+	Filters              bool              `json:"filters"`
+	RequireAppPasswords  bool              `json:"require_app_passwords"`
+	RequireTwoFactor     bool              `json:"require_two_factor"`
+	Source               map[string]string `json:"source,omitempty"`
+}
+
+// Allows reports whether the policy lets the account use a protocol.
+func (e Effective) Allows(protocol string) bool {
+	allowed, ok := e.Protocols[protocol]
+	return !ok || allowed
+}
+
+// Layer is one named level of the resolution order.
+type Layer struct {
+	Name     string
+	Settings Settings
+}
+
+// Builtin is what applies when no layer sets a value: everything allowed,
+// nothing limited, the user's own choices respected.
+func Builtin() Effective {
+	e := Effective{Protocols: map[string]bool{}, ExternalForwarding: true, Filters: true, Source: map[string]string{}}
+	for _, p := range Protocols {
+		e.Protocols[p] = true
+	}
+	return e
+}
+
+// Resolve layers settings over the built-in defaults, least specific first:
+// pass the default class, then the domain's class, then the account's class,
+// then the account's overrides. Later layers win field by field.
+func Resolve(address, class string, layers ...Layer) Effective {
+	e := Builtin()
+	e.Address, e.Class = address, class
+	set := func(field, source string) { e.Source[field] = source }
+	for _, l := range layers {
+		s := l.Settings
+		if s.QuotaBytes != nil {
+			e.QuotaBytes = *s.QuotaBytes
+			set("quota_bytes", l.Name)
+		}
+		if s.MaxMessageBytes != nil {
+			e.MaxMessageBytes = *s.MaxMessageBytes
+			set("max_message_bytes", l.Name)
+		}
+		if s.MaxAttachmentBytes != nil {
+			e.MaxAttachmentBytes = *s.MaxAttachmentBytes
+			set("max_attachment_bytes", l.Name)
+		}
+		if s.MessagesPerHour != nil {
+			e.MessagesPerHour = *s.MessagesPerHour
+			set("messages_per_hour", l.Name)
+		}
+		if s.RecipientsPerMessage != nil {
+			e.RecipientsPerMessage = *s.RecipientsPerMessage
+			set("recipients_per_message", l.Name)
+		}
+		if s.RecipientsPerDay != nil {
+			e.RecipientsPerDay = *s.RecipientsPerDay
+			set("recipients_per_day", l.Name)
+		}
+		for p, allowed := range s.Protocols {
+			e.Protocols[p] = allowed
+			set("protocols."+p, l.Name)
+		}
+		if s.ExternalForwarding != nil {
+			e.ExternalForwarding = *s.ExternalForwarding
+			set("external_forwarding", l.Name)
+		}
+		if s.Filters != nil {
+			e.Filters = *s.Filters
+			set("filters", l.Name)
+		}
+		if s.RequireAppPasswords != nil {
+			e.RequireAppPasswords = *s.RequireAppPasswords
+			set("require_app_passwords", l.Name)
+		}
+		if s.RequireTwoFactor != nil {
+			e.RequireTwoFactor = *s.RequireTwoFactor
+			set("require_two_factor", l.Name)
+		}
+	}
+	return e
+}
+
+var classPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+// ErrInvalid is wrapped by every validation failure.
+var ErrInvalid = errors.New("invalid policy")
+
+// ValidClass checks a class name: lower-case letters, digits, '-' and '_',
+// up to 63 characters, so it is safe in URLs, logs and CLI arguments.
+func ValidClass(name string) error {
+	if !classPattern.MatchString(name) {
+		return fmt.Errorf("%w: class names use a-z, 0-9, '-' and '_', up to 63 characters", ErrInvalid)
+	}
+	return nil
+}
+
+// maxBytes bounds size settings at 1 PiB, the same ceiling as quotas, so a
+// typo can't wrap a counter.
+const maxBytes = int64(1) << 50
+
+// Validate checks that every set value is in range and every protocol name
+// is known.
+func (s Settings) Validate() error {
+	for name, v := range map[string]*int64{"quota_bytes": s.QuotaBytes, "max_message_bytes": s.MaxMessageBytes, "max_attachment_bytes": s.MaxAttachmentBytes} {
+		if v != nil && (*v < 0 || *v > maxBytes) {
+			return fmt.Errorf("%w: %s must be 0 (unlimited) up to 1 PiB", ErrInvalid, name)
+		}
+	}
+	for name, v := range map[string]*int{"messages_per_hour": s.MessagesPerHour, "recipients_per_message": s.RecipientsPerMessage, "recipients_per_day": s.RecipientsPerDay} {
+		if v != nil && (*v < 0 || *v > 10_000_000) {
+			return fmt.Errorf("%w: %s must be 0 (unlimited) up to 10000000", ErrInvalid, name)
+		}
+	}
+	for p := range s.Protocols {
+		if !knownProtocol(p) {
+			return fmt.Errorf("%w: unknown protocol %q (known: %s)", ErrInvalid, p, strings.Join(Protocols, ", "))
+		}
+	}
+	return nil
+}
+
+func knownProtocol(p string) bool {
+	for _, k := range Protocols {
+		if k == p {
+			return true
+		}
+	}
+	return false
+}
+
+// Class is a named class of service.
+type Class struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Settings    Settings `json:"settings"`
+	// Accounts and Domains count the assignments, so an administrator can
+	// see what a change will touch. Filled in by the mailbox service.
+	Accounts int `json:"accounts"`
+	Domains  int `json:"domains"`
+}
+
+// AccountPolicy is what is stored for one account: its class, if it has
+// one of its own, and its overrides.
+type AccountPolicy struct {
+	Address  string   `json:"address"`
+	Class    string   `json:"class,omitempty"`
+	Settings Settings `json:"settings"`
+}
+
+// DomainPolicy names the class a domain's accounts use by default.
+type DomainPolicy struct {
+	Domain string `json:"domain"`
+	Class  string `json:"class,omitempty"`
+}

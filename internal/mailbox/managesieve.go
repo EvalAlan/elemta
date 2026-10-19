@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
 // sieveExtensions is what the interpreter supports, as advertised.
@@ -311,7 +313,11 @@ func (ss *sieveSession) authenticate(ctx context.Context, args []string) {
 	}
 	// ManageSieve is internal-only in deployments (the webmail edits
 	// filters), so it is not a listener the requirement covers.
-	a, err := ss.s.login(ctx, string(parts[1]), string(parts[2]), false)
+	a, err := ss.s.login(ctx, string(parts[1]), string(parts[2]), false, "")
+	if err == nil && a.Policy != nil && !a.Policy.Filters {
+		ss.no("", mailpolicy.FiltersOffMessage)
+		return
+	}
 	if err != nil {
 		if !errors.Is(err, ErrCredentials) {
 			ss.no("TRYLATER", "Temporarily unavailable")

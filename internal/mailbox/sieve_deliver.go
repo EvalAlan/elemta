@@ -128,6 +128,12 @@ func storeToken(token, target string) string {
 
 // deliver stores one recipient's copy, running their Sieve script.
 func (s *Service) deliver(ctx context.Context, d delivery) error {
+	if p := d.account.Policy; p != nil && !p.Filters {
+		// Filters turned off by the class of service: stored scripts stay,
+		// unused, so turning filters back on restores them.
+		_, err := s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, nil, time.Now(), d.token)
+		return err
+	}
 	script, err := s.engine.ActiveScript(ctx, d.account.ID)
 	if errors.Is(err, ErrNotFound) {
 		_, err = s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, nil, time.Now(), d.token)
@@ -170,6 +176,7 @@ func (s *Service) runSieve(ctx context.Context, d delivery, stored SieveScript) 
 }
 
 func (s *Service) applyActions(ctx context.Context, d delivery, actions []interp.AppliedAction) error {
+	actions = s.withoutExternalRedirects(ctx, d, actions)
 	for _, a := range actions {
 		switch a := a.(type) {
 		case interp.ActionReject:
@@ -442,4 +449,26 @@ func (s *Service) vacationReply(d delivery, orig gomail.Header, v interp.ActionV
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// withoutExternalRedirects applies the class of service's external
+// forwarding switch. A redirect to an address outside the server becomes a
+// keep: the mail is still delivered, just not sent on, and a script whose
+// only action was the redirect doesn't lose it.
+func (s *Service) withoutExternalRedirects(ctx context.Context, d delivery, actions []interp.AppliedAction) []interp.AppliedAction {
+	if p := d.account.Policy; p == nil || p.ExternalForwarding {
+		return actions
+	}
+	out := make([]interp.AppliedAction, 0, len(actions))
+	for _, a := range actions {
+		if r, ok := a.(interp.ActionRedirect); ok {
+			if _, err := s.auth.Resolve(ctx, r.Address); err != nil {
+				s.log.Info("sieve redirect outside the server refused by class of service", "account", d.account.ID)
+				out = append(out, interp.ActionKeep{})
+				continue
+			}
+		}
+		out = append(out, a)
+	}
+	return out
 }

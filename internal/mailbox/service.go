@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/imapfork/imapserver"
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/emersion/go-imap/v2"
 	smtp "github.com/emersion/go-smtp"
 )
@@ -32,12 +33,14 @@ type Service struct {
 	imapStartTLS *imapserver.Server
 	// internalNets may use the account-security API (security_api.go).
 	internalNets []*net.IPNet
-	lmtp         *smtp.Server
-	sieve        sieveCache
-	tlsConfig    *tls.Config
-	http         *http.Server
-	ctx          context.Context
-	cancel       context.CancelFunc
+	// adminToken guards the admin API (admin_api.go); empty turns it off.
+	adminToken string
+	lmtp       *smtp.Server
+	sieve      sieveCache
+	tlsConfig  *tls.Config
+	http       *http.Server
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 func Open(ctx context.Context, c Config, log *slog.Logger) (*Service, error) {
@@ -84,7 +87,7 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 		log = slog.Default()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel}
+	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel, adminToken: os.Getenv(c.Admin.TokenEnv)}
 	var tlsConfig *tls.Config
 	if c.Server.TLSCert != "" {
 		certs, err := newCertReloader(c.Server.TLSCert, c.Server.TLSKey)
@@ -158,7 +161,10 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 		w.WriteHeader(http.StatusOK)
 	})
 	s.securityAPI(mux)
-	s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+	s.adminAPI(mux)
+	// The write timeout allows for an admin purge of a large mailbox; the
+	// other handlers bound their own work to a few seconds.
+	s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second}
 	return s, nil
 }
 func (s *Service) Run(ctx context.Context) error {
@@ -382,6 +388,9 @@ func (l *lmtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	if err != nil {
 		return &smtp.SMTPError{Code: 451, Message: "Directory unavailable"}
 	}
+	if err = l.service.applyPolicy(ctx, &a); err != nil {
+		return &smtp.SMTPError{Code: 451, Message: "Mailbox unavailable"}
+	}
 	if err = l.service.engine.EnsureAccount(ctx, a); err != nil {
 		return &smtp.SMTPError{Code: 451, Message: "Mailbox unavailable"}
 	}
@@ -407,7 +416,12 @@ func (l *lmtpSession) LMTPData(r io.Reader, status smtp.StatusCollector) error {
 		// A broken read is the connection's fault, not the message's.
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "Message not received completely; try again"}
 	}
+	largestAttachment := int64(-1) // measured once, if a recipient limits it
 	for i, a := range l.recipients {
+		if refused := sizeRefusal(a.Policy, raw, &largestAttachment); refused != nil {
+			status.SetStatus(l.addresses[i], refused)
+			continue
+		}
 		ctx, cancel := context.WithTimeout(l.service.ctx, 45*time.Second)
 		token := l.token
 		if token != "" {
@@ -439,4 +453,38 @@ func (s *Service) receiveSlot(ctx context.Context) (func(), error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// applyPolicy works out the account's class of service and applies its
+// quota, so a quota a class sets reaches EnsureAccount like one the
+// directory holds.
+func (s *Service) applyPolicy(ctx context.Context, a *Account) error {
+	eff, err := s.engine.EffectivePolicy(ctx, a.Address, a.Quota)
+	if err != nil {
+		return err
+	}
+	a.Quota = eff.QuotaBytes
+	a.Policy = &eff
+	return nil
+}
+
+// sizeRefusal applies a recipient's class-of-service limits on the size of
+// mail received. Each recipient gets their own answer, so one with a small
+// limit doesn't bounce the message for the others.
+func sizeRefusal(p *mailpolicy.Effective, raw []byte, largest *int64) error {
+	if p == nil {
+		return nil
+	}
+	if p.MaxMessageBytes > 0 && int64(len(raw)) > p.MaxMessageBytes {
+		return &smtp.SMTPError{Code: 552, EnhancedCode: smtp.EnhancedCode{5, 3, 4}, Message: "Message is larger than this recipient accepts"}
+	}
+	if p.MaxAttachmentBytes > 0 {
+		if *largest < 0 {
+			*largest = mailpolicy.LargestAttachment(raw)
+		}
+		if *largest > p.MaxAttachmentBytes {
+			return &smtp.SMTPError{Code: 552, EnhancedCode: smtp.EnhancedCode{5, 3, 4}, Message: "An attachment is larger than this recipient accepts"}
+		}
+	}
+	return nil
 }

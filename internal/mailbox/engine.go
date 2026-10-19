@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
@@ -35,6 +36,9 @@ var schema string
 type Account struct {
 	ID, Address string
 	Quota       int64
+	// Policy is the account's effective class of service, filled in at
+	// login and delivery (Service.applyPolicy). Nil elsewhere.
+	Policy *mailpolicy.Effective
 }
 type Folder struct {
 	ID             int64

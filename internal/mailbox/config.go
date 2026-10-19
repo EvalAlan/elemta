@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -20,6 +21,14 @@ type Config struct {
 	Limits      LimitsConfig      `toml:"limits"`
 	Maintenance MaintenanceConfig `toml:"maintenance"`
 	Sieve       SieveConfig       `toml:"sieve"`
+	Admin       AdminConfig       `toml:"admin"`
+}
+
+// AdminConfig controls the admin API (admin_api.go).
+type AdminConfig struct {
+	// TokenEnv names the environment variable holding the shared admin
+	// token. The API is off while it is empty.
+	TokenEnv string `toml:"token_env"`
 }
 
 // SieveConfig controls filtering at delivery and the ManageSieve service.
@@ -121,6 +130,9 @@ func (c Config) WithDefaults() Config {
 		if driver := os.Getenv(c.Bodies.DriverEnv); driver != "" {
 			c.Bodies.Driver = driver
 		}
+	}
+	if c.Admin.TokenEnv == "" {
+		c.Admin.TokenEnv = mailpolicy.TokenEnv
 	}
 	if c.Sieve.MaxScriptBytes == 0 {
 		c.Sieve.MaxScriptBytes = 64 << 10

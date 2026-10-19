@@ -96,3 +96,23 @@ CREATE TABLE IF NOT EXISTS mailbox_app_passwords (
  created timestamptz NOT NULL DEFAULT now(), last_used timestamptz
 );
 CREATE INDEX IF NOT EXISTS mailbox_app_passwords_account ON mailbox_app_passwords(account);
+
+-- Classes of service and per-account policy (policy.go). Accounts are keyed
+-- by primary address, which is what administrators name and what the
+-- directory guarantees unique; the directory ID is created lazily here and
+-- would not exist yet for an account that has never logged in or received
+-- mail. A class in use can't be deleted (the foreign keys refuse it).
+CREATE TABLE IF NOT EXISTS mailbox_classes (
+ name text PRIMARY KEY, description text NOT NULL DEFAULT '',
+ settings jsonb NOT NULL DEFAULT '{}', updated timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO mailbox_classes(name, description) VALUES ('default', 'Applies to every account unless its domain or the account names another class') ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS mailbox_domain_policy (
+ domain text PRIMARY KEY, class text NOT NULL REFERENCES mailbox_classes(name),
+ updated timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS mailbox_account_policy (
+ address text PRIMARY KEY, class text REFERENCES mailbox_classes(name),
+ settings jsonb NOT NULL DEFAULT '{}', updated timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS mailbox_account_policy_class ON mailbox_account_policy(class);

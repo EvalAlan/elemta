@@ -77,10 +77,25 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		if a.app {
 			kind = "app"
 		}
-		return map[string]any{"kind": kind, "totp": st.TOTP, "app_required": st.AppRequired, "account_id": a.account.ID}, nil
+		// The class of service's switches travel with the answer: the
+		// webmail applies webmail, DAV and two-step verification, and the
+		// MTA submission. A class that requires app passwords counts as the
+		// user having chosen it.
+		out := map[string]any{"kind": kind, "totp": st.TOTP, "app_required": st.AppRequired, "account_id": a.account.ID}
+		if p := a.account.Policy; p != nil {
+			out["app_required"] = st.AppRequired || p.RequireAppPasswords
+			out["protocols"] = p.Protocols
+			out["require_two_factor"] = p.RequireTwoFactor
+			out["filters"] = p.Filters
+		}
+		return out, nil
 	})
 	handle("GET /v1/security", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
-		return s.engine.SecurityState(r.Context(), a.account.ID)
+		st, err := s.engine.SecurityState(r.Context(), a.account.ID)
+		if p := a.account.Policy; err == nil && p != nil {
+			st.AppRequiredByClass, st.TOTPRequired = p.RequireAppPasswords, p.RequireTwoFactor
+		}
+		return st, err
 	})
 	handle("POST /v1/security/verify", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		var in struct{ Code string }
@@ -128,6 +143,9 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		return map[string]any{"recovery_codes": codes}, err
 	})
 	handle("POST /v1/security/totp/disable", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		if p := a.account.Policy; p != nil && p.RequireTwoFactor {
+			return nil, &requestError{"two-step verification is required for this account"}
+		}
 		var in struct{ Code string }
 		if err := decode(r, &in); err != nil {
 			return nil, err

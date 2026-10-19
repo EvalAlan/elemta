@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/google/uuid"
 )
 
@@ -89,7 +90,7 @@ func (p *popSession) renew(ctx context.Context) bool {
 func (p *popSession) login(ctx context.Context, password string) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	a, err := p.s.login(ctx, p.user, password, true)
+	a, err := p.s.login(ctx, p.user, password, true, mailpolicy.POP3)
 	if err != nil {
 		return err
 	}
@@ -136,7 +137,7 @@ func (p *popSession) run(ctx context.Context) {
 			return
 		}
 		if p.owner != "" && time.Since(p.checkedAt) >= 30*time.Second {
-			a, err := p.s.login(ctx, p.user, p.password, true)
+			a, err := p.s.login(ctx, p.user, p.password, true, mailpolicy.POP3)
 			if err != nil || a.ID != p.account.ID {
 				_ = p.line("-ERR Account credentials have changed")
 				return
@@ -239,6 +240,10 @@ func (p *popSession) run(ctx context.Context) {
 						// Valid credentials: say so, so the client retries later
 						// instead of asking the user for a new password.
 						_ = p.line("-ERR [IN-USE] Maildrop already locked")
+						return
+					}
+					if errors.Is(err, ErrProtocolDisabled) {
+						_ = p.line("-ERR [SYS/PERM] POP3 access is turned off for this account")
 						return
 					}
 					_ = p.line("-ERR [AUTH] Authentication failed")

@@ -345,6 +345,9 @@ func (a testAuth) Login(_ context.Context, u, p string) (Account, error) {
 	}
 	return a.account, nil
 }
+func (a testAuth) Exists(_ context.Context, u string) (bool, error) {
+	return u == a.account.Address, nil
+}
 func (a testAuth) Resolve(_ context.Context, u string) (Account, error) {
 	if u != a.account.Address {
 		return Account{}, ErrCredentials

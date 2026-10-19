@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/imapfork/imapserver"
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/emersion/go-imap/v2"
 )
 
@@ -40,9 +41,12 @@ var _ imapserver.SessionIMAP4rev2 = (*imapSession)(nil)
 
 func (s *imapSession) Close() error { s.cancel(); return nil }
 func (s *imapSession) Login(user, password string) error {
-	a, err := s.service.login(s.ctx, user, password, s.public)
+	a, err := s.service.login(s.ctx, user, password, s.public, s.protocol())
 	if errors.Is(err, ErrCredentials) {
 		return imapserver.ErrAuthFailed
+	}
+	if errors.Is(err, ErrProtocolDisabled) {
+		return &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeNoPerm, Text: "IMAP access is turned off for this account"}
 	}
 	if err != nil {
 		return protocolError(err)
@@ -51,6 +55,16 @@ func (s *imapSession) Login(user, password string) error {
 	s.user, s.password = user, password
 	go s.watchCredentials()
 	return nil
+}
+
+// protocol is what the class of service's switches call this session: IMAP
+// on the public listeners; nothing on the internal one, which serves the
+// webmail and applies the webmail and DAV switches itself.
+func (s *imapSession) protocol() string {
+	if s.public {
+		return mailpolicy.IMAP
+	}
+	return ""
 }
 
 // Revalidate established connections against shared credential and directory
@@ -68,7 +82,7 @@ func (s *imapSession) watchCredentials() {
 		case <-s.ctx.Done():
 			return
 		case <-ticks:
-			a, err := s.service.login(s.ctx, s.user, s.password, s.public)
+			a, err := s.service.login(s.ctx, s.user, s.password, s.public, s.protocol())
 			if err != nil || a.ID != s.account.ID {
 				_ = s.conn.Close()
 				return
@@ -77,19 +91,34 @@ func (s *imapSession) watchCredentials() {
 	}
 }
 
-// login checks a user's credentials for a mail protocol. On a public
-// listener, an account that requires app passwords refuses its account
-// password (security.go).
-func (s *Service) login(ctx context.Context, user, password string, public bool) (Account, error) {
+// ErrProtocolDisabled refuses a sign-in the account's class of service
+// doesn't allow. It is not a credential failure: the password was right, so
+// it doesn't count towards the failure limit.
+var ErrProtocolDisabled = errors.New("this account may not use this protocol")
+
+// login checks a user's credentials for a mail protocol. protocol names it
+// for the class of service's protocol switches (mailpolicy.IMAP, POP3), or
+// is empty for the internal listener the webmail uses, which applies its
+// own switches. On a public listener, an account that requires app
+// passwords, or whose class does, refuses its account password
+// (security.go).
+func (s *Service) login(ctx context.Context, user, password string, public bool, protocol string) (Account, error) {
 	a, app, err := s.authenticate(ctx, user, password)
-	if err != nil || app || !public {
+	if err != nil {
 		return a, err
+	}
+	if protocol != "" && a.Policy != nil && !a.Policy.Allows(protocol) {
+		s.log.Info("mailbox: sign-in refused by class of service", "user", a.Address, "protocol", protocol)
+		return Account{}, ErrProtocolDisabled
+	}
+	if app || !public {
+		return a, nil
 	}
 	required, err := s.engine.AppPasswordsRequired(ctx, a.ID)
 	if err != nil {
 		return Account{}, err
 	}
-	if required {
+	if required || a.Policy != nil && a.Policy.RequireAppPasswords {
 		s.failLogin(a.Address)
 		s.log.Info("mailbox: account password refused; app password required", "user", a.Address)
 		return Account{}, ErrCredentials
@@ -135,6 +164,9 @@ func (s *Service) authenticate(ctx context.Context, user, password string) (Acco
 			}
 			return Account{}, false, err
 		}
+		if err := s.applyPolicy(ctx, &a); err != nil {
+			return Account{}, false, err
+		}
 		if err := s.engine.EnsureAccount(ctx, a); err != nil {
 			return Account{}, false, err
 		}
@@ -145,6 +177,9 @@ func (s *Service) authenticate(ctx context.Context, user, password string) (Acco
 		if errors.Is(err, ErrCredentials) {
 			s.failLogin(user)
 		}
+		return Account{}, false, err
+	}
+	if err = s.applyPolicy(ctx, &a); err != nil {
 		return Account{}, false, err
 	}
 	if err = s.engine.EnsureAccount(ctx, a); err != nil {

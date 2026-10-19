@@ -58,6 +58,10 @@ type SecurityState struct {
 	RecoveryLeft  int           `json:"recovery_left"`
 	AppPasswords  []AppPassword `json:"app_passwords"`
 	TOTPSetupOpen bool          `json:"totp_setup_open"`
+	// What the account's class of service requires, set by the security
+	// API, so the settings page can say why a control is fixed.
+	AppRequiredByClass bool `json:"app_required_by_class"`
+	TOTPRequired       bool `json:"totp_required"`
 }
 
 // AppPassword describes one app password; the password itself is shown once,
