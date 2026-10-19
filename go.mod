@@ -5,7 +5,7 @@ go 1.26.9
 require (
 	blitiri.com.ar/go/spf v1.6.0
 	github.com/BurntSushi/toml v1.6.0
-	github.com/chromedp/cdproto v0.157.8
+	github.com/chromedp/cdproto v0.158.0
 	github.com/chromedp/chromedp v0.21.0
 	github.com/davecgh/go-spew v1.1.1
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
