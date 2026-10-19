@@ -40,6 +40,9 @@ type SMTPAuthenticator struct {
 	dataSource datasource.DataSource
 	logger     *slog.Logger
 	mu         sync.RWMutex
+	// security applies app passwords and the user's requirement for them
+	// (app_passwords.go); nil when no mailbox security API is configured.
+	security *mailboxSecurity
 }
 
 type authDataSourceFactory func(config datasource.Config) (datasource.DataSource, error)
@@ -113,6 +116,9 @@ func NewAuthenticator(config *AuthConfig) (*SMTPAuthenticator, error) {
 	}
 
 	auth.dataSource = ds
+	if auth.security, err = newMailboxSecurity(config); err != nil {
+		return nil, err
+	}
 	return auth, nil
 }
 

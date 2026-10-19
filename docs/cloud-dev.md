@@ -237,12 +237,18 @@ and app passwords**.
     limit, and an app password can't sign in to webmail.
 - **App passwords** are random per-app passwords, stored only as hashes. Each
   one shows when it was last used and can be deleted on its own.
-  - They work on IMAP (993, 143), POP3 (110) and CalDAV/CardDAV.
-  - With **Require app passwords for mail apps** on, those listeners refuse
-    the account password, which then works only in webmail.
+  - They work on IMAP (993, 143), POP3 (110), SMTP submission (587) and
+    CalDAV/CardDAV.
+  - With **Require app passwords for mail apps** on, all of those refuse the
+    account password, which then works only in webmail.
   - Users with two-step verification should turn this on. Otherwise a stolen
-    password can still read mail over IMAP or POP3.
-  - SMTP submission (587) still accepts the account password.
+    password can still read mail over IMAP or POP3, or send it.
+  - SMTP AUTH asks the mailbox service's API
+    (`ELEMTA_AUTH_MAILBOX_SECURITY_URL`). Only the webmail's fixed address
+    (`ELEMTA_AUTH_APP_PASSWORD_EXEMPT`, 10.253.53.250) may submit with the
+    account password, because it asks for the second step itself. If the
+    API is unreachable, other account-password logins are refused rather
+    than let through.
 
 The mailbox service stores both in Postgres (`mailbox_security`,
 `mailbox_app_passwords`). The webmail manages them through the mailbox service's

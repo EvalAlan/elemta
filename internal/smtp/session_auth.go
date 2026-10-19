@@ -356,7 +356,13 @@ func (ah *AuthHandler) performAuthentication(ctx context.Context, username, pass
 	}
 
 	// Perform authentication
-	authenticated, err := ah.authenticator.Authenticate(ctx, username, password)
+	var authenticated bool
+	var err error
+	if ca, ok := ah.authenticator.(clientAuthenticator); ok {
+		authenticated, err = ca.AuthenticateFrom(ctx, username, password, ah.clientIP())
+	} else {
+		authenticated, err = ah.authenticator.Authenticate(ctx, username, password)
+	}
 	duration := time.Since(startTime)
 
 	if err != nil || !authenticated {
@@ -775,4 +781,16 @@ func (ah *AuthHandler) Cleanup(ctx context.Context) {
 		"remaining_ip_failures", len(ah.securityManager.ipFailures),
 		"remaining_lockouts", len(ah.securityManager.accountLockouts),
 	)
+}
+
+// clientIP is the connecting client's address, or nil when unknown.
+func (ah *AuthHandler) clientIP() net.IP {
+	if ah.conn == nil {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(ah.conn.RemoteAddr().String())
+	if err != nil {
+		return nil
+	}
+	return net.ParseIP(host)
 }

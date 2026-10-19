@@ -96,10 +96,11 @@ password.
 The list shows when each app password was last used. Delete any you don't
 recognise, or for devices you no longer have.
 
-**Require app passwords for mail apps.** With this on, IMAP, POP3 and calendar
-and contacts sync refuse your account password, which then works only in the
-webmail. Turn it on if you use two-step verification. Otherwise someone with
-your password could still read your mail through a mail app. Create app
+**Require app passwords for mail apps.** With this on, mail apps (reading and
+sending) and calendar and contacts sync refuse your account password, which
+then works only in the webmail. Turn it on if you use two-step verification.
+Otherwise someone with your password could still read or send your mail
+through a mail app. Create app
 passwords for your apps before turning it on, or they will stop connecting.
 
 App passwords can't sign in to the webmail. The webmail always needs your

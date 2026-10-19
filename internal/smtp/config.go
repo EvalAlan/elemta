@@ -351,6 +351,16 @@ type AuthConfig struct {
 	// Keys are logins; values are addresses ("sales@example.com") or whole
 	// domains ("@example.org").
 	SenderAliases map[string][]string `json:"sender_aliases,omitempty" toml:"sender_aliases"`
+	// MailboxSecurityURL is the mailbox service's internal account-security
+	// API (for example http://elemta-mailbox:8080). When set, SMTP AUTH
+	// accepts app passwords and honours a user's choice to require them
+	// (app_passwords.go). ELEMTA_AUTH_MAILBOX_SECURITY_URL overrides it.
+	MailboxSecurityURL string `json:"mailbox_security_url,omitempty" toml:"mailbox_security_url"`
+	// AppPasswordExemptNetworks may still use the account password when the
+	// user requires app passwords: the webmail, which asks for its own
+	// second step first. Addresses or CIDRs; ELEMTA_AUTH_APP_PASSWORD_EXEMPT
+	// (comma-separated) overrides it.
+	AppPasswordExemptNetworks []string `json:"app_password_exempt_networks,omitempty" toml:"app_password_exempt_networks"`
 }
 
 // TLSConfig represents TLS configuration

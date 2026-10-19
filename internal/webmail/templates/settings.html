@@ -197,7 +197,7 @@
         <input type="hidden" name="required" value="{{if .AppRequired}}0{{else}}1{{end}}">
         <div>
           <strong>Require app passwords for mail apps</strong>
-          <p class="small muted">{{if .AppRequired}}Mail, calendar and contacts apps must use an app password. Your account password works only in webmail.{{else}}Apps can still sign in with your account password.{{if .TOTP}} With two-step verification on, turn this on too, or a stolen password can still read your mail through IMAP or POP3.{{end}}{{end}}</p>
+          <p class="small muted">{{if .AppRequired}}Mail, calendar and contacts apps must use an app password. Your account password works only in webmail.{{else}}Apps can still sign in with your account password.{{if .TOTP}} With two-step verification on, turn this on too, or a stolen password can still read and send your mail through a mail app.{{end}}{{end}}</p>
         </div>
         <button class="button{{if and .TOTP (not .AppRequired)}} primary{{end}}" type="submit">{{if .AppRequired}}Turn off{{else}}Turn on{{end}}</button>
       </form>
