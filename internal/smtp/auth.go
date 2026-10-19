@@ -80,6 +80,9 @@ func AuthDataSourceConfig(config *AuthConfig) datasource.Config {
 	}
 
 	if config.DataSourceName == "ldap" {
+		if config.DataSourceTLSMode != "" {
+			dsConfig.Options["tls_mode"] = config.DataSourceTLSMode
+		}
 		if config.DataSourceDB != "" {
 			dsConfig.Options["base_dn"] = config.DataSourceDB
 		}

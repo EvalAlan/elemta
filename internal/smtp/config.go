@@ -338,6 +338,7 @@ type AuthConfig struct {
 	DataSourceUser      string `json:"datasource_user" toml:"datasource_user"`
 	DataSourcePass      string `json:"datasource_pass" toml:"datasource_pass"`
 	DataSourceDB        string `json:"datasource_db" toml:"datasource_db"`
+	DataSourceTLSMode   string `json:"datasource_tls_mode" toml:"datasource_tls_mode"`
 	// AllowPlaintextAuth permits AUTH PLAIN/LOGIN on connections without TLS
 	// from non-loopback clients. Off by default: the password crosses the
 	// network readable by anyone on the path.

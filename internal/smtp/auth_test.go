@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+func TestLDAPTransportModeFromAuthConfig(t *testing.T) {
+	config := &AuthConfig{DataSourceName: "ldap", DataSourceTLSMode: "plaintext"}
+	got := AuthDataSourceConfig(config).Options["tls_mode"]
+	if got != "plaintext" {
+		t.Fatalf("explicit LDAP transport mode = %v, want plaintext", got)
+	}
+	config.DataSourceTLSMode = ""
+	if _, ok := AuthDataSourceConfig(config).Options["tls_mode"]; ok {
+		t.Fatal("unset LDAP transport mode must retain the secure default")
+	}
+}
+
 // TestSMTPAuthenticator tests the SMTP authenticator
 func TestSMTPAuthenticator(t *testing.T) {
 	// Create a temporary SQLite database for testing

@@ -171,6 +171,9 @@ datasource_type = "ldap"
 datasource_name = "ldap"
 datasource_host = "elemta-ldap"
 datasource_port = 389
+# This development Compose directory has TLS disabled. Other deployments use
+# verified StartTLS by default unless they explicitly choose a TLS mode.
+datasource_tls_mode = "plaintext"
 # SMTP AUTH and recipient lookups bind as a read-only service account. Its
 # password comes from ELEMTA_AUTH_DATASOURCE_PASS (deployments/compose/
 # .secrets/elemta.env in the dev stack), not this file.
