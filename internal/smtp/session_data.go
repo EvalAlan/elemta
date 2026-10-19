@@ -1882,14 +1882,30 @@ func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, m
 		return nil
 	}
 
+	// The envelope lets Rspamd score with the connection's IP and HELO, and
+	// recognise mail a logged-in user submitted (internal/antispam/envelope.go).
+	env := antispam.Envelope{Helo: dh.state.HeloName(), From: dh.state.GetMailFrom(), Rcpt: dh.state.GetRecipients()}
+	if dh.conn != nil {
+		if host, _, splitErr := net.SplitHostPort(dh.conn.RemoteAddr().String()); splitErr == nil {
+			env.ClientIP = host
+		}
+	}
+	if dh.state.IsAuthenticated() {
+		env.User = dh.state.GetUsername()
+	}
+	if metadata != nil {
+		env.QueueID = metadata.MessageID
+	}
+	scanCtx := antispam.WithEnvelope(ctx, env)
+
 	var (
 		results []*antispam.ScanResult
 		err     error
 	)
 	if view.path != "" {
-		results, err = dh.scannerManager.ScanFileForSpam(ctx, view.path)
+		results, err = dh.scannerManager.ScanFileForSpam(scanCtx, view.path)
 	} else {
-		results, err = dh.scannerManager.ScanForSpam(ctx, view.body)
+		results, err = dh.scannerManager.ScanForSpam(scanCtx, view.body)
 	}
 	if err != nil {
 		dh.logger.WarnContext(ctx, "Spam scan failed; delivering message unscored",

@@ -31,6 +31,7 @@ type fakeRspamd struct {
 	body     []byte
 	paths    []string
 	password string
+	header   http.Header
 
 	response   RspamdResponse
 	statusCode int
@@ -47,6 +48,7 @@ func startFakeRspamd(t *testing.T, response RspamdResponse) *fakeRspamd {
 		f.mu.Lock()
 		f.paths = append(f.paths, r.URL.Path)
 		f.password = r.Header.Get("Password")
+		f.header = r.Header.Clone()
 		if r.URL.Path != "/ping" {
 			f.body = body
 		}
@@ -284,6 +286,54 @@ func TestRspamdSendsAPIKey(t *testing.T) {
 	f.mu.Unlock()
 	if got != "s3cret" {
 		t.Errorf("Password header = %q, want s3cret", got)
+	}
+}
+
+// TestRspamdSendsEnvelope pins that Rspamd hears who connected and who logged
+// in. Without it a user's own submitted mail is scored as unknown inbound mail.
+func TestRspamdSendsEnvelope(t *testing.T) {
+	f := startFakeRspamd(t, RspamdResponse{Action: "no action", Required: 6.0})
+	s := newTestRspamd(t, f, Config{})
+
+	ctx := WithEnvelope(context.Background(), Envelope{
+		ClientIP: "192.0.2.10",
+		Helo:     "client.example\r\nX-Injected: 1",
+		From:     "alice@example.com",
+		Rcpt:     []string{"bob@example.org", "carol@example.net"},
+		User:     "alice@example.com",
+		QueueID:  "q123",
+	})
+	if _, err := s.ScanBytes(ctx, []byte("message")); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	f.mu.Lock()
+	h := f.header
+	f.mu.Unlock()
+	for name, want := range map[string]string{"IP": "192.0.2.10", "Helo": "client.exampleX-Injected: 1", "From": "alice@example.com", "User": "alice@example.com", "Queue-Id": "q123"} {
+		if got := h.Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if got := h.Values("Rcpt"); len(got) != 2 || got[0] != "bob@example.org" || got[1] != "carol@example.net" {
+		t.Errorf("Rcpt = %q", got)
+	}
+	if h.Get("X-Injected") != "" {
+		t.Error("HELO text injected a header")
+	}
+
+	// An unauthenticated bounce: no User, and the empty sender still sent.
+	ctx = WithEnvelope(context.Background(), Envelope{ClientIP: "192.0.2.11", Rcpt: []string{"bob@example.org"}})
+	if _, err := s.ScanBytes(ctx, []byte("message")); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	f.mu.Lock()
+	h = f.header
+	f.mu.Unlock()
+	if _, ok := h["User"]; ok {
+		t.Error("User sent for an unauthenticated message")
+	}
+	if got := h.Get("From"); got != "<>" {
+		t.Errorf("null sender From = %q, want <>", got)
 	}
 }
 

@@ -266,6 +266,9 @@ func (r *Rspamd) check(ctx context.Context, body io.Reader, contentLength int64)
 		return nil, fmt.Errorf("rspamd: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	if env, ok := envelopeFrom(ctx); ok {
+		env.setRspamdHeaders(req.Header)
+	}
 	if contentLength >= 0 {
 		req.ContentLength = contentLength
 	}
