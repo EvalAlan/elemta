@@ -127,10 +127,6 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 			}
 			msg.Seen = true
 			v.Message = msg
-			if msg.HTML != "" {
-				res := sanitizeHTML(msg.HTML, sanitizeOptions{AllowRemote: remote})
-				v.Body = &res
-			}
 			v.Title = msg.Subject
 			v.Tags, _ = st.Tags(r.Context(), ls.Folder)
 		}
@@ -139,6 +135,16 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 			return err
 		}
 		v.Folders = folders
+		if v.Message != nil {
+			if !remote && s.autoImages(sess, ls.Folder, folders) {
+				remote = true
+				v.Remote = true
+			}
+			if v.Message.HTML != "" {
+				res := sanitizeHTML(v.Message.HTML, sanitizeOptions{AllowRemote: remote})
+				v.Body = &res
+			}
+		}
 		if v.Message != nil {
 			v.Thread = s.conversation(r.Context(), st, v.Message, folders)
 			for _, rel := range v.Thread {
@@ -201,6 +207,13 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 		s.decorateMessage(r.Context(), sess, &v)
 	}
 	s.render(w, "mail.html", http.StatusOK, v)
+}
+
+// autoImages reports whether a message in folder shows remote images
+// without the user asking: only when they chose that in Settings, and never
+// in Junk, where a tracking pixel would confirm the address to a spammer.
+func (s *Server) autoImages(sess *Session, folder string, folders []Folder) bool {
+	return s.prefsCached(sess).LoadImages && !isRoleIn(folder, folders, RoleJunk)
 }
 
 func isRoleIn(name string, folders []Folder, role Role) bool {
@@ -312,7 +325,7 @@ const maxInlineImage = 4 << 20
 // requests from a sandboxed (opaque-origin) frame don't carry the session
 // cookie.
 func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Session) {
-	_, _, raw, err := s.loadMessage(r, sess)
+	folder, _, raw, err := s.loadMessage(r, sess)
 	if err != nil {
 		s.fail(w, r, sess, err)
 		return
@@ -322,12 +335,23 @@ func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Sessi
 		http.Error(w, "The message couldn't be read.", http.StatusNotFound)
 		return
 	}
+	remote := r.URL.Query().Get("remote") == "1"
+	if !remote && s.prefsCached(sess).LoadImages {
+		// Conversation cards load their bodies here without the reading
+		// page's flag, so the preference is applied here too.
+		_ = s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+			folders, err := st.Folders(r.Context())
+			if err == nil {
+				remote = s.autoImages(sess, folder, folders)
+			}
+			return nil
+		})
+	}
 	if msg.HTML == "" {
 		// Plain-text messages render here too, so a conversation can show
 		// every message the same way, each in its own frame.
 		msg.HTML = `<pre style="white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0">` + string(linkify(msg.Text)) + `</pre>`
 	}
-	remote := r.URL.Query().Get("remote") == "1"
 	res := sanitizeHTML(msg.HTML, sanitizeOptions{
 		AllowRemote: remote,
 		CIDURL: func(cid string) string {

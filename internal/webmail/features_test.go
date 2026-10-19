@@ -664,3 +664,42 @@ func TestNoNestedForms(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadImagesPreference pins that remote images stay blocked until the
+// user opts in, then load in the reading page and in the body frames that
+// conversation cards fetch on their own, but never in Junk.
+func TestLoadImagesPreference(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	h.store.raw[11] = []byte("From: a@example.com\r\nSubject: t\r\nContent-Type: text/html\r\n\r\n<p>hi</p><img src=\"https://tracker.example/p.gif\">\r\n")
+	loads := func(path string) bool {
+		t.Helper()
+		resp, body := h.get(path)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s = %d", path, resp.StatusCode)
+		}
+		return strings.Contains(body, "tracker.example")
+	}
+	if loads("/mail/body?f=INBOX&uid=11") {
+		t.Fatal("remote image loaded before the user opted in")
+	}
+	if _, page := h.get("/mail?f=INBOX&uid=11"); !strings.Contains(page, "Show images") {
+		t.Error("no show-images banner while images are blocked")
+	}
+	if resp := h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "load_images": {"1"}}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("settings = %d", resp.StatusCode)
+	}
+	if !loads("/mail/body?f=INBOX&uid=11") {
+		t.Error("conversation-card body frame ignored the preference")
+	}
+	_, page := h.get("/mail?f=INBOX&uid=11")
+	if strings.Contains(page, "Show images") || !strings.Contains(page, "remote=1") {
+		t.Error("reading page ignored the preference")
+	}
+	if loads("/mail/body?f=Junk&uid=11") {
+		t.Error("remote image loaded automatically in Junk")
+	}
+	if _, page := h.get("/settings"); !strings.Contains(page, `name="load_images" value="1" checked`) {
+		t.Error("settings page doesn't show the preference as on")
+	}
+}

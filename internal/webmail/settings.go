@@ -43,6 +43,9 @@ type Settings struct {
 	Palette string `json:"palette,omitempty"`
 	// Conversations groups the message list by thread; nil means on.
 	Conversations *bool `json:"conversations,omitempty"`
+	// LoadImages shows remote images without asking, except in Junk. Off by
+	// default: loading an image tells its sender the message was opened.
+	LoadImages bool `json:"load_images,omitempty"`
 }
 
 // GroupConversations reports whether lists are grouped by thread.
@@ -407,6 +410,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	p.Palette = validPalette(r.PostFormValue("palette"))
 	conv := r.PostFormValue("conversations") == "1"
 	p.Conversations = &conv
+	p.LoadImages = r.PostFormValue("load_images") == "1"
 	switch v := r.PostFormValue("calendar_view"); v {
 	case "month", "week", "day", "agenda":
 		p.CalendarView = v
