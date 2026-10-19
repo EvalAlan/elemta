@@ -1,5 +1,7 @@
 # Elemta on Kubernetes
 
+Diagrams of the overlays and the pods: [Architecture](../../docs/architecture.md#kubernetes).
+
 Two ways in:
 
 - **`dev/`, the development stack on Kubernetes.** It is what

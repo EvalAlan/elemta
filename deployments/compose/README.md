@@ -1,5 +1,7 @@
 # Docker Compose stacks
 
+Diagrams of the dev stack and the cloud server: [Architecture](../../docs/architecture.md#docker-compose-the-development-stack).
+
 Run these through `make` from the repository root where a target exists; the
 targets set the environment the files expect.
 

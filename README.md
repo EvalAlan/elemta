@@ -96,6 +96,8 @@ Other ways to run it:
 ## Documentation
 
 - [Documentation index](docs/README.md)
+- [Architecture](docs/architecture.md): diagrams of the components, mail flow,
+  the Docker Compose stack, the cloud server and Kubernetes
 - [User guide](docs/user-guide.md): webmail, mail apps, two-step verification
 - [Installation](docs/installation.md) and [Configuration](docs/configuration.md)
 - [Mailbox service](docs/mailbox-service.md)

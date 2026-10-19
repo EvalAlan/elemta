@@ -7,6 +7,7 @@ traps live in [HANDOFF.md](../HANDOFF.md); release-by-release changes in the
 
 ## Start here
 
+- [Architecture](architecture.md): how the parts fit together, with diagrams of the Docker Compose, cloud and Kubernetes layouts
 - [User Guide](user-guide.md): webmail, mail apps, two-step verification and app passwords
 - [Installation](installation.md)
 - [Configuration](configuration.md)
