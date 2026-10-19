@@ -39,6 +39,15 @@
     }
   }, true);
 
+  // ---- calendar and contact import -----------------------------------------
+  // The import shows as a link (see .js .import in the stylesheet); choosing
+  // a file is the confirmation, so it submits straight away.
+  doc.addEventListener("change", function (e) {
+    var input = e.target;
+    if (!input.matches || !input.matches(".import input[type=file]")) return;
+    if (input.files && input.files.length) input.form.submit();
+  });
+
   // ---- theme ---------------------------------------------------------------
   // The toggle flips whichever theme is showing, including one that came
   // from the device's setting, applies it at once and saves it in the

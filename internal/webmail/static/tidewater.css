@@ -489,6 +489,16 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .link-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
 .import { display: flex; flex-direction: column; gap: 6px; padding: 0 4px; }
 .import input { max-width: 100%; font-size: 12px; }
+/* With scripts, the import is a link like its export neighbour: the label
+   opens the file picker and choosing a file submits (app.js), so the
+   browser's own file control, which can't be styled, stays out of sight.
+   Without scripts the plain control and button remain. */
+.js .import { padding: 0; gap: 0; }
+.js .import label { color: var(--muted); text-decoration: underline; cursor: pointer; padding: 0 10px; }
+.js .import label:hover { color: var(--accent-dark); }
+.js .import:focus-within label { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.js .import input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); }
+.js .import button { display: none; }
 
 .error-page { margin: 32px; display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
 .error-page .problem { margin: 0; }

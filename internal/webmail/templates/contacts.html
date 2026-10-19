@@ -19,7 +19,7 @@
   </nav>
   <form class="import" action="/contacts/import" method="post" enctype="multipart/form-data">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-    <label class="small" for="vcf">Import a .vcf file</label>
+    <label class="small" for="vcf">Import contacts (.vcf)</label>
     <input id="vcf" name="file" type="file" accept=".vcf,text/vcard" required>
     <button class="button" type="submit">Import</button>
   </form>

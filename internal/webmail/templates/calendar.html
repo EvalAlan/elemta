@@ -16,7 +16,7 @@
   <a class="small manage" href="/settings#holidays">Customize holidays</a>
   <form class="import" action="/calendar/import" method="post" enctype="multipart/form-data">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-    <label class="small" for="ics">Import an .ics file</label>
+    <label class="small" for="ics">Import calendar (.ics)</label>
     <input id="ics" name="file" type="file" accept=".ics,text/calendar" required>
     <button class="button" type="submit">Import</button>
   </form>
