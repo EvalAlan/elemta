@@ -1877,10 +1877,23 @@ body.hide-failed-queue .failed-health-stat {
 /* ============================================================================
    Reports View
    ============================================================================ */
+/* The delivery chart takes the full width; Recent Errors and Top Failure
+   Reasons share the row under it. With three cards in a 2fr/1fr grid the
+   third wrapped into the wide column alone. */
 .reports-grid {
     display: grid;
-    grid-template-columns: 2fr 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.reports-grid > .chart-card {
+    grid-column: 1 / -1;
+}
+
+/* The cards below the grid are siblings, not grid items, so they need the
+   same gap themselves. */
+#view-reports > .card {
     margin-top: 1.5rem;
 }
 

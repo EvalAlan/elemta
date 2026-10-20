@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261019-notice">
+    <link rel="stylesheet" href="/static/styles.css?v=20261020-reports">
     <link rel="stylesheet" href="/static/mail-admin.css?v=20261019-cos">
 </head>
 
@@ -770,11 +770,13 @@
                 <div class="card">
                     <div class="card-header">
                         <h3>Sender reputation</h3>
-                        <select id="sender-stats-days" class="filter-select" onchange="refreshSenderStats()" aria-label="Window">
-                            <option value="1">Today (UTC)</option>
-                            <option value="7">Last 7 days</option>
-                        </select>
-                        <button class="btn btn-secondary btn-sm" onclick="refreshSenderStats()">Refresh</button>
+                        <div class="chart-controls">
+                            <select id="sender-stats-days" class="filter-select" onchange="refreshSenderStats()" aria-label="Window">
+                                <option value="1">Today (UTC)</option>
+                                <option value="7">Last 7 days</option>
+                            </select>
+                            <button class="btn btn-secondary btn-sm" onclick="refreshSenderStats()">Refresh</button>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div class="field-hint">
