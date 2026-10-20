@@ -535,6 +535,7 @@ func (b davCalBackend) PutCalendarObject(ctx context.Context, p string, cal *ica
 	if err := davPut(ctx, b.s, c.coll, &obj, name, ".ics", opts.IfMatch, opts.IfNoneMatch, caldav.NewPreconditionError(caldav.PreconditionNoUIDConflict)); err != nil {
 		return nil, err
 	}
+	b.s.davCalendarChanged(ctx, c.coll)
 	co, err := davCalendarObject(c, obj)
 	if err != nil {
 		return nil, err
@@ -548,7 +549,19 @@ func (b davCalBackend) DeleteCalendarObject(ctx context.Context, p string) error
 	if c == nil || name == "" {
 		return davNotFound("calendar object")
 	}
-	return davDelete(ctx, b.s, c.coll, name, ".ics")
+	if err := davDelete(ctx, b.s, c.coll, name, ".ics"); err != nil {
+		return err
+	}
+	b.s.davCalendarChanged(ctx, c.coll)
+	return nil
+}
+
+// davCalendarChanged republishes free/busy after a CalDAV client changed
+// the calendar (tasks don't make anyone busy).
+func (s *Server) davCalendarChanged(ctx context.Context, coll Collection) {
+	if conn := davFrom(ctx); conn != nil && coll == CollCalendar {
+		s.publishFreeBusy(conn.user, conn.pw, s.cfg.address(conn.user))
+	}
 }
 
 // davPut stores obj under the client's resource name. The object ID stays

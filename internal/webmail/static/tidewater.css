@@ -1073,3 +1073,18 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
   .settings-nav .folder { min-height: 32px; }
   .toggle-row { flex-direction: column; align-items: flex-start; }
 }
+
+/* Availability on the event form: one row per person for the chosen day,
+   busy times shaded, the proposed time outlined. */
+.availability { display: grid; gap: 4px; font-size: .875rem; }
+.availability .fb-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr); gap: 8px; align-items: center; }
+.availability .fb-who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.availability .fb-track { position: relative; height: 18px; background: var(--line-soft); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.availability .fb-hours { position: relative; height: 1.1em; color: var(--muted); font-size: .75rem; }
+.availability .fb-hours span { position: absolute; transform: translateX(-50%); }
+.availability .fb-busy { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .75; }
+.availability .fb-busy.tentative { background: repeating-linear-gradient(45deg, var(--accent) 0 4px, transparent 4px 8px); opacity: .6; }
+.availability .fb-slot { position: absolute; top: -1px; bottom: -1px; border: 2px solid var(--ink); border-radius: 3px; pointer-events: none; }
+.availability .fb-unknown { color: var(--muted); font-style: italic; }
+.availability .fb-summary { margin: 2px 0 0; color: var(--muted); }
+.availability .fb-summary.conflict { color: var(--warn-fg); }

@@ -22,6 +22,12 @@ type fakeSecurity struct {
 	// The class of service the check reports.
 	protocols        map[string]bool
 	requireTwoFactor bool
+	// The company address book /v1/directory returns.
+	directory []directoryEntry
+	// Free/busy: what was published, and what lookups return.
+	published map[string]any
+	freeBusy  []map[string]any
+	lookups   []string
 }
 
 func (f *fakeSecurity) handler(t *testing.T) http.Handler {
@@ -39,6 +45,19 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 			_ = json.NewDecoder(r.Body).Decode(&in)
 		}
 		out := map[string]any{}
+		switch {
+		case r.URL.Path == "/v1/directory":
+			_ = json.NewEncoder(w).Encode(f.directory)
+			return
+		case r.URL.Path == "/v1/freebusy" && r.Method == http.MethodPut:
+			f.published = in
+			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+			return
+		case r.URL.Path == "/v1/freebusy":
+			f.lookups = append(f.lookups, r.URL.RawQuery)
+			_ = json.NewEncoder(w).Encode(f.freeBusy)
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/security/check":
 			out = map[string]any{"kind": kind, "totp": f.totp, "app_required": f.appRequired, "protocols": f.protocols, "require_two_factor": f.requireTwoFactor}
@@ -327,5 +346,46 @@ func TestClassOfServiceInWebmail(t *testing.T) {
 	}
 	if resp, _ := h.get("/mail"); resp.StatusCode != http.StatusOK {
 		t.Fatalf("mail after setup = %d", resp.StatusCode)
+	}
+}
+
+func TestCompanyDirectoryInAutocomplete(t *testing.T) {
+	f := &fakeSecurity{directory: []directoryEntry{
+		{Address: "lee@example.com", Name: "Lee Park", Kind: "account"},
+		{Address: "team@example.com", Name: "Team", Kind: "list"},
+	}}
+	h := newSecurityHarness(t, f)
+	if resp, _ := h.submitLogin("secret"); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("sign-in = %d", resp.StatusCode)
+	}
+	// Someone already in contacts isn't offered twice.
+	card := "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:lee\r\nFN:Lee P.\r\nEMAIL:lee@example.com\r\nEND:VCARD\r\n"
+	if err := h.store.PutObject(context.Background(), CollContacts, Object{ID: "lee", Data: []byte(card)}); err != nil {
+		t.Fatal(err)
+	}
+	_, js := h.get("/api/addresses")
+	var sugg []struct {
+		Label, Value string
+		Directory    bool
+	}
+	if err := json.Unmarshal([]byte(js), &sugg); err != nil {
+		t.Fatal(err)
+	}
+	labels := map[string]bool{}
+	for _, s := range sugg {
+		labels[s.Label] = s.Directory
+	}
+	if !labels["Team <team@example.com> (list)"] {
+		t.Errorf("the list from the address book is missing: %s", js)
+	}
+	if _, dup := labels["Lee Park <lee@example.com>"]; dup {
+		t.Errorf("a contact was offered again from the address book: %s", js)
+	}
+	// Without the mailbox's answer autocomplete still works.
+	f.mu.Lock()
+	f.directory = nil
+	f.mu.Unlock()
+	if resp, _ := h.get("/api/addresses"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("addresses without directory = %d", resp.StatusCode)
 	}
 }

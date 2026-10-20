@@ -607,9 +607,10 @@ func (s *Server) addressesAPI(w http.ResponseWriter, r *http.Request, sess *Sess
 		return
 	}
 	type suggestion struct {
-		Label string `json:"label"`
-		Value string `json:"value"`
-		Group bool   `json:"group,omitempty"`
+		Label     string `json:"label"`
+		Value     string `json:"value"`
+		Group     bool   `json:"group,omitempty"`
+		Directory bool   `json:"directory,omitempty"`
 	}
 	out := []suggestion{}
 	members := map[string][]string{}
@@ -629,6 +630,27 @@ func (s *Server) addressesAPI(w http.ResponseWriter, r *http.Request, sess *Sess
 	}
 	for g, m := range members {
 		out = append(out, suggestion{Label: g + " (group, " + plural2(len(m), "person", "people") + ")", Value: strings.Join(m, ", "), Group: true})
+	}
+	// Then the company address book, for colleagues not yet in contacts.
+	// It is a convenience: without it autocomplete still has the contacts.
+	known := map[string]bool{}
+	for _, c := range all {
+		for _, e := range c.Emails {
+			known[strings.ToLower(e.Value)] = true
+		}
+	}
+	for _, d := range s.companyDirectory(r.Context(), sess) {
+		if known[d.Address] || strings.EqualFold(d.Address, sess.Address) {
+			continue
+		}
+		label := d.Address
+		if d.Name != "" {
+			label = d.Name + " <" + d.Address + ">"
+		}
+		if d.Kind == "list" {
+			label += " (list)"
+		}
+		out = append(out, suggestion{Label: label, Value: formatAddress(Address{Name: d.Name, Email: d.Address}), Directory: true})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "private, no-store")
@@ -665,4 +687,29 @@ func senderIsContact(s *Server, ctx context.Context, sess *Session, v *view) {
 
 func init() {
 	messageDecorators = append(messageDecorators, senderIsContact)
+}
+
+// directoryEntry is one address from the company address book.
+type directoryEntry struct {
+	Address string `json:"address"`
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+}
+
+// companyDirectory is the address book of the user's domain from the
+// mailbox service, or nothing when it isn't available.
+func (s *Server) companyDirectory(ctx context.Context, sess *Session) []directoryEntry {
+	if s.security == nil {
+		return nil
+	}
+	password, err := s.sessions.password(sess)
+	if err != nil {
+		return nil
+	}
+	var out []directoryEntry
+	if err := s.security.call(ctx, http.MethodGet, "/v1/directory", sess.User, password, nil, &out); err != nil {
+		s.log.Warn("company address book unavailable", "error", err)
+		return nil
+	}
+	return out
 }

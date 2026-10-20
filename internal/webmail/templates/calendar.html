@@ -184,6 +184,8 @@
   <label for="ev-location">Location</label><input id="ev-location" name="location" type="text" value="{{.Location}}">
   <label for="ev-url">Link</label><input id="ev-url" name="url" type="url" value="{{.URL}}" placeholder="https://… (a video call, for example)">
   <label for="ev-guests">Guests</label><input id="ev-guests" name="attendees" type="text" value="{{.Attendees}}" autocomplete="off" data-addresses placeholder="Email addresses, separated by commas">
+  <span class="label" data-freebusy-label hidden>Availability</span>
+  <div class="availability" data-freebusy aria-live="polite" hidden></div>
   <span></span>
   <label class="checkline"><input type="checkbox" name="notify" value="1"{{if or .Notify (not .UID)}} checked{{end}}> Email invitations (and updates) to guests</label>
   <label for="ev-cal">Calendar</label>

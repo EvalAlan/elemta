@@ -51,6 +51,7 @@ type Server struct {
 	// when none is configured (security.go).
 	security *securityClient
 	pending  pendingLogins
+	freeBusy freeBusyPublisher
 	// defaultLoc is the time zone for users who haven't chosen one and
 	// whose browser hasn't reported one yet.
 	defaultLoc *time.Location
@@ -254,6 +255,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", s.authed(s.mailEvents))
 	mux.HandleFunc("GET /api/counts", s.authed(s.countsAPI))
 	mux.HandleFunc("GET /api/addresses", s.authed(s.addressesAPI))
+	mux.HandleFunc("GET /api/freebusy", s.authed(s.freeBusyAPI))
 	// Calendar and contact sync for phones and desktop clients. Clients
 	// look for the well-known paths first (RFC 6764).
 	mux.Handle("/dav/", s.davHandler())
@@ -693,6 +695,9 @@ func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *htt
 	s.setCookie(w, sessionCookie, sess.ID, 0)
 	s.setAppearanceCookies(w, s.prefs(ctx, sess))
 	s.log.Info("webmail: login", "user", user, "ip", s.clientIP(r))
+	// Catch calendar changes made elsewhere (another mail app over IMAP,
+	// or before free/busy existed).
+	s.publishFreeBusy(user, password, sess.Address)
 	return true
 }
 

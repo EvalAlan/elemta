@@ -39,6 +39,7 @@ type Service struct {
 	sieve      sieveCache
 	tlsConfig  *tls.Config
 	http       *http.Server
+	dir        directoryCache
 	ctx        context.Context
 	cancel     context.CancelFunc
 }

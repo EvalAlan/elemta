@@ -136,7 +136,7 @@ func keepAlarms(dst, src *ical.Component, reminder int) {
 func (s *Server) putEvent(ctx context.Context, sess *Session, e Event) error {
 	now := s.now()
 	e.Modified = now.UTC()
-	return s.sessions.withStore(ctx, sess, s.dial, func(st Mailstore) error {
+	err := s.sessions.withStore(ctx, sess, s.dial, func(st Mailstore) error {
 		objs, err := st.Objects(ctx, CollCalendar)
 		if err != nil {
 			return err
@@ -147,6 +147,10 @@ func (s *Server) putEvent(ctx context.Context, sess *Session, e Event) error {
 		}
 		return st.PutObject(ctx, CollCalendar, Object{ID: id, Title: e.Summary, ContentType: "text/calendar", Data: data})
 	})
+	if err == nil {
+		s.calendarChanged(sess)
+	}
+	return err
 }
 
 // mergeEvent renders e into the object it is stored in (or a new one when
@@ -239,6 +243,14 @@ func replaceComponent(stored *storedEvent, comp *ical.Component, overrides []*ic
 }
 
 func (s *Server) deleteEvent(ctx context.Context, sess *Session, uid string) error {
+	err := s.deleteEventIn(ctx, sess, uid)
+	if err == nil {
+		s.calendarChanged(sess)
+	}
+	return err
+}
+
+func (s *Server) deleteEventIn(ctx context.Context, sess *Session, uid string) error {
 	return s.sessions.withStore(ctx, sess, s.dial, func(st Mailstore) error {
 		objs, err := st.Objects(ctx, CollCalendar)
 		if err != nil {

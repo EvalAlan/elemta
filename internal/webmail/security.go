@@ -133,7 +133,9 @@ func (c *securityClient) call(ctx context.Context, method, path, user, password 
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(out)
+	// The address book and free/busy answers grow with the organisation;
+	// the rest are small.
+	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
 }
 
 func (c *securityClient) check(ctx context.Context, user, password string) (securityCheck, error) {

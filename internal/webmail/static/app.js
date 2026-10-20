@@ -580,6 +580,70 @@
     input.addEventListener("blur", function () { setTimeout(close, 150); });
   }
 
+  // ---- availability on the event form --------------------------------------
+  // Guests' busy times for the chosen day, from the free/busy they publish.
+  // Hidden until there is someone to show, and if the server has none.
+  var avail = $("[data-freebusy]");
+  if (avail) {
+    var fbLabel = $("[data-freebusy-label]");
+    var guests = $("#ev-guests"), startDate = $("#ev-start-date"), startTime = $("#ev-start-time"), endTime = $("#ev-end-time"), endDate = $("#ev-end-date"), allDay = $("#ev-allday");
+    var fbTimer = null, fbSeq = 0;
+    var minutesOf = function (v) { var p = (v || "").split(":"); return p.length < 2 ? null : Number(p[0]) * 60 + Number(p[1]); };
+    var hide = function () { avail.hidden = true; if (fbLabel) fbLabel.hidden = true; };
+    var fbRender = function (data) {
+      avail.textContent = "";
+      if (!data || !data.people || data.people.length < 2) { hide(); return; }
+      var slotFrom = allDay && allDay.checked ? 0 : minutesOf(startTime && startTime.value);
+      var slotTo = allDay && allDay.checked ? data.minutes : minutesOf(endTime && endTime.value);
+      if (endDate && endDate.value && startDate && endDate.value !== startDate.value) slotTo = data.minutes;
+      if (slotFrom === null) slotFrom = 9 * 60;
+      if (slotTo === null || slotTo <= slotFrom) slotTo = Math.min(data.minutes, slotFrom + 60);
+      // Working hours, widened to take in the proposed time.
+      var from = Math.min(7 * 60, Math.floor(slotFrom / 60) * 60), to = Math.max(20 * 60, Math.ceil(slotTo / 60) * 60);
+      var pct = function (m) { return ((Math.max(from, Math.min(to, m)) - from) / (to - from) * 100) + "%"; };
+      var hours = doc.createElement("div"); hours.className = "fb-hours";
+      for (var h = from; h <= to; h += 120) { var s = doc.createElement("span"); s.style.left = pct(h); s.textContent = String(h / 60).padStart(2, "0") + ":00"; hours.appendChild(s); }
+      var head = doc.createElement("div"); head.className = "fb-row"; head.appendChild(doc.createElement("span")); head.appendChild(hours); avail.appendChild(head);
+      var conflicts = [];
+      data.people.forEach(function (p, i) {
+        var row = doc.createElement("div"); row.className = "fb-row";
+        var who = doc.createElement("span"); who.className = "fb-who"; who.textContent = i === 0 ? "You" : p.address; who.title = p.address; row.appendChild(who);
+        if (!p.known) {
+          var u = doc.createElement("span"); u.className = "fb-unknown"; u.textContent = "No availability shared"; row.appendChild(u);
+        } else {
+          var track = doc.createElement("div"); track.className = "fb-track";
+          p.busy.forEach(function (b) {
+            if (b.to <= from || b.from >= to) return;
+            var d = doc.createElement("span"); d.className = "fb-busy" + (b.tentative ? " tentative" : "");
+            d.style.left = pct(b.from); d.style.width = "calc(" + pct(b.to) + " - " + pct(b.from) + ")";
+            track.appendChild(d);
+          });
+          var slot = doc.createElement("span"); slot.className = "fb-slot"; slot.style.left = pct(slotFrom); slot.style.width = "calc(" + pct(slotTo) + " - " + pct(slotFrom) + ")";
+          track.appendChild(slot);
+          row.appendChild(track);
+          if (i > 0 && p.busy.some(function (b) { return !b.tentative && b.from < slotTo && b.to > slotFrom; })) conflicts.push(p.address);
+        }
+        avail.appendChild(row);
+      });
+      var sum = doc.createElement("p"); sum.className = "fb-summary" + (conflicts.length ? " conflict" : "");
+      sum.textContent = conflicts.length ? "Busy at this time: " + conflicts.join(", ") : "No conflicts with the guests who share their availability.";
+      avail.appendChild(sum);
+      avail.hidden = false; if (fbLabel) fbLabel.hidden = false;
+    };
+    var fbLoad = function () {
+      if (!startDate || !startDate.value || !guests.value.trim()) { hide(); return; }
+      var seq = ++fbSeq;
+      fetch("/api/freebusy?date=" + encodeURIComponent(startDate.value) + "&attendees=" + encodeURIComponent(guests.value), { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) { if (seq === fbSeq) fbRender(data); })
+        .catch(hide);
+    };
+    var fbSoon = function () { clearTimeout(fbTimer); fbTimer = setTimeout(fbLoad, 400); };
+    [guests, startDate, startTime, endTime, endDate, allDay].forEach(function (el) { if (el) el.addEventListener("change", fbSoon); });
+    guests.addEventListener("input", fbSoon);
+    fbLoad();
+  }
+
   // ---- time zone ---------------------------------------------------------
   if (body.hasAttribute("data-detect-tz") && window.Intl) {
     try {

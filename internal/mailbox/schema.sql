@@ -174,3 +174,16 @@ CREATE TABLE IF NOT EXISTS mailbox_audit (
     detail text NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS mailbox_audit_domain ON mailbox_audit(domain, id);
+
+-- Each account's busy times, published by the webmail whenever its
+-- calendar changes (freebusy.go), so colleagues scheduling a meeting can
+-- see when someone is free without reading their calendar.
+CREATE TABLE IF NOT EXISTS mailbox_freebusy (
+    account text PRIMARY KEY,
+    address text NOT NULL,
+    window_from timestamptz NOT NULL,
+    window_to timestamptz NOT NULL,
+    busy jsonb NOT NULL,
+    updated timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS mailbox_freebusy_address ON mailbox_freebusy(address);

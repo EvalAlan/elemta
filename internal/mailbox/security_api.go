@@ -39,7 +39,11 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 4096)
+			limit := int64(4096)
+			if r.URL.Path == "/v1/freebusy" {
+				limit = 1 << 20 // a year of busy times
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 			defer cancel()
 			auth, err := s.securityLogin(ctx, user, password)
@@ -89,6 +93,28 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			out["filters"] = p.Filters
 		}
 		return out, nil
+	})
+	// The address book of the user's own domain, for address autocomplete.
+	handle("GET /v1/directory", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.directory(r.Context(), a.account.Address)
+	})
+	// Free/busy: the webmail publishes the user's own busy times and reads
+	// colleagues'.
+	handle("PUT /v1/freebusy", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var fb FreeBusy
+		if err := decode(r, &fb); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.PublishFreeBusy(r.Context(), a.account, fb)
+	})
+	handle("GET /v1/freebusy", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		q := r.URL.Query()
+		from, err1 := time.Parse(time.RFC3339, q.Get("from"))
+		to, err2 := time.Parse(time.RFC3339, q.Get("to"))
+		if err1 != nil || err2 != nil {
+			return nil, errBadFreeBusy
+		}
+		return s.freeBusy(r.Context(), a.account, q["address"], from, to)
 	})
 	handle("GET /v1/security", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		st, err := s.engine.SecurityState(r.Context(), a.account.ID)

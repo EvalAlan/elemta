@@ -15,6 +15,16 @@ Sign in at your server's address with your full email address and password.
   `from:`, `subject:`, `is:unread` and `has:attachment`.
 - **Calendar, Contacts and Tasks:** in the top bar. An invitation sent to you
   shows Yes, Maybe and No, and your answer goes back to the organiser.
+- **Addresses:** typing in To, Cc, Bcc or an event's Guests suggests your
+  contacts first, then colleagues and distribution lists from your
+  organisation's address book.
+- **Scheduling:** when you add colleagues as guests to an event, the form
+  shows when each of them is busy that day, with the time you picked
+  outlined. Colleagues see only that you're busy (striped when it's a
+  maybe or an invitation you haven't answered), never what the event is.
+  Events shown as Free, cancelled ones and invitations you declined don't
+  count. Changes made from the webmail or a calendar app show up within
+  seconds; ones made another way, the next time you sign in to webmail.
 - **Settings:** the gear icon, top right. Each section is in the settings
   sidebar:
 

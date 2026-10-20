@@ -72,6 +72,16 @@ optional.
   that doesn't name the user, sent from the null sender. Redirects and
   replies are submitted to `sieve.submit_addr`; without it they are skipped
   and logged.
+- The company address book and free/busy, on the account-security API with
+  the user's own credentials and limited to their own domain.
+  `GET /v1/directory` lists the domain's active accounts (from LDAP, with
+  `displayName` or `cn`) and distribution lists, cached for five minutes;
+  the webmail adds them to address autocomplete. `PUT /v1/freebusy` stores
+  the busy times the webmail computes from a user's calendar
+  (`mailbox_freebusy`: start, end and tentative only, half a year ahead),
+  and `GET /v1/freebusy?address=…&from=…&to=…` returns colleagues' times.
+  An address in another domain answers exactly like one that never
+  published.
 - A selected IMAP session keeps only its folder's UIDs (4 bytes a message)
   and loads flags, dates and sizes for the messages a command touches, so
   memory doesn't grow with the folder. Measured on the dev stack: 400
