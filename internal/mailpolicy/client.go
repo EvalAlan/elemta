@@ -77,12 +77,17 @@ func (e *APIError) Unwrap() error { return e.kind }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
-	if in != nil {
+	contentType := ""
+	switch v := in.(type) {
+	case nil:
+	case rawBody:
+		body, contentType = bytes.NewReader(v), "message/rfc822"
+	default:
 		data, err := json.Marshal(in)
 		if err != nil {
 			return err
 		}
-		body = bytes.NewReader(data)
+		body, contentType = bytes.NewReader(data), "application/json"
 	}
 	// #nosec G704 -- the base URL is operator configuration; paths are fixed with escaped segments
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
@@ -90,8 +95,8 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := c.http.Do(req) // #nosec G704 -- request built above from operator configuration
 	if err != nil {
@@ -254,4 +259,55 @@ func (c *Client) DeleteList(ctx context.Context, address string) error {
 func (c *Client) Address(ctx context.Context, address string) (AddressInfo, error) {
 	var out AddressInfo
 	return out, c.do(ctx, http.MethodGet, "/v1/admin/addresses/"+seg(address), nil, &out)
+}
+
+// rawBody is a request body sent as is, not as JSON.
+type rawBody []byte
+
+// Import is one message to store in an account, from a migration.
+type Import struct {
+	Address string    // the account's primary address
+	Folder  string    // "/" separates levels; created if missing
+	Flags   []string  // IMAP flags and keywords to keep
+	Date    time.Time // the original internal date; zero is now
+	// Key names the message's origin (source, folder, UIDVALIDITY, UID).
+	// Importing the same key again stores nothing new, so an interrupted
+	// migration can simply be run again.
+	Key string
+	Raw []byte
+}
+
+// ImportResult is where an imported message was stored.
+type ImportResult struct {
+	UID         uint32 `json:"uid"`
+	UIDValidity uint32 `json:"uidvalidity"`
+	Folder      string `json:"folder"`
+	// Duplicate means an earlier run already imported this key.
+	Duplicate bool `json:"duplicate"`
+}
+
+// ErrTooLarge and ErrQuota are refusals an import can meet.
+var (
+	ErrTooLarge = errors.New("message too large")
+	ErrQuota    = errors.New("mailbox over quota")
+)
+
+// Import stores one message in an account.
+func (c *Client) Import(ctx context.Context, m Import) (ImportResult, error) {
+	q := url.Values{"folder": {m.Folder}, "key": {m.Key}, "flags": {strings.Join(m.Flags, ",")}}
+	if !m.Date.IsZero() {
+		q.Set("date", m.Date.UTC().Format(time.RFC3339))
+	}
+	var out ImportResult
+	err := c.do(ctx, http.MethodPost, "/v1/admin/accounts/"+seg(m.Address)+"/messages?"+q.Encode(), rawBody(m.Raw), &out)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.Status {
+		case http.StatusRequestEntityTooLarge:
+			apiErr.kind = ErrTooLarge
+		case http.StatusInsufficientStorage:
+			apiErr.kind = ErrQuota
+		}
+	}
+	return out, err
 }

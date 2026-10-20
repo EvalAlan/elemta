@@ -334,3 +334,59 @@ func TestAddressingAdminAPI(t *testing.T) {
 		t.Fatalf("delete missing list = %d", code)
 	}
 }
+
+// TestImportMessages pins the migration import: original flags and date,
+// folders created as needed, a key stored once, and the refusals.
+func TestImportMessages(t *testing.T) {
+	r := newAddressingRig(t)
+	r.svc.adminToken = "admin-secret"
+	post := func(address, query, body string) (int, map[string]any) {
+		req := httptest.NewRequest("POST", "/v1/admin/accounts/"+address+"/messages?"+query, strings.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:5000"
+		req.Header.Set("Authorization", "Bearer admin-secret")
+		w := httptest.NewRecorder()
+		r.svc.http.Handler.ServeHTTP(w, req)
+		var out map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out
+	}
+	raw := "From: old@example.org\r\nSubject: imported\r\n\r\nbody\r\n"
+	q := "folder=Projects%2FAlpha&key=imap%3Aold%3AINBOX%3A1%3A7&flags=%5CSeen%2C%24Important&date=2024-03-01T09%3A30%3A00Z"
+	code, out := post(r.addr("ana"), q, raw)
+	if code != http.StatusOK || out["duplicate"] != false || out["folder"] != "Projects/Alpha" {
+		t.Fatalf("import = %d %v", code, out)
+	}
+	a := r.dir.accounts[r.addr("ana")]
+	_, msgs, err := r.e.Snapshot(context.Background(), a.ID, "Projects/Alpha")
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("folder has %d messages, %v", len(msgs), err)
+	}
+	m := msgs[0]
+	if !m.Date.Equal(time.Date(2024, 3, 1, 9, 30, 0, 0, time.UTC)) || !strings.EqualFold(strings.Join(m.Flags, ","), `$Important,\Seen`) && !strings.EqualFold(strings.Join(m.Flags, ","), `\Seen,$Important`) {
+		t.Errorf("stored with date %v flags %v", m.Date, m.Flags)
+	}
+	// The same key again stores nothing and says so.
+	if code, out = post(r.addr("ana"), q, raw); code != http.StatusOK || out["duplicate"] != true {
+		t.Fatalf("second import = %d %v", code, out)
+	}
+	if _, msgs, _ = r.e.Snapshot(context.Background(), a.ID, "Projects/Alpha"); len(msgs) != 1 {
+		t.Fatal("a repeated key was stored twice")
+	}
+	// Different content under a used key is refused.
+	if code, _ = post(r.addr("ana"), q, raw+"changed"); code != http.StatusConflict {
+		t.Fatalf("changed content under a used key = %d", code)
+	}
+	// Refusals: no key, an alias, a disabled account, an unknown one.
+	if code, _ = post(r.addr("ana"), "folder=INBOX", raw); code != http.StatusBadRequest {
+		t.Errorf("no key = %d", code)
+	}
+	if code, _ = post(r.addr("benny"), "key=k1", raw); code != http.StatusBadRequest {
+		t.Errorf("alias = %d", code)
+	}
+	if code, _ = post(r.addr("gone"), "key=k2", raw); code != http.StatusBadRequest {
+		t.Errorf("disabled account = %d", code)
+	}
+	if code, _ = post(r.addr("nobody"), "key=k3", raw); code != http.StatusNotFound {
+		t.Errorf("unknown account = %d", code)
+	}
+}

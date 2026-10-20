@@ -15,6 +15,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -39,7 +40,11 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 				writeAdminError(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+			limit := int64(64 << 10)
+			if strings.HasSuffix(r.URL.Path, "/messages") {
+				limit = s.engine.MaxBytes + 1
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			// Purging a large mailbox deletes many rows; everything else is
 			// quick.
 			ctx, cancel := context.WithTimeout(r.Context(), 100*time.Second)
@@ -167,6 +172,9 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 	handle("DELETE /v1/admin/lists/{address}", func(r *http.Request) (any, error) {
 		return map[string]bool{"ok": true}, s.engine.DeleteList(r.Context(), r.PathValue("address"))
 	})
+	handle("POST /v1/admin/accounts/{address}/messages", func(r *http.Request) (any, error) {
+		return s.importMessage(r)
+	})
 	handle("GET /v1/admin/addresses/{address}", func(r *http.Request) (any, error) {
 		return s.addressInfo(r.Context(), r.PathValue("address"))
 	})
@@ -250,6 +258,10 @@ func adminStatus(err error) (int, string) {
 		return http.StatusNotFound, adminMessage(err)
 	case errors.Is(err, ErrInUse):
 		return http.StatusConflict, adminMessage(err)
+	case errors.Is(err, ErrTooLarge):
+		return http.StatusRequestEntityTooLarge, adminMessage(err)
+	case errors.Is(err, ErrQuota):
+		return http.StatusInsufficientStorage, "the mailbox is over its quota"
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusServiceUnavailable, "timed out"
 	}
@@ -298,4 +310,77 @@ func (s *Service) addressInfo(ctx context.Context, raw string) (mailpolicy.Addre
 		info.Kind = "list"
 	}
 	return info, nil
+}
+
+// importMessage stores one message from a migration (internal/migrate) in
+// an account's folder, with its original flags and date. The caller names
+// each message with a key (its source and UID); the key becomes the
+// delivery token, so importing the same message again, after an
+// interrupted run, stores nothing new. Folders are created as needed.
+// Quota applies as for any delivery: a migration that doesn't fit stops
+// with a clear refusal rather than quietly overfilling the mailbox.
+func (s *Service) importMessage(r *http.Request) (any, error) {
+	a, err := s.directoryAccount(r.Context(), r.PathValue("address"))
+	if err != nil {
+		return nil, err
+	}
+	if a.ID == "" {
+		return nil, errors.Join(mailpolicy.ErrInvalid, errors.New("the account is disabled; enable it to import into it"))
+	}
+	q := r.URL.Query()
+	folder := strings.TrimSpace(q.Get("folder"))
+	if folder == "" {
+		folder = "INBOX"
+	}
+	if !validMailbox(folder) {
+		return nil, errors.Join(mailpolicy.ErrInvalid, errors.New("invalid folder name"))
+	}
+	key := q.Get("key")
+	if key == "" || len(key) > 1024 {
+		return nil, errors.Join(mailpolicy.ErrInvalid, errors.New("each imported message needs a key naming its source"))
+	}
+	var date time.Time
+	if v := q.Get("date"); v != "" {
+		if date, err = time.Parse(time.RFC3339, v); err != nil {
+			return nil, errors.Join(mailpolicy.ErrInvalid, errors.New("date must be RFC 3339"))
+		}
+	}
+	var flags []string
+	for _, f := range strings.Split(q.Get("flags"), ",") {
+		if f = strings.TrimSpace(f); f != "" && !strings.EqualFold(f, `\Recent`) && len(f) <= 100 && !strings.ContainsAny(f, " ()\r\n") {
+			flags = append(flags, f)
+		}
+	}
+	raw, err := io.ReadAll(r.Body)
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) || int64(len(raw)) > s.engine.MaxBytes {
+		return nil, errors.Join(ErrTooLarge, errors.New("message is larger than the mailbox accepts"))
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := s.applyPolicy(r.Context(), &a); err != nil {
+		return nil, err
+	}
+	if err := s.engine.EnsureAccount(r.Context(), a); err != nil {
+		return nil, err
+	}
+	if folder != "INBOX" {
+		if err := s.engine.Create(r.Context(), a.ID, folder); err != nil && !errors.Is(err, ErrExists) {
+			return nil, err
+		}
+	}
+	token := "import:" + sum(key)
+	var seen bool
+	if err := s.engine.DB.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM mailbox_deliveries WHERE account=$1 AND token=$2)`, a.ID, token).Scan(&seen); err != nil {
+		return nil, err
+	}
+	res, err := s.engine.Append(r.Context(), a.ID, folder, raw, flags, date, token)
+	if errors.Is(err, ErrConflict) {
+		return nil, errors.Join(ErrInUse, errors.New("a different message was already imported under this key"))
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"uid": res.UID, "uidvalidity": res.Validity, "folder": folder, "duplicate": seen}, nil
 }
