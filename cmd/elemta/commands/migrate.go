@@ -87,8 +87,7 @@ func newMigrateCommand(open func() (*provision.Service, error)) *cobra.Command {
 	root := &cobra.Command{Use: "migrate", Short: "Move mail, calendars, contacts and accounts onto Elemta",
 		Long: "Copy users from another mail system. Every command can be run again: what was already copied is skipped, so an interrupted run is resumed by repeating it, and a last pass before changing MX picks up new mail. Passwords are prompted for or read from stdin or a CSV, never command arguments."}
 	root.PersistentFlags().BoolVar(&asJSON, "json", false, "Output JSON for scripts")
-	// A failed migration explains itself; the usage text would bury it.
-	root.SilenceUsage = true
+
 	admin := func() (*mailpolicy.Client, error) {
 		s, err := open()
 		if err != nil {
@@ -112,8 +111,10 @@ func newMigrateCommand(open func() (*provision.Service, error)) *cobra.Command {
 	var sourceUser, dest, users, stateDir, exclude string
 	var parallel int
 	mail := &cobra.Command{
-		Use:   "mail",
-		Short: "Copy mail over IMAP, for one user (--source-user, --dest) or many (--users file.csv)",
+		// A failed migration explains itself; the usage text would bury it.
+		SilenceUsage: true,
+		Use:          "mail",
+		Short:        "Copy mail over IMAP, for one user (--source-user, --dest) or many (--users file.csv)",
 		Long: `Copy every folder of a user's mailbox from another IMAP server, keeping folders, read and flagged state, and dates.
 Sent, Drafts, Trash, Junk and Archive folders are recognised and land in the webmail's own; messages marked deleted are left behind.
 
@@ -227,9 +228,11 @@ Admin:     add --source-admin admin@old.example.com to sign in on each user's be
 	// ---- calendars, tasks and contacts ---------------------------------------
 	var fileDest string
 	files := &cobra.Command{
-		Use:   "import-files <file.ics|file.vcf>...",
-		Short: "Import calendar (.ics) and contact (.vcf) exports into a user's calendar, tasks and contacts",
-		Args:  cobra.MinimumNArgs(1),
+		// A failed migration explains itself; the usage text would bury it.
+		SilenceUsage: true,
+		Use:          "import-files <file.ics|file.vcf>...",
+		Short:        "Import calendar (.ics) and contact (.vcf) exports into a user's calendar, tasks and contacts",
+		Args:         cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := admin()
 			if err != nil {
@@ -274,8 +277,10 @@ Admin:     add --source-admin admin@old.example.com to sign in on each user's be
 	// ---- accounts, aliases, classes and lists -------------------------------
 	var csvPath string
 	accounts := &cobra.Command{
-		Use:   "accounts",
-		Short: "Create accounts, aliases, classes of service and distribution lists from a CSV",
+		// A failed migration explains itself; the usage text would bury it.
+		SilenceUsage: true,
+		Use:          "accounts",
+		Short:        "Create accounts, aliases, classes of service and distribution lists from a CSV",
 		Long: `Each row is an account or a list, by its type column:
 
   type,address,name,quota,password,aliases,class,members,owner,posting
