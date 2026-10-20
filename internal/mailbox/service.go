@@ -96,7 +96,7 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 			cancel()
 			return nil, err
 		}
-		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.GetCertificate}
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.GetCertificate, CipherSuites: tls12Suites}
 	}
 	s.tlsConfig = tlsConfig
 	for _, cidr := range c.Server.LMTPAllowedNetworks {
@@ -540,4 +540,18 @@ func lmtpResult(s *Service, what string, err error) error {
 	}
 	s.log.Warn("mailbox delivery failed", "recipient", what, "error", err)
 	return &smtp.SMTPError{Code: 451, Message: "Delivery temporarily unavailable"}
+}
+
+// tls12Suites are the TLS 1.2 suites the mail listeners accept: forward
+// secret AEAD only. Go's defaults also take the CBC/SHA-1 suites, which
+// every client of the last decade can do without and which the MTA and the
+// web front already refuse. TLS 1.3 suites aren't configurable and are all
+// AEAD.
+var tls12Suites = []uint16{
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
 }
