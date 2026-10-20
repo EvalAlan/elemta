@@ -1,4 +1,4 @@
-# make install-dev-full: the dev stack plus ClamAV, Rspamd and Roundcube.
+# make install-dev-full: the dev stack plus ClamAV and Rspamd.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -13,4 +13,3 @@ resources:
   - ../minimal
 components:
   - ../components/scanners
-  - ../components/roundcube

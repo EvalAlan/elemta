@@ -590,42 +590,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  elemta-roundcube:
-    image: roundcube/roundcubemail:latest
-    container_name: elemta-roundcube
-    ports:
-      - "8026:80"
-    environment:
-      - ROUNDCUBEMAIL_DB_TYPE=sqlite
-      - ROUNDCUBEMAIL_SKIN=elastic
-      - ROUNDCUBEMAIL_DEFAULT_HOST=elemta-mailbox
-      - ROUNDCUBEMAIL_DEFAULT_PORT=1143
-      - ROUNDCUBEMAIL_SMTP_SERVER=tls://elemta
-      - ROUNDCUBEMAIL_SMTP_PORT=2525
-      - ROUNDCUBEMAIL_SMTP_AUTH_TYPE=PLAIN
-      - ROUNDCUBEMAIL_SMTP_USER=%u
-      - ROUNDCUBEMAIL_SMTP_PASS=%p
-      - ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE=25M
-      - ROUNDCUBEMAIL_ASPELL_ENABLE=true
-    volumes:
-      - roundcube_data:/var/roundcube
-      # STARTTLS options for submitting to Elemta; see the file for why.
-      - ../../docker/roundcube/config/elemta-smtp.inc.php:/var/roundcube/config/elemta-smtp.inc.php:ro
-      # Disable custom config for now due to Docker file sharing issues
-      # - ./docker/roundcube/config/config.inc.php:/var/roundcube/config/config.inc.php:ro
-    networks:
-      - elemta_network
-    restart: unless-stopped
-    depends_on:
-      - elemta-mailbox
-      - elemta
-      - elemta-ldap
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost/" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
   # Monitoring Stack
 
 networks:
@@ -669,6 +633,4 @@ volumes:
   ldap_data:
     driver: local
   ldap_config:
-    driver: local
-  roundcube_data:
     driver: local

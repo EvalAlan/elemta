@@ -75,12 +75,12 @@ docker-compose logs --tail=30 elemta 2>/dev/null || \
 docker-compose logs --tail=30 $(docker-compose ps --services | grep elemta | head -1) 2>/dev/null || \
 echo "Could not find Elemta container logs"
 
-# Check for emails in the dovecot mailbox
+# Check for emails in the elemta-mailbox mailbox
 echo -e "${YELLOW}Checking for delivered emails:${NC}"
-docker-compose exec elemta-dovecot sh -c "ls -la /var/mail/recipient@example.com/{new,cur}/ 2>/dev/null || echo 'No mailbox found'"
+docker-compose exec elemta-mailbox sh -c "ls -la /var/lib/elemta/bodies/ 2>/dev/null || echo 'No mailbox found'"
 
-# Check Dovecot logs for any issues
-echo -e "${YELLOW}Checking Dovecot logs:${NC}"
-docker-compose logs --tail=20 elemta-dovecot | grep -i "lmtp\|error\|debug\|mail"
+# Check elemta-mailbox logs for any issues
+echo -e "${YELLOW}Checking elemta-mailbox logs:${NC}"
+docker-compose logs --tail=20 elemta-mailbox | grep -i "lmtp\|error\|debug\|mail"
 
 echo -e "${GREEN}Debug session complete.${NC}" 

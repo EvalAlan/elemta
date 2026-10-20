@@ -18,14 +18,14 @@ import (
 	"github.com/EvalAlan/elemta/internal/sievefork/parser"
 )
 
-const DovecotTestExtension = "vnd.dovecot.testsuite"
+const TestSuiteExtension = "vnd.dovecot.testsuite"
 
-type CmdDovecotTest struct {
+type CmdTestSuiteTest struct {
 	TestName string
 	Cmds     []Cmd
 }
 
-func (c CmdDovecotTest) Execute(ctx context.Context, d *RuntimeData) error {
+func (c CmdTestSuiteTest) Execute(ctx context.Context, d *RuntimeData) error {
 	if d.Test == nil {
 		return fmt.Errorf("test runtime is not configured")
 	}
@@ -60,12 +60,12 @@ func (c CmdDovecotTest) Execute(ctx context.Context, d *RuntimeData) error {
 	return nil
 }
 
-type CmdDovecotTestFail struct {
+type CmdTestSuiteTestFail struct {
 	At      lexer.Position
 	Message string
 }
 
-func (c CmdDovecotTestFail) Execute(_ context.Context, d *RuntimeData) error {
+func (c CmdTestSuiteTestFail) Execute(_ context.Context, d *RuntimeData) error {
 	if d.Test == nil {
 		return fmt.Errorf("test runtime is not configured")
 	}
@@ -75,13 +75,13 @@ func (c CmdDovecotTestFail) Execute(_ context.Context, d *RuntimeData) error {
 	return ErrStop
 }
 
-type CmdDovecotConfigSet struct {
+type CmdTestSuiteConfigSet struct {
 	Unset bool
 	Key   string
 	Value string
 }
 
-func (c CmdDovecotConfigSet) Execute(_ context.Context, d *RuntimeData) error {
+func (c CmdTestSuiteConfigSet) Execute(_ context.Context, d *RuntimeData) error {
 	switch c.Key {
 	case "sieve_variables_max_variable_size":
 		if c.Unset {
@@ -105,12 +105,12 @@ func (c CmdDovecotConfigSet) Execute(_ context.Context, d *RuntimeData) error {
 	return nil
 }
 
-type CmdDovecotTestSet struct {
+type CmdTestSuiteTestSet struct {
 	VariableName  string
 	VariableValue string
 }
 
-func (c CmdDovecotTestSet) Execute(_ context.Context, d *RuntimeData) error {
+func (c CmdTestSuiteTestSet) Execute(_ context.Context, d *RuntimeData) error {
 	value := expandVars(d, c.VariableValue)
 
 	switch c.VariableName {
@@ -158,11 +158,11 @@ func (c CmdDovecotTestSet) Execute(_ context.Context, d *RuntimeData) error {
 	return nil
 }
 
-type CmdDovecotBinarySave struct {
+type CmdTestSuiteBinarySave struct {
 	Name string
 }
 
-func (c CmdDovecotBinarySave) Execute(_ context.Context, d *RuntimeData) error {
+func (c CmdTestSuiteBinarySave) Execute(_ context.Context, d *RuntimeData) error {
 	if d.Test == nil {
 		return fmt.Errorf("test runtime is not configured")
 	}
@@ -182,13 +182,13 @@ func (c CmdDovecotBinarySave) Execute(_ context.Context, d *RuntimeData) error {
 	return nil
 }
 
-type CmdDovecotMessage struct {
+type CmdTestSuiteMessage struct {
 	SMTP   bool
 	Folder string
 	Index  int
 }
 
-func (c CmdDovecotMessage) Execute(_ context.Context, d *RuntimeData) error {
+func (c CmdTestSuiteMessage) Execute(_ context.Context, d *RuntimeData) error {
 	if d.Test == nil {
 		return fmt.Errorf("test runtime is not configured")
 	}
@@ -196,7 +196,7 @@ func (c CmdDovecotMessage) Execute(_ context.Context, d *RuntimeData) error {
 		return fmt.Errorf("no test execution environment is configured")
 	}
 
-	// Implicit test_dovecot_result_reset
+	// Implicit test_result_reset
 	if d.Test.OriginalMsg != nil {
 		d.Msg = d.Test.OriginalMsg
 		d.Envelope = d.Test.OriginalEnvelope
@@ -232,11 +232,11 @@ func (c CmdDovecotMessage) Execute(_ context.Context, d *RuntimeData) error {
 	return nil
 }
 
-type CmdDovecotMailboxCreate struct {
+type CmdTestSuiteMailboxCreate struct {
 	Name string
 }
 
-func (c CmdDovecotMailboxCreate) Execute(_ context.Context, d *RuntimeData) error {
+func (c CmdTestSuiteMailboxCreate) Execute(_ context.Context, d *RuntimeData) error {
 	if d.Test == nil {
 		return fmt.Errorf("test runtime is not configured")
 	}
@@ -247,13 +247,13 @@ func (c CmdDovecotMailboxCreate) Execute(_ context.Context, d *RuntimeData) erro
 	return d.Test.Execute.CreateMailbox(c.Name)
 }
 
-type TestDovecotMessage struct {
+type TestTestSuiteMessage struct {
 	SMTP   bool
 	Folder string
 	Index  int
 }
 
-func (c TestDovecotMessage) Check(_ context.Context, d *RuntimeData) (bool, error) {
+func (c TestTestSuiteMessage) Check(_ context.Context, d *RuntimeData) (bool, error) {
 	if d.Test == nil {
 		return false, fmt.Errorf("test runtime is not configured")
 	}
@@ -273,9 +273,9 @@ func (c TestDovecotMessage) Check(_ context.Context, d *RuntimeData) (bool, erro
 	return d.Test.Execute.HasMailboxMessage(folder, c.Index)
 }
 
-type CmdDovecotResultReset struct{}
+type CmdTestSuiteResultReset struct{}
 
-func (c CmdDovecotResultReset) Execute(_ context.Context, d *RuntimeData) error {
+func (c CmdTestSuiteResultReset) Execute(_ context.Context, d *RuntimeData) error {
 	if d.Test == nil {
 		return fmt.Errorf("test runtime is not configured")
 	}
@@ -294,11 +294,11 @@ func (c CmdDovecotResultReset) Execute(_ context.Context, d *RuntimeData) error 
 	return nil
 }
 
-type CmdDovecotBinaryLoad struct {
+type CmdTestSuiteBinaryLoad struct {
 	Name string
 }
 
-func (c CmdDovecotBinaryLoad) Execute(_ context.Context, d *RuntimeData) error {
+func (c CmdTestSuiteBinaryLoad) Execute(_ context.Context, d *RuntimeData) error {
 	if d.Test == nil {
 		return fmt.Errorf("test runtime is not configured")
 	}
@@ -317,11 +317,11 @@ func (c CmdDovecotBinaryLoad) Execute(_ context.Context, d *RuntimeData) error {
 	return nil
 }
 
-type TestDovecotCompile struct {
+type TestTestSuiteCompile struct {
 	ScriptPath string
 }
 
-func (t TestDovecotCompile) Check(_ context.Context, d *RuntimeData) (bool, error) {
+func (t TestTestSuiteCompile) Check(_ context.Context, d *RuntimeData) (bool, error) {
 	if d.Test == nil {
 		return false, fmt.Errorf("test runtime is not configured")
 	}
@@ -365,10 +365,9 @@ func (t TestDovecotCompile) Check(_ context.Context, d *RuntimeData) (bool, erro
 	return true, nil
 }
 
-type TestDovecotRun struct {
-}
+type TestTestSuiteRun struct{}
 
-func (t TestDovecotRun) Check(ctx context.Context, d *RuntimeData) (bool, error) {
+func (t TestTestSuiteRun) Check(ctx context.Context, d *RuntimeData) (bool, error) {
 	if d.Test == nil {
 		return false, fmt.Errorf("test runtime is not configured")
 	}
@@ -393,23 +392,23 @@ func (t TestDovecotRun) Check(ctx context.Context, d *RuntimeData) (bool, error)
 	return true, nil
 }
 
-type TestDovecotTestError struct {
+type TestTestSuiteTestError struct {
 	matcherTest
 }
 
-func (t TestDovecotTestError) Check(_ context.Context, _ *RuntimeData) (bool, error) {
+func (t TestTestSuiteTestError) Check(_ context.Context, _ *RuntimeData) (bool, error) {
 	// go-sieve has a very different error formatting and stops lexing/parsing/loading
 	// on first error, therefore we skip all test_errors checks as they are
 	// Pigeonhole-specific.
 	return true, nil
 }
 
-type TestDovecotResultAction struct {
+type TestTestSuiteResultAction struct {
 	matcherTest
 	Index *int
 }
 
-func (t TestDovecotResultAction) Check(_ context.Context, d *RuntimeData) (bool, error) {
+func (t TestTestSuiteResultAction) Check(_ context.Context, d *RuntimeData) (bool, error) {
 	if t.isCount() {
 		entryCount := uint64(0)
 		if t.Index != nil {
@@ -454,9 +453,9 @@ func (t TestDovecotResultAction) Check(_ context.Context, d *RuntimeData) (bool,
 	return false, nil
 }
 
-type TestDovecotResultExecute struct{}
+type TestTestSuiteResultExecute struct{}
 
-func (t TestDovecotResultExecute) Check(_ context.Context, d *RuntimeData) (bool, error) {
+func (t TestTestSuiteResultExecute) Check(_ context.Context, d *RuntimeData) (bool, error) {
 	if d.Test == nil {
 		return false, fmt.Errorf("test runtime is not configured")
 	}
@@ -471,18 +470,18 @@ func (t TestDovecotResultExecute) Check(_ context.Context, d *RuntimeData) (bool
 }
 
 func init() {
-	gob.Register(CmdDovecotTest{})
-	gob.Register(CmdDovecotTestFail{})
-	gob.Register(CmdDovecotConfigSet{})
-	gob.Register(CmdDovecotBinarySave{})
-	gob.Register(CmdDovecotBinaryLoad{})
-	gob.Register(CmdDovecotMessage{})
-	gob.Register(CmdDovecotResultReset{})
-	gob.Register(CmdDovecotMailboxCreate{})
-	gob.Register(TestDovecotMessage{})
-	gob.Register(TestDovecotCompile{})
-	gob.Register(TestDovecotRun{})
-	gob.Register(TestDovecotTestError{})
-	gob.Register(TestDovecotResultAction{})
-	gob.Register(TestDovecotResultExecute{})
+	gob.Register(CmdTestSuiteTest{})
+	gob.Register(CmdTestSuiteTestFail{})
+	gob.Register(CmdTestSuiteConfigSet{})
+	gob.Register(CmdTestSuiteBinarySave{})
+	gob.Register(CmdTestSuiteBinaryLoad{})
+	gob.Register(CmdTestSuiteMessage{})
+	gob.Register(CmdTestSuiteResultReset{})
+	gob.Register(CmdTestSuiteMailboxCreate{})
+	gob.Register(TestTestSuiteMessage{})
+	gob.Register(TestTestSuiteCompile{})
+	gob.Register(TestTestSuiteRun{})
+	gob.Register(TestTestSuiteTestError{})
+	gob.Register(TestTestSuiteResultAction{})
+	gob.Register(TestTestSuiteResultExecute{})
 }

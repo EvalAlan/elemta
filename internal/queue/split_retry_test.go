@@ -51,7 +51,7 @@ func TestARemoteDeferralDoesNotRedeliverToTheLocalMailbox(t *testing.T) {
 	manager := NewManager(t.TempDir(), 0)
 	defer manager.Stop()
 
-	local := &recordingHandler{name: "dovecot"}
+	local := &recordingHandler{name: "local"}
 	remote := &flakyRemote{}
 	split := NewSplitDeliveryHandler(local, remote, []string{"example.com"}, nil)
 
@@ -105,7 +105,7 @@ func TestAPermanentRemoteFailureAlsoSparesTheLocalMailbox(t *testing.T) {
 	manager := NewManager(t.TempDir(), 0)
 	defer manager.Stop()
 
-	local := &recordingHandler{name: "dovecot"}
+	local := &recordingHandler{name: "local"}
 	remote := &recordingHandler{
 		name:   "smtp",
 		err:    errors.New("550 5.1.1 no such user"),

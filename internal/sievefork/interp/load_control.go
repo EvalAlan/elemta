@@ -24,11 +24,11 @@ func loadRequire(s *Script, pcmd parser.Cmd) (Cmd, error) {
 	}
 
 	for _, ext := range exts {
-		if ext == DovecotTestExtension {
+		if ext == TestSuiteExtension {
 			if s.opts.T == nil {
 				return nil, fmt.Errorf("testing environment is not available, cannot use vnd.dovecot.testsuite")
 			}
-			s.extensions[DovecotTestExtension] = struct{}{}
+			s.extensions[TestSuiteExtension] = struct{}{}
 			continue
 		}
 

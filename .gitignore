@@ -142,8 +142,6 @@ local-user*.ldif
 change-password.ldif
 
 # Temporary docker files and scripts
-docker/roundcube/sendmail-wrapper.sh
-docker/roundcube/smtp-proxy.py
 
 # Rspamd overrides: local experiments are ignored, the ones the dev stack
 # mounts are tracked. Ignoring the directory itself would stop git descending

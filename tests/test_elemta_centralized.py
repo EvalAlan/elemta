@@ -629,7 +629,7 @@ class ElemtaTestSuite:
                     containers.append(json.loads(line))
             
             if self.config.deployment == DeploymentType.DOCKER_DESKTOP:
-                required_containers = ["elemta-node0", "elemta-dovecot", "elemta-roundcube", "elemta-ldap"]
+                required_containers = ["elemta-node0", "elemta-mailbox", "elemta-ldap"]
             else:  # docker-dev or other minimal deployments
                 required_containers = ["elemta-node0"]
             running_containers = [c["Name"] for c in containers if c["State"] == "running"]

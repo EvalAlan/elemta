@@ -40,9 +40,8 @@ DEV_ENV_FILE ?= .env
 # The normal dev stack keeps only services used by mail delivery and webmail.
 # The discarding sink is started explicitly by the benchmark targets.
 DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-webmail elemta-mailbox-db elemta-mailbox-a elemta-mailbox-b elemta-mailbox elemta-ldap valkey
-DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-roundcube
-# The benchmarking stack: everything that scans, nothing that stores. Roundcube
-# is pointless here because delivery is discarded.
+DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd
+# The benchmarking stack: everything that scans, nothing that stores.
 DEV_BENCH_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-sink
 
 # Development TLS certificate.
@@ -419,9 +418,9 @@ print-dev-summary:
 	@# Report where mail actually goes rather than asserting it. The two installs
 	@# differ on this, and a summary that guesses is worse than none.
 	@target=$$(docker exec elemta-node0 sh -c "sed -n '/^\[delivery\]/,/^\[/p' /app/runtime-config/elemta.toml | grep -m1 '^host'" 2>/dev/null | sed 's/.*= *//; s/"//g'); \
-	if [ "$$target" = "elemta-sink" ]; then \
-		echo "   📭 Delivery:  a DISCARDING SINK. Delivered mail is not stored anywhere."; \
-		echo "                 make sink-down   → real mailboxes + Roundcube"; \
+	@if [ "$$target" = "elemta-sink" ]; then \
+			echo "   📭 Delivery:  a DISCARDING SINK. Delivered mail is not stored anywhere."; \
+			echo "                 make sink-down   → real mailboxes";
 	elif [ -n "$$target" ]; then \
 		echo "   📬 Delivery:  $$target — mail lands in real mailboxes."; \
 		echo "                 make sink-up     → discard instead, for throughput work"; \
@@ -444,7 +443,7 @@ help:
 	@echo "⚡ Quick Start:"
 	@echo "  make install                  # Setup wizard: a dev stack, or a mail server for a real domain"
 	@echo "  make install-dev              # Dev stack: MTA, mailbox service, webmail; prints a dashboard login"
-	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd, Roundcube"
+	@echo "  make install-dev-full         # Everything, incl. ClamAV, Rspamd"
 	@echo "  make install-dev-bench        # Scanners on, delivery DISCARDED — for throughput work"
 	@echo "  make install-dev-postgres     # Dev stack with a Postgres queue"
 	@echo "  make install-dev-mailauth     # Dev stack for SPF/DKIM/DMARC/ARC: fixed DNS, mail lands at :8029"
@@ -566,10 +565,6 @@ install-dev-bench: check-tools ensure-dev-secrets docker-build ensure-dev-certs 
 	@$(MAKE) configure-plugins
 	@echo "🚀 Starting services..."
 	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d $(DEV_BENCH_SERVICES)
-	@# 'up -d <list>' starts what is listed and stops nothing, so a Roundcube
-	@# left over from install-dev-full would keep running against mail that is
-	@# now being discarded.
-	@docker compose -f $(COMPOSE_FILE) rm -sf elemta-roundcube >/dev/null 2>&1 || true
 	@echo "⏳ Initializing LDAP..."
 	@./scripts/init-ldap-if-needed.sh || true
 	@$(MAKE) bootstrap-admin
@@ -641,13 +636,13 @@ install-dev-full: check-tools ensure-dev-secrets docker-build ensure-dev-certs e
 	@./scripts/init-ldap-if-needed.sh || true
 	@$(MAKE) bootstrap-admin
 	@$(MAKE) print-dev-summary
-	@echo "   ✉️  Roundcube: http://localhost:8026"
+	@echo "   ✉️  Webmail: http://localhost:8027"
 
 # install-dev-mailauth is a dev stack in its own right, not a mode layered on
 # another one. Delivery mode is a single global setting, so a stack cannot
 # deliver locally over LMTP and out over SMTP at the same time: this install
 # sends over remote SMTP to a local sink, which is what makes DKIM signing and
-# ARC sealing observable, and is why mail does not reach Roundcube here.
+# ARC sealing observable, and is why mail does not reach the webmail here.
 #
 # Switching back is just running another install-dev target; they remove these
 # services for you.
@@ -667,7 +662,7 @@ install-dev-mailauth: check-tools ensure-dev-secrets docker-build ensure-dev-cer
 	@./scripts/init-ldap-if-needed.sh || true
 	@$(MAKE) bootstrap-admin
 	@$(MAKE) print-dev-summary
-	@echo "   📥 Delivered mail: http://localhost:8029 (this stack does not deliver to Roundcube)"
+	@echo "   📥 Delivered mail: http://localhost:8029 (this stack does not deliver to webmail)"
 	@echo "   ✅ SPF/DMARC pass: pass.auth.test      ❌ fail: fail.auth.test"
 	@echo "   Send one: make mailauth-check   or   make mailauth-check-fail"
 
@@ -900,7 +895,7 @@ install setup:
 #
 # Each k8s-install-dev* target applies one overlay of deployments/kubernetes/dev:
 #   minimal   Elemta, caching DNS, LDAP, mailbox service + Postgres, webmail, Valkey, LMTP sink
-#   full      + ClamAV, Rspamd, Roundcube
+#   full      + ClamAV, Rspamd
 #   bench     + ClamAV, Rspamd (delivery goes to the sink)
 #   postgres  + Postgres for the queue
 # Services keep their compose names and host ports, so config/elemta.toml and
@@ -911,13 +906,13 @@ KUBECTL ?= kubectl
 K8S_NAMESPACE ?= elemta
 K8S_DIR ?= deployments/kubernetes
 K8S_OVERLAY ?= minimal
-# The overlays read config/elemta.toml and the LDAP, Rspamd and Roundcube files
+# The overlays read config/elemta.toml and the LDAP, Rspamd files
 # from where they live in the repository, outside the kustomization's own
 # directory, which kustomize refuses by default.
 KUSTOMIZE = $(KUBECTL) kustomize --load-restrictor LoadRestrictionsNone
 KC = $(KUBECTL) -n $(K8S_NAMESPACE)
 # Applying an overlay removes what the previous one added and this one does
-# not (Roundcube when going from full to minimal). Volumes are not in the list
+# not. Volumes are not in the list
 # on purpose: switching stacks must not take the ClamAV signatures or the
 # Rspamd Bayes data with it. k8s-down-volumes does.
 K8S_PRUNE = --prune -l app.kubernetes.io/part-of=elemta \
@@ -949,7 +944,7 @@ K8S_WEB_EXEC = $(KC) exec -i deploy/elemta -c web -- /app/elemta --config /app/r
 k8s-help:
 	@echo "☸️  Kubernetes (k3s; see deployments/kubernetes/README.md):"
 	@echo "  k8s-install-dev            Minimal stack, plugins on, prints a dashboard login"
-	@echo "  k8s-install-dev-full       + ClamAV, Rspamd, Roundcube"
+	@echo "  k8s-install-dev-full       + ClamAV, Rspamd"
 	@echo "  k8s-install-dev-bench      + ClamAV, Rspamd; delivery DISCARDED"
 	@echo "  k8s-install-dev-postgres   Postgres queue"
 	@echo "  k8s-up / k8s-down          Scale to zero and back, volumes kept"
@@ -1084,7 +1079,7 @@ k8s-install-dev-full:
 	@echo "☸️  Elemta Development Setup on Kubernetes (Full)"
 	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=full
 	@$(MAKE) --no-print-directory k8s-print-dev-summary
-	@echo "   ✉️  Roundcube: http://localhost:8026"
+	@echo "   ✉️  Webmail: http://localhost:8027"
 
 # As install-dev-bench: scanners on, delivery discarded, and the repo config
 # put back afterwards because the sink lives in the seeded copy.

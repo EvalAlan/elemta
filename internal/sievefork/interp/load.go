@@ -67,18 +67,18 @@ func init() {
 		// RFC 5230 (vacation extension), added in this fork
 		"vacation": loadVacation,
 		// vnd.dovecot.testsuite
-		"test":                loadDovecotTest,
-		"test_set":            loadDovecotTestSet,
-		"test_fail":           loadDovecotTestFail,
-		"test_binary_load":    loadDovecotBinaryLoad,
-		"test_binary_save":    loadDovecotBinarySave,
-		"test_mailbox_create": loadDovecotMailboxCreate,
+		"test":                loadTestSuiteTest,
+		"test_set":            loadTestSuiteTestSet,
+		"test_fail":           loadTestSuiteTestFail,
+		"test_binary_load":    loadTestSuiteBinaryLoad,
+		"test_binary_save":    loadTestSuiteBinarySave,
+		"test_mailbox_create": loadTestSuiteMailboxCreate,
 		// "test_imap_metadata_set"
 		"test_config_reload": loadNoop, // go-sieve applies changes immediately
-		"test_config_set":    loadDovecotConfigSet,
-		"test_config_unset":  loadDovecotConfigUnset,
-		"test_result_reset":  loadDovecotResultReset,
-		"test_message":       loadDovecotCmdMessage,
+		"test_config_set":    loadTestSuiteConfigSet,
+		"test_config_unset":  loadTestSuiteConfigUnset,
+		"test_result_reset":  loadTestSuiteResultReset,
+		"test_message":       loadTestSuiteCmdMessage,
 	}
 	tests = map[string]func(*Script, parser.Test) (Test, error){
 		// RFC 5228
@@ -104,12 +104,12 @@ func init() {
 		"date":        loadDateTest,
 		"currentdate": loadCurrentDateTest,
 		// vnd.dovecot.testsuite
-		"test_script_compile": loadDovecotCompile,       // compile script (to test for compile errors)
-		"test_script_run":     loadDovecotRun,           // run script (to test for run-time errors)
-		"test_error":          loadDovecotError,         // check detailed results of test_script_compile or test_script_run
-		"test_message":        loadDovecotTestMessage,   // check results of test_result_execute - where messages are
-		"test_result_action":  loadDovecotResultAction,  // check results of test_result_execute - what actions are executed
-		"test_result_execute": loadDovecotResultExecute, // apply script results (validated using test_message)
+		"test_script_compile": loadTestSuiteCompile,       // compile script (to test for compile errors)
+		"test_script_run":     loadTestSuiteRun,           // run script (to test for run-time errors)
+		"test_error":          loadTestSuiteError,         // check detailed results of test_script_compile or test_script_run
+		"test_message":        loadTestSuiteTestMessage,   // check results of test_result_execute - where messages are
+		"test_result_action":  loadTestSuiteResultAction,  // check results of test_result_execute - what actions are executed
+		"test_result_execute": loadTestSuiteResultExecute, // apply script results (validated using test_message)
 	}
 }
 

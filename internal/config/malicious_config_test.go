@@ -214,7 +214,7 @@ debug = false
 
 [delivery]
 mode = "lmtp"
-host = "dovecot.example.com"
+host = "elemta-mailbox.example.com"
 port = 2424
 timeout = 30
 max_retries = 3

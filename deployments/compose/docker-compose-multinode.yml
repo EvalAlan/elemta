@@ -36,7 +36,7 @@ services:
       - elemta-ldap
       - elemta-rspamd
       - elemta-clamav
-      - elemta-dovecot
+      - elemta-mailbox
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "2525"]
       interval: 30s
@@ -67,7 +67,7 @@ services:
       - elemta-ldap
       - elemta-rspamd
       - elemta-clamav
-      - elemta-dovecot
+      - elemta-mailbox
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "2525"]
       interval: 30s

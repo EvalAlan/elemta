@@ -96,9 +96,6 @@ services:
     ports: !override
       - "127.0.0.1:6379:6379"
 
-  elemta-roundcube:
-    profiles: [roundcube]
-
   elemta-caddy:
     image: caddy:2-alpine
     container_name: elemta-caddy

@@ -125,8 +125,8 @@ test sends come through the Docker bridge.
 
 **SMTP AUTH needs STARTTLS (except from loopback), and its limits are shared.**
 PLAIN and LOGIN were accepted in the clear, and the failed-attempt limits lived
-in a per-connection object, so reconnecting reset them. Roundcube in the dev
-stack submits over STARTTLS with `docker/roundcube/config/elemta-smtp.inc.php`
+in a per-connection object, so reconnecting reset them. Webmail in the dev
+stack submits over STARTTLS with `config/elemta-webmail.toml`
 turning off peer verification for the self-signed dev certificate.
 `[auth] allow_plaintext_auth = true` restores the old behaviour.
 

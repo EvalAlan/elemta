@@ -9,9 +9,7 @@ flowchart TB
     postgres["dev/postgres"]
     minimal --> full & bench & postgres
     scanners[["scanners component<br/>ClamAV · Rspamd"]]
-    roundcube[["roundcube<br/>component"]]
     pgc[["postgres component<br/>queue backend"]]
     full --- scanners
-    full --- roundcube
     bench --- scanners
     postgres --- pgc

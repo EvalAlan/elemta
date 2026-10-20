@@ -82,10 +82,10 @@ Each one does the following:
 4. Re-seeds the runtime config.
 5. Loads the LDAP users and prints a dashboard login.
 
-| Overlay (`dev/…`) | Adds |
+| Overlay (`dev/...`) | Adds |
 |---|---|
 | `minimal` | Elemta, `elemta-dns` (caching DNSSEC resolver), `elemta-ldap`, the mailbox service (`elemta-mailbox`, two replicas, and `elemta-mailbox-db`), `elemta-webmail`, `elemta-valkey`, `elemta-sink` |
-| `full` | `elemta-clamav`, `elemta-rspamd`, `elemta-roundcube` |
+| `full` | `elemta-clamav`, `elemta-rspamd` |
 | `bench` | `elemta-clamav`, `elemta-rspamd` |
 | `postgres` | `elemta-postgres` |
 
@@ -104,8 +104,6 @@ Services that bind on the host:
 | 2525 / 2587 | SMTP / submission |
 | 8025 | Dashboard and API |
 | 9080 | Prometheus metrics (container port 8080) |
-| 8026 | Roundcube (full) |
-| 11334 | Rspamd web UI (full, bench) |
 | 8027 | Webmail |
 | 993 | IMAPS |
 | 14143 / 4190 | IMAP / ManageSieve |

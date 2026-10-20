@@ -53,7 +53,7 @@ func newSplit(local, remote *recordingHandler) *SplitDeliveryHandler {
 }
 
 func TestRecipientsGoToTheRouteTheirDomainDeserves(t *testing.T) {
-	local, remote := &recordingHandler{name: "dovecot"}, &recordingHandler{name: "smtp"}
+	local, remote := &recordingHandler{name: "local"}, &recordingHandler{name: "smtp"}
 	split := newSplit(local, remote)
 
 	msg := Message{ID: "m1", From: "sender@example.com", To: []string{
@@ -96,7 +96,7 @@ func TestRecipientsGoToTheRouteTheirDomainDeserves(t *testing.T) {
 // local domain leaking onto the remote route means internal mail leaves the
 // building and its MX may not even be us.
 func TestLocalMailIsNeverSentOverTheInternet(t *testing.T) {
-	local, remote := &recordingHandler{name: "dovecot"}, &recordingHandler{name: "smtp"}
+	local, remote := &recordingHandler{name: "local"}, &recordingHandler{name: "smtp"}
 	split := newSplit(local, remote)
 
 	msg := Message{ID: "m2", To: []string{"a@example.com", "b@example.com"}}
@@ -113,7 +113,7 @@ func TestLocalMailIsNeverSentOverTheInternet(t *testing.T) {
 // deferral from redelivering to the local mailbox on every attempt — which the
 // recipient experiences as the same message arriving over and over.
 func TestPartialFailureReportsPerRecipient(t *testing.T) {
-	local := &recordingHandler{name: "dovecot"}
+	local := &recordingHandler{name: "local"}
 	remote := &recordingHandler{name: "smtp", err: errors.New("450 4.7.1 try again later")}
 	split := newSplit(local, remote)
 
@@ -143,7 +143,7 @@ func TestPartialFailureReportsPerRecipient(t *testing.T) {
 // TestOneRouteFailingDoesNotStopTheOther: a deferral from an outside domain
 // must not hold up mail to a mailbox two containers away.
 func TestOneRouteFailingDoesNotStopTheOther(t *testing.T) {
-	local := &recordingHandler{name: "dovecot"}
+	local := &recordingHandler{name: "local"}
 	remote := &recordingHandler{name: "smtp", err: errors.New("connection refused")}
 	split := newSplit(local, remote)
 
@@ -158,7 +158,7 @@ func TestOneRouteFailingDoesNotStopTheOther(t *testing.T) {
 // TestDuplicateRecipientsSurvive: duplicates in an envelope are legal, and the
 // queue matches outcomes to recipients by occurrence rather than by address.
 func TestDuplicateRecipientsSurvive(t *testing.T) {
-	local, remote := &recordingHandler{name: "dovecot"}, &recordingHandler{name: "smtp"}
+	local, remote := &recordingHandler{name: "local"}, &recordingHandler{name: "smtp"}
 	split := newSplit(local, remote)
 
 	msg := Message{ID: "m5", To: []string{
@@ -179,7 +179,7 @@ func TestDuplicateRecipientsSurvive(t *testing.T) {
 // TestSingleRouteMessagesAreNotWrapped keeps the ordinary case identical to the
 // behaviour before routing existed.
 func TestSingleRouteMessagesAreNotWrapped(t *testing.T) {
-	local, remote := &recordingHandler{name: "dovecot"}, &recordingHandler{name: "smtp"}
+	local, remote := &recordingHandler{name: "local"}, &recordingHandler{name: "smtp"}
 	split := newSplit(local, remote)
 
 	result, err := split.DeliverMessageWithMetadata(context.Background(),
@@ -218,7 +218,7 @@ func TestMissingHandlerDefersRatherThanBounces(t *testing.T) {
 // TestNoLocalDomainsMeansEverythingIsRemote: a relay configured with no local
 // domains must not start treating the internet as local.
 func TestNoLocalDomainsMeansEverythingIsRemote(t *testing.T) {
-	local, remote := &recordingHandler{name: "dovecot"}, &recordingHandler{name: "smtp"}
+	local, remote := &recordingHandler{name: "local"}, &recordingHandler{name: "smtp"}
 	split := NewSplitDeliveryHandler(local, remote, nil, nil)
 
 	if _, err := split.DeliverMessageWithMetadata(context.Background(),

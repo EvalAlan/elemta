@@ -7,12 +7,9 @@
  +-----------------------------------------------------------------------+
  */
 
-// Database configuration
-$config['db_dsnw'] = 'sqlite:////var/roundcube/db/sqlite.db?mode=0646';
-
-// IMAP Configuration - Connect to Dovecot
-$config['default_host'] = 'elemta-dovecot';
-$config['default_port'] = 14143;
+// IMAP Configuration - Connect to elemta-mailbox
+$config['default_host'] = 'elemta-mailbox';
+$config['default_port'] = 11143;
 $config['imap_timeout'] = 120;
 $config['imap_auth_type'] = 'PLAIN';
 $config['imap_delimiter'] = null;
@@ -255,7 +252,7 @@ $config['imap_cache'] = 'db';
 
 // Managesieve (Sieve filters) - Enhanced with LDAP
 $config['managesieve_port'] = 4190;
-$config['managesieve_host'] = 'elemta-dovecot';
+$config['managesieve_host'] = 'elemta-mailbox';
 $config['managesieve_auth_type'] = null;
 $config['managesieve_auth_cid'] = null;
 $config['managesieve_auth_pw'] = null;

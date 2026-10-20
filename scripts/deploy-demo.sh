@@ -96,9 +96,9 @@ create_user_directories() {
     
     # Create directories for each user
     for user in "${users[@]}"; do
-        docker run --rm -v elemta_dovecot_data:/var/mail alpine:latest sh -c "
-            mkdir -p /var/mail/$user/{new,cur,tmp,sieve} &&
-            chown -R 5000:5000 /var/mail/$user
+        docker run --rm -v elemta_mailbox_bodies:/var/lib/elemta/bodies alpine:latest sh -c "
+            mkdir -p /var/lib/elemta/bodies/$user/{new,cur,tmp,sieve} &&
+            chown -R 5000:5000 /var/lib/elemta/bodies/$user
         " || log_warning "Failed to create directories for $user"
     done
     
@@ -110,7 +110,7 @@ sync_sieve_filters() {
     
     # Ensure the sync script exists
     if ! docker exec elemta-ldap test -f /scripts/ldap-sieve-sync-simple.sh; then
-        docker cp "$ROOT_DIR/docker/dovecot/ldap-sieve-sync-simple.sh" elemta-ldap:/scripts/
+        docker cp "$ROOT_DIR/docker/mailbox/ldap-sieve-sync-simple.sh" elemta-ldap:/scripts/
         docker exec elemta-ldap chmod +x /scripts/ldap-sieve-sync-simple.sh
     fi
     
@@ -192,7 +192,7 @@ show_summary() {
     echo -e "  ✅ LDAP search and filtering"
     
     echo -e "\n${BLUE}🚀 NEXT STEPS:${NC}"
-    echo -e "  1. Test Roundcube login: http://localhost:8025"
+    echo -e "  1. Test Webmail login: http://localhost:8027"
     echo -e "  2. Test ManageSieve filters interface"
     echo -e "  3. Send test emails between users"
     echo -e "  4. Run integration test suite: ./tests/run_centralized_tests.sh --deployment docker-dev"

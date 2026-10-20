@@ -130,8 +130,8 @@ EOF
         log_success "User $email added successfully with SSHA512 password"
         
         # Create mailbox directory
-        docker exec elemta-dovecot mkdir -p "/var/mail/${email}/{new,cur,tmp}" 2>/dev/null || true
-        docker exec elemta-dovecot chown -R vmail:vmail "/var/mail/${email}" 2>/dev/null || true
+        docker exec elemta-mailbox mkdir -p "/var/lib/elemta/bodies/${email}/{new,cur,tmp}" 2>/dev/null || true
+        docker exec elemta-mailbox chown -R 5000:5000 "/var/lib/elemta/bodies/${email}" 2>/dev/null || true
         
         log_success "Mailbox created for $email"
     else

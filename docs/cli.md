@@ -2,7 +2,7 @@
 
 Elemta currently ships three binaries:
 
-- `elemta` — primary command (server/web/queue/cert/zimbra)
+- `elemta` — primary command (server/web/queue/cert)
 - `elemta-queue` — queue status utility
 - `elemta-cli` — remote queue client over the HTTP API
 
@@ -28,7 +28,6 @@ Main subcommands:
 - `cert` — TLS/Let's Encrypt helper commands
 - `user` — dashboard/API accounts (also editable in Settings > Users)
 - `dkim` — generate DKIM keys, print their DNS records, check DNS before a rotation
-- `zimbra` — LDAP/SOAP diagnostic commands
 
 Global flag:
 

@@ -18,7 +18,7 @@ class ManageSieveClient:
         # Use Docker host if running in container environment
         import os
         if os.getenv('DOCKER_HOST') or os.path.exists('/.dockerenv'):
-            self.host = 'elemta-dovecot'
+            self.host = 'elemta-mailbox'
         else:
             self.host = host
         self.host = host

@@ -88,9 +88,9 @@ deploy_services() {
     
     # Wait for services to be ready
     wait_for_service "LDAP" "docker exec elemta-ldap ldapsearch -x -b 'dc=example,dc=com' -s base"
-    wait_for_service "Dovecot" "docker exec elemta-dovecot nc -z localhost 14143"
+    wait_for_service "elemta-mailbox" "docker exec elemta-mailbox nc -z localhost 11143"
     wait_for_service "Elemta MTA" "docker exec elemta nc -z localhost 2525"
-    wait_for_service "Roundcube" "curl -f http://localhost:8026/ -L"
+    wait_for_service "Webmail" "curl -f http://localhost:8027/ -L"
 }
 
 # Add enhanced schema to LDAP
@@ -274,7 +274,7 @@ show_summary() {
     echo "  • customer-team@example.com (customer-facing - 3 members)"
     echo ""
     echo -e "${BLUE}🔗 Service URLs:${NC}"
-    echo "  • Roundcube Webmail: http://localhost:8026"
+    echo "  • Webmail: http://localhost:8027"
     echo "  • Grafana Dashboard: http://localhost:3000 (admin/elemta123)"
     echo "  • Prometheus Metrics: http://localhost:9090"
     echo "  • LDAP Directory: ldap://localhost:1389"
@@ -286,7 +286,7 @@ show_summary() {
     echo "  • Test email: ./tests/test-elemta-ldap.sh"
     echo ""
     echo -e "${GREEN}✅ Next Steps:${NC}"
-    echo "  1. Access Roundcube at http://localhost:8026"
+    echo "  1. Access Webmail at http://localhost:8027"
     echo "  2. Login with any user (e.g., john.smith@example.com)"
     echo "  3. Test sending emails to distribution lists"
     echo "  4. Verify forwarding and aliases work"

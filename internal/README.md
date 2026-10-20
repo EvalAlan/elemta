@@ -27,5 +27,4 @@ A map of `internal/`. Design reasoning and known traps are in
 | `metrics` | Per-domain delivery stats, optionally in Valkey |
 | `server` | TLS certificate and Let's Encrypt renewal metrics |
 | `runtimepaths` | Resolves runtime file locations |
-| `zimbra` | Zimbra LDAP/SOAP integration and diagnostics |
 | `version` | Build version |

@@ -17,7 +17,7 @@ flowchart TB
         mailbox["elemta-mailbox Service<br/>→ 2 mailbox replicas"]
         db[("elemta-mailbox-db<br/>Postgres")]
         deps["shared: elemta-dns 10.43.53.53<br/>elemta-ldap · elemta-valkey"]
-        extras["optional: clamav · rspamd (full, bench)<br/>roundcube (full) · sink (bench)<br/>postgres queue (postgres)"]
+        extras["optional: clamav · rspamd (full, bench)<br/>sink (bench)<br/>postgres queue (postgres)"]
     end
 
     h1 --> smtp
