@@ -122,7 +122,11 @@ func coordinatedObjectDialer(coord *objectCoordinator, security *securityClient,
 			return nil, err
 		}
 		owner := strings.ToLower(user)
-		if security != nil {
+		// A shared mailbox ("member|mailbox") is opened for its mail only,
+		// never its objects, and the mailbox already checked the grant at
+		// IMAP login. The security API knows plain accounts, so asking it
+		// would refuse every shared mailbox.
+		if security != nil && !strings.Contains(user, "|") {
 			check, err := security.check(ctx, user, password)
 			if err != nil || check.AccountID == "" {
 				_ = st.Close()
