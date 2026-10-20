@@ -1,5 +1,87 @@
 # Elemta Changelog
 
+## v0.5.0 (2026-10-20)
+
+The release where Elemta becomes a complete self-hosted mail platform: its
+own mailbox service and webmail replace the third-party IMAP server and PHP
+webmail the stack used before, with administration, sharing, compliance and
+production tooling around them. It is also the first release published as a
+git tag, with container images on ghcr.io.
+
+### Upgrade notes
+
+- **License:** Elemta is now GPL-3.0-only (was MIT).
+- **The third-party IMAP/LMTP/Sieve server and the PHP webmail are gone**
+  from Compose, Kubernetes, scripts and docs; `elemta-mailbox` and
+  `elemta-webmail` take their place. The old source-system integration
+  command and package are removed; use `elemta migrate` to move users.
+- **Dashboard read endpoints** (queues, logs, traces, statistics,
+  configuration) now need the `api:read` permission. Every existing role has
+  it, so nothing changes for current users; the new `domain-admin` role
+  doesn't.
+- **Mailbox TLS 1.2** accepts only forward-secret AEAD suites; mail clients
+  older than about 2013 that can only do CBC suites can't connect.
+- New Postgres tables and columns are created on start
+  (`IF NOT EXISTS`, no table rewrites): classes of service, lists and
+  routes, held mail, audit log, free/busy, shares.
+
+### Mailbox service
+
+- IMAP4rev1/rev2 with CONDSTORE/QRESYNC, SORT, THREAD, QUOTA, IDLE, indexed
+  SEARCH, set-based STORE/EXPUNGE/COPY/MOVE; POP3; LMTP; Sieve with
+  vacation and ManageSieve. Metadata in Postgres, bodies on disk or S3, any
+  number of replicas behind HAProxy.
+- Implicit TLS on 993, STARTTLS-only IMAP and POP3 on public ports, LMTP over
+  STARTTLS from the MTA; sessions hold only UIDs, so memory doesn't grow with
+  folder size.
+- `mailbox verify`, backup and restore drill.
+
+### Webmail
+
+- Mail with conversations, rich compose, search, filters and out-of-office,
+  tags, folders, light and dark themes, push of new mail.
+- Calendar with invitations and replies, holidays, tasks, contacts;
+  CalDAV/CardDAV sync; optional Postgres object storage.
+- Two-step verification (TOTP, recovery codes) and app passwords for mail
+  apps; verified password recovery.
+- **Company address book** in address autocomplete (accounts and lists of
+  your own domain) and **free/busy**: guests' busy times on the event form,
+  published from each user's calendar without titles.
+- **Shared mailboxes**: members open them in webmail and in mail apps
+  (`member|mailbox` as the user name) with their own password, and send as
+  them when granted.
+
+### Administration
+
+- **Classes of service**: quotas, message and attachment sizes, sending
+  limits, protocol switches, forwarding, filters, app-password and two-step
+  requirements, per domain or account with overrides.
+- **Retention and legal hold**: Trash/Junk expiry and maximum mail age;
+  legal hold keeps everything deleted, exportable as mbox, and blocks purge.
+- **Distribution lists, domain aliases and catch-alls**, with posting
+  policies.
+- **Domain administrators** (`domain-admin` role, `--domains`): manage their
+  domains' accounts, aliases, lists and catch-alls and nothing else.
+- **Audit log** of every administrative change (dashboard, CLI, migration)
+  in Postgres, with a dashboard page.
+- `elemta provision reset-two-factor`, shared-mailbox grants, purging.
+- **`elemta migrate`**: mail over IMAP (incremental, idempotent), calendars
+  and contacts from `.ics`/`.vcf`, accounts, aliases and lists from CSV.
+- Mail over a recipient's size limit is refused at RCPT.
+
+### Operations
+
+- **Release images** `ghcr.io/evalalan/elemta` and
+  `ghcr.io/evalalan/elemta-mailbox`, tagged with the version.
+- **Production overlay** `docker-compose.release.yml` for the full stack:
+  release images, third-party images pinned by digest, no-new-privileges,
+  memory and process limits and read-only root filesystems
+  (docs/production-compose.md).
+- **Backup and restore** of the whole stack: `scripts/backup.sh`,
+  `scripts/restore-drill.sh`, `scripts/restore.sh`.
+- Kubernetes overlays run the mailbox service and webmail; Valkey for the
+  dashboard and MTA.
+
 ## v0.4.0 (2026-10-11)
 
 ### Fixes

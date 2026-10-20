@@ -1,8 +1,8 @@
 # Releasing Elemta
 
-This document describes how to cut a release of Elemta. The repository
-currently has no git tags — this process starts with **v0.1.0** as the
-first proposed release.
+This document describes how to cut a release of Elemta. The first tagged
+release is **v0.5.0**: v0.3.0 and v0.4.0 were described in the changelog but
+never tagged, so tags continue that numbering.
 
 ## Tagging convention
 
@@ -41,11 +41,12 @@ else in CI creates GitHub Releases.
    go build -trimpath -ldflags "-s -w -X github.com/EvalAlan/elemta/internal/version.Version=${VERSION}"
    ```
 
-   `VERSION` is the pushed tag (e.g. `v0.1.0`), taken from `GITHUB_REF`. This
+   `VERSION` is the pushed tag (e.g. `v0.5.0`), taken from `GITHUB_REF`. This
    stamps `internal/version.Version` (see
    [`internal/version/version.go`](../internal/version/version.go)) so both
    binaries report the correct release version at runtime instead of the
-   `0.1.0-dev` placeholder baked into source.
+   `-dev` placeholder baked into source (`0.5.0-dev`; bump it to the next
+   minor after tagging).
 
 2. **Package** — each arch's pair of binaries is packaged into
    `elemta-<version>-linux-<arch>.tar.gz`.
@@ -67,13 +68,13 @@ in `release.yml` if/when other platforms are needed.
    what's in the release. The existing changelog is narrative rather than
    strictly "Keep a Changelog"-formatted — follow the existing style, but
    include the version number in the heading going forward, e.g.
-   `## v0.1.0 (2026-07-09)`.
+   `## v0.5.0 (2026-10-20)`.
 3. Commit the changelog update on `main`.
 4. Tag the commit and push the tag:
 
    ```bash
-   git tag -a v0.1.0 -m "v0.1.0"
-   git push origin v0.1.0
+   git tag -a v0.5.0 -m "v0.5.0"
+   git push origin v0.5.0
    ```
 
 5. Watch the `Release` workflow run in GitHub Actions. On success, a draft
@@ -83,18 +84,15 @@ in `release.yml` if/when other platforms are needed.
 6. Sanity-check the published release: download at least one tarball and
    confirm `elemta-cli` (or `elemta`) reports the expected version.
 
-## First release: v0.1.0
+## Container images
 
-`internal/version.Version` is already `0.1.0-dev` in source, and this is a
-reasonable, low-risk first tag: `v0.1.0`. Nothing about the release
-workflow requires any code changes beyond what's already in place — cutting
-`v0.1.0` only requires the manual steps above.
+The same tag also runs [`.github/workflows/build.yml`](../.github/workflows/build.yml),
+which publishes `ghcr.io/evalalan/elemta:vX.Y.Z` and
+`ghcr.io/evalalan/elemta-mailbox:vX.Y.Z` with the version stamped in. Pushes
+to `main` publish `:latest` and `:<commit sha>`. The production overlay
+(`docker-compose.release.yml`, see [production-compose.md](production-compose.md))
+runs these by `ELEMTA_TAG`.
 
-## Notes / non-goals
-
-- No git tags exist yet in this repository. This document does not create
-  one; tagging is a manual, deliberate action by a maintainer.
-- Docker image publishing is handled separately by
-  [`.github/workflows/build.yml`](../.github/workflows/build.yml) (pushes
-  `:latest` and `:<sha>` to GHCR on every push to `main`) and is out of
-  scope for the tag-triggered release workflow described here.
+Before tagging, run the upgrade drill from [production-compose.md](production-compose.md)
+against the commit's images (`ELEMTA_TAG=<sha>`): the release images are
+the same build.

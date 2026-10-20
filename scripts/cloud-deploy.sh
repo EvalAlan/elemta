@@ -5,7 +5,7 @@
 # Needs deployments/compose/.secrets/cloud.env with at least:
 #   MAIL_DOMAIN=dev.example.net     the host's name and its mail domain
 #   DKIM_SELECTOR=dev2026           optional
-#   ELEMTA_TAG=v0.1.0               optional: run that release's images from
+#   ELEMTA_TAG=v0.5.0               optional: run that release's images from
 #                                   ghcr.io, pinned and hardened
 #                                   (docker-compose.release.yml), instead of
 #                                   building this checkout. Production uses

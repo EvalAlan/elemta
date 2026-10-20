@@ -40,7 +40,7 @@ jobs:
           mkdir -p dist
           # Read the module path rather than repeating it. `-X` silently does
           # nothing when the symbol does not exist, so a stale path here does not
-          # fail the build — it ships binaries reporting the default 0.1.0-dev.
+          # fail the build — it ships binaries reporting the default -dev placeholder.
           # Deriving it from go.mod means renaming the module cannot desync this.
           MODULE="$(go list -m)"
           LDFLAGS="-s -w -X ${MODULE}/internal/version.Version=${VERSION}"
