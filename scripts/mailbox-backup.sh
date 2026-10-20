@@ -32,7 +32,11 @@ docker exec -e ELEMTA_BACKUP_DB_USER="$dbuser" -e ELEMTA_BACKUP_DB_NAME="$dbname
 ' >"$stage/metadata.dump"
 
 echo "Copying bodies from volume $bodies"
-docker run --rm --network none --entrypoint tar -v "$bodies:/bodies:ro" "$image" -C /bodies -czf - . >"$stage/bodies.tar.gz"
+# Mail keeps arriving, so tar may see the directory change and exit 1 with
+# a warning. That's expected: a body written after the dump isn't in it.
+# Real errors exit 2.
+docker run --rm --network none --entrypoint sh -v "$bodies:/bodies:ro" "$image" \
+    -c 'tar --warning=no-file-changed -C /bodies -czf - .; [ $? -le 1 ]' >"$stage/bodies.tar.gz"
 
 docker run --rm -i --network none postgres:17-alpine pg_restore -l <"$stage/metadata.dump" >/dev/null
 tar -tzf "$stage/bodies.tar.gz" >/dev/null

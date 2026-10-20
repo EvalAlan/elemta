@@ -5,6 +5,11 @@
 # Needs deployments/compose/.secrets/cloud.env with at least:
 #   MAIL_DOMAIN=dev.example.net     the host's name and its mail domain
 #   DKIM_SELECTOR=dev2026           optional
+#   ELEMTA_TAG=v0.1.0               optional: run that release's images from
+#                                   ghcr.io, pinned and hardened
+#                                   (docker-compose.release.yml), instead of
+#                                   building this checkout. Production uses
+#                                   this; see docs/production-compose.md.
 #
 # Re-running takes the rendered configuration again (ELEMTA_CONFIG_RESEED), so
 # settings saved in the admin console are replaced; make lasting changes in
@@ -26,7 +31,11 @@ fi
 DKIM_SELECTOR=${DKIM_SELECTOR:-dev2026}
 caddy_ip=${ELEMTA_CADDY_IP:-10.253.53.80}
 
-dc() { docker compose --env-file "$env_file" -f "$compose_dir/docker-compose.yml" -f "$compose_dir/docker-compose.cloud.yml" "$@"; }
+files=(-f "$compose_dir/docker-compose.yml" -f "$compose_dir/docker-compose.cloud.yml")
+if [ -n "${ELEMTA_TAG:-}" ]; then
+    files+=(-f "$compose_dir/docker-compose.release.yml")
+fi
+dc() { docker compose --env-file "$env_file" "${files[@]}" "$@"; }
 step() { printf '\n==> %s\n' "$*"; }
 
 # Service credentials, and a self-signed placeholder certificate the mail
@@ -99,8 +108,14 @@ fi
 sudo chown 1001:1001 "$dkim_key"
 sudo chmod 600 "$dkim_key"
 
-step "Building images"
-dc build
+if [ -n "${ELEMTA_TAG:-}" ]; then
+    step "Release images ($ELEMTA_TAG)"
+    dc pull --ignore-buildable --quiet
+    dc build elemta-dns
+else
+    step "Building images"
+    dc build
+fi
 
 step "Directory and certificate"
 dc up -d elemta-ldap elemta-caddy

@@ -1,0 +1,114 @@
+# Production overlay for the full stack: the release images instead of local
+# builds, pinned third-party images, and container hardening. Applied last,
+# on top of the stack and the internet-facing overlay:
+#
+#   docker compose --env-file .secrets/cloud.env \
+#     -f docker-compose.yml -f docker-compose.cloud.yml \
+#     -f docker-compose.release.yml up -d
+#
+# scripts/cloud-deploy.sh does this when ELEMTA_TAG is set (a release such
+# as v0.1.0, or a commit SHA built on main). See docs/production-compose.md.
+#
+# Why each piece:
+#
+#   - Images come from ghcr.io, built and tested by CI for that tag, so what
+#     runs is exactly what was released. Nothing of ours is built on the
+#     host except the two-line DNS resolver image.
+#   - Third-party images are pinned by digest (the version each was tested
+#     with is in the comment). A "latest" that moves overnight is how a mail
+#     server breaks without anyone deploying anything. Bump them on purpose,
+#     with a drill (docs/production-compose.md, "Upgrades").
+#   - Every service: no-new-privileges, a memory and process ceiling so one
+#     runaway can't take the host down, and rotated logs.
+#   - Our own services also run with a read-only root filesystem; everything
+#     they write goes to a volume or a tmpfs.
+
+x-harden: &harden
+  security_opt: [no-new-privileges:true]
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+x-elemta-image: &elemta-image
+  image: ${ELEMTA_IMAGE:-ghcr.io/evalalan/elemta}:${ELEMTA_TAG:?set ELEMTA_TAG to a release (v0.1.0) or a commit built on main}
+  pull_policy: missing
+
+x-mailbox-image: &mailbox-image
+  image: ${ELEMTA_MAILBOX_IMAGE:-ghcr.io/evalalan/elemta-mailbox}:${ELEMTA_TAG:?set ELEMTA_TAG}
+  pull_policy: missing
+
+x-ours: &ours
+  <<: *harden
+  read_only: true
+  cap_drop: [ALL]
+
+services:
+  elemta:
+    <<: [*ours, *elemta-image]
+    build: !reset null # a merged !reset is ignored; it has to be here
+    tmpfs: !override [/tmp:size=256m]
+    mem_limit: 1g
+    pids_limit: 512
+  elemta-web:
+    <<: [*ours, *elemta-image]
+    tmpfs: !override [/tmp:size=64m]
+    mem_limit: 512m
+    pids_limit: 256
+  elemta-webmail:
+    <<: [*ours, *elemta-image]
+    tmpfs: !override [/tmp:size=128m]
+    mem_limit: 512m
+    pids_limit: 256
+  elemta-mailbox-a: &mailbox
+    <<: [*ours, *mailbox-image]
+    build: !reset null
+    tmpfs: !override [/tmp:size=64m]
+    mem_limit: 768m
+    pids_limit: 256
+  elemta-mailbox-b: *mailbox
+
+  elemta-mailbox: # HAProxy in front of the mailbox replicas
+    <<: *harden
+    image: haproxy:3.0-alpine@sha256:d84eb36e91830bcaa67b23cfde1909850b99f11eb60da3abd185bd0daf3f75bb # 3.0.30
+    pids_limit: 128
+  elemta-mailbox-db:
+    <<: *harden
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24 # 17.11
+    pids_limit: 512
+    shm_size: 256m
+  elemta-ldap:
+    <<: *harden
+    # 2.4.57 in an image no longer maintained upstream. It stays on the
+    # internal network only; replacing it is tracked in docs/production-compose.md.
+    image: osixia/openldap:latest@sha256:3f68751292b43564a2586fc29fb7337573e2dad692b92d4e78e49ad5c22e567b # 1.5.0
+    mem_limit: 256m
+    pids_limit: 256
+  elemta-rspamd:
+    <<: *harden
+    image: rspamd/rspamd:latest@sha256:6064489cdc7ae235f950ec7a640cb974cc343495b9f91fd6b400ad842a23fdb1 # 4.2.2
+    mem_limit: 768m
+    pids_limit: 256
+  elemta-clamav:
+    <<: *harden
+    image: clamav/clamav:latest@sha256:638d90201ee7ee6a82d249a2fc23b132e578673b5f1f2766852b127676ca1ef6 # 1.5.4
+    # Signatures alone need well over a gigabyte while reloading.
+    mem_limit: 3g
+    pids_limit: 256
+  valkey:
+    <<: *harden
+    image: valkey/valkey:8.0-alpine@sha256:fd348c9b6999ef15719a1d6b43b810ee1bf2068ded2d7ab6f6dd15943841f28b # 8.0.11
+    mem_limit: 640m
+    pids_limit: 128
+  rspamd-valkey:
+    <<: *harden
+    image: valkey/valkey:8.0-alpine@sha256:fd348c9b6999ef15719a1d6b43b810ee1bf2068ded2d7ab6f6dd15943841f28b # 8.0.11
+    mem_limit: 256m
+    pids_limit: 128
+  elemta-dns:
+    <<: *harden
+    mem_limit: 128m
+    pids_limit: 64
+  elemta-caddy:
+    <<: *harden
+    image: caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f # 2.11.7
+    pids_limit: 128
