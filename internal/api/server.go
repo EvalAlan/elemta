@@ -248,6 +248,9 @@ const inheritedHTTPFDEnv = "ELEMTA_INHERITED_HTTP_FD"
 type MetricsStore interface {
 	GetMetrics(ctx context.Context) (*DeliveryMetricsData, error)
 	GetHourlyStats(ctx context.Context) ([]HourlyStatsData, error)
+	// GetDailyStats returns the last days days, oldest first, labelled
+	// YYYY-MM-DD (UTC).
+	GetDailyStats(ctx context.Context, days int) ([]HourlyStatsData, error)
 	GetRecentErrors(ctx context.Context, limit int64) ([]map[string]string, error)
 	GetDomainStats(ctx context.Context) ([]metrics.DomainStats, error)
 }
@@ -436,6 +439,18 @@ func (a *valkeyMetricsAdapter) GetMetrics(ctx context.Context) (*DeliveryMetrics
 		TotalReceived:  m.TotalReceived,
 		LastUpdated:    m.LastUpdated,
 	}, nil
+}
+
+func (a *valkeyMetricsAdapter) GetDailyStats(ctx context.Context, days int) ([]HourlyStatsData, error) {
+	stats, err := a.store.GetDailyStats(ctx, days)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]HourlyStatsData, len(stats))
+	for i, s := range stats {
+		result[i] = HourlyStatsData(s)
+	}
+	return result, nil
 }
 
 func (a *valkeyMetricsAdapter) GetHourlyStats(ctx context.Context) ([]HourlyStatsData, error) {

@@ -2860,11 +2860,19 @@ async function refreshReports() {
         const stats = await response.json();
         console.log('Reports data received:', stats);
 
-        // Update stat cards
-        document.getElementById('report-delivered').textContent = stats.total_delivered || 0;
-        document.getElementById('report-failed').textContent = stats.total_failed || 0;
-        document.getElementById('report-deferred').textContent = stats.total_deferred || 0;
-        document.getElementById('report-success-rate').textContent = (stats.success_rate || 0).toFixed(1) + '%';
+        // The cards count the same period as the chart below them. The
+        // running totals since the server started counting are in the
+        // caption.
+        const w = stats.window || { delivered: stats.total_delivered, failed: stats.total_failed, deferred: stats.total_deferred, success_rate: stats.success_rate };
+        document.getElementById('report-delivered').textContent = (w.delivered || 0).toLocaleString();
+        document.getElementById('report-failed').textContent = (w.failed || 0).toLocaleString();
+        document.getElementById('report-deferred').textContent = (w.deferred || 0).toLocaleString();
+        document.getElementById('report-success-rate').textContent = (w.success_rate || 0).toFixed(1) + '%';
+        const periods = { hour: 'the last 24 hours', day: 'the last 30 days', week: 'the last 12 weeks', month: 'the last 12 months' };
+        const caption = document.getElementById('report-window');
+        if (caption) {
+            caption.textContent = `Totals for ${periods[currentTimeScale] || 'this period'}. All time: ${(stats.total_delivered || 0).toLocaleString()} delivered, ${(stats.total_failed || 0).toLocaleString()} failed, ${(stats.total_deferred || 0).toLocaleString()} deferred.`;
+        }
 
         // Update chart with time scale data
         const chartData = stats.data || [];
@@ -2903,6 +2911,23 @@ function renderHourlyChart(hourlyData) {
     renderChart(hourlyData);
 }
 
+// formatChartLabel shows a bucket's start in the viewer's terms. Hourly
+// buckets arrive as RFC 3339 UTC times and are shown in local time; days,
+// weeks (their Monday) and months (their first day) arrive as YYYY-MM-DD
+// UTC dates, read as calendar dates so a time zone west of UTC doesn't
+// shift them back a day.
+function formatChartLabel(label, scale) {
+    if (scale === 'hour') {
+        const t = new Date(label);
+        return isNaN(t.getTime()) ? label : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(label || '');
+    if (!m) return label;
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (scale === 'month') return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
 function renderChart(data) {
     const canvas = document.getElementById('hourly-chart-canvas');
     if (!canvas) return;
@@ -2928,7 +2953,14 @@ function renderChart(data) {
     // Simple bar chart
     const padding = 40;
     const barWidth = (canvas.width - padding * 2) / data.length - 4;
-    const maxValue = Math.max(...data.map(h => h.delivered + h.failed + h.deferred), 1);
+    // Whole-number ticks on a rounded-up scale: with a few messages a
+    // fifth of the maximum isn't a count, and rounding it printed 0, 0, 1, 1.
+    const peak = Math.max(...data.map(h => h.delivered + h.failed + h.deferred), 1);
+    const rawStep = peak / 5;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(Math.max(rawStep, 1))));
+    const tickStep = Math.max(1, [1, 2, 5, 10].map(m => m * magnitude).find(s => s >= rawStep));
+    const tickCount = Math.ceil(peak / tickStep);
+    const maxValue = tickCount * tickStep;
     const chartHeight = canvas.height - padding * 2;
 
     // Draw Y-axis
@@ -2940,14 +2972,13 @@ function renderChart(data) {
     ctx.stroke();
 
     // Draw Y-axis ticks and labels
-    const tickCount = 5;
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-muted');
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'right';
     
     for (let i = 0; i <= tickCount; i++) {
         const y = canvas.height - padding - (i * chartHeight / tickCount);
-        const value = Math.round((i * maxValue) / tickCount);
+        const value = i * tickStep;
         
         // Draw tick mark
         ctx.beginPath();
@@ -3002,56 +3033,7 @@ function renderChart(data) {
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'center';
             
-            // Convert timezone for display
-            let label = item.label;
-            
-            if (currentTimeScale === 'hour') {
-                // Parse the hour label and convert to local timezone
-                try {
-                    // Backend sends time-only format like "16:00"
-                    // We need to construct a proper date with today's date
-                    const today = new Date();
-                    const [hours, minutes] = label.split(':').map(Number);
-                    
-                    // Create date in UTC with the given time
-                    const utcDate = new Date(Date.UTC(
-                        today.getUTCFullYear(),
-                        today.getUTCMonth(),
-                        today.getUTCDate(),
-                        hours,
-                        minutes
-                    ));
-                    
-                    console.log('Original label:', label, 'UTC date:', utcDate);
-                    
-                    if (!isNaN(utcDate.getTime())) {
-                        label = utcDate.toLocaleTimeString('en-US', { 
-                            hour: '2-digit', 
-                            minute: '2-digit',
-                            hour12: false,
-                            timeZone: 'America/New_York' // Force Eastern Time
-                        });
-                        console.log('Formatted label (Eastern):', label);
-                    }
-                } catch (e) {
-                    // Fallback to original label if parsing fails
-                    console.warn('Failed to parse date label:', label, e);
-                }
-            } else if (currentTimeScale === 'day') {
-                // Format daily labels
-                try {
-                    const date = new Date(label);
-                    if (!isNaN(date.getTime())) {
-                        label = date.toLocaleDateString('en-US', { 
-                            month: 'short', 
-                            day: 'numeric' 
-                        });
-                    }
-                } catch (e) {
-                    console.warn('Failed to parse date label:', label, e);
-                }
-            }
-            
+            const label = formatChartLabel(item.label, currentTimeScale);
             ctx.fillText(label, x + barWidth / 2, canvas.height - padding + 15);
         }
     });

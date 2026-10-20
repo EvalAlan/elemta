@@ -1887,6 +1887,10 @@ body.hide-failed-queue .failed-health-stat {
     margin-top: 1.5rem;
 }
 
+.report-window {
+    margin: 0 0 0.75rem;
+}
+
 .reports-grid > .chart-card {
     grid-column: 1 / -1;
 }

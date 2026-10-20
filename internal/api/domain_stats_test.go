@@ -20,6 +20,9 @@ func (s *stubDomainStats) GetMetrics(context.Context) (*DeliveryMetricsData, err
 	return &DeliveryMetricsData{}, nil
 }
 func (s *stubDomainStats) GetHourlyStats(context.Context) ([]HourlyStatsData, error) { return nil, nil }
+func (s *stubDomainStats) GetDailyStats(context.Context, int) ([]HourlyStatsData, error) {
+	return nil, nil
+}
 func (s *stubDomainStats) GetRecentErrors(context.Context, int64) ([]map[string]string, error) {
 	return nil, nil
 }

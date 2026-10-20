@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261020-reports">
+    <link rel="stylesheet" href="/static/styles.css?v=20261020-reports2">
     <link rel="stylesheet" href="/static/mail-admin.css?v=20261019-cos">
 </head>
 
@@ -660,6 +660,7 @@
 
             <!-- Reports View -->
             <section class="view" id="view-reports">
+                <p class="field-hint report-window" id="report-window" aria-live="polite"></p>
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-icon active-icon">
@@ -700,7 +701,7 @@
                     <div class="stat-card">
                         <div class="stat-icon hold-icon">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                                <path d="M19 5L5 19" /><circle cx="6.5" cy="6.5" r="2.5" /><circle cx="17.5" cy="17.5" r="2.5" />
                             </svg>
                         </div>
                         <div class="stat-info">
@@ -1498,7 +1499,7 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261021-domainadmin3"></script>
+    <script src="/static/app.js?v=20261020-reports"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
     <script src="/static/mail-admin.js?v=20261021-delegated"></script>
