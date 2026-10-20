@@ -186,18 +186,34 @@ jobs:
           done
           exit 1
 
-      - name: Check licenses
-        continue-on-error: true
+      # v1.6.0 cannot classify this dependency's three-clause BSD license.
+      # Pin the exception to the audited module version and exact license text,
+      # so an upgrade or license change requires a new review.
+      - name: Verify mathutil license exception
         run: |
-          go-licenses check ./... --disallowed_types=forbidden,restricted || echo "Some licenses could not be verified"
+          test "$(go list -m -f '{{.Version}}' modernc.org/mathutil)" = v1.7.1
+          go mod download modernc.org/mathutil@v1.7.1
+          license_file="$(go list -m -f '{{.Dir}}' modernc.org/mathutil)/LICENSE"
+          test -f "$license_file"
+          license_hash="$(sha256sum "$license_file")"
+          test "${license_hash%% *}" = bfa9bf72a72ca009fd62a8f84fca3dca67e51d93af96352723646599898b6cf5
+
+      - name: Check licenses
+        run: |
+          go-licenses check ./... \
+            --disallowed_types=forbidden,restricted,unknown \
+            --ignore github.com/EvalAlan/elemta \
+            --ignore modernc.org/mathutil
 
       - name: Generate license report
-        continue-on-error: true
         run: |
-          go-licenses report ./... > licenses.txt 2>&1 || true
+          go-licenses report ./... \
+            --ignore github.com/EvalAlan/elemta \
+            --ignore modernc.org/mathutil > licenses.txt
           echo "## License Report" >> $GITHUB_STEP_SUMMARY
+          echo "modernc.org/mathutil v1.7.1: BSD-3-Clause license verified by SHA-256 above; excluded from scanner classification." >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          head -50 licenses.txt >> $GITHUB_STEP_SUMMARY || echo "No license data available" >> $GITHUB_STEP_SUMMARY
+          head -50 licenses.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
   sbom-generation:
