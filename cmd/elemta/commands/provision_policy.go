@@ -27,6 +27,7 @@ type settingsFlags struct {
 	messagesPerHour, recipientsPerMessage, recipientsPerDay string
 	protocols                                               string
 	forwarding, filters, appPasswords, twoFactor            string
+	trashDays, junkDays, retentionDays, legalHold           string
 }
 
 func (f *settingsFlags) register(c *cobra.Command) {
@@ -42,6 +43,10 @@ func (f *settingsFlags) register(c *cobra.Command) {
 	fl.StringVar(&f.filters, "filters", "", "Users may keep filters and vacation replies: on, off or inherit")
 	fl.StringVar(&f.appPasswords, "require-app-passwords", "", "Mail apps must use app passwords: on, off or inherit")
 	fl.StringVar(&f.twoFactor, "require-two-factor", "", "Webmail users must set up two-step verification: on, off or inherit")
+	fl.StringVar(&f.trashDays, "trash-days", "", "Empty Trash of mail older than this many days there; 0 keeps it")
+	fl.StringVar(&f.junkDays, "junk-days", "", "Empty Junk of mail older than this many days there; 0 keeps it")
+	fl.StringVar(&f.retentionDays, "retention-days", "", "Delete mail in every folder older than this many days; 0 keeps it")
+	fl.StringVar(&f.legalHold, "legal-hold", "", "Keep everything, even what the user deletes: on, off or inherit")
 }
 
 // apply changes s by the flags that were given and leaves the rest alone.
@@ -103,6 +108,10 @@ func (f *settingsFlags) apply(c *cobra.Command, s *mailpolicy.Settings) error {
 		toggle("filters", f.filters, &s.Filters),
 		toggle("require-app-passwords", f.appPasswords, &s.RequireAppPasswords),
 		toggle("require-two-factor", f.twoFactor, &s.RequireTwoFactor),
+		count("trash-days", f.trashDays, &s.TrashDays),
+		count("junk-days", f.junkDays, &s.JunkDays),
+		count("retention-days", f.retentionDays, &s.RetentionDays),
+		toggle("legal-hold", f.legalHold, &s.LegalHold),
 	} {
 		if err != nil {
 			return err
@@ -252,6 +261,17 @@ func addPolicyCommands(add addCommand) {
 	})
 	setPolicy.Flags().StringVar(&accountClass, "class", "", `The account's own class of service; "inherit" uses its domain's`)
 	accountFlags.register(setPolicy)
+	add("export-held <email>", []string{"eh"}, "Write the mail kept under an account's legal hold to stdout as mbox", 1, func(ctx context.Context, cmd *cobra.Command, s *provision.Service, args []string) (any, error) {
+		c, err := admin(s)
+		if err != nil {
+			return nil, err
+		}
+		address, err := provision.Address(args[0])
+		if err != nil {
+			return nil, err
+		}
+		return nil, c.ExportHeld(ctx, address, cmd.OutOrStdout())
+	})
 	var purgeConfirm string
 	purge := add("purge-account <email>", []string{"pa"}, "Permanently remove a deleted account's mail, folders, filters and settings", 1, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
 		if !strings.EqualFold(purgeConfirm, args[0]) {
@@ -293,6 +313,9 @@ func printPolicy(w *tabwriter.Writer, value any) bool {
 		printSettings(w, v.Policy.Settings)
 		fmt.Fprintf(w, "\nIn effect (class %s):\n", v.Effective.Class)
 		printEffective(w, v.Effective)
+		if v.Held > 0 || v.Effective.LegalHold {
+			fmt.Fprintf(w, "\nMessages on hold:\t%d (export-held writes them as mbox)\n", v.Held)
+		}
 	case mailpolicy.PurgeResult:
 		fmt.Fprintf(w, "Purged %s: %d mailbox records, %d folders, %d messages. Message files are removed by the next cleanup after the backup grace period.\n", v.Address, v.Accounts, v.Folders, v.Messages)
 	default:
@@ -319,6 +342,11 @@ func printSettings(w *tabwriter.Writer, s mailpolicy.Settings) {
 			line(name, onOff(*v))
 		}
 	}
+	days := func(name string, v *int) {
+		if v != nil {
+			line(name, formatDays(*v))
+		}
+	}
 	size("quota", s.QuotaBytes)
 	size("max message", s.MaxMessageBytes)
 	size("max attachment", s.MaxAttachmentBytes)
@@ -337,6 +365,10 @@ func printSettings(w *tabwriter.Writer, s mailpolicy.Settings) {
 	toggle("filters", s.Filters)
 	toggle("require app passwords", s.RequireAppPasswords)
 	toggle("require two-step verification", s.RequireTwoFactor)
+	days("empty Trash after", s.TrashDays)
+	days("empty Junk after", s.JunkDays)
+	days("delete mail older than", s.RetentionDays)
+	toggle("legal hold", s.LegalHold)
 	if !printed {
 		fmt.Fprintln(w, "  (nothing set; everything is inherited)")
 	}
@@ -362,6 +394,17 @@ func printEffective(w *tabwriter.Writer, e mailpolicy.Effective) {
 	fmt.Fprintf(w, "  filters:\t%s\t(%s)\n", onOff(e.Filters), src("filters"))
 	fmt.Fprintf(w, "  require app passwords:\t%s\t(%s)\n", onOff(e.RequireAppPasswords), src("require_app_passwords"))
 	fmt.Fprintf(w, "  require two-step verification:\t%s\t(%s)\n", onOff(e.RequireTwoFactor), src("require_two_factor"))
+	fmt.Fprintf(w, "  empty Trash after:\t%s\t(%s)\n", formatDays(e.TrashDays), src("trash_days"))
+	fmt.Fprintf(w, "  empty Junk after:\t%s\t(%s)\n", formatDays(e.JunkDays), src("junk_days"))
+	fmt.Fprintf(w, "  delete mail older than:\t%s\t(%s)\n", formatDays(e.RetentionDays), src("retention_days"))
+	fmt.Fprintf(w, "  legal hold:\t%s\t(%s)\n", onOff(e.LegalHold), src("legal_hold"))
+}
+
+func formatDays(n int) string {
+	if n == 0 {
+		return "never"
+	}
+	return strconv.Itoa(n) + " days"
 }
 
 func onOff(b bool) string {

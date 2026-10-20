@@ -175,6 +175,27 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 	handle("POST /v1/admin/accounts/{address}/messages", func(r *http.Request) (any, error) {
 		return s.importMessage(r)
 	})
+	mux.HandleFunc("GET /v1/admin/accounts/{address}/held", func(w http.ResponseWriter, r *http.Request) {
+		// Streams mbox, so it bypasses the JSON wrapper but not its checks.
+		if s.adminToken == "" {
+			http.NotFound(w, r)
+			return
+		}
+		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !s.internalClient(r) || !ok || subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) != 1 {
+			writeAdminError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		address := strings.ToLower(strings.TrimSpace(r.PathValue("address")))
+		w.Header().Set("Content-Type", "application/mbox")
+		w.Header().Set("Cache-Control", "no-store")
+		n, err := s.engine.ExportHeld(r.Context(), address, w)
+		if err != nil {
+			s.log.Warn("held mail export failed", "address", address, "exported", n, "error", err)
+			return
+		}
+		s.log.Info("held mail exported", "address", address, "messages", n)
+	})
 	handle("GET /v1/admin/addresses/{address}", func(r *http.Request) (any, error) {
 		return s.addressInfo(r.Context(), r.PathValue("address"))
 	})
@@ -247,7 +268,11 @@ func (s *Service) accountView(ctx context.Context, a Account) (mailpolicy.Accoun
 		return mailpolicy.AccountView{}, err
 	}
 	eff, err := s.engine.EffectivePolicy(ctx, a.Address, a.Quota)
-	return mailpolicy.AccountView{Policy: p, Effective: eff}, err
+	if err != nil {
+		return mailpolicy.AccountView{}, err
+	}
+	held, err := s.engine.HeldCount(ctx, a.Address)
+	return mailpolicy.AccountView{Policy: p, Effective: eff, Held: held}, err
 }
 
 func adminStatus(err error) (int, string) {

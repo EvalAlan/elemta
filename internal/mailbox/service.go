@@ -250,6 +250,7 @@ func (s *Service) Run(ctx context.Context) error {
 		defer wg.Done()
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
+		var lastRetention time.Time
 		for {
 			select {
 			case <-s.ctx.Done():
@@ -263,6 +264,15 @@ func (s *Service) Run(ctx context.Context) error {
 				if h := s.cfg.Maintenance.JournalRetentionHours; h > 0 {
 					if _, err := s.engine.CompactChanges(ctx, time.Duration(h)*time.Hour); err != nil && ctx.Err() == nil {
 						s.log.Warn("mailbox journal compaction failed", "error", err)
+					}
+				}
+				// Retention once an hour, on whichever replica takes the lock.
+				if time.Since(lastRetention) >= time.Hour {
+					lastRetention = time.Now()
+					if rep, err := s.engine.Retention(ctx, time.Now()); err != nil && ctx.Err() == nil {
+						s.log.Warn("mailbox retention failed", "error", err)
+					} else if rep.Deleted > 0 {
+						s.log.Info("mailbox retention", "accounts", rep.Accounts, "deleted", rep.Deleted)
 					}
 				}
 				// Every replica runs this; summaries are idempotent, so overlap

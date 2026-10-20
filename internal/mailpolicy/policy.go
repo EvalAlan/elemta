@@ -71,6 +71,16 @@ type Settings struct {
 	// RequireTwoFactor makes webmail users set up two-step verification
 	// before they can use the webmail.
 	RequireTwoFactor *bool `json:"require_two_factor,omitempty"`
+
+	// Retention, in days; 0 keeps mail forever. TrashDays and JunkDays
+	// count from when a message reached that folder; RetentionDays deletes
+	// mail in every folder by the message's own date.
+	TrashDays     *int `json:"trash_days,omitempty"`
+	JunkDays      *int `json:"junk_days,omitempty"`
+	RetentionDays *int `json:"retention_days,omitempty"`
+	// LegalHold keeps everything: mail the user deletes is held out of
+	// sight, retention skips the account, and it can't be purged.
+	LegalHold *bool `json:"legal_hold,omitempty"`
 }
 
 // Effective is a fully worked-out policy. Source names the layer each
@@ -90,6 +100,10 @@ type Effective struct {
 	Filters              bool              `json:"filters"`
 	RequireAppPasswords  bool              `json:"require_app_passwords"`
 	RequireTwoFactor     bool              `json:"require_two_factor"`
+	TrashDays            int               `json:"trash_days"`
+	JunkDays             int               `json:"junk_days"`
+	RetentionDays        int               `json:"retention_days"`
+	LegalHold            bool              `json:"legal_hold"`
 	Source               map[string]string `json:"source,omitempty"`
 }
 
@@ -168,6 +182,22 @@ func Resolve(address, class string, layers ...Layer) Effective {
 			e.RequireTwoFactor = *s.RequireTwoFactor
 			set("require_two_factor", l.Name)
 		}
+		if s.TrashDays != nil {
+			e.TrashDays = *s.TrashDays
+			set("trash_days", l.Name)
+		}
+		if s.JunkDays != nil {
+			e.JunkDays = *s.JunkDays
+			set("junk_days", l.Name)
+		}
+		if s.RetentionDays != nil {
+			e.RetentionDays = *s.RetentionDays
+			set("retention_days", l.Name)
+		}
+		if s.LegalHold != nil {
+			e.LegalHold = *s.LegalHold
+			set("legal_hold", l.Name)
+		}
 	}
 	return e
 }
@@ -201,6 +231,11 @@ func (s Settings) Validate() error {
 	for name, v := range map[string]*int{"messages_per_hour": s.MessagesPerHour, "recipients_per_message": s.RecipientsPerMessage, "recipients_per_day": s.RecipientsPerDay} {
 		if v != nil && (*v < 0 || *v > 10_000_000) {
 			return fmt.Errorf("%w: %s must be 0 (unlimited) up to 10000000", ErrInvalid, name)
+		}
+	}
+	for name, v := range map[string]*int{"trash_days": s.TrashDays, "junk_days": s.JunkDays, "retention_days": s.RetentionDays} {
+		if v != nil && (*v < 0 || *v > 36500) {
+			return fmt.Errorf("%w: %s must be 0 (keep forever) up to 36500", ErrInvalid, name)
 		}
 	}
 	for p := range s.Protocols {

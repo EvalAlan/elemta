@@ -84,6 +84,9 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 			if err != nil {
 				return err
 			}
+			if value == nil {
+				return nil // the command wrote its own output (export-held)
+			}
 			if asJSON {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")

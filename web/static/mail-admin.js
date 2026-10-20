@@ -17,6 +17,7 @@
     ];
     const PROTOCOLS = [['imap', 'IMAP'], ['pop3', 'POP3'], ['webmail', 'Webmail'], ['dav', 'Calendar and contact sync (DAV)'], ['submission', 'SMTP submission from mail apps']];
     const SWITCHES = [['external_forwarding', 'Forwarding outside the server'], ['filters', 'Filters and vacation replies'], ['require_app_passwords', 'Require app passwords'], ['require_two_factor', 'Require two-step verification']];
+    const RETENTION = [['trash_days', 'Empty Trash after (days)', 'days'], ['junk_days', 'Empty Junk after (days)', 'days'], ['retention_days', 'Delete all mail older than (days)', 'days'], ['legal_hold', 'Legal hold (keep everything)', 'switch']];
 
     async function request(path, method = 'GET', body) {
         const options = { method, headers: { Accept: 'application/json' } };
@@ -71,7 +72,7 @@
                 [['', 'Inherit'], ['on', 'On'], ['off', 'Off']].forEach(([v, t]) => input.appendChild(option(v, t)));
             } else {
                 input = node('input'); input.id = id; input.type = 'text';
-                input.placeholder = kind === 'size' ? 'Inherit (e.g. 25M, 0 = unlimited)' : 'Inherit (0 = unlimited)';
+                input.placeholder = kind === 'size' ? 'Inherit (e.g. 25M, 0 = unlimited)' : kind === 'days' ? 'Inherit (0 = keep forever)' : 'Inherit (0 = unlimited)';
             }
             container.appendChild(input);
             fields[key] = { input, kind };
@@ -79,6 +80,7 @@
         heading('Limits'); LIMITS.forEach(([k, l, kind]) => add(k, l, kind));
         heading('Protocols'); PROTOCOLS.forEach(([k, l]) => add('protocols.' + k, l, 'switch'));
         heading('Features'); SWITCHES.forEach(([k, l]) => add(k, l, 'switch'));
+        heading('Retention'); RETENTION.forEach(([k, l, kind]) => add(k, l, kind));
         return {
             fill(settings) {
                 settings = settings || {};
@@ -243,6 +245,7 @@
         const v = e[key];
         if (typeof v === 'boolean') return v ? 'On' : 'Off';
         if (key.endsWith('_bytes')) return quota(v);
+        if (key.endsWith('_days')) return v ? v + ' days' : 'Never';
         return v ? String(v) : 'Unlimited';
     }
     function fillPolicy(view) {
@@ -253,10 +256,11 @@
         accountEditor.fill(view.policy.settings);
         const body = el('ma-effective'); body.replaceChildren();
         const e = view.effective;
-        [...LIMITS.map(([k, l]) => [k, l]), ...PROTOCOLS.map(([k, l]) => ['protocols.' + k, l]), ...SWITCHES].forEach(([key, label]) => {
+        [...LIMITS.map(([k, l]) => [k, l]), ...PROTOCOLS.map(([k, l]) => ['protocols.' + k, l]), ...SWITCHES, ...RETENTION.map(([k, l]) => [k, l])].forEach(([key, label]) => {
             const row = node('tr'); cell(row, label); cell(row, effectiveValue(e, key)); cell(row, (e.source || {})[key] || 'built-in'); body.appendChild(row);
         });
         const row = node('tr'); cell(row, 'Class in effect'); cell(row, e.class); cell(row, ''); body.prepend(row);
+        if (view.held || e.legal_hold) { const held = node('tr'); cell(held, 'Messages on hold'); cell(held, view.held || 0); cell(held, 'export with provision export-held'); body.appendChild(held); }
     }
     async function openAccount(account) {
         fillAccount(account); el('ma-account-dialog').showModal();

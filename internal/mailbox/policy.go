@@ -275,6 +275,13 @@ type PurgeResult = mailpolicy.PurgeResult
 func (e *Engine) PurgeAccount(ctx context.Context, address string) (PurgeResult, error) {
 	address = strings.ToLower(strings.TrimSpace(address))
 	out := PurgeResult{Address: address}
+	// Mail under legal hold must survive the account: purging is refused
+	// until the hold is lifted.
+	if eff, err := e.EffectivePolicy(ctx, address, 0); err != nil {
+		return out, err
+	} else if eff.LegalHold {
+		return out, errors.Join(ErrInUse, errors.New(address+" is on legal hold; lift the hold before purging"))
+	}
 	tx, err := e.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return out, err
@@ -311,6 +318,7 @@ func (e *Engine) PurgeAccount(ctx context.Context, address string) (PurgeResult,
 			`DELETE FROM mailbox_deliveries WHERE account=ANY($1)`,
 			`DELETE FROM mailbox_sieve_scripts WHERE account=ANY($1)`,
 			`DELETE FROM mailbox_sieve_sent WHERE account=ANY($1)`,
+			`DELETE FROM mailbox_held WHERE account=ANY($1)`,
 			`DELETE FROM mailbox_accounts WHERE id=ANY($1)`, // security, app passwords, POP3 leases cascade
 		} {
 			if _, err := tx.ExecContext(ctx, q, list); err != nil {

@@ -174,6 +174,8 @@ func (c *Client) SetDomain(ctx context.Context, p DomainPolicy) (DomainPolicy, e
 type AccountView struct {
 	Policy    AccountPolicy `json:"policy"`
 	Effective Effective     `json:"effective"`
+	// Held counts messages kept under legal hold.
+	Held int `json:"held"`
 }
 
 // Account returns an account's stored policy and its effective policy.
@@ -310,4 +312,26 @@ func (c *Client) Import(ctx context.Context, m Import) (ImportResult, error) {
 		}
 	}
 	return out, err
+}
+
+// ExportHeld writes an account's mail held under legal hold to w, as mbox.
+func (c *Client) ExportHeld(ctx context.Context, address string, w io.Writer) error {
+	// #nosec G704 -- the base URL is operator configuration; the path is fixed with an escaped segment
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1/admin/accounts/"+seg(address)+"/held", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	client := *c.http
+	client.Timeout = 0          // an export can be large; ctx bounds it
+	resp, err := client.Do(req) // #nosec G704 -- request built above from operator configuration
+	if err != nil {
+		return fmt.Errorf("mailbox admin API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return &APIError{Status: resp.StatusCode, Message: resp.Status}
+	}
+	_, err = io.Copy(w, resp.Body)
+	return err
 }

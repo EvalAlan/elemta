@@ -358,10 +358,19 @@ func (e *Engine) DeleteFolder(ctx context.Context, account, name string) error {
 	if canonicalMailbox(name) == "INBOX" {
 		return errors.New("cannot delete INBOX")
 	}
+	held, err := e.onHold(ctx, account)
+	if err != nil {
+		return err
+	}
 	return e.tx(ctx, account, func(tx *sql.Tx) error {
 		f, err := folderTx(ctx, tx, account, name)
 		if err != nil {
 			return err
+		}
+		if held {
+			if err := holdMessages(ctx, tx, account, f, nil, "folder deleted"); err != nil {
+				return err
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE mailbox_accounts SET used_bytes=used_bytes-COALESCE((SELECT sum(b.size) FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body WHERE m.folder=$2),0) WHERE id=$1`, account, f.ID); err != nil {
 			return err
@@ -745,6 +754,10 @@ func (e *Engine) Expunge(ctx context.Context, account, name string, uids []uint3
 func (e *Engine) expunge(ctx context.Context, account, name string, uids []uint32, requireDeleted bool, popOwner string) (removed []uint32, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
+	held, err := e.onHold(ctx, account)
+	if err != nil {
+		return nil, err
+	}
 	// Set-based, like MutateFlagsIf: emptying a large Trash is a few
 	// statements, not several per message. Bodies that lose their last
 	// message are found and given their grace by cleanup.
@@ -786,6 +799,11 @@ WHERE m.folder=$1 AND m.uid=ANY($2) AND (NOT $3::boolean OR '\deleted'=ANY(m.fla
 		}
 		if len(ids) == 0 {
 			return nil
+		}
+		if held {
+			if err := holdMessages(ctx, tx, account, f, ids, "deleted"); err != nil {
+				return err
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `DELETE FROM mailbox_messages WHERE folder=$1 AND uid=ANY($2)`, f.ID, pq.Array(ids)); err != nil {
 			return err
@@ -951,21 +969,22 @@ func (e *Engine) GC(ctx context.Context) (int, error) {
 	// marked on one pass and only collected after the grace on a later one.
 	if _, err := tx.ExecContext(ctx, `UPDATE mailbox_bodies b SET orphaned_at=now() WHERE b.key IN (
 SELECT key FROM mailbox_bodies x WHERE x.store=$1 AND x.state='ready' AND x.orphaned_at IS NULL
-AND NOT EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=x.key) LIMIT 1000)`, e.Bodies.Identity()); err != nil {
+AND NOT EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=x.key)
+AND NOT EXISTS(SELECT 1 FROM mailbox_held h WHERE h.body=x.key) LIMIT 1000)`, e.Bodies.Identity()); err != nil {
 		return 0, err
 	}
 	// A body referenced again (after restoring older metadata, say) starts
 	// its grace afresh if it is ever orphaned again.
 	if _, err := tx.ExecContext(ctx, `UPDATE mailbox_bodies b SET orphaned_at=NULL WHERE b.key IN (
 SELECT key FROM mailbox_bodies x WHERE x.store=$1 AND x.orphaned_at IS NOT NULL AND x.state='ready'
-AND EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=x.key) LIMIT 1000)`, e.Bodies.Identity()); err != nil {
+AND (EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=x.key) OR EXISTS(SELECT 1 FROM mailbox_held h WHERE h.body=x.key)) LIMIT 1000)`, e.Bodies.Identity()); err != nil {
 		return 0, err
 	}
 	grace := e.bodyGrace
 	if grace <= 0 {
 		grace = 7 * 24 * time.Hour
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT key FROM mailbox_bodies b WHERE store=$1 AND ((state='staging' AND expires<now()) OR (state='ready' AND orphaned_at<now()-$2*interval '1 second' AND NOT EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=b.key))) ORDER BY expires LIMIT 100 FOR UPDATE SKIP LOCKED`, e.Bodies.Identity(), int64(grace/time.Second))
+	rows, err := tx.QueryContext(ctx, `SELECT key FROM mailbox_bodies b WHERE store=$1 AND ((state='staging' AND expires<now()) OR (state='ready' AND orphaned_at<now()-$2*interval '1 second' AND NOT EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=b.key) AND NOT EXISTS(SELECT 1 FROM mailbox_held h WHERE h.body=b.key))) ORDER BY expires LIMIT 100 FOR UPDATE SKIP LOCKED`, e.Bodies.Identity(), int64(grace/time.Second))
 	if err != nil {
 		return 0, err
 	}
@@ -987,7 +1006,8 @@ AND EXISTS(SELECT 1 FROM mailbox_messages m WHERE m.body=x.key) LIMIT 1000)`, e.
 		// Recheck references after acquiring the body lock, using a fresh
 		// READ COMMITTED snapshot. A copy that committed while we waited wins.
 		var referenced bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_messages WHERE body=$1)`, key).Scan(&referenced); err != nil {
+		// Mail under legal hold (retention.go) keeps its body too.
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_messages WHERE body=$1) OR EXISTS(SELECT 1 FROM mailbox_held WHERE body=$1)`, key).Scan(&referenced); err != nil {
 			return 0, err
 		}
 		if !referenced {

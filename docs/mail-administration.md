@@ -86,6 +86,10 @@ deleted either.
 | Filters | `--filters off` | mailbox: stored filters are ignored and ManageSieve refuses; turning filters back on restores them |
 | Require app passwords | `--require-app-passwords on` | mail apps must use app passwords, as if the user had chosen it |
 | Require two-step verification | `--require-two-factor on` | webmail: sign-in leads through setting it up, and it can't be turned off |
+| Empty Trash | `--trash-days 30` | mailbox: hourly, mail in Trash longer than this is deleted |
+| Empty Junk | `--junk-days 14` | the same, for Junk |
+| Retention | `--retention-days 2555` | mailbox: hourly, mail in any folder older than this (by its date) is deleted |
+| Legal hold | `--legal-hold on` | mailbox: nothing the user deletes is lost (see below) |
 
 Sizes accept the same suffixes as quotas; for every limit `0` means
 unlimited. Every flag also takes `inherit`, which unsets the value so the
@@ -194,6 +198,30 @@ address, which must be an existing account, alias or list. Catch-alls
 attract spam, so use them sparingly.
 
 Per-account aliases stay in the directory (`add-alias`), as before.
+
+## Retention and legal hold
+
+Retention rules delete old mail once an hour, on one mailbox replica at a
+time, through the normal delete path, so quotas, mail apps and the webmail
+see it like any other delete. Trash and Junk count from when a message
+arrived in the folder; `--retention-days` counts from the message's own
+date, in every folder. A first run over years of mail works through it in
+batches across successive hours.
+
+Legal hold (`set-policy dana@example.com --legal-hold on`, or on a class)
+keeps everything for an account under investigation. The user's mailbox
+works as usual, but whatever is removed for good, an emptied Trash, a
+deleted folder or a POP3 delete, is first kept out of sight with its
+original folder, flags and date. Retention skips held accounts, and purging
+one is refused until the hold is lifted. `get-policy` shows how many
+messages are held, and
+
+```sh
+provision export-held dana@example.com > dana-held.mbox
+```
+
+writes them as mbox for review tools, each with an `X-Elemta-Held` header
+naming the folder it was deleted from and when.
 
 ## Purging a mailbox
 
