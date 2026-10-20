@@ -323,7 +323,9 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .brand .logo .paper { fill: var(--chrome); }
 .brand.dark { color: var(--ink); }
 .apps { display: flex; gap: 4px; }
-.apps a { color: var(--chrome-muted); text-decoration: none; padding: 8px 12px; border-radius: 6px; }
+.apps a { display: inline-flex; align-items: center; gap: 8px; color: var(--chrome-muted); text-decoration: none; padding: 8px 12px; border-radius: 6px; white-space: nowrap; }
+.apps a .icon { width: 17px; height: 17px; opacity: .85; }
+.apps a[aria-current="page"] .icon, .apps a:hover .icon { opacity: 1; }
 .apps a:hover { color: var(--chrome-strong); }
 .apps a[aria-current="page"] { background: var(--chrome-2); color: var(--chrome-strong); font-weight: 500; }
 .search { flex: 1 1 280px; display: flex; align-items: center; gap: 8px; background: var(--chrome-2); border-radius: var(--radius); padding: 0 12px; color: var(--chrome-muted); }
@@ -683,6 +685,11 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 @media (max-width: 720px) {
   .topbar { padding: 8px 12px; gap: 10px; }
   .apps { order: 3; width: 100%; overflow-x: auto; }
+  /* Four labels don't fit a phone's width: icons share the row evenly and
+     each label stays as the link's accessible name. */
+  .apps a { flex: 1; justify-content: center; padding: 10px 0; }
+  .apps a .icon { width: 20px; height: 20px; }
+  .apps a span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .shell { flex-direction: column; }
   .sidebar { flex: 0 0 auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 12px; }
   .folders { flex-direction: row; overflow-x: auto; }

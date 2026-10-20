@@ -13,10 +13,10 @@
 <header class="topbar">
   <a class="brand" href="/mail">{{template "logo"}}<span>Elemta</span></a>
   <nav class="apps" aria-label="Apps">
-    <a href="/mail"{{if eq .App "mail"}} aria-current="page"{{end}}>Mail</a>
-    <a href="/calendar"{{if eq .App "calendar"}} aria-current="page"{{end}}>Calendar</a>
-    <a href="/contacts"{{if eq .App "contacts"}} aria-current="page"{{end}}>Contacts</a>
-    <a href="/tasks"{{if eq .App "tasks"}} aria-current="page"{{end}}>Tasks</a>
+    <a href="/mail" title="Mail"{{if eq .App "mail"}} aria-current="page"{{end}}>{{template "icon-mail"}}<span>Mail</span></a>
+    <a href="/calendar" title="Calendar"{{if eq .App "calendar"}} aria-current="page"{{end}}>{{template "icon-calendar"}}<span>Calendar</span></a>
+    <a href="/contacts" title="Contacts"{{if eq .App "contacts"}} aria-current="page"{{end}}>{{template "icon-contact"}}<span>Contacts</span></a>
+    <a href="/tasks" title="Tasks"{{if eq .App "tasks"}} aria-current="page"{{end}}>{{template "icon-tasks"}}<span>Tasks</span></a>
   </nav>
   {{block "search" .}}
   <form class="search" role="search" action="/mail" method="get">
