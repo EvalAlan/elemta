@@ -161,6 +161,20 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 		}
 		return map[string]string{"status": "two-step verification reset; the user must enroll again if their class requires it"}, nil
 	})
+	add("list-shares <mailbox>", nil, "List people granted access to a mailbox", 1, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
+		return s.Shares(ctx, args[0])
+	})
+	var canSend bool
+	grant := add("grant-share <mailbox> <member>", nil, "Grant a user access to a mailbox", 2, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
+		return s.GrantShare(ctx, args[0], args[1], canSend)
+	})
+	grant.Flags().BoolVar(&canSend, "send", false, "Also let the member send as this mailbox")
+	add("revoke-share <mailbox> <member>", nil, "Remove a user's mailbox access", 2, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
+		if err := s.RevokeShare(ctx, args[0], args[1]); err != nil {
+			return nil, err
+		}
+		return map[string]string{"status": "mailbox access removed"}, nil
+	})
 	var confirm string
 	var purgeToo bool
 	del := add("delete-account <email>", []string{"da"}, "Remove an account, retaining its mailbox unless --purge is given", 1, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
@@ -231,6 +245,13 @@ func printProvision(cmd *cobra.Command, value any) error {
 		for _, d := range v {
 			fmt.Fprintf(w, "%s\t%t\t%d\t%d\t%s\t%s\n", d.Name, d.Configured, d.Accounts, d.Aliases, d.AliasOf, d.CatchAll)
 		}
+	case []mailpolicy.Share:
+		fmt.Fprintln(w, "MAILBOX\tMEMBER\tSEND AS")
+		for _, share := range v {
+			fmt.Fprintf(w, "%s\t%s\t%t\n", share.Mailbox, share.Member, share.CanSend)
+		}
+	case mailpolicy.Share:
+		fmt.Fprintf(w, "Mailbox:\t%s\nMember:\t%s\nSend as:\t%t\n", v.Mailbox, v.Member, v.CanSend)
 	case map[string]string:
 		fmt.Fprintln(w, v["status"])
 	default:

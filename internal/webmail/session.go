@@ -32,6 +32,7 @@ type Session struct {
 	CSRF          string
 	User          string // login name as typed, used for IMAP and submission AUTH
 	Address       string // mailbox address the user sends as
+	Mailbox       string // another mailbox selected by this user, or empty for their own
 	sealed        []byte
 	nonce         []byte
 	created       time.Time
@@ -75,6 +76,7 @@ type SessionRecord struct {
 	CSRF      string    `json:"csrf"`
 	User      string    `json:"user"`
 	Address   string    `json:"address"`
+	Mailbox   string    `json:"mailbox,omitempty"`
 	Sealed    []byte    `json:"sealed"`
 	Nonce     []byte    `json:"nonce"`
 	Created   time.Time `json:"created"`
@@ -115,11 +117,11 @@ func NewSharedSessionManager(ttl time.Duration, key []byte, store SessionStore) 
 }
 
 func (s *Session) record() *SessionRecord {
-	return &SessionRecord{ID: s.ID, CSRF: s.CSRF, User: s.User, Address: s.Address, Sealed: s.sealed, Nonce: s.nonce, Created: s.created, LastSeen: s.lastSeen, SeenNanos: strconv.FormatInt(s.lastSeen.UnixNano(), 10)}
+	return &SessionRecord{ID: s.ID, CSRF: s.CSRF, User: s.User, Address: s.Address, Mailbox: s.Mailbox, Sealed: s.sealed, Nonce: s.nonce, Created: s.created, LastSeen: s.lastSeen, SeenNanos: strconv.FormatInt(s.lastSeen.UnixNano(), 10)}
 }
 
 func sessionFromRecord(r *SessionRecord) *Session {
-	return &Session{ID: r.ID, CSRF: r.CSRF, User: r.User, Address: r.Address, sealed: r.Sealed, nonce: r.Nonce, created: r.Created, lastSeen: r.LastSeen, lastPersisted: r.LastSeen}
+	return &Session{ID: r.ID, CSRF: r.CSRF, User: r.User, Address: r.Address, Mailbox: r.Mailbox, sealed: r.Sealed, nonce: r.Nonce, created: r.Created, lastSeen: r.LastSeen, lastPersisted: r.LastSeen}
 }
 
 // randomToken returns n random bytes, URL-safe base64 encoded.
@@ -222,6 +224,9 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 	}
 	if sharedRec != nil && sharedRec.LastSeen.After(s.lastPersisted) {
 		s.lastPersisted = sharedRec.LastSeen
+	}
+	if sharedRec != nil {
+		s.Mailbox = sharedRec.Mailbox
 	}
 	m.mu.Unlock()
 	m.mu.Lock()
@@ -373,6 +378,10 @@ func (s *Session) closeStore() {
 func (m *SessionManager) withStore(ctx context.Context, s *Session, dial Dialer, fn func(Mailstore) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return m.withStoreLocked(ctx, s, dial, fn)
+}
+
+func (m *SessionManager) withStoreLocked(ctx context.Context, s *Session, dial Dialer, fn func(Mailstore) error) error {
 	for attempt := 0; ; attempt++ {
 		if s.store == nil {
 			pw, err := m.password(s)
@@ -392,6 +401,68 @@ func (m *SessionManager) withStore(ctx context.Context, s *Session, dial Dialer,
 		_ = s.store.Close()
 		s.store = nil
 	}
+}
+
+// withMailStore uses a fresh connection for another mailbox. Reauthenticating
+// with the member's own password on every request makes a revoked grant stop
+// working immediately and keeps personal calendar/contact storage separate.
+func (m *SessionManager) withMailStore(ctx context.Context, s *Session, dial Dialer, fn func(Mailstore) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m.mu.Lock()
+	mailbox := s.Mailbox
+	m.mu.Unlock()
+	if mailbox == "" {
+		return m.withStoreLocked(ctx, s, dial, fn)
+	}
+	pw, err := m.password(s)
+	if err != nil {
+		return err
+	}
+	st, err := dial(ctx, s.User+"|"+mailbox, pw)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+	return fn(st)
+}
+
+func (m *SessionManager) SetMailbox(ctx context.Context, s *Session, mailbox string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m.mu.Lock()
+	previous := s.Mailbox
+	s.Mailbox = mailbox
+	s.lastSeen = m.now()
+	rec := s.record()
+	m.mu.Unlock()
+	if m.shared != nil {
+		if err := m.shared.Save(ctx, rec, m.ttl); err != nil {
+			m.mu.Lock()
+			s.Mailbox = previous
+			m.mu.Unlock()
+			return err
+		}
+		m.mu.Lock()
+		s.lastPersisted = rec.LastSeen
+		m.mu.Unlock()
+	}
+	return nil
+}
+
+func (m *SessionManager) SelectedMailbox(s *Session) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return s.Mailbox
+}
+
+func (m *SessionManager) MailAddress(s *Session) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s.Mailbox != "" {
+		return s.Mailbox
+	}
+	return s.Address
 }
 
 // RevokeUser ends webmail sessions even when an existing IMAP connection

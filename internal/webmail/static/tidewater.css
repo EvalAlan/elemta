@@ -1088,3 +1088,4 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 .availability .fb-unknown { color: var(--muted); font-style: italic; }
 .availability .fb-summary { margin: 2px 0 0; color: var(--muted); }
 .availability .fb-summary.conflict { color: var(--warn-fg); }
+.mailbox-switch{display:grid;gap:.35rem;margin-bottom:1rem}.mailbox-switch label{font-size:.8rem;color:var(--muted)}.mailbox-switch select{width:100%;min-width:0}

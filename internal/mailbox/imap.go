@@ -103,6 +103,45 @@ var ErrProtocolDisabled = errors.New("this account may not use this protocol")
 // passwords, or whose class does, refuses its account password
 // (security.go).
 func (s *Service) login(ctx context.Context, user, password string, public bool, protocol string) (Account, error) {
+	if strings.Contains(user, "|") {
+		actorName, mailboxName, ok := strings.Cut(user, "|")
+		actorName, mailboxName = strings.ToLower(strings.TrimSpace(actorName)), strings.ToLower(strings.TrimSpace(mailboxName))
+		if !ok || actorName == "" || mailboxName == "" || strings.Contains(mailboxName, "|") || !strings.Contains(mailboxName, "@") || protocol == mailpolicy.POP3 {
+			return Account{}, ErrCredentials
+		}
+		actor, err := s.login(ctx, actorName, password, public, protocol)
+		if err != nil {
+			return Account{}, err
+		}
+		mailbox, err := s.auth.Resolve(ctx, mailboxName)
+		if err != nil {
+			return Account{}, err
+		}
+		if mailbox.Address != mailboxName {
+			return Account{}, ErrCredentials
+		}
+		allowed, err := s.engine.HasShare(ctx, mailbox.ID, actor.ID, false)
+		if err != nil {
+			return Account{}, err
+		}
+		if !allowed {
+			s.failLogin(actor.Address)
+			return Account{}, ErrCredentials
+		}
+		if err := s.applyPolicy(ctx, &mailbox); err != nil {
+			return Account{}, err
+		}
+		if protocol != "" && mailbox.Policy != nil && !mailbox.Policy.Allows(protocol) {
+			return Account{}, ErrProtocolDisabled
+		}
+		if protocol == "" && mailbox.Policy != nil && !mailbox.Policy.Allows(mailpolicy.Webmail) {
+			return Account{}, ErrProtocolDisabled
+		}
+		if err := s.engine.EnsureAccount(ctx, mailbox); err != nil {
+			return Account{}, err
+		}
+		return mailbox, nil
+	}
 	a, app, err := s.authenticate(ctx, user, password)
 	if err != nil {
 		return a, err

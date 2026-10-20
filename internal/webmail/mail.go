@@ -110,10 +110,11 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	lq.Sort, lq.Reverse, lq.Page, lq.PageSize = ls.Sort, ls.Reverse, ls.Page, s.pageSize(sess)
 
 	v := view{Title: ls.Folder, Session: sess, Folder: ls.Folder, Query: ls.Query, List: &ls, Notice: notices[q.Get("n")], Remote: remote}
+	v.SharedMailboxes = s.sharedMailboxes(r.Context(), sess)
 	if s.prefsCached(sess).MailCalendar {
 		v.Calendar = s.mailCalendar(r.Context(), sess)
 	}
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		if hasUID {
 			raw, err := st.Raw(r.Context(), ls.Folder, uid, s.maxMessage())
 			if err != nil {
@@ -182,7 +183,9 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 		v.Page = &p
 		// Recorded before the open message is decorated, so an open reply
 		// already shows as recorded.
-		s.recordReplies(r.Context(), st, ls.Folder, sess.Address, pendingReplies(p, v.Conversations), loc)
+		if s.sessions.SelectedMailbox(sess) == "" {
+			s.recordReplies(r.Context(), st, ls.Folder, sess.Address, pendingReplies(p, v.Conversations), loc)
+		}
 		for _, c := range v.Conversations {
 			for _, m := range c.Messages {
 				if v.Message != nil && m.UID == uid {
@@ -312,7 +315,7 @@ func (s *Server) loadMessage(r *http.Request, sess *Session) (string, uint32, []
 		return "", 0, nil, ErrNotFound
 	}
 	var raw []byte
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		var err error
 		raw, err = st.Raw(r.Context(), folder, uid, s.maxMessage())
 		return err
@@ -345,7 +348,7 @@ func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Sessi
 	if !remote && s.prefsCached(sess).LoadImages {
 		// Conversation cards load their bodies here without the reading
 		// page's flag, so the preference is applied here too.
-		_ = s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+		_ = s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 			folders, err := st.Folders(r.Context())
 			if err == nil {
 				remote = s.autoImages(sess, folder, folders)
@@ -542,7 +545,7 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 	// leaves is true for operations after which the open message is no
 	// longer in this folder, so the redirect drops it.
 	leaves := false
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		ctx := r.Context()
 		switch op {
 		case "read":
@@ -676,7 +679,7 @@ var folderNameRE = regexp.MustCompile(`^[^/.\\%*"\x00-\x1f]{1,80}$`)
 
 func (s *Server) foldersPage(w http.ResponseWriter, r *http.Request, sess *Session) {
 	v := view{Title: "Folders", Session: sess, App: "settings", SettingsTab: "folders", Notice: notices[r.URL.Query().Get("n")]}
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		var err error
 		v.Folders, err = st.Folders(r.Context())
 		return err
@@ -698,7 +701,7 @@ func (s *Server) foldersSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		return
 	}
 	notice := ""
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		ctx := r.Context()
 		delim, err := st.Delimiter(ctx)
 		if err != nil {
@@ -783,7 +786,7 @@ var (
 func (s *Server) countsAPI(w http.ResponseWriter, r *http.Request, sess *Session) {
 	counts := map[string]uint32{}
 	totals := map[string]uint32{}
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		folders, err := st.Folders(r.Context())
 		for _, f := range folders {
 			counts[f.Name] = f.Unread

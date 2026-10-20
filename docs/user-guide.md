@@ -11,6 +11,9 @@ Sign in at your server's address with your full email address and password.
 
 - **Mail:** the folder list is on the left. Messages can be grouped into
   conversations (Settings → General). Press `?` for keyboard shortcuts.
+- **Shared mailboxes:** when someone grants you access, choose the mailbox in
+  the Mail sidebar. You can read and organize its mail. If your grant includes
+  sending, new messages use its address; otherwise they use your own.
 - **Search:** the box at the top searches the current folder. It also takes
   `from:`, `subject:`, `is:unread` and `has:attachment`.
 - **Calendar, Contacts and Tasks:** in the top bar. An invitation sent to you
@@ -53,6 +56,12 @@ address and password. For other apps, enter these settings, replacing
 Your user name is your full email address. Use IMAP unless you have a reason
 not to. It keeps every device in step. POP3 downloads mail to one device; when
 that app deletes a message, it is deleted from the server too.
+
+To open a shared mailbox in a mail app, use IMAP with a username such as
+`you@example.com|support@example.com` and your own password. Use your own
+address as the SMTP username; if your grant allows sending, set the From
+address in the app to `support@example.com`. When your account requires app
+passwords, use one of your app passwords for both connections.
 
 ## Calendar and contacts on your phone
 

@@ -44,9 +44,10 @@ type composeView struct {
 func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Session) {
 	q := r.URL.Query()
 	prefs := s.prefs(r.Context(), sess)
-	cv := &composeView{Mode: q.Get("mode"), To: q.Get("to"), Subject: q.Get("subject"), From: prefs.fromAddress(sess.Address)}
+	fromAddress := s.sendAddress(r.Context(), sess)
+	cv := &composeView{Mode: q.Get("mode"), To: q.Get("to"), Subject: q.Get("subject"), From: prefs.fromAddress(fromAddress)}
 	v := view{Title: "New message", Session: sess, Folder: q.Get("f"), Compose: cv}
-	err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		folders, err := st.Folders(r.Context())
 		if err != nil {
 			return err
@@ -76,7 +77,7 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 			return nil
 		}
 		cv.OrigFolder, cv.OrigUID = q.Get("f"), uid
-		prefillReply(cv, orig, sess.Address, prefs)
+		prefillReply(cv, orig, fromAddress, prefs)
 		if cv.Mode == "forward" {
 			cv.Forwarded = orig.Attachments()
 		}
@@ -277,13 +278,14 @@ func parseList(field string) ([]Address, error) {
 
 func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
 	prefs := s.prefs(r.Context(), sess)
+	fromAddress := s.sendAddress(r.Context(), sess)
 	cv := &composeView{
 		To: r.PostFormValue("to"), Cc: r.PostFormValue("cc"), Bcc: r.PostFormValue("bcc"),
 		Subject: r.PostFormValue("subject"), Text: r.PostFormValue("body"),
 		InReplyTo: r.PostFormValue("in_reply_to"), References: r.PostFormValue("references"),
 		Mode: r.PostFormValue("mode"), OrigFolder: r.PostFormValue("orig_f"),
 		HighPriority: r.PostFormValue("priority") == "high", Receipt: r.PostFormValue("receipt") == "1",
-		From: prefs.fromAddress(sess.Address),
+		From: prefs.fromAddress(fromAddress),
 	}
 	cv.OrigUID, _ = parseUID(r.PostFormValue("orig_uid"))
 	cv.DraftUID, _ = parseUID(r.PostFormValue("draft_uid"))
@@ -292,7 +294,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	v := view{Title: "New message", Session: sess, Compose: cv}
 
 	again := func(status int, problem string) {
-		_ = s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+		_ = s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 			v.Folders, _ = st.Folders(r.Context())
 			return nil
 		})
@@ -318,7 +320,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		}
 	}
 	if cv.Receipt {
-		d.ReceiptTo = sess.Address
+		d.ReceiptTo = fromAddress
 	}
 	if prefs.ReplyTo != "" {
 		if a, err := mail.ParseAddress(prefs.ReplyTo); err == nil {
@@ -361,7 +363,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	// Pictures pasted or inserted in the editor become inline attachments,
 	// counted against the same size limit as files.
 	if richHTML != "" {
-		html, inline, over := extractInlineImages(richHTML, domainOf(sess.Address), s.cfg.MaxUploadMB<<20-total)
+		html, inline, over := extractInlineImages(richHTML, domainOf(fromAddress), s.cfg.MaxUploadMB<<20-total)
 		if over {
 			again(http.StatusRequestEntityTooLarge, fmt.Sprintf("Pictures and attachments are limited to %d MB in total.", s.cfg.MaxUploadMB))
 			return
@@ -374,7 +376,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	// Forwarding carries the original's attachments that are still ticked.
 	if cv.Mode == "forward" && cv.OrigFolder != "" && cv.OrigUID != 0 && len(r.PostForm["fwd_part"]) > 0 {
 		var raw []byte
-		err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+		err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 			var err error
 			raw, err = st.Raw(r.Context(), cv.OrigFolder, cv.OrigUID, s.maxMessage())
 			return err
@@ -412,7 +414,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	}
 
 	if saveDraft {
-		err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+		err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 			if err := st.Append(r.Context(), RoleDrafts, raw, true, true); err != nil {
 				return err
 			}
@@ -435,7 +437,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
-	if err := s.submit.Submit(ctx, sess.User, pw, sess.Address, d.Recipients(), raw); err != nil {
+	if err := s.submit.Submit(ctx, sess.User, pw, fromAddress, d.Recipients(), raw); err != nil {
 		s.log.Warn("webmail: submit", "user", sess.User, "error", err)
 		if errors.Is(err, ErrRejected) {
 			again(http.StatusBadRequest, "The mail server refused this message: "+strings.TrimPrefix(err.Error(), ErrRejected.Error()+": "))
@@ -445,7 +447,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		return
 	}
 	notice := "sent"
-	if err := s.sessions.withStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+	if err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		if err := st.Append(r.Context(), RoleSent, raw, true, false); err != nil {
 			return err
 		}

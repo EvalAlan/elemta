@@ -1,8 +1,13 @@
 package smtp
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
 // Sender binding: an authenticated client may only use a MAIL FROM it owns.
@@ -30,7 +35,7 @@ import (
 
 // checkSenderBinding returns an SMTP error if the authenticated user may not
 // send as mailFrom. It is a no-op for unauthenticated sessions.
-func (ch *CommandHandler) checkSenderBinding(mailFrom string) error {
+func (ch *CommandHandler) checkSenderBinding(ctx context.Context, mailFrom string) error {
 	if !ch.state.IsAuthenticated() || mailFrom == "" {
 		return nil
 	}
@@ -41,6 +46,17 @@ func (ch *CommandHandler) checkSenderBinding(mailFrom string) error {
 	login := ch.state.GetUsername()
 	if senderOwnedBy(login, mailFrom, ch.config.LocalDomains, auth) {
 		return nil
+	}
+	if policies := ch.senderPolicies(); policies != nil {
+		ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		defer cancel()
+		allowed, err := policies.client.ShareAccess(ctx, mailFrom, login, true)
+		if err == nil && allowed {
+			return nil
+		}
+		if err != nil && !errors.Is(err, mailpolicy.ErrNotFound) {
+			return fmt.Errorf("451 4.3.0 Shared sender authorization unavailable")
+		}
 	}
 	return fmt.Errorf("553 5.7.1 Sender address rejected: not owned by authenticated user %s", login)
 }

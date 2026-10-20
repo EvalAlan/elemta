@@ -116,6 +116,57 @@ func TestWithStoreRedialsDeadConnection(t *testing.T) {
 	}
 }
 
+func TestSharedMailboxSelectionKeepsPersonalStore(t *testing.T) {
+	shared := &memSessions{recs: map[string]SessionRecord{}}
+	key := make([]byte, 32)
+	m, err := NewSharedSessionManager(time.Hour, key, shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	personal := &countingStore{}
+	s, err := m.Create("dana@example.com", "dana@example.com", "own-password", personal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetMailbox(context.Background(), s, "support@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	var dialed string
+	temporary := &countingStore{}
+	dial := func(_ context.Context, user, password string) (Mailstore, error) {
+		dialed = user
+		if password != "own-password" {
+			t.Errorf("shared mailbox used another password")
+		}
+		return temporary, nil
+	}
+	if err := m.withMailStore(context.Background(), s, dial, func(st Mailstore) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if dialed != "dana@example.com|support@example.com" || !temporary.closed || personal.closed {
+		t.Fatalf("shared connection = %q, closed %v; personal closed %v", dialed, temporary.closed, personal.closed)
+	}
+	other, err := NewSharedSessionManager(time.Hour, key, shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, ok := other.Get(s.ID)
+	if !ok || other.MailAddress(restored) != "support@example.com" {
+		t.Fatal("shared mailbox selection did not survive session reload")
+	}
+	if err := m.SetMailbox(context.Background(), s, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.withMailStore(context.Background(), s, dial, func(st Mailstore) error {
+		if st != personal {
+			t.Fatal("personal store not restored")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // memSessions is an in-memory SessionStore standing in for Valkey.
 type memSessions struct {
 	mu   sync.Mutex

@@ -114,8 +114,12 @@ func (s *Server) mailEvents(w http.ResponseWriter, r *http.Request, sess *Sessio
 	if folder != "INBOX" {
 		folders = append(folders, folder)
 	}
+	watchUser := sess.User
+	if selected := s.sessions.SelectedMailbox(sess); selected != "" {
+		watchUser += "|" + selected
+	}
 	for _, name := range folders {
-		go func() { failed <- watcher(ctx, sess.User, pw, name, changed, ready) }()
+		go func() { failed <- watcher(ctx, watchUser, pw, name, changed, ready) }()
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")

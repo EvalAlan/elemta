@@ -24,6 +24,7 @@ type fakeSecurity struct {
 	requireTwoFactor bool
 	// The company address book /v1/directory returns.
 	directory []directoryEntry
+	shares    []sharedMailbox
 	// Free/busy: what was published, and what lookups return.
 	published map[string]any
 	freeBusy  []map[string]any
@@ -46,6 +47,9 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		}
 		out := map[string]any{}
 		switch {
+		case r.URL.Path == "/v1/security/shares":
+			_ = json.NewEncoder(w).Encode(f.shares)
+			return
 		case r.URL.Path == "/v1/directory":
 			_ = json.NewEncoder(w).Encode(f.directory)
 			return
@@ -109,6 +113,36 @@ func newSecurityHarness(t *testing.T, f *fakeSecurity) *harness {
 		return h.store, nil
 	}
 	return h
+}
+
+func TestSharedMailboxSwitcher(t *testing.T) {
+	f := &fakeSecurity{shares: []sharedMailbox{{Mailbox: "support@example.com", Member: "dana@example.com", CanSend: true}}}
+	h := newSecurityHarness(t, f)
+	csrf := h.login()
+	var dialed string
+	h.server.dial = func(_ context.Context, user, pw string) (Mailstore, error) {
+		dialed = user
+		if pw != "secret" {
+			return nil, ErrAuthFailed
+		}
+		return h.store, nil
+	}
+	resp := h.post("/mail/switch", url.Values{"csrf": {csrf}, "mailbox": {"support@example.com"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("switch = %d", resp.StatusCode)
+	}
+	_, body := h.get("/mail")
+	if dialed != "dana|support@example.com" || !strings.Contains(body, `value="support@example.com" selected`) {
+		t.Fatalf("shared mail page used %q: %s", dialed, body[:min(len(body), 500)])
+	}
+	resp = h.post("/mail/switch", url.Values{"csrf": {csrf}, "mailbox": {"other@example.com"}})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("ungranted switch = %d", resp.StatusCode)
+	}
+	resp = h.post("/mail/switch", url.Values{"csrf": {csrf}, "mailbox": {""}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("return to own mailbox = %d", resp.StatusCode)
+	}
 }
 
 func (h *harness) submitLogin(password string) (*http.Response, string) {

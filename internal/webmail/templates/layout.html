@@ -48,6 +48,17 @@
 <div class="shell">
   <aside class="sidebar" aria-label="{{if eq .App "mail"}}Folders{{else}}Navigation{{end}}">
   {{block "sidebar" .}}
+    {{if or .SharedMailboxes .ActiveMailbox}}
+    <form action="/mail/switch" method="post" class="mailbox-switch">
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+      <label for="mailbox-select">Mailbox</label>
+      <select id="mailbox-select" name="mailbox">
+        <option value=""{{if not .ActiveMailbox}} selected{{end}}>My mailbox</option>
+        {{range .SharedMailboxes}}<option value="{{.Mailbox}}"{{if eq .Mailbox $.ActiveMailbox}} selected{{end}}>{{.Mailbox}}</option>{{end}}
+      </select>
+      <button type="submit" class="small">Open</button>
+    </form>
+    {{end}}
     <a class="button primary block" href="/compose">{{template "icon-plus"}}New message</a>
     <nav aria-label="Folders">
       <ul class="folders">

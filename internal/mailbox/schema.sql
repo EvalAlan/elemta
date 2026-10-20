@@ -97,6 +97,17 @@ CREATE TABLE IF NOT EXISTS mailbox_app_passwords (
 );
 CREATE INDEX IF NOT EXISTS mailbox_app_passwords_account ON mailbox_app_passwords(account);
 
+-- Grants refer to immutable directory identities. Reusing an address must
+-- not grant the new owner access to someone else's retained mailbox.
+CREATE TABLE IF NOT EXISTS mailbox_shares (
+ mailbox text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+ member text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+ can_send boolean NOT NULL DEFAULT false,
+ PRIMARY KEY(mailbox,member),
+ CHECK (mailbox <> member)
+);
+CREATE INDEX IF NOT EXISTS mailbox_shares_member ON mailbox_shares(member);
+
 -- Classes of service and per-account policy (policy.go). Accounts are keyed
 -- by primary address, which is what administrators name and what the
 -- directory guarantees unique; the directory ID is created lazily here and

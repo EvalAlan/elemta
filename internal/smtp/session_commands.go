@@ -267,7 +267,7 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 	}
 	mailFrom, declaredSize := parsed.addr, parsed.size
 
-	if err := ch.checkSenderBinding(mailFrom); err != nil {
+	if err := ch.checkSenderBinding(ctx, mailFrom); err != nil {
 		ch.logger.WarnContext(ctx, "Sender refused: not owned by authenticated user",
 			"event_type", "rejection",
 			"mail_from", mailFrom,

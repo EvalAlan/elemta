@@ -215,31 +215,63 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 	handle("GET /v1/admin/addresses/{address}", func(r *http.Request) (any, error) {
 		return s.addressInfo(r.Context(), r.PathValue("address"))
 	})
-	handle("POST /v1/admin/accounts/{address}/reset-two-factor", func(r *http.Request) (any, error) {
-		a, err := s.directoryAccount(r.Context(), r.PathValue("address"))
+	handle("GET /v1/admin/accounts/{address}/shares", func(r *http.Request) (any, error) {
+		owner, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
 		if err != nil {
 			return nil, err
 		}
-		if a.ID == "" {
-			// Disabled accounts cannot authenticate, but their immutable mailbox
-			// identity still owns the security row. Refuse an ambiguous address.
-			rows, err := s.engine.DB.QueryContext(r.Context(), `SELECT id FROM mailbox_accounts WHERE address=$1`, a.Address)
-			if err != nil {
-				return nil, err
-			}
-			defer rows.Close()
-			if !rows.Next() {
-				return nil, ErrNotFound
-			}
-			if err := rows.Scan(&a.ID); err != nil {
-				return nil, err
-			}
-			if rows.Next() {
-				return nil, errors.Join(mailpolicy.ErrInvalid, errors.New("address has more than one mailbox identity"))
-			}
-			if err := rows.Err(); err != nil {
-				return nil, err
-			}
+		return s.engine.SharesForMailbox(r.Context(), owner.ID)
+	})
+	handle("GET /v1/admin/share-access", func(r *http.Request) (any, error) {
+		owner, err := s.directoryAccount(r.Context(), r.URL.Query().Get("mailbox"))
+		if err != nil {
+			return nil, err
+		}
+		member, err := s.directoryAccount(r.Context(), r.URL.Query().Get("member"))
+		if err != nil {
+			return nil, err
+		}
+		allowed, err := s.engine.HasShare(r.Context(), owner.ID, member.ID, r.URL.Query().Get("send") == "true")
+		return map[string]bool{"allowed": allowed}, err
+	})
+	handle("PUT /v1/admin/accounts/{address}/shares/{member}", func(r *http.Request) (any, error) {
+		owner, err := s.directoryAccount(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		member, err := s.directoryAccount(r.Context(), r.PathValue("member"))
+		if err != nil {
+			return nil, err
+		}
+		if err := s.applyPolicy(r.Context(), &owner); err != nil {
+			return nil, err
+		}
+		if err := s.applyPolicy(r.Context(), &member); err != nil {
+			return nil, err
+		}
+		var request struct {
+			CanSend bool `json:"can_send"`
+		}
+		if err := decode(r, &request); err != nil {
+			return nil, err
+		}
+		return s.engine.GrantShare(r.Context(), owner, member, request.CanSend)
+	})
+	handle("DELETE /v1/admin/accounts/{address}/shares/{member}", func(r *http.Request) (any, error) {
+		owner, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		member, err := s.directoryIdentity(r.Context(), r.PathValue("member"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.RevokeShare(r.Context(), owner.ID, member.ID)
+	})
+	handle("POST /v1/admin/accounts/{address}/reset-two-factor", func(r *http.Request) (any, error) {
+		a, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
 		}
 		if err := s.engine.DisableTOTP(r.Context(), a.ID); err != nil {
 			return nil, err
@@ -267,6 +299,30 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		}
 		return res, err
 	})
+}
+
+// directoryIdentity finds retained data for a disabled or removed account.
+// Refusing an ambiguous address avoids acting on a previous owner's mailbox.
+func (s *Service) directoryIdentity(ctx context.Context, address string) (Account, error) {
+	a, err := s.directoryAccount(ctx, address)
+	if err != nil || a.ID != "" {
+		return a, err
+	}
+	rows, err := s.engine.DB.QueryContext(ctx, `SELECT id FROM mailbox_accounts WHERE address=$1`, a.Address)
+	if err != nil {
+		return Account{}, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return Account{}, ErrNotFound
+	}
+	if err := rows.Scan(&a.ID); err != nil {
+		return Account{}, err
+	}
+	if rows.Next() {
+		return Account{}, errors.Join(mailpolicy.ErrInvalid, errors.New("address has more than one mailbox identity"))
+	}
+	return a, rows.Err()
 }
 
 // directoryAccount finds the account an administrator names, which must be

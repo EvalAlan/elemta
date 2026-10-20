@@ -205,6 +205,40 @@ attract spam, so use them sparingly.
 
 Per-account aliases stay in the directory (`add-alias`), as before.
 
+## Shared mailboxes
+
+A shared mailbox has its own account and message storage. Grant each colleague
+access to that account; a grant follows both accounts' immutable directory
+identities, so deleting and recreating an address does not pass its access to
+the next owner. The mailbox and its members must be in the same domain.
+
+```sh
+provision create-account support@example.com --name Support
+provision grant-share support@example.com dana@example.com --send
+provision grant-share support@example.com lee@example.com
+provision list-shares support@example.com
+provision revoke-share support@example.com lee@example.com
+```
+
+The shared account must be active to receive mail. Give it an unused random
+password; members use their own credentials. The grant without `--send` gives
+mailbox access only. The `--send` flag also lets that member use the shared
+address as the SMTP envelope sender. Grant and revoke commands appear in the
+audit log. Shared mailbox administration and SMTP send-as checks require the
+mailbox admin API token described above.
+
+In webmail, a member selects the mailbox from the Mail sidebar. Messages,
+folders, drafts and sent copies then belong to that mailbox. Personal settings,
+contacts and calendars stay with the member. Compose uses the shared address
+when the member has send permission, and their own address otherwise.
+
+For a mail app, sign in to IMAP with a username of
+`dana@example.com|support@example.com` and Dana's own password (or Dana's app
+password if required by policy). Configure SMTP submission separately with
+`dana@example.com` and the same credential. To send as the shared mailbox,
+set the app's From address to `support@example.com`; SMTP checks the live grant.
+POP3 does not expose shared mailboxes.
+
 ## Retention and legal hold
 
 Retention rules delete old mail once an hour, on one mailbox replica at a

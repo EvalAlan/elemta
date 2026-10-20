@@ -223,6 +223,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /mail/source", s.authed(s.messageSource))
 	mux.HandleFunc("GET /api/reminders", s.authed(s.remindersAPI))
 	mux.HandleFunc("POST /mail/action", s.authed(s.messageAction))
+	mux.HandleFunc("POST /mail/switch", s.authed(s.switchMailbox))
 	mux.HandleFunc("GET /compose", s.authed(s.composePage))
 	mux.HandleFunc("POST /compose", s.authed(s.composeSubmit))
 	mux.HandleFunc("GET /folders", s.authed(s.foldersPage))
@@ -346,19 +347,21 @@ type view struct {
 	Session *Session
 	// App is the top-bar section the page belongs to: mail (the default),
 	// calendar, contacts or tasks.
-	App     string
-	Folders []Folder
-	Folder  string
-	Query   string
-	List    *listState
-	Notice  string
-	Problem string
-	Page    *Page
-	Message *Message
-	Body    *sanitizeResult
-	Remote  bool
-	Tags    []string
-	Thread  []Related
+	App             string
+	Folders         []Folder
+	SharedMailboxes []sharedMailbox
+	ActiveMailbox   string
+	Folder          string
+	Query           string
+	List            *listState
+	Notice          string
+	Problem         string
+	Page            *Page
+	Message         *Message
+	Body            *sanitizeResult
+	Remote          bool
+	Tags            []string
+	Thread          []Related
 	// Conversations is the threaded list, when the list is grouped.
 	Conversations []Conversation
 	Threaded      bool
@@ -391,6 +394,7 @@ type view struct {
 
 func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
 	if pv, ok := v.(view); ok && pv.Session != nil {
+		pv.ActiveMailbox = s.sessions.SelectedMailbox(pv.Session)
 		if pv.Loc == nil {
 			pv.Loc = s.loc(pv.Session)
 		}

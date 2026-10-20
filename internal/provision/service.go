@@ -495,6 +495,50 @@ func (s *Service) ResetTwoFactor(ctx context.Context, raw string) error {
 	return mailbox.ResetTwoFactor(ctx, address)
 }
 
+func (s *Service) Shares(ctx context.Context, raw string) ([]mailpolicy.Share, error) {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return nil, err
+	}
+	address, err := Address(raw)
+	if err != nil {
+		return nil, err
+	}
+	return mailbox.Shares(ctx, address)
+}
+
+func (s *Service) GrantShare(ctx context.Context, rawMailbox, rawMember string, canSend bool) (mailpolicy.Share, error) {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return mailpolicy.Share{}, err
+	}
+	address, err := Address(rawMailbox)
+	if err != nil {
+		return mailpolicy.Share{}, err
+	}
+	member, err := Address(rawMember)
+	if err != nil {
+		return mailpolicy.Share{}, err
+	}
+	return mailbox.GrantShare(ctx, address, member, canSend)
+}
+
+func (s *Service) RevokeShare(ctx context.Context, rawMailbox, rawMember string) error {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return err
+	}
+	address, err := Address(rawMailbox)
+	if err != nil {
+		return err
+	}
+	member, err := Address(rawMember)
+	if err != nil {
+		return err
+	}
+	return mailbox.RevokeShare(ctx, address, member)
+}
+
 // CheckPurgeable reports why an account's mailbox couldn't be purged now,
 // before anything is changed: delete-and-purge checks it first, so a held
 // account isn't deleted only for the purge to be refused.
