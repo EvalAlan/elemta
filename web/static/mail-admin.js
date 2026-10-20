@@ -7,6 +7,9 @@
     const el = id => document.getElementById(id);
     let accounts = [], domains = [], lists = [], classes = [], domainClasses = {}, tab = 'accounts', domain = '', selected = null;
     let busy = false, limit = 250, sequence = 0, mailboxAdmin = false, selectedList = null, selectedClass = null;
+    // A domain administrator (scope.all false) sees only their domains, and
+    // none of the system-wide controls; the server enforces the same.
+    let scope = { all: true }, audit = [], auditDone = false;
 
     // Settings a class of service, or an account's overrides, can hold
     // (internal/mailpolicy). Sizes and counts take "0" for unlimited; blank
@@ -25,7 +28,7 @@
         const response = await fetch('/api/provision' + path, options);
         if (!response.ok) {
             if (response.status === 401) throw new Error('Your administrator session has ended. Sign in again.');
-            if (response.status === 403) throw new Error('Mailbox administration requires an administrator account.');
+            if (response.status === 403) throw new Error((await response.text()).trim() || 'Mailbox administration requires an administrator account.');
             throw new Error((await response.text()).trim() || 'The directory request failed.');
         }
         return response.json();
@@ -139,8 +142,9 @@
     }
     function renderTable() {
         root.querySelectorAll('[data-ma-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.maTab === tab)));
-        el('ma-domain-form').hidden = tab !== 'domains'; el('ma-alias-domain-form').hidden = tab !== 'domains' || !mailboxAdmin; el('ma-status').hidden = tab !== 'accounts';
-        el('ma-create').hidden = tab === 'lists' || tab === 'classes'; el('ma-create-list').hidden = tab !== 'lists'; el('ma-create-class').hidden = tab !== 'classes';
+        el('ma-domain-form').hidden = tab !== 'domains' || !scope.all; el('ma-alias-domain-form').hidden = tab !== 'domains' || !mailboxAdmin || !scope.all; el('ma-status').hidden = tab !== 'accounts';
+        el('ma-create').hidden = tab === 'lists' || tab === 'classes' || tab === 'audit'; el('ma-create-list').hidden = tab !== 'lists'; el('ma-create-class').hidden = tab !== 'classes';
+        if (tab === 'audit') { renderAudit(); return; }
         const head = el('ma-table-head'), body = el('ma-table-body'); head.replaceChildren(); body.replaceChildren();
         const headers = {
             accounts: ['Address', 'Display name', 'Status', 'Quota', 'Aliases'],
@@ -173,7 +177,7 @@
             } else {
                 cell(row, item.name); cell(row, item.alias_of ? 'Alias of ' + item.alias_of : item.configured ? 'Configured' : 'Not configured'); cell(row, item.accounts); cell(row, item.aliases);
                 if (mailboxAdmin) {
-                    cell(row, item.configured && !item.alias_of ? domainClassSelect(item) : '—');
+                    cell(row, item.configured && !item.alias_of ? (scope.all ? domainClassSelect(item) : (domainClasses[item.name] || 'default')) : '—');
                     const catchAll = button(item.catch_all || 'Set…', () => perform(async () => {
                         const target = window.prompt('Deliver mail for unknown names at ' + item.name + ' to which address? Leave empty to stop.', item.catch_all || '');
                         if (target === null) return;
@@ -187,7 +191,7 @@
                     const result = item.alias_of ? await request('/domain-aliases', 'DELETE', { alias: item.name }) : await request('/domains', 'DELETE', { name: item.name });
                     message(result.status); await refresh();
                 }));
-                remove.disabled = !item.configured || item.accounts > 0 || item.aliases > 0; cell(row, remove);
+                remove.disabled = !item.configured || item.accounts > 0 || item.aliases > 0; cell(row, scope.all ? remove : '');
             }
             body.appendChild(row);
         });
@@ -200,14 +204,19 @@
         const status = await request('/status');
         if (!status.available) throw new Error(status.reason);
         mailboxAdmin = !!status.mailbox_admin;
+        scope = status.scope || { all: true };
         const [a, d, l, c] = await Promise.all([request('/accounts'), request('/domains'), mailboxAdmin ? request('/lists') : null, mailboxAdmin ? request('/classes') : null]);
         if (seq !== sequence) return;
         accounts = a.accounts; domains = d.domains;
         lists = l ? l.lists : []; classes = c ? c.classes : [];
         domainClasses = {}; (c ? c.domains : []).forEach(x => { domainClasses[x.domain] = x.class; });
         root.querySelectorAll('[data-ma-needs-mailbox]').forEach(b => { b.hidden = !mailboxAdmin; });
+        root.querySelectorAll('[data-ma-system]').forEach(b => { b.hidden = !scope.all || !mailboxAdmin; });
         el('ma-purge').hidden = !mailboxAdmin;
-        if (!mailboxAdmin && (tab === 'lists' || tab === 'classes')) tab = 'accounts';
+        el('ma-scope').hidden = scope.all; el('ma-scope').textContent = scope.all ? '' : 'You administer ' + (scope.domains || []).join(', ') + '.';
+        if (!mailboxAdmin && (tab === 'lists' || tab === 'classes' || tab === 'audit')) tab = 'accounts';
+        if (!scope.all && tab === 'classes') tab = 'accounts';
+        if (tab === 'audit') await loadAudit(true);
         const target = el('ma-alias-target'); target.replaceChildren();
         domains.filter(x => x.configured && !x.alias_of).forEach(x => target.appendChild(option(x.name, x.name)));
         ['ma-initial-password', 'ma-password', 'ma-confirm-password'].forEach(id => { el(id).minLength = status.min_password_length || 10; });
@@ -230,6 +239,7 @@
         el('ma-password').value = ''; el('ma-confirm-password').value = ''; el('ma-alias').value = '';
         el('ma-dialog-message').hidden = true;
         el('ma-account-policy').hidden = !editing || !mailboxAdmin;
+        el('ma-policy-overrides').hidden = !scope.all;
         const list = el('ma-alias-list'); list.replaceChildren();
         if (editing) {
             account.aliases.forEach(alias => {
@@ -274,8 +284,11 @@
     ['ma-account-dialog', 'ma-list-dialog', 'ma-class-dialog'].forEach(id => el(id).addEventListener('cancel', event => { if (busy) event.preventDefault(); }));
     el('ma-refresh').addEventListener('click', window.refreshMailAdmin);
     ['ma-search', 'ma-status'].forEach(id => el(id).addEventListener('input', () => { limit = 250; renderTable(); }));
-    el('ma-more').addEventListener('click', () => { limit += 250; renderTable(); });
-    root.querySelectorAll('[data-ma-tab]').forEach(b => b.addEventListener('click', () => { tab = b.dataset.maTab; limit = 250; renderTable(); }));
+    el('ma-more').addEventListener('click', () => { if (tab === 'audit') { perform(() => loadAudit(false)); return; } limit += 250; renderTable(); });
+    root.querySelectorAll('[data-ma-tab]').forEach(b => b.addEventListener('click', () => {
+        tab = b.dataset.maTab; limit = 250;
+        if (tab === 'audit') perform(() => loadAudit(true)); else renderTable();
+    }));
     el('ma-account-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
         const payload = { name: el('ma-name').value, quota_bytes: parseQuota(el('ma-quota').value) };
         if (selected) payload.status = el('ma-account-status').value;
@@ -311,6 +324,34 @@
         const result = await request('/domain-aliases', 'POST', { alias: el('ma-alias-domain').value, target: el('ma-alias-target').value });
         el('ma-alias-domain').value = ''; message(result.status); await refresh();
     }); });
+
+    // ---- audit log -----------------------------------------------------------
+    // Newest first, a page at a time; "Show more" fetches older entries. The
+    // server limits a domain administrator to their domains' entries.
+    async function loadAudit(fresh) {
+        const before = fresh || !audit.length ? '' : '&before=' + audit[audit.length - 1].id;
+        const page = (await request('/audit?limit=200' + before)).entries;
+        audit = fresh ? page : audit.concat(page);
+        auditDone = page.length < 200;
+        renderTable();
+    }
+    function renderAudit() {
+        const head = el('ma-table-head'), body = el('ma-table-body'); head.replaceChildren(); body.replaceChildren();
+        const headers = ['When', 'Who', 'Action', 'Target', 'Detail', 'From'];
+        const heading = node('tr'); headers.forEach(label => heading.appendChild(node('th', label))); head.appendChild(heading);
+        const query = el('ma-search').value.trim().toLowerCase();
+        const rows = audit.filter(e => !query || [e.actor, e.action, e.target, e.detail].some(v => (v || '').toLowerCase().includes(query)));
+        rows.forEach(e => {
+            const row = node('tr');
+            const when = node('time', new Date(e.at).toLocaleString()); when.dateTime = e.at;
+            cell(row, when); cell(row, e.actor); cell(row, e.action); cell(row, e.target); cell(row, e.detail || '');
+            cell(row, [e.source, e.client].filter(Boolean).join(' · '));
+            body.appendChild(row);
+        });
+        if (!rows.length) { const row = node('tr'), c = node('td', audit.length ? 'No matching entries.' : 'No changes recorded yet.'); c.colSpan = headers.length; row.appendChild(c); body.appendChild(row); }
+        el('ma-count').textContent = 'Showing ' + rows.length + ' of ' + audit.length + ' loaded entries';
+        el('ma-more').hidden = auditDone;
+    }
 
     // ---- distribution lists --------------------------------------------------
     function openList(list) {

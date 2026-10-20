@@ -158,3 +158,19 @@ CREATE TABLE IF NOT EXISTS mailbox_held (
 );
 CREATE INDEX IF NOT EXISTS mailbox_held_account ON mailbox_held(account);
 CREATE INDEX IF NOT EXISTS mailbox_held_body ON mailbox_held(body);
+
+-- Administrative changes, append-only (mailpolicy.AuditEntry). Kept here
+-- rather than in the dashboard's logs so that it survives restarts and log
+-- rotation and every dashboard replica and the CLI write to one place.
+CREATE TABLE IF NOT EXISTS mailbox_audit (
+    id bigserial PRIMARY KEY,
+    at timestamptz NOT NULL DEFAULT now(),
+    actor text NOT NULL,
+    source text NOT NULL DEFAULT '',
+    client text NOT NULL DEFAULT '',
+    action text NOT NULL,
+    target text NOT NULL DEFAULT '',
+    domain text NOT NULL DEFAULT '',
+    detail text NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS mailbox_audit_domain ON mailbox_audit(domain, id);

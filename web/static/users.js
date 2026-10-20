@@ -49,7 +49,7 @@ async function refreshUsers() {
 
         listEl.innerHTML = `
             <table class="messages-table">
-                <thead><tr><th>User</th><th>Role</th><th></th></tr></thead>
+                <thead><tr><th>User</th><th>Role</th><th>Domains</th><th></th></tr></thead>
                 <tbody>
                     ${data.users.map(u => {
                         const isMe = u.username === data.current_user;
@@ -63,6 +63,9 @@ async function refreshUsers() {
                                     ${roles.map(r => `<option value="${escapeHtml(r)}"${r === current ? ' selected' : ''}>${escapeHtml(r)}</option>`).join('')}
                                 </select>
                             </td>
+                            <td>${current === 'domain-admin'
+                                ? `<button class="btn btn-secondary btn-sm" onclick="setUserRole('${name}', 'domain-admin', null, '${escapeJsArg((u.domains || []).join(', '))}')">${escapeHtml((u.domains || []).join(', ') || 'none')}</button>`
+                                : '<span class="field-hint">all</span>'}</td>
                             <td style="white-space: nowrap;">
                                 <button class="btn btn-secondary btn-sm" onclick="resetUserPassword('${name}')">Set password</button>
                                 ${isMe ? '' : `<button class="btn btn-danger btn-sm" onclick="deleteUser('${name}')">Remove</button>`}
@@ -89,6 +92,14 @@ function fillRoleSelect(selectEl, roles) {
     selectEl.value = roles.some(r => r.name === chosen) ? chosen : 'user';
 }
 
+// askDomains asks which domains a domain administrator manages. null means
+// the operator cancelled.
+function askDomains(username, current) {
+    const answer = prompt(`Domains ${username} administers, separated by commas:`, current || '');
+    if (answer === null) return null;
+    return answer.split(/[\s,;]+/).map(d => d.trim()).filter(Boolean);
+}
+
 async function createUser() {
     const nameEl = document.getElementById('new-user-name');
     const passEl = document.getElementById('new-user-password');
@@ -99,8 +110,14 @@ async function createUser() {
     if (!username) { showToast('Enter a username', 'error'); return; }
     if (password.length < 12) { showToast('Passwords need at least 12 characters', 'error'); return; }
 
+    let domains;
+    if (role === 'domain-admin') {
+        domains = askDomains(username, '');
+        if (domains === null) return;
+    }
+
     try {
-        await usersRequest('POST', '/users', { username, password, role });
+        await usersRequest('POST', '/users', { username, password, role, domains });
         nameEl.value = '';
         passEl.value = '';
         showToast(`Added ${username} as ${role}`, 'success');
@@ -110,11 +127,20 @@ async function createUser() {
     }
 }
 
-async function setUserRole(username, role, selectEl) {
+async function setUserRole(username, role, selectEl, currentDomains) {
+    let domains;
+    if (role === 'domain-admin') {
+        domains = askDomains(username, currentDomains);
+        if (domains === null) {
+            if (selectEl) selectEl.value = selectEl.dataset.current;
+            return;
+        }
+    }
     try {
-        await usersRequest('PUT', `/users/${encodeURIComponent(username)}/role`, { role });
+        await usersRequest('PUT', `/users/${encodeURIComponent(username)}/role`, { role, domains });
         if (selectEl) selectEl.dataset.current = role;
-        showToast(`${username} is now ${role}`, 'success');
+        showToast(`${username} is now ${role}${domains ? ' for ' + domains.join(', ') : ''}`, 'success');
+        refreshUsers();
         if (username === authState.username) checkAuthStatus();
     } catch (error) {
         // Put the select back to what the server still has.

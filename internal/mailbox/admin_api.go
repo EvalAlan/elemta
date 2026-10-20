@@ -17,6 +17,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -171,6 +172,21 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 	})
 	handle("DELETE /v1/admin/lists/{address}", func(r *http.Request) (any, error) {
 		return map[string]bool{"ok": true}, s.engine.DeleteList(r.Context(), r.PathValue("address"))
+	})
+	handle("POST /v1/admin/audit", func(r *http.Request) (any, error) {
+		var a mailpolicy.AuditEntry
+		if err := decode(r, &a); err != nil {
+			return nil, err
+		}
+		a.ID, a.At = 0, time.Time{}
+		return s.engine.Audit(r.Context(), a)
+	})
+	handle("GET /v1/admin/audit", func(r *http.Request) (any, error) {
+		v := r.URL.Query()
+		q := mailpolicy.AuditQuery{Domains: v["domain"], Actor: v.Get("actor"), Target: v.Get("target"), Action: v.Get("action")}
+		q.Before, _ = strconv.ParseInt(v.Get("before"), 10, 64)
+		q.Limit, _ = strconv.Atoi(v.Get("limit"))
+		return s.engine.AuditLog(r.Context(), q)
 	})
 	handle("POST /v1/admin/accounts/{address}/messages", func(r *http.Request) (any, error) {
 		return s.importMessage(r)

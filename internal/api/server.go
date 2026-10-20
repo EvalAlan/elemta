@@ -865,11 +865,15 @@ func (s *Server) finishStop(err error) {
 	s.lifecycleMu.Unlock()
 }
 
+// requireAuthIfConfigured guards the dashboard's read-only views of the
+// whole server (queues, logs, traces, statistics, configuration). They need
+// api:read, which every built-in role but domain-admin has: a domain
+// administrator mustn't read other domains' traffic.
 func (s *Server) requireAuthIfConfigured(next http.Handler) http.Handler {
 	if s.authMiddleware == nil {
 		return next
 	}
-	return s.authMiddleware.RequireAuth(next)
+	return s.authMiddleware.RequirePermission(auth.PermissionAPIRead)(next)
 }
 
 // unauthenticatedExposureWarning returns a startup warning when the admin API

@@ -348,6 +348,9 @@ func migrateAccounts(ctx context.Context, s *provision.Service, rows []map[strin
 	fail := func(i int, format string, args ...any) {
 		rep.Errors = append(rep.Errors, fmt.Sprintf("row %d: ", i+2)+fmt.Sprintf(format, args...))
 	}
+	audit := func(action, target, detail string) {
+		_ = s.Audit(ctx, mailpolicy.AuditEntry{Actor: cliActor(), Source: "migrate", Action: action, Target: target, Detail: detail})
+	}
 	for i, r := range rows {
 		if !strings.EqualFold(r["type"], "account") && r["type"] != "" {
 			continue
@@ -384,6 +387,7 @@ func migrateAccounts(ctx context.Context, s *provision.Service, rows []map[strin
 				continue
 			}
 			rep.Created++
+			audit("account-create", address, fmt.Sprintf("quota %d", quota))
 		default:
 			fail(i, "look up %s: %v", address, err)
 			continue
@@ -402,6 +406,7 @@ func migrateAccounts(ctx context.Context, s *provision.Service, rows []map[strin
 				continue
 			}
 			rep.Aliases++
+			audit("alias-add", address, alias)
 		}
 		if class := r["class"]; class != "" {
 			client, err := s.MailboxAdmin()
@@ -418,6 +423,7 @@ func migrateAccounts(ctx context.Context, s *provision.Service, rows []map[strin
 				continue
 			}
 			rep.Classes++
+			audit("account-policy", address, "class "+class)
 		}
 	}
 	for i, r := range rows {
@@ -430,6 +436,7 @@ func migrateAccounts(ctx context.Context, s *provision.Service, rows []map[strin
 			continue
 		}
 		rep.Lists++
+		audit("list-set", l.Address, fmt.Sprintf("%d members", len(l.Members)))
 	}
 	return rep
 }

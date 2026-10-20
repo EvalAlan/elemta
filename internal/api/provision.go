@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/gorilla/mux"
@@ -25,38 +26,64 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		})
 		return
 	}
-	protected.Use(s.authMiddleware.RequirePermission(auth.PermissionSystemAdmin))
+	protected.Use(s.requireMailAdmin)
 	protected.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		if s.provisioner == nil {
 			writeJSON(w, map[string]any{"available": false, "reason": "Configure shared sessions and a privileged mailbox directory account to enable mail administration"})
 			return
 		}
-		writeJSON(w, map[string]any{"available": true, "min_password_length": max(10, s.provisioner.MinPasswordLength), "mailbox_admin": s.provisioner.Mailbox != nil})
+		writeJSON(w, map[string]any{"available": true, "min_password_length": max(10, s.provisioner.MinPasswordLength), "mailbox_admin": s.provisioner.Mailbox != nil, "scope": scopeOf(r).view()})
 	}).Methods("GET")
 	s.provisionPolicyRoutes(protected)
+	protected.HandleFunc("/audit", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+		c, err := s.provisioner.MailboxAdmin()
+		if err != nil {
+			return err
+		}
+		v := r.URL.Query()
+		q := mailpolicy.AuditQuery{Actor: v.Get("actor"), Target: v.Get("target"), Action: v.Get("action")}
+		q.Before, _ = strconv.ParseInt(v.Get("before"), 10, 64)
+		q.Limit, _ = strconv.Atoi(v.Get("limit"))
+		if sc := scopeOf(r); !sc.all {
+			q.Domains = sc.domains
+		}
+		entries, err := c.AuditLog(ctx, q)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, map[string]any{"entries": entries})
+		return nil
+	})).Methods("GET")
 	protected.HandleFunc("/accounts", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+		sc := scopeOf(r)
 		if r.Method == "GET" {
 			accounts, err := s.provisioner.List(ctx)
 			if err != nil {
 				return err
 			}
-			writeJSON(w, map[string]any{"accounts": accounts})
+			writeJSON(w, map[string]any{"accounts": filterAccounts(sc, accounts)})
 			return nil
 		}
 		var in provision.Create
 		if !decodeJSONBody(w, r, &in) {
 			return nil
 		}
+		if err := sc.checkAddress(in.Address); err != nil {
+			return err
+		}
 		account, err := s.provisioner.Create(ctx, in)
 		if err != nil {
 			return err
 		}
-		s.provisionAudit(r, "create", account.Address)
+		s.provisionAudit(r, "account-create", account.Address, fmt.Sprintf("quota %d", account.QuotaBytes))
 		writeJSONStatus(w, http.StatusCreated, account)
 		return nil
 	})).Methods("GET", "POST")
 	protected.HandleFunc("/accounts/{address}", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		address := mux.Vars(r)["address"]
+		if err := scopeOf(r).checkAddress(address); err != nil {
+			return err
+		}
 		switch r.Method {
 		case "GET":
 			account, err := s.provisioner.Get(ctx, address)
@@ -73,7 +100,7 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 			if err != nil {
 				return err
 			}
-			s.provisionAudit(r, "update", account.Address)
+			s.provisionAudit(r, "account-update", account.Address, patchDetail(patch))
 			writeJSON(w, account)
 		case "DELETE":
 			var in struct {
@@ -96,7 +123,7 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 			if err := s.provisioner.Delete(ctx, address); err != nil {
 				return err
 			}
-			s.provisionAudit(r, "delete", address)
+			s.provisionAudit(r, "account-delete", address, "")
 			if !in.Purge {
 				writeJSON(w, map[string]any{"status": "Account removed; its mailbox is retained."})
 				return nil
@@ -105,7 +132,7 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 			if err != nil {
 				return err
 			}
-			s.provisionAudit(r, "purge", address)
+			s.provisionAudit(r, "account-purge", address, fmt.Sprintf("%d messages", result.Messages))
 			writeJSON(w, map[string]any{"status": fmt.Sprintf("Account removed and its mailbox purged (%d messages).", result.Messages)})
 		}
 		return nil
@@ -118,10 +145,13 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 			return nil
 		}
 		address := mux.Vars(r)["address"]
+		if err := scopeOf(r).checkAddress(address); err != nil {
+			return err
+		}
 		if err := s.provisioner.Password(ctx, address, in.Password); err != nil {
 			return err
 		}
-		s.provisionAudit(r, "reset-password", address)
+		s.provisionAudit(r, "account-password", address, "")
 		writeJSON(w, map[string]any{"status": "password reset; webmail sessions ended"})
 		return nil
 	})).Methods("POST")
@@ -132,22 +162,39 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		if !decodeJSONBody(w, r, &in) {
 			return nil
 		}
+		if err := scopeOf(r).checkAddress(mux.Vars(r)["address"], in.Alias); err != nil {
+			return err
+		}
 		account, err := s.provisioner.Alias(ctx, mux.Vars(r)["address"], in.Alias, r.Method == "POST")
 		if err != nil {
 			return err
 		}
-		s.provisionAudit(r, "alias-"+r.Method, account.Address)
+		action := "alias-add"
+		if r.Method == "DELETE" {
+			action = "alias-remove"
+		}
+		s.provisionAudit(r, action, account.Address, in.Alias)
 		writeJSON(w, account)
 		return nil
 	})).Methods("POST", "DELETE")
 	protected.HandleFunc("/domains", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+		sc := scopeOf(r)
 		if r.Method == "GET" {
 			domains, err := s.provisioner.Domains(ctx)
 			if err != nil {
 				return err
 			}
-			writeJSON(w, map[string]any{"domains": domains})
+			visible := []provision.Domain{}
+			for _, d := range domains {
+				if sc.domain(d.Name) {
+					visible = append(visible, d)
+				}
+			}
+			writeJSON(w, map[string]any{"domains": visible})
 			return nil
+		}
+		if err := sc.systemOnly(); err != nil {
+			return err
 		}
 		var in struct {
 			Name string `json:"name"`
@@ -158,7 +205,11 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		if err := s.provisioner.Domain(ctx, in.Name, r.Method == "POST"); err != nil {
 			return err
 		}
-		s.provisionAudit(r, "domain-"+r.Method, in.Name)
+		action := "domain-add"
+		if r.Method == "DELETE" {
+			action = "domain-remove"
+		}
+		s.provisionAudit(r, action, in.Name, "")
 		writeJSON(w, map[string]any{"requires_restart": true, "status": "Domain configuration saved. Restart the SMTP service to apply routing changes."})
 		return nil
 	})).Methods("GET", "POST", "DELETE")
@@ -181,6 +232,8 @@ func (s *Server) provisionCall(fn func(context.Context, http.ResponseWriter, *ht
 		case errors.As(err, &apiErr) && apiErr.Status < 500:
 			// The mailbox's own refusal, which explains itself.
 			http.Error(w, apiErr.Message, apiErr.Status)
+		case errors.Is(err, errOutOfScope):
+			http.Error(w, err.Error(), http.StatusForbidden)
 		case errors.Is(err, provision.ErrInvalid):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		case errors.Is(err, provision.ErrExists):
@@ -195,10 +248,40 @@ func (s *Server) provisionCall(fn func(context.Context, http.ResponseWriter, *ht
 		}
 	}
 }
-func (s *Server) provisionAudit(r *http.Request, action, target string) {
-	actor := ""
+
+// provisionAudit records a change made from the dashboard. It runs after
+// the change succeeded and on a context of its own, so a client that hangs
+// up as the response is written doesn't lose the entry.
+func (s *Server) provisionAudit(r *http.Request, action, target, detail string) {
+	actor := "unknown"
 	if ac := GetAuthContext(r); ac != nil {
 		actor = ac.Username
+		if ac.IsAPIKey {
+			actor += " (API key)"
+		}
 	}
-	slog.Info("Mailbox administration", "actor", actor, "action", action, "target", target)
+	entry := mailpolicy.AuditEntry{Actor: actor, Source: "dashboard", Client: s.loginAddr(r), Action: action, Target: target, Detail: detail}
+	if strings.HasPrefix(action, "dashboard-user-") {
+		// A dashboard user named like an address isn't part of that
+		// domain; keep these entries away from its domain administrator.
+		entry.Domain = "(system)"
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+	defer cancel()
+	_ = s.provisioner.Audit(ctx, entry)
+}
+
+// patchDetail describes an account update for the audit log.
+func patchDetail(p provision.Patch) string {
+	var parts []string
+	if p.Name != nil {
+		parts = append(parts, "name")
+	}
+	if p.Status != nil {
+		parts = append(parts, "status "+*p.Status)
+	}
+	if p.QuotaBytes != nil {
+		parts = append(parts, fmt.Sprintf("quota %d", *p.QuotaBytes))
+	}
+	return strings.Join(parts, ", ")
 }

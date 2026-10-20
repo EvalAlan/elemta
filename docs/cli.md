@@ -73,12 +73,15 @@ Changes apply to a running server on its next request; no restart.
 ```bash
 ./bin/elemta user add alice --role operator --file /etc/elemta/users.txt
 ./bin/elemta user role alice admin --file /etc/elemta/users.txt
+./bin/elemta user role bob domain-admin --domains example.com --file /etc/elemta/users.txt
 ./bin/elemta user passwd alice --file /etc/elemta/users.txt
 ./bin/elemta user list --file /etc/elemta/users.txt
 ./bin/elemta user remove alice --file /etc/elemta/users.txt
 ```
 
-Roles: `admin`, `operator` (queue management), `user` and `readonly` (view only).
+Roles: `admin`, `operator` (queue management), `user` and `readonly` (view only),
+and `domain-admin` (mail administration of the `--domains` given; see
+[mail administration](mail-administration.md#domain-administrators)).
 
 ### `elemta dkim` subcommands
 

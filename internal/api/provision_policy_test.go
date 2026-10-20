@@ -21,6 +21,9 @@ type fakeMailboxAdmin struct {
 	lists   map[string]mailpolicy.List
 	routes  map[string]mailpolicy.DomainRoute
 	purged  []string
+	held    map[string]bool
+	audit   []mailpolicy.AuditEntry
+	queries []string // audit queries received
 }
 
 func (f *fakeMailboxAdmin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +71,7 @@ func (f *fakeMailboxAdmin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		eff := mailpolicy.Builtin()
 		eff.Address, eff.Class = a, f.policy[a].Class
+		eff.LegalHold = f.held[a]
 		_ = enc.Encode(mailpolicy.AccountView{Policy: f.policy[a], Effective: eff})
 	case strings.HasPrefix(p, "accounts/") && strings.HasSuffix(p, "/purge"):
 		a := strings.TrimSuffix(strings.TrimPrefix(p, "accounts/"), "/purge")
@@ -101,6 +105,31 @@ func (f *fakeMailboxAdmin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			delete(f.lists, a)
 			_ = enc.Encode(map[string]bool{"ok": true})
 		}
+	case p == "audit" && r.Method == "POST":
+		var e mailpolicy.AuditEntry
+		_ = json.NewDecoder(r.Body).Decode(&e)
+		if err := e.Validate(); err != nil {
+			fail(http.StatusBadRequest, err.Error())
+			return
+		}
+		e.ID = int64(len(f.audit) + 1)
+		f.audit = append(f.audit, e)
+		_ = enc.Encode(e)
+	case p == "audit":
+		f.queries = append(f.queries, r.URL.RawQuery)
+		domains := r.URL.Query()["domain"]
+		out := []mailpolicy.AuditEntry{}
+		for i := len(f.audit) - 1; i >= 0; i-- {
+			e := f.audit[i]
+			keep := len(domains) == 0
+			for _, d := range domains {
+				keep = keep || e.Domain == d
+			}
+			if keep {
+				out = append(out, e)
+			}
+		}
+		_ = enc.Encode(out)
 	case p == "routes":
 		out := []mailpolicy.DomainRoute{}
 		for _, rt := range f.routes {

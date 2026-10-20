@@ -30,8 +30,11 @@ func init() {
 		c.Flags().StringVar(&userFile, "file", "", "Path to the users file (defaults to [api].auth_file)")
 	}
 	userAddCmd.Flags().StringVar(&userRole, "role", "",
-		"Role: admin, operator, user or readonly (default: admin for names containing \"admin\", otherwise user)")
+		"Role: admin, operator, user, readonly or domain-admin (default: admin for names containing \"admin\", otherwise user)")
 	userCmd.AddCommand(userRoleCmd)
+	for _, c := range []*cobra.Command{userAddCmd, userRoleCmd} {
+		c.Flags().StringSliceVar(&userDomains, "domains", nil, "Domains a domain-admin manages, comma-separated")
+	}
 	userRoleCmd.Flags().StringVar(&userFile, "file", "", "Path to the users file (defaults to [api].auth_file)")
 	for _, c := range []*cobra.Command{userAddCmd, userPasswdCmd} {
 		c.Flags().StringVar(&userPassword, "password", "",
@@ -43,18 +46,29 @@ var (
 	userFile     string
 	userPassword string
 	userRole     string
+	userDomains  []string
 )
 
 // userRoles are the built-in roles; see internal/auth/rbac.go.
-var userRoles = []string{"admin", "operator", "user", "readonly"}
+var userRoles = []string{"admin", "operator", "user", "readonly", "domain-admin"}
 
-func checkRole(role string) error {
+// rolesFor checks a role and returns what to store for it: a domain-admin
+// also stores the domains it manages (--domains), and only it takes them.
+func rolesFor(role string) ([]string, error) {
+	known := false
 	for _, r := range userRoles {
-		if r == role {
-			return nil
-		}
+		known = known || r == role
 	}
-	return fmt.Errorf("unknown role %q: use one of %s", role, strings.Join(userRoles, ", "))
+	if !known {
+		return nil, fmt.Errorf("unknown role %q: use one of %s", role, strings.Join(userRoles, ", "))
+	}
+	if role == "domain-admin" {
+		return auth.DomainAdminGroups(userDomains)
+	}
+	if len(userDomains) > 0 {
+		return nil, fmt.Errorf("--domains applies only to the domain-admin role")
+	}
+	return []string{role}, nil
 }
 
 // A running server re-reads the users file when it changes, so none of these
@@ -82,10 +96,9 @@ var userAddCmd = &cobra.Command{
 		}
 		roles := datasource.LegacyRolesFor(args[0])
 		if userRole != "" {
-			if err := checkRole(userRole); err != nil {
+			if roles, err = rolesFor(userRole); err != nil {
 				return err
 			}
-			roles = []string{userRole}
 		}
 		password, err := readPassword(cmd, true)
 		if err != nil {
@@ -203,10 +216,11 @@ var userListCmd = &cobra.Command{
 
 var userRoleCmd = &cobra.Command{
 	Use:   "role <username> <role>",
-	Short: "Set a user's role (admin, operator, user or readonly)",
+	Short: "Set a user's role (admin, operator, user, readonly, or domain-admin with --domains)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := checkRole(args[1]); err != nil {
+		roles, err := rolesFor(args[1])
+		if err != nil {
 			return err
 		}
 		path, err := resolveUserFile()
@@ -218,13 +232,13 @@ var userRoleCmd = &cobra.Command{
 			if !exists {
 				return fmt.Errorf("user %q does not exist in %s", args[0], path)
 			}
-			u.Roles = []string{args[1]}
+			u.Roles = roles
 			users[args[0]] = u
 			return nil
 		}); err != nil {
 			return err
 		}
-		fmt.Printf("%q is now %s\n", args[0], args[1])
+		fmt.Printf("%q is now %s\n", args[0], strings.Join(roles, ","))
 		return nil
 	},
 }

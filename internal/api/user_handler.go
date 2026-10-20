@@ -53,6 +53,28 @@ type userView struct {
 	Username string   `json:"username"`
 	Roles    []string `json:"roles"`
 	IsAdmin  bool     `json:"is_admin"`
+	// Domains a domain administrator manages; stored among the roles as
+	// "domain:" entries, shown apart from them.
+	Domains []string `json:"domains,omitempty"`
+}
+
+func viewUser(username string, groups []string, isAdmin bool) userView {
+	roles := []string{}
+	for _, g := range groups {
+		if !strings.HasPrefix(g, auth.DomainScopePrefix) {
+			roles = append(roles, g)
+		}
+	}
+	return userView{Username: username, Roles: roles, IsAdmin: isAdmin, Domains: auth.DomainScope(groups)}
+}
+
+// groupsFor is what to store for a role: the role alone, or for a domain
+// administrator the role and their domains.
+func groupsFor(role string, domains []string) ([]string, error) {
+	if role == "domain-admin" {
+		return auth.DomainAdminGroups(domains)
+	}
+	return []string{role}, nil
 }
 
 type roleView struct {
@@ -69,11 +91,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]userView, 0, len(users))
 	for _, u := range users {
-		roles := u.Groups
-		if roles == nil {
-			roles = []string{}
-		}
-		views = append(views, userView{Username: u.Username, Roles: roles, IsAdmin: u.IsAdmin})
+		views = append(views, viewUser(u.Username, u.Groups, u.IsAdmin))
 	}
 	current := ""
 	if ac := GetAuthContext(r); ac != nil {
@@ -108,9 +126,10 @@ func (s *Server) roleViews() []roleView {
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Username string   `json:"username"`
+		Password string   `json:"password"`
+		Role     string   `json:"role"`
+		Domains  []string `json:"domains"`
 	}
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -131,6 +150,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unknown role: "+body.Role, http.StatusBadRequest)
 		return
 	}
+	groups, err := groupsFor(body.Role, body.Domains)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	ctx := r.Context()
 	if err := s.authSystem.CreateUser(ctx, body.Username, body.Password, "", "", body.Role == "admin"); err != nil {
@@ -141,25 +165,31 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Could not create the user: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := s.authSystem.SetUserRoles(ctx, body.Username, []string{body.Role}); err != nil {
+	if err := s.authSystem.SetUserRoles(ctx, body.Username, groups); err != nil {
 		http.Error(w, "User created, but setting the role failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSONStatus(w, http.StatusCreated, userView{
-		Username: body.Username, Roles: []string{body.Role}, IsAdmin: body.Role == "admin",
-	})
+	view := viewUser(body.Username, groups, body.Role == "admin")
+	s.provisionAudit(r, "dashboard-user-create", body.Username, roleDetail(view))
+	writeJSONStatus(w, http.StatusCreated, view)
 }
 
 func (s *Server) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 	username := mux.Vars(r)["username"]
 	var body struct {
-		Role string `json:"role"`
+		Role    string   `json:"role"`
+		Domains []string `json:"domains"`
 	}
 	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	if _, err := s.rbac.GetRole(body.Role); err != nil {
 		http.Error(w, "Unknown role: "+body.Role, http.StatusBadRequest)
+		return
+	}
+	groups, err := groupsFor(body.Role, body.Domains)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -175,11 +205,13 @@ func (s *Server) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.authSystem.SetUserRoles(ctx, username, []string{body.Role}); err != nil {
+	if err := s.authSystem.SetUserRoles(ctx, username, groups); err != nil {
 		http.Error(w, "Could not change the role: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, userView{Username: username, Roles: []string{body.Role}, IsAdmin: body.Role == "admin"})
+	view := viewUser(username, groups, body.Role == "admin")
+	s.provisionAudit(r, "dashboard-user-role", username, roleDetail(view))
+	writeJSON(w, view)
 }
 
 // handleResetUserPassword sets another user's password. Their sessions end, so
@@ -207,6 +239,7 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 	if ac := GetAuthContext(r); ac == nil || ac.Username != username {
 		s.sessionManager.RevokeUserSessions(username)
 	}
+	s.provisionAudit(r, "dashboard-user-password", username, "")
 	writeJSON(w, map[string]interface{}{"ok": true})
 }
 
@@ -234,6 +267,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sessionManager.RevokeUserSessions(username)
+	s.provisionAudit(r, "dashboard-user-delete", username, "")
 	writeJSON(w, map[string]interface{}{"ok": true})
 }
 
@@ -280,4 +314,12 @@ func (s *Server) otherAdminsRemain(r *http.Request, username string) (bool, stri
 		}
 	}
 	return false, "This is the last administrator; make another user an admin first"
+}
+
+func roleDetail(v userView) string {
+	detail := "role " + strings.Join(v.Roles, ",")
+	if len(v.Domains) > 0 {
+		detail += "; domains " + strings.Join(v.Domains, ",")
+	}
+	return detail
 }

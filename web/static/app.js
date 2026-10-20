@@ -34,17 +34,17 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeNavigation();
     initializeEventListeners();
     
-    // Check authentication status with a delay to ensure cookies are ready after redirect
-    setTimeout(() => {
-        checkAuthStatus(); // Check authentication status on page load
-    }, 300);
-    
-    // Initial health check to set failed queue visibility
-    refreshHealth();
-    
     loadFromURL();
-    refreshAllData();
-    startAutoRefresh();
+    // Check authentication status with a delay to ensure cookies are ready
+    // after redirect, then load the server's data, unless the user is a
+    // domain administrator, whom the API would refuse it.
+    setTimeout(async () => {
+        await checkAuthStatus();
+        if (authState.confined) return;
+        refreshHealth(); // also sets the failed queue's visibility
+        refreshAllData();
+        startAutoRefresh();
+    }, 300);
 });
 
 // ============================================================================
@@ -1708,8 +1708,27 @@ function updateUserUI() {
     // There are no accounts to manage when the dashboard runs without login.
     const usersTab = document.getElementById('settings-tab-users');
     if (usersTab) usersTab.style.display = authState.isLoggedIn ? '' : 'none';
+    const perms = authState.permissions || [];
     const mailAdminNav = document.getElementById('nav-mailadmin');
-    if (mailAdminNav) mailAdminNav.hidden = !authState.isLoggedIn || !(authState.permissions || []).includes('system:admin');
+    if (mailAdminNav) mailAdminNav.hidden = !authState.isLoggedIn || !(perms.includes('system:admin') || perms.includes('mail:domain-admin'));
+    // A domain administrator can't read the server's queues, logs or
+    // statistics (the API refuses them), so the dashboard shows only Mail
+    // Administration and Settings and stops polling the rest.
+    const confined = authState.isLoggedIn && perms.includes('mail:domain-admin') && !perms.includes('api:read');
+    if (confined !== !!authState.confined) {
+        authState.confined = confined;
+        document.querySelectorAll('.nav-item[data-view]').forEach(item => {
+            if (!['mail-admin', 'settings'].includes(item.dataset.view)) item.style.display = confined ? 'none' : '';
+        });
+        document.querySelectorAll('.settings-tab[data-tab]').forEach(item => {
+            if (!['ui', 'users'].includes(item.dataset.tab)) item.style.display = confined ? 'none' : '';
+        });
+        if (confined) {
+            state.autoRefreshPaused = true;
+            if (state.refreshInterval) { clearTimeout(state.refreshInterval); state.refreshInterval = null; }
+            switchView('mail-admin');
+        }
+    }
 
     if (authState.isLoggedIn) {
         userDisplay.textContent = authState.username || 'User';

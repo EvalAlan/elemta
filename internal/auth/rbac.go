@@ -47,6 +47,12 @@ const (
 	PermissionAPIRead  Permission = "api:read"
 	PermissionAPIWrite Permission = "api:write"
 	PermissionAPIAdmin Permission = "api:admin"
+
+	// PermissionMailDomainAdmin is mail administration confined to the
+	// domains listed in the user's "domain:" entries (DomainScope). It is
+	// deliberately not api:read, so a domain administrator sees nothing of
+	// the server's queues, logs or other domains' traffic.
+	PermissionMailDomainAdmin Permission = "mail:domain-admin"
 )
 
 // Role represents a collection of permissions
@@ -125,6 +131,17 @@ func (r *RBAC) initializeDefaultRoles() {
 		IsSystem:  true,
 		CreatedAt: now,
 		UpdatedAt: now,
+	}
+
+	// Domain administrator - mailboxes, aliases and lists of the domains
+	// the user is given, nothing else.
+	r.roles["domain-admin"] = &Role{
+		Name:        "domain-admin",
+		Description: "Domain Administrator - Mail administration for assigned domains only",
+		Permissions: []Permission{PermissionMailDomainAdmin},
+		IsSystem:    true,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	// Read-only role - monitoring only
@@ -418,6 +435,7 @@ func (r *RBAC) isValidPermission(permission Permission) bool {
 		PermissionUserView, PermissionUserCreate, PermissionUserUpdate, PermissionUserDelete,
 		PermissionSystemView, PermissionSystemAdmin, PermissionSystemConfig,
 		PermissionAPIRead, PermissionAPIWrite, PermissionAPIAdmin,
+		PermissionMailDomainAdmin,
 	}
 
 	for _, valid := range validPermissions {
@@ -437,6 +455,7 @@ func (r *RBAC) getAllPermissions() []Permission {
 		PermissionUserView, PermissionUserCreate, PermissionUserUpdate, PermissionUserDelete,
 		PermissionSystemView, PermissionSystemAdmin, PermissionSystemConfig,
 		PermissionAPIRead, PermissionAPIWrite, PermissionAPIAdmin,
+		PermissionMailDomainAdmin,
 	}
 }
 
@@ -460,6 +479,8 @@ func PermissionString(permission Permission) string {
 		PermissionAPIRead:      "API Read Access",
 		PermissionAPIWrite:     "API Write Access",
 		PermissionAPIAdmin:     "API Administration",
+
+		PermissionMailDomainAdmin: "Mail Administration of Assigned Domains",
 	}
 
 	if desc, exists := descriptions[permission]; exists {

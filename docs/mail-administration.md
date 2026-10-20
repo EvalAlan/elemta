@@ -331,11 +331,63 @@ sets its class and overrides, and shows every setting in effect with the
 layer it came from. Deleting an account offers to purge its mailbox too.
 The list, class and routing tabs appear when the mailbox admin API is
 configured (`ELEMTA_MAILBOX_ADMIN_TOKEN` on the web service). These
-routes require dashboard authentication and `system:admin`, including reads.
-They remain closed when dashboard authentication is disabled. Mutations require
-JSON and existing same-origin write protection. Successful changes record the
-actor, action and target, without passwords or recovery tokens. Delegated
-administration is outside this version's command surface.
+routes require dashboard authentication and `system:admin` or
+`mail:domain-admin` (see below), including reads. They remain closed when
+dashboard authentication is disabled. Mutations require JSON and existing
+same-origin write protection.
+
+## Domain administrators
+
+A dashboard user with the `domain-admin` role manages the mail of the
+domains assigned to them, and nothing else:
+
+```sh
+elemta user add support-lead --role domain-admin --domains example.com,example.org
+elemta user role support-lead domain-admin --domains example.com
+```
+
+or on the dashboard's Users page, which asks for the domains when you pick the
+role (click the domains to change them). The domains are stored with the role
+(`domain-admin,domain:example.com` in the users file), so a change applies to
+the next request; a domain administrator with no domains can do nothing.
+
+Within their domains they can create, change, disable, delete and purge
+accounts, reset passwords, manage delivery aliases, distribution lists and the
+catch-all, assign classes of service to accounts, and read the audit log.
+They can't:
+
+* see or change anything outside their domains (other domains' accounts are
+  neither listed nor reachable, and an alias or list must be in their domains
+  too);
+* create or edit classes of service, set a domain's default class, add or
+  remove domains or alias domains;
+* change an account's per-setting overrides (they keep what a system
+  administrator set), or change the class of an account on legal hold;
+* use the rest of the dashboard: queues, logs, tracing, statistics and
+  settings need `api:read`, which the role doesn't have. The dashboard opens
+  straight to Mail Administration for them.
+
+## Audit log
+
+Every administrative change is recorded in the mailbox service's database
+(the `mailbox_audit` table), whether it was made in the dashboard, with
+`elemta provision`, or by `elemta migrate accounts`: who made it, from which
+address, what they did, to what, and a short detail such as the new quota,
+class or alias. Changes to dashboard users (added, role or domains changed,
+password set, removed) are recorded too. Passwords and recovery tokens never
+are; CLI arguments are recorded, which is safe because passwords are never
+arguments.
+
+The console's Audit log tab shows the newest entries first, with a search
+over who, what and target, and "Show more" for older ones. A domain
+administrator sees their domains' entries only. The same data is at
+`GET /api/provision/audit?actor=&target=&action=&before=&limit=` and on the
+mailbox admin API at `/v1/admin/audit`. Entries are never edited or deleted
+through any API; prune the table with SQL if you need to.
+
+The log needs the mailbox admin API (`ELEMTA_MAILBOX_ADMIN_TOKEN`). Without it,
+changes are still written to the service log (`Mailbox administration`), and
+a CLI change that couldn't be recorded prints a warning.
 
 Verification includes service validation and configuration-lock tests, admin
 API permissions and lifecycle tests, CLI output/alias tests, SMTP cache tests,

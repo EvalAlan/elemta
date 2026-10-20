@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/user"
 	"strings"
 	"text/tabwriter"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/EvalAlan/elemta/internal/webmail"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func openProvision(c *config.Config, path string) (*provision.Service, error) {
@@ -84,6 +86,7 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 			if err != nil {
 				return err
 			}
+			auditCLI(ctx, service, cmd, args)
 			if value == nil {
 				return nil // the command wrote its own output (export-held)
 			}
@@ -228,4 +231,34 @@ func printProvision(cmd *cobra.Command, value any) error {
 		return fmt.Errorf("unsupported provisioning output")
 	}
 	return w.Flush()
+}
+
+// auditCLI records a provisioning command that changed something (all but
+// list-* and get-*; export-held too, since reading held mail is itself worth
+// a record). Passwords are never arguments, so the arguments are safe to keep.
+func auditCLI(ctx context.Context, s *provision.Service, cmd *cobra.Command, args []string) {
+	name := cmd.Name()
+	if strings.HasPrefix(name, "list-") || strings.HasPrefix(name, "get-") || len(args) == 0 {
+		return
+	}
+	var flags []string
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		if f.Name != "confirm" && f.Name != "json" {
+			flags = append(flags, "--"+f.Name+"="+f.Value.String())
+		}
+	})
+	detail := strings.Join(append(args[1:], flags...), " ")
+	if err := s.Audit(ctx, mailpolicy.AuditEntry{Actor: cliActor(), Source: "cli", Action: name, Target: args[0], Detail: detail}); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "warning: the change was made but not recorded in the audit log:", err)
+	}
+}
+
+// cliActor names whoever runs the CLI in the audit log. Inside a container
+// that is usually the service account, which still tells a CLI change from
+// a dashboard one.
+func cliActor() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return "cli:" + u.Username
+	}
+	return "cli"
 }
