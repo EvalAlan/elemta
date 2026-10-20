@@ -78,7 +78,9 @@ func (s *Service) freeBusy(ctx context.Context, viewer Account, addresses []stri
 			continue
 		}
 		var data []byte
-		err := s.engine.DB.QueryRowContext(ctx, `SELECT window_from, window_to, updated, busy FROM mailbox_freebusy WHERE address=$1`, address).Scan(&fb.From, &fb.To, &fb.Updated, &data)
+		// The newest publication wins: a deleted account's mailbox (and its
+		// row) is kept until purged, and the address may be in use again.
+		err := s.engine.DB.QueryRowContext(ctx, `SELECT window_from, window_to, updated, busy FROM mailbox_freebusy WHERE address=$1 ORDER BY updated DESC LIMIT 1`, address).Scan(&fb.From, &fb.To, &fb.Updated, &data)
 		if errors.Is(err, sql.ErrNoRows) {
 			// An alias: published under the account's own address.
 			if a, rerr := s.auth.Resolve(ctx, address); rerr == nil && a.Address != address {

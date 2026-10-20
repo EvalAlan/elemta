@@ -319,6 +319,7 @@ func (e *Engine) PurgeAccount(ctx context.Context, address string) (PurgeResult,
 			`DELETE FROM mailbox_sieve_scripts WHERE account=ANY($1)`,
 			`DELETE FROM mailbox_sieve_sent WHERE account=ANY($1)`,
 			`DELETE FROM mailbox_held WHERE account=ANY($1)`,
+			`DELETE FROM mailbox_freebusy WHERE account=ANY($1)`,
 			`DELETE FROM mailbox_accounts WHERE id=ANY($1)`, // security, app passwords, POP3 leases cascade
 		} {
 			if _, err := tx.ExecContext(ctx, q, list); err != nil {
