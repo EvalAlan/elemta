@@ -214,7 +214,7 @@ func (e *Engine) Retention(ctx context.Context, now time.Time) (RetentionReport,
 // whole rather than built from the column name.
 var expireQueries = map[string]string{
 	"added": `SELECT m.uid FROM mailbox_messages m JOIN mailbox_folders f ON f.id=m.folder
-WHERE f.account=$1 AND f.name=$2 AND m.added<$3 ORDER BY m.uid LIMIT $4`,
+WHERE f.account=$1 AND f.name=$2 AND COALESCE(m.added,m.internal_date)<$3 ORDER BY m.uid LIMIT $4`,
 	"internal_date": `SELECT m.uid FROM mailbox_messages m JOIN mailbox_folders f ON f.id=m.folder
 WHERE f.account=$1 AND f.name=$2 AND m.internal_date<$3 ORDER BY m.uid LIMIT $4`,
 }

@@ -141,11 +141,16 @@ CREATE TABLE IF NOT EXISTS mailbox_list_sent (
 CREATE INDEX IF NOT EXISTS mailbox_list_sent_expiry ON mailbox_list_sent(expires);
 
 -- Retention and legal hold (retention.go). added is when a message reached
--- its folder, which Trash and Junk retention count from; rows that predate
--- the column start their count at the upgrade. mailbox_held keeps what a
--- user on legal hold deleted, out of sight of every protocol, with its
--- body kept alive (the body cleanup treats a held body as referenced).
-ALTER TABLE mailbox_messages ADD COLUMN IF NOT EXISTS added timestamptz NOT NULL DEFAULT now();
+-- its folder, which Trash and Junk retention count from. It is added
+-- without a default and given one after: a volatile default on ADD COLUMN
+-- rewrites the whole table under an exclusive lock, which on a large
+-- mailbox store would stall delivery for the length of the upgrade. Rows
+-- that predate it have no value, and retention uses their own date.
+-- mailbox_held keeps what a user on legal hold deleted, out of sight of
+-- every protocol, with its body kept alive (the body cleanup treats a held
+-- body as referenced).
+ALTER TABLE mailbox_messages ADD COLUMN IF NOT EXISTS added timestamptz;
+ALTER TABLE mailbox_messages ALTER COLUMN added SET DEFAULT now();
 CREATE TABLE IF NOT EXISTS mailbox_held (
  id bigserial PRIMARY KEY, account text NOT NULL, folder text NOT NULL,
  body text NOT NULL REFERENCES mailbox_bodies(key), flags text[] NOT NULL DEFAULT '{}',
