@@ -108,14 +108,24 @@ patches:
         template:
           spec:
             containers:
+              # VALKEY_ADDR, as in the compose stack: the dashboard's mail
+              # administration needs the shared webmail sessions it revokes,
+              # and the MTA counts class-of-service sending limits there so
+              # every replica shares one count.
               - name: smtp
                 envFrom:
                   - secretRef:
                       name: elemta-ldap-smtp
+                env:
+                  - name: VALKEY_ADDR
+                    value: elemta-valkey:6379
               - name: web
                 envFrom:
                   - secretRef:
                       name: elemta-ldap-web
+                env:
+                  - name: VALKEY_ADDR
+                    value: elemta-valkey:6379
   - target:
       kind: Deployment
       name: elemta
