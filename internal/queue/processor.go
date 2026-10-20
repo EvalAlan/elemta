@@ -663,15 +663,16 @@ func (p *Processor) processMessage(msg Message) {
 	deliveryResult, deliveryErr := p.handler.DeliverMessageWithMetadata(ctx, msg, content)
 	deliveryResult, deliveryErr = normalizeDeliveryResult(msg, deliveryResult, deliveryErr)
 
-	if p.handleRecipientOutcomes(msg, deliveryResult, deliveryErr, startTime) {
-		return
-	}
-
 	// Attribute outcomes to destinations before branching, so every path is
 	// counted: a message can be partly delivered and partly deferred, and
 	// recording only on the success branch would make a domain that defers half
-	// our mail look perfect.
+	// our mail look perfect. That includes the per-recipient path just below,
+	// which every delivery takes now and which returns on its own.
 	p.recordDomainOutcomes(deliveryResult)
+
+	if p.handleRecipientOutcomes(msg, deliveryResult, deliveryErr, startTime) {
+		return
+	}
 
 	if deliveryErr == nil && deliveryResult.Success {
 		p.handleDeliverySuccess(msg, deliveryResult)
@@ -829,6 +830,16 @@ func (p *Processor) handleRecipientOutcomes(msg Message, result *DeliveryResult,
 	// Before the DSN work below, which can return early: a bounce that fails to
 	// generate must not also lose the fact that the address is dead.
 	p.recordSuppressions(permanentR, result.RecipientOutcomes)
+	// The Reports page lists recent failures and their commonest reasons;
+	// moveToFailed records them for whole-message failures, and these are
+	// the per-recipient ones.
+	for _, r := range permanentR {
+		reason := r.Diagnostic
+		if reason == "" {
+			reason = "permanent recipient delivery failure"
+		}
+		p.recordMetric(func(m MetricsRecorder) error { return m.AddRecentError(p.ctx, msg.ID, r.Address, reason) })
+	}
 	if len(permanent) > 0 && strings.TrimSpace(msg.From) != "" && strings.TrimSpace(msg.From) != "<>" && p.bounceEngine != nil {
 		failed := msg
 		failed.To = append([]string(nil), permanent...)
