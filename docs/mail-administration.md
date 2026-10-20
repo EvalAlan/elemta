@@ -18,6 +18,7 @@ elemta --config /path/to/elemta.toml provision get-account dana@example.com
 elemta --config /path/to/elemta.toml provision modify-account dana@example.com --status disabled
 elemta --config /path/to/elemta.toml provision modify-account dana@example.com --status active --quota 10G
 elemta --config /path/to/elemta.toml provision set-password dana@example.com
+elemta --config /path/to/elemta.toml provision reset-two-factor dana@example.com
 elemta --config /path/to/elemta.toml provision add-alias dana@example.com sales@example.com
 elemta --config /path/to/elemta.toml provision remove-alias dana@example.com sales@example.com
 elemta --config /path/to/elemta.toml provision --json list-accounts
@@ -34,6 +35,11 @@ without exposing it in command arguments. There is no password argument or
 password flag. Initial passwords are applied with LDAP Password Modify and the
 directory's own policy. A new account stays disabled until its password is set.
 Passwords and stored password hashes are never included in account responses.
+
+`reset-two-factor` removes an account's authenticator enrollment, pending setup
+and recovery codes. An administrator should verify the user's identity before
+running it. The CLI records the reset in the audit log. If the account's class
+requires two-step verification, the next webmail sign-in requires fresh setup.
 
 Quota sizes accept integer bytes or suffixes such as `K`, `M`, `G`, `MiB`, and
 `GiB`. Suffixes use binary units; `5G` is 5 GiB. Zero means unlimited. Quotas

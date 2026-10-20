@@ -213,6 +213,11 @@ func (c *Client) Purge(ctx context.Context, address string) (PurgeResult, error)
 	return out, c.do(ctx, http.MethodPost, "/v1/admin/accounts/"+seg(address)+"/purge", nil, &out)
 }
 
+// ResetTwoFactor removes a mailbox's enrolled authenticator and recovery codes.
+func (c *Client) ResetTwoFactor(ctx context.Context, address string) error {
+	return c.do(ctx, http.MethodPost, "/v1/admin/accounts/"+seg(address)+"/reset-two-factor", nil, nil)
+}
+
 // Routes lists domains with an alias target or a catch-all.
 func (c *Client) Routes(ctx context.Context) ([]DomainRoute, error) {
 	var out []DomainRoute

@@ -155,6 +155,12 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 		}
 		return map[string]string{"status": "password reset; webmail sessions ended"}, nil
 	})
+	add("reset-two-factor <email>", nil, "Remove a user's two-step verification enrollment and recovery codes", 1, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
+		if err := s.ResetTwoFactor(ctx, args[0]); err != nil {
+			return nil, err
+		}
+		return map[string]string{"status": "two-step verification reset; the user must enroll again if their class requires it"}, nil
+	})
 	var confirm string
 	var purgeToo bool
 	del := add("delete-account <email>", []string{"da"}, "Remove an account, retaining its mailbox unless --purge is given", 1, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {

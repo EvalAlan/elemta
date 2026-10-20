@@ -215,6 +215,37 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 	handle("GET /v1/admin/addresses/{address}", func(r *http.Request) (any, error) {
 		return s.addressInfo(r.Context(), r.PathValue("address"))
 	})
+	handle("POST /v1/admin/accounts/{address}/reset-two-factor", func(r *http.Request) (any, error) {
+		a, err := s.directoryAccount(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		if a.ID == "" {
+			// Disabled accounts cannot authenticate, but their immutable mailbox
+			// identity still owns the security row. Refuse an ambiguous address.
+			rows, err := s.engine.DB.QueryContext(r.Context(), `SELECT id FROM mailbox_accounts WHERE address=$1`, a.Address)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			if !rows.Next() {
+				return nil, ErrNotFound
+			}
+			if err := rows.Scan(&a.ID); err != nil {
+				return nil, err
+			}
+			if rows.Next() {
+				return nil, errors.Join(mailpolicy.ErrInvalid, errors.New("address has more than one mailbox identity"))
+			}
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.engine.DisableTOTP(r.Context(), a.ID); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, nil
+	})
 	handle("POST /v1/admin/accounts/{address}/purge", func(r *http.Request) (any, error) {
 		address := strings.ToLower(strings.TrimSpace(r.PathValue("address")))
 		if !strings.Contains(address, "@") || len(address) > 320 {

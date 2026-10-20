@@ -478,6 +478,23 @@ func (s *Service) Purge(ctx context.Context, raw string) (mailpolicy.PurgeResult
 	return mailbox.Purge(ctx, address)
 }
 
+// ResetTwoFactor requires a directory account so an old retained mailbox
+// cannot be changed through a recycled address.
+func (s *Service) ResetTwoFactor(ctx context.Context, raw string) error {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return err
+	}
+	address, err := Address(raw)
+	if err != nil {
+		return err
+	}
+	if _, err := s.Directory.Get(ctx, address); err != nil {
+		return err
+	}
+	return mailbox.ResetTwoFactor(ctx, address)
+}
+
 // CheckPurgeable reports why an account's mailbox couldn't be purged now,
 // before anything is changed: delete-and-purge checks it first, so a held
 // account isn't deleted only for the purge to be refused.

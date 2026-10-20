@@ -2,6 +2,7 @@ package mailbox
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 func i64(v int64) *int64 { return &v }
@@ -244,6 +246,23 @@ func TestAdminAPI(t *testing.T) {
 	// everything for one it doesn't.
 	if code, _ := call(local, "POST", "/v1/admin/accounts/"+a.Address+"/purge", "admin-secret", ""); code != http.StatusConflict {
 		t.Fatalf("purging a live account = %d", code)
+	}
+	if _, err := e.DB.Exec(`INSERT INTO mailbox_security(account,totp_secret,recovery_codes) VALUES($1,'test-secret',ARRAY['test-code']) ON CONFLICT(account) DO UPDATE SET totp_secret='test-secret',recovery_codes=ARRAY['test-code']`, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := call(local, "POST", "/v1/admin/accounts/"+a.Address+"/reset-two-factor", "wrong", ""); code != http.StatusUnauthorized {
+		t.Fatalf("reset with wrong token = %d", code)
+	}
+	if code, _ := call(local, "POST", "/v1/admin/accounts/"+a.Address+"/reset-two-factor", "admin-secret", ""); code != http.StatusOK {
+		t.Fatalf("reset two-factor = %d", code)
+	}
+	var secret sql.NullString
+	var codes []string
+	if err := e.DB.QueryRow(`SELECT totp_secret,recovery_codes FROM mailbox_security WHERE account=$1`, a.ID).Scan(&secret, pq.Array(&codes)); err != nil {
+		t.Fatal(err)
+	}
+	if secret.Valid || len(codes) != 0 {
+		t.Fatalf("reset retained secret or recovery codes: %v %v", secret.Valid, len(codes))
 	}
 	gone := Account{ID: uuid.NewString(), Address: "gone-" + uuid.NewString()[:8] + "@example.com"}
 	if err := e.EnsureAccount(context.Background(), gone); err != nil {
