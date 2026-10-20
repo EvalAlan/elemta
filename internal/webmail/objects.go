@@ -292,3 +292,11 @@ func decodeObject(raw []byte) (Object, error) {
 	name := strings.TrimSpace(e.Header.Get(objectNameHeader))
 	return Object{ID: id, Name: name, Title: title, ContentType: ct, Data: data, Modified: date}, nil
 }
+
+// ObjectMessage encodes a calendar, contact or task as the message the
+// IMAP object store keeps in the collection's folder, so a migration
+// (internal/migrate) can import them with the mailbox admin API and the
+// webmail and DAV read them like their own.
+func ObjectMessage(id, title, contentType string, data []byte) ([]byte, error) {
+	return encodeObject(Object{ID: objectID(id), Title: title, ContentType: contentType, Data: data}, time.Now())
+}
