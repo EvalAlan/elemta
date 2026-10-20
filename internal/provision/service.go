@@ -477,3 +477,28 @@ func (s *Service) Purge(ctx context.Context, raw string) (mailpolicy.PurgeResult
 	}
 	return mailbox.Purge(ctx, address)
 }
+
+// CheckPurgeable reports why an account's mailbox couldn't be purged now,
+// before anything is changed: delete-and-purge checks it first, so a held
+// account isn't deleted only for the purge to be refused.
+func (s *Service) CheckPurgeable(ctx context.Context, raw string) error {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return err
+	}
+	address, err := Address(raw)
+	if err != nil {
+		return err
+	}
+	view, err := mailbox.Account(ctx, address)
+	if err != nil {
+		if errors.Is(err, mailpolicy.ErrNotFound) {
+			return nil // nothing kept for it; purging is a no-op
+		}
+		return err
+	}
+	if view.Effective.LegalHold {
+		return fmt.Errorf("%w: %s is on legal hold; lift the hold (set-policy --legal-hold off) before purging", ErrInvalid, address)
+	}
+	return nil
+}

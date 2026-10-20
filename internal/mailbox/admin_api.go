@@ -234,6 +234,12 @@ func (s *Service) directoryAccount(ctx context.Context, address string) (Account
 			// A disabled account still has a policy to manage.
 			return Account{Address: address}, nil
 		}
+		// So does a deleted one whose mailbox is kept, a legal hold most
+		// of all: lifting it is what lets the mailbox be purged.
+		var kept bool
+		if err := s.engine.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_accounts WHERE address=$1)`, address).Scan(&kept); err == nil && kept {
+			return Account{Address: address}, nil
+		}
 		return Account{}, ErrNotFound
 	}
 	if err != nil {

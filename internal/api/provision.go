@@ -89,7 +89,7 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 			if in.Purge {
 				// Checked first, so a missing admin token can't leave the
 				// account deleted and its mail behind.
-				if _, err := s.provisioner.MailboxAdmin(); err != nil {
+				if err := s.provisioner.CheckPurgeable(ctx, address); err != nil {
 					return err
 				}
 			}

@@ -161,7 +161,7 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 		if purgeToo {
 			// Checked first, so a missing admin token doesn't leave the
 			// account deleted and its mail behind.
-			if _, err := s.MailboxAdmin(); err != nil {
+			if err := s.CheckPurgeable(ctx, args[0]); err != nil {
 				return nil, err
 			}
 		}
