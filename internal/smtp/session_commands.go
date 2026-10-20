@@ -389,6 +389,14 @@ func (ch *CommandHandler) HandleRCPT(ctx context.Context, args string) error {
 			return err
 		}
 	}
+	// The recipient's own size limit, for any sender, signed in or not.
+	if ch.session != nil && ch.session.senderPolicies != nil && ch.isLocalDomain(ctx, rcptTo) {
+		if err := ch.session.senderPolicies.checkRecipientSize(ctx, rcptTo, ch.state.GetDeclaredSize()); err != nil {
+			ch.logger.InfoContext(ctx, "Recipient refused: message over their size limit",
+				"event_type", "rejection", "recipient", rcptTo, "declared_size", ch.state.GetDeclaredSize())
+			return err
+		}
+	}
 
 	// Add recipient to state
 	if err := ch.state.AddRecipient(ctx, rcptTo); err != nil {

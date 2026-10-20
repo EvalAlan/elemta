@@ -91,6 +91,17 @@ func TestSenderPolicies(t *testing.T) {
 	clock = clock.Add(2 * time.Minute)
 	assert.ErrorContains(t, p.checkMail(ctx, user, 0), "451 4.7.1")
 
+	// A recipient's own size limit, from the size the client declared.
+	up.Store(true)
+	clock = clock.Add(2 * time.Minute)
+	assert.ErrorContains(t, p.checkRecipientSize(ctx, "dana@example.com", 5000), "552 5.3.4")
+	assert.NoError(t, p.checkRecipientSize(ctx, "dana@example.com", 500), "under the limit")
+	assert.NoError(t, p.checkRecipientSize(ctx, "dana@example.com", 0), "no SIZE declared")
+	assert.NoError(t, p.checkRecipientSize(ctx, "list@example.com", 5000), "not an account: left to delivery")
+	up.Store(false)
+	clock = clock.Add(2 * time.Minute)
+	assert.NoError(t, p.checkRecipientSize(ctx, "dana@example.com", 5000), "lookup failing: left to delivery")
+
 	// Without the admin token the rules are off entirely.
 	t.Setenv(mailpolicy.TokenEnv, "")
 	assert.Nil(t, newSenderPolicies(&Config{Auth: &AuthConfig{MailboxSecurityURL: url}}, slog.Default()))

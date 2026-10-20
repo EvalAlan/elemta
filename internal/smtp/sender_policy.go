@@ -288,3 +288,24 @@ func (v *valkeyCounters) add(ctx context.Context, user string, recipients int, n
 	}
 	return nil
 }
+
+// checkRecipientSize refuses, at RCPT, a local recipient whose class of
+// service won't take a message of the size the client declared with SIZE.
+// The mailbox enforces the same limit at delivery, but by then the MTA has
+// accepted the message and can only bounce it; refusing here tells the
+// sending server at once, with no bounce traffic. Only a definite answer
+// refuses: an address the mailbox doesn't resolve to an account (a list, a
+// catch-all) or a lookup that fails leaves the check to delivery.
+func (p *senderPolicies) checkRecipientSize(ctx context.Context, rcpt string, declaredSize int64) error {
+	if declaredSize <= 0 {
+		return nil
+	}
+	eff, err := p.policy(ctx, rcpt)
+	if err != nil {
+		return nil
+	}
+	if eff.MaxMessageBytes > 0 && declaredSize > eff.MaxMessageBytes {
+		return fmt.Errorf("552 5.3.4 <%s>: Message is larger than this recipient accepts (%d bytes maximum)", sanitizeEmailForHeader(rcpt), eff.MaxMessageBytes)
+	}
+	return nil
+}
