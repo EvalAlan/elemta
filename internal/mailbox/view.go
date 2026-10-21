@@ -75,7 +75,7 @@ func (e *Engine) FolderStatus(ctx context.Context, account, name string) (f Fold
 		return
 	}
 	err = e.DB.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER (WHERE NOT ('\seen'=ANY(m.flags))),coalesce(sum(b.size),0)
-FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body WHERE m.folder=$1`, f.ID).Scan(&messages, &unseen, &size)
+FROM mailbox_messages m `+bodyOf+` WHERE m.folder=$1`, f.ID).Scan(&messages, &unseen, &size)
 	return
 }
 

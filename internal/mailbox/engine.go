@@ -416,8 +416,16 @@ func scanMessages(ctx context.Context, q querier, folder int64) ([]Message, erro
 	return scanMessagesWhere(ctx, q, `m.folder=$1`, folder)
 }
 
+// bodyOf looks up one message's body by its primary key. As a plain join
+// the planner hashed the whole mailbox_bodies table on every call, so
+// opening any folder cost a scan of every body on the server (half the
+// database's time under load). As a lateral subquery, with OFFSET 0 to stop
+// it being flattened back into that join, it is one index lookup per message
+// in the folder.
+const bodyOf = `CROSS JOIN LATERAL (SELECT size, checksum FROM mailbox_bodies WHERE key=m.body OFFSET 0) b`
+
 func scanMessagesWhere(ctx context.Context, q querier, where string, args ...any) ([]Message, error) {
-	rows, err := q.QueryContext(ctx, `SELECT m.uid,m.body,m.flags,m.internal_date,m.modseq,b.size,b.checksum FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body WHERE `+where+` ORDER BY m.uid`, args...)
+	rows, err := q.QueryContext(ctx, `SELECT m.uid,m.body,m.flags,m.internal_date,m.modseq,b.size,b.checksum FROM mailbox_messages m `+bodyOf+` WHERE `+where+` ORDER BY m.uid`, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -313,7 +313,8 @@ type SortKeys struct {
 // caller computes those.
 func (e *Engine) FolderSortKeys(ctx context.Context, folder int64) (map[uint32]*SortKeys, error) {
 	rows, err := e.DB.QueryContext(ctx, `SELECT m.uid,s.base_subject,s.sent,s.sender,s.recipient,s.cc,s.display_from,s.display_to,s.message_id,s.refs,s.reply,m.internal_date,b.size
-FROM mailbox_messages m JOIN mailbox_bodies b ON b.key=m.body JOIN mailbox_summaries s ON s.body=m.body AND s.version=$2 WHERE m.folder=$1`, folder, summaryVersion)
+FROM mailbox_messages m `+bodyOf+`
+CROSS JOIN LATERAL (SELECT * FROM mailbox_summaries WHERE body=m.body AND version=$2 OFFSET 0) s WHERE m.folder=$1`, folder, summaryVersion)
 	if err != nil {
 		return nil, err
 	}
