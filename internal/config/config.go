@@ -152,6 +152,8 @@ type Config struct {
 
 	// DMARCReports sends RFC 7489 aggregate reports to domains that ask.
 	DMARCReports *smtp.DMARCReportsConfig `toml:"dmarc_reports"`
+	// MessageChecks sets how strictly message content is checked at DATA.
+	MessageChecks *smtp.MessageChecksConfig `toml:"message_checks"`
 
 	// StrictLineEndings enforces RFC 5321 CRLF requirements in DATA. Unset
 	// means strict; set it to false only to interoperate with legacy senders.

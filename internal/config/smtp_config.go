@@ -51,6 +51,7 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 		FeedbackAddresses:       c.FeedbackAddresses,
 		TLSReporting:            c.TLSReporting,
 		DMARCReports:            c.DMARCReports,
+		MessageChecks:           c.MessageChecks,
 		MaxRetries:              c.MaxRetries,
 		MaxQueueTime:            c.MaxQueueTime,
 		RetrySchedule:           c.RetrySchedule,

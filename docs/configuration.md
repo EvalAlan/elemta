@@ -528,6 +528,30 @@ contact_email = "postmaster@example.com"     # default: report_from
 Counts are saved to `dmarc-reports-state.json` in `state_dir` every minute
 and on shutdown, so a restart loses at most a minute of counts.
 
+### Message checks
+
+Beyond what SMTP requires, mail from outside (not trusted networks) can be
+checked more strictly at DATA. Each check is off by default, because real
+mail fails them: in a load test with 5,000 messages from public corpora they
+refused about one legitimate message in twelve, which the sender's server
+then bounced. DMARC, spam scoring, malware scanning and the envelope address
+checks apply either way.
+
+```toml
+[message_checks]
+strict_address_headers = false  # refuse From/To/Cc/Bcc/Reply-To that aren't valid address lists
+max_header_length = 0           # refuse any header field longer than this after unfolding; 0 = no limit
+reject_invalid_utf8 = false     # refuse 8-bit text that isn't UTF-8
+```
+
+- `strict_address_headers` refuses "undisclosed-recipients" style or
+  unparseable address headers, and addresses that fail the envelope checks.
+- `max_header_length` counts a folded header as one field. RFC 5322's 998
+  is a limit per line, so a value of 998 here is stricter than the
+  standard, and refuses long recipient lists that other servers accept.
+- `reject_invalid_utf8` refuses mail in older 8-bit character sets, which
+  8BITMIME allows.
+
 ### Metrics
 
 - `[metrics].enabled`

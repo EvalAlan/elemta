@@ -119,10 +119,17 @@ func NewDataHandler(session *Session, state *SessionState, conn net.Conn, reader
 		config:            config,
 		queueManager:      queueManager,
 		scannerManager:    scannerManager,
-		enhancedValidator: NewEnhancedValidator(logger.With("component", "enhanced-validator")),
+		enhancedValidator: newMessageValidator(logger, config),
 		msgLogger:         msgLogger,
 		receptionTime:     time.Now(),
 	}
+}
+
+// newMessageValidator is the DATA validator with [message_checks] applied.
+func newMessageValidator(logger *slog.Logger, config *Config) *EnhancedValidator {
+	v := NewEnhancedValidator(logger.With("component", "enhanced-validator"))
+	v.applyMessageChecks(config.messageChecks())
+	return v
 }
 
 // spoolDir returns the directory message spools are written to. It sits under
@@ -1033,6 +1040,10 @@ func (dh *DataHandler) validateLineContent(ctx context.Context, line string, sta
 		if !validationResult.Valid {
 			// Check if the failure is due to line length - if so, ignore it
 			// since we handle line length validation above with proper RFC 5321 compliance
+			// Non-UTF-8 text is refused only when [message_checks] asks.
+			if validationResult.ErrorType == "invalid_utf8" && !dh.config.messageChecks().RejectInvalidUTF8 {
+				return nil
+			}
 			if !strings.Contains(validationResult.ErrorMessage, "Line exceeds") {
 				// Log security event for failed validation
 				LogSecurityEvent(dh.logger, "line_validation_failed", validationResult.SecurityThreat,
@@ -1487,10 +1498,14 @@ func (dh *DataHandler) validateMessageHeaders(ctx context.Context, metadata *Mes
 		}
 	}
 
-	// Validate email addresses in headers (only for external connections)
+	// Address headers from outside are checked only when [message_checks]
+	// strict_address_headers is set: real mail is full of address lists no
+	// parser accepts, and refusing them bounces legitimate mail.
 	if !isInternal {
-		if err := dh.validateEmailAddressesInHeaders(ctx, metadata.Headers); err != nil {
-			return err
+		if dh.config.messageChecks().StrictAddressHeaders {
+			if err := dh.validateEmailAddressesInHeaders(ctx, metadata.Headers); err != nil {
+				return err
+			}
 		}
 
 		// Validate content-type restrictions

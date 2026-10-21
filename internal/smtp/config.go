@@ -62,6 +62,9 @@ type Config struct {
 	TLSReporting *TLSReportingConfig `toml:"tls_reporting" json:"tls_reporting,omitempty"`
 	// DMARCReports sends RFC 7489 aggregate reports to domains that ask.
 	DMARCReports *DMARCReportsConfig `toml:"dmarc_reports" json:"dmarc_reports,omitempty"`
+	// MessageChecks sets how strictly message content from outside is
+	// checked (message_checks.go).
+	MessageChecks *MessageChecksConfig `toml:"message_checks" json:"message_checks,omitempty"`
 
 	// Queue processor options
 	QueueProcessorEnabled bool `toml:"queue_processor_enabled" json:"queue_processor_enabled"` // Whether queue processing is enabled

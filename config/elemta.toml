@@ -365,6 +365,14 @@ address = "elemta-clamav:3310"
 timeout = 30
 scan_limit = 26214400  # 25MB
 
+# How strictly message content from outside is checked at DATA. The
+# defaults accept what real mail looks like; each setting restores a
+# stricter check. See docs/configuration.md, "Message checks".
+# [message_checks]
+# strict_address_headers = false  # refuse From/To/Cc/Bcc/Reply-To that don't parse
+# max_header_length = 0           # refuse header fields longer than this once unfolded (0 = no limit)
+# reject_invalid_utf8 = false     # refuse 8-bit text that isn't UTF-8
+
 [antispam]
 enabled = true
 # Refuse only what Rspamd itself calls a reject.
