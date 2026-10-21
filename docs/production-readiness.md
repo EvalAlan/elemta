@@ -107,7 +107,7 @@ sustained about 130 messages per second of intake with no failures, and the
 file backend drained a queue at about 140/s on average (200/s peak). That is
 ample for transactional and departmental mail; it is not the
 tens-of-thousands/sec regime that dedicated outbound platforms target. The
-limit is inside Elemta, not the mailbox server (see `HANDOFF.md`). Measure on
+limit is inside Elemta, not the mailbox server. Measure on
 your own hardware, with scanning enabled.
 
 **Delivery and bounce handling.** Retry scheduling, deferral, and failure

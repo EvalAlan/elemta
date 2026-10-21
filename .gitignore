@@ -25,6 +25,15 @@ TODAYS_WORK.md
 *_TODO.md
 *_NOTES.md
 CURSOR_*.md
+# Notes agents leave for each other: instructions, handoffs and plans are
+# working files, not documentation.
+AGENTS.md
+GEMINI.md
+HANDOFF*.md
+*_HANDOFF.md
+.hermes/
+.aider*
+.github/copilot-instructions.md
 scripts/update_roadmap*.sh
 scripts/*_ai_*.sh
 *.txt

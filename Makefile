@@ -531,7 +531,7 @@ help:
 	@echo ""
 	@echo "💡 make gotchas   - The things that surprise people (config reload, discarded"
 	@echo "                    delivery, cert expiry, what [logging] ignores). Worth reading"
-	@echo "                    once; HANDOFF.md has the same traps in depth."
+	@echo "                    once."
 
 install-dev: check-tools ensure-dev-secrets docker-build ensure-dev-certs ensure-dev-env refresh-dev-env
 	@echo "🚀 Elemta Development Setup (Minimal)"
@@ -737,7 +737,8 @@ elk-dashboard:
 # worked on messages it was not trained on.
 #
 # Without this the dev Rspamd has no statistical filter and scores real ham
-# above real spam — see the trap in HANDOFF.md. HAM_DIR and SPAM_DIR must point
+# above real spam: with nothing learned, the score is mostly infrastructure
+# symbols that replayed corpus mail trips more than spam does. HAM_DIR and SPAM_DIR must point
 # at directories of plain message files; the untroubled corpus ships .7z
 # archives that need extracting first.
 HAM_DIR ?= /mnt/data/email-corpus/enron/extracted/maildir

@@ -1,7 +1,6 @@
 # Internal packages
 
-A map of `internal/`. Design reasoning and known traps are in
-[HANDOFF.md](../HANDOFF.md); each package's own doc comments carry the detail.
+A map of `internal/`. Each package's own doc comments carry the detail.
 
 | Package | What it does |
 |---|---|

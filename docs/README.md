@@ -1,9 +1,8 @@
 # Elemta Documentation
 
 Maintained docs for the current codebase. If behaviour and docs disagree,
-update the docs in the same PR as the code change. Design reasoning and known
-traps live in [HANDOFF.md](../HANDOFF.md); release-by-release changes in the
-[CHANGELOG](../CHANGELOG.md).
+update the docs in the same PR as the code change. Release-by-release changes
+are in the [CHANGELOG](../CHANGELOG.md).
 
 ## Start here
 
