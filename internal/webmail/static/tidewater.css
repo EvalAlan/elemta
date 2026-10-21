@@ -1096,3 +1096,4 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 .availability .fb-summary { margin: 2px 0 0; color: var(--muted); }
 .availability .fb-summary.conflict { color: var(--warn-fg); }
 .mailbox-switch{display:grid;gap:.35rem;margin-bottom:1rem}.mailbox-switch label{font-size:.8rem;color:var(--muted)}.mailbox-switch select{width:100%;min-width:0}
+.admin-access-banner{padding:.65rem 1rem;background:var(--warn-bg,#fff3cf);color:var(--warn-fg,#5b3900);font-weight:600;text-align:center;border-bottom:1px solid var(--line)}

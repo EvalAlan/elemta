@@ -77,6 +77,7 @@ func (d *mapDirectory) Alias(_ context.Context, address, alias string, add bool)
 const testDomainAdminPassword = "domain-admin-password-1"
 
 func TestDelegatedDomainAdministration(t *testing.T) {
+	t.Setenv("ELEMTA_WEBMAIL_PUBLIC_URL", "https://mail.example.com")
 	dir := t.TempDir()
 	hash := func(pw string) string {
 		h, err := auth.HashPassword(pw)
@@ -148,6 +149,7 @@ func TestDelegatedDomainAdministration(t *testing.T) {
 	}{
 		{"POST", "/accounts", map[string]any{"address": "new@other.example", "name": "New", "password": "private-initial-password"}},
 		{"GET", "/accounts/eve@other.example", nil},
+		{"POST", "/accounts/eve@other.example/access", nil},
 		{"PATCH", "/accounts/eve@other.example", map[string]any{"name": "Mallory"}},
 		{"DELETE", "/accounts/eve@other.example", map[string]any{"confirm": "eve@other.example"}},
 		{"POST", "/accounts/eve@other.example/password", map[string]any{"password": "new-private-password"}},
@@ -167,6 +169,19 @@ func TestDelegatedDomainAdministration(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, code, "%s %s: %s", c.method, c.path, body)
 	}
 	require.Equal(t, "Eve", directory.accounts["eve@other.example"].Name)
+	code, body = deleg("POST", "/api/provision/accounts/dana@example.com/access", nil)
+	require.Equal(t, http.StatusOK, code, body)
+	require.Contains(t, body, `"webmail_url":"https://mail.example.com"`)
+	require.Equal(t, []string{"dana@example.com"}, fake.access)
+	directory.mu.Lock()
+	directory.accounts["alias@example.com"] = &provision.Account{Address: "eve@other.example", Status: "active"}
+	directory.mu.Unlock()
+	code, body = deleg("POST", "/api/provision/accounts/alias@example.com/access", nil)
+	require.Equal(t, http.StatusBadRequest, code, body)
+	require.Equal(t, []string{"dana@example.com"}, fake.access)
+	directory.mu.Lock()
+	delete(directory.accounts, "alias@example.com")
+	directory.mu.Unlock()
 
 	code, body = deleg("POST", "/api/provision/accounts", map[string]any{"address": "lee@example.com", "name": "Lee", "password": "private-initial-password"})
 	require.Equal(t, http.StatusCreated, code, body)

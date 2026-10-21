@@ -113,9 +113,11 @@
       {{if isRole .Folder $.Folders "drafts"}}
       <a class="button primary-soft" href="{{composeURL "draft" .Folder .UID}}" data-key="r">Edit draft</a>
       {{else}}
+      {{if not $.Session.AdminActor}}
       <a class="button" href="{{composeURL "reply" .Folder .UID}}" data-key="r">Reply</a>
       <a class="button" href="{{composeURL "replyall" .Folder .UID}}" data-key="a">Reply all</a>
       <a class="button" href="{{composeURL "forward" .Folder .UID}}" data-key="f">Forward</a>
+      {{end}}
       {{end}}
       <form action="/mail/action" method="post" class="inline">
         <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">

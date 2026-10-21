@@ -203,6 +203,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/recovery", s.authed(s.recoverySubmit))
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.loginSubmit)
+	mux.HandleFunc("POST /login/admin", s.adminLoginSubmit)
 	mux.HandleFunc("GET /login/verify", s.twoFactorPage)
 	mux.HandleFunc("POST /login/verify", s.twoFactorSubmit)
 	mux.HandleFunc("GET /login/setup", s.forcedSetupPage)
@@ -311,6 +312,10 @@ func (s *Server) authed(next func(http.ResponseWriter, *http.Request, *Session))
 			http.Error(w, "Your session has ended. Sign in again.", http.StatusUnauthorized)
 			return
 		}
+		if sess.AdminActor != "" && !adminMailRoute(r.URL.Path) {
+			http.Error(w, "This administrator session opens mail only.", http.StatusForbidden)
+			return
+		}
 		if r.Method == http.MethodPost {
 			// Cap every request body: attachments plus room for the text
 			// fields and multipart overhead. Without the cap, a large upload
@@ -339,6 +344,11 @@ func (s *Server) authed(next func(http.ResponseWriter, *http.Request, *Session))
 		s.prefs(r.Context(), sess)
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, sess)), sess)
 	}
+}
+
+func adminMailRoute(path string) bool {
+	return path == "/mail" || (strings.HasPrefix(path, "/mail/") && path != "/mail/switch") || path == "/folders" ||
+		path == "/logout" || path == "/settings/theme" || path == "/api/counts" || path == "/api/events"
 }
 
 // view is the data every layout page receives.
@@ -648,6 +658,18 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 			s.renderLogin(w, r, http.StatusForbidden, user, "", "Webmail is turned off for this account. Ask your administrator if you need it.")
 			return
 		}
+		if check.Kind == "admin" {
+			if check.Administrator == "" || !check.Expires.After(s.now()) {
+				_ = store.Close()
+				s.renderLogin(w, r, http.StatusUnauthorized, user, "", "Administrator access has expired.")
+				return
+			}
+			s.limiter.reset(userKey)
+			if s.startSessionWithAccess(ctx, w, r, user, password, store, check.Administrator, check.Expires) {
+				http.Redirect(w, r, "/mail", http.StatusSeeOther)
+			}
+			return
+		}
 		if !check.TOTP && check.RequireTwoFactor {
 			// The class requires two-step verification and this account
 			// hasn't set it up: that happens now, before any session exists.
@@ -673,6 +695,62 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	s.finishLogin(ctx, w, r, user, password, store, "/mail")
 }
 
+// adminLoginSubmit accepts the short-lived token carried in a POST from the
+// dashboard. The token never enters a URL, browser history or referrer.
+func (s *Server) adminLoginSubmit(w http.ResponseWriter, r *http.Request) {
+	if s.security == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		http.Error(w, "Administrator access requires the mail dashboard.", http.StatusForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	user := strings.TrimSpace(r.PostFormValue("user"))
+	token := r.PostFormValue("token")
+	if user == "" || token == "" {
+		http.Error(w, "Missing administrator access token.", http.StatusBadRequest)
+		return
+	}
+	ip := s.clientIP(r)
+	userKey := "user:" + strings.ToLower(user)
+	if s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser) {
+		http.Error(w, "Too many sign-in attempts.", http.StatusTooManyRequests)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	store, err := s.dial(ctx, user, token)
+	if err != nil {
+		if errors.Is(err, ErrAuthFailed) {
+			s.limiter.fail(ip)
+			s.limiter.fail(userKey)
+			http.Error(w, "Administrator access was refused.", http.StatusUnauthorized)
+			return
+		}
+		s.log.Warn("webmail: administrator access could not reach mail server", "error", err)
+		http.Error(w, "Sign-in is temporarily unavailable.", http.StatusBadGateway)
+		return
+	}
+	check, err := s.security.check(ctx, user, token)
+	if err != nil || check.Kind != "admin" || check.Administrator == "" || !check.Expires.After(s.now()) {
+		_ = store.Close()
+		s.limiter.fail(userKey)
+		http.Error(w, "Administrator access was refused.", http.StatusUnauthorized)
+		return
+	}
+	if !check.allows(mailpolicy.Webmail) {
+		_ = store.Close()
+		http.Error(w, "Webmail is turned off for this account.", http.StatusForbidden)
+		return
+	}
+	s.limiter.reset(userKey)
+	if s.startSessionWithAccess(ctx, w, r, user, token, store, check.Administrator, check.Expires) {
+		http.Redirect(w, r, "/mail", http.StatusSeeOther)
+	}
+}
+
 // finishLogin turns a verified sign-in into a session.
 func (s *Server) finishLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password string, store Mailstore, next string) {
 	if s.startSession(ctx, w, r, user, password, store) {
@@ -683,13 +761,23 @@ func (s *Server) finishLogin(ctx context.Context, w http.ResponseWriter, r *http
 // startSession creates the session and its cookies, or writes an error and
 // reports false.
 func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password string, store Mailstore) bool {
+	return s.startSessionWithAccess(ctx, w, r, user, password, store, "", time.Time{})
+}
+
+func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password string, store Mailstore, actor string, expires time.Time) bool {
 	// Every account gets the standard folders, so Junk and Trash are there
 	// to move mail to from the first sign-in. A failure here only means
 	// they're created later, when first needed.
 	if err := store.EnsureFolders(ctx, defaultFolderRoles); err != nil {
 		s.log.Warn("webmail: create default folders", "user", user, "error", err)
 	}
-	sess, err := s.sessions.Create(user, s.cfg.address(user), password, store)
+	var sess *Session
+	var err error
+	if actor != "" {
+		sess, err = s.sessions.CreateAdmin(user, s.cfg.address(user), password, store, actor, expires)
+	} else {
+		sess, err = s.sessions.Create(user, s.cfg.address(user), password, store)
+	}
 	if err != nil {
 		_ = store.Close()
 		http.Error(w, "Something went wrong.", http.StatusInternalServerError)
@@ -701,7 +789,9 @@ func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *htt
 	s.log.Info("webmail: login", "user", user, "ip", s.clientIP(r))
 	// Catch calendar changes made elsewhere (another mail app over IMAP,
 	// or before free/busy existed).
-	s.publishFreeBusy(user, password, sess.Address)
+	if actor == "" {
+		s.publishFreeBusy(user, password, sess.Address)
+	}
 	return true
 }
 

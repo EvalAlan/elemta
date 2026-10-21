@@ -198,6 +198,9 @@ func inviteText(e Event, when string) string {
 
 // submitDraft builds and sends a message as the session's user.
 func (s *Server) submitDraft(ctx context.Context, sess *Session, d *Draft) error {
+	if sess.AdminActor != "" {
+		return errors.New("sending is unavailable during administrator access")
+	}
 	raw, err := d.Build(s.now())
 	if err != nil {
 		return err

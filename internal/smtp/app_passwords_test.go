@@ -24,7 +24,7 @@ func appPasswordAuthenticator(t *testing.T, required *atomic.Bool, apiUp *atomic
 			return
 		}
 		user, pw, _ := r.BasicAuth()
-		kind := map[string]string{"account-pw": "password", "app-pw": "app"}[pw]
+		kind := map[string]string{"account-pw": "password", "app-pw": "app", "admin-token": "admin"}[pw]
 		if r.URL.Path != "/v1/security/check" || user != "dana@example.com" || kind == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -69,6 +69,8 @@ func TestSubmissionAppPasswords(t *testing.T) {
 	assert.True(t, login("account-pw", phone), "account password before the requirement")
 	assert.True(t, login("app-pw", phone), "app password, which the directory doesn't know")
 	assert.False(t, login("wrong", phone), "wrong password")
+	assert.False(t, login("admin-token", phone), "administrator mailbox token cannot submit")
+	assert.False(t, login("admin-token", webmail), "administrator mailbox token cannot submit from webmail")
 
 	required.Store(true)
 	assert.False(t, login("account-pw", phone), "account password once app passwords are required")

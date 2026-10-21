@@ -3,6 +3,7 @@ package webmail
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -326,6 +327,66 @@ func TestUnauthenticatedRedirectsToLogin(t *testing.T) {
 	resp, _ = h.get("/mail/raw?f=INBOX&uid=7")
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("raw without session = %d", resp.StatusCode)
+	}
+}
+
+func TestAdministratorSessionBannerAndRouteRestrictions(t *testing.T) {
+	h := newHarness(t)
+	sess, err := h.server.sessions.CreateAdmin("dana@example.com", "dana@example.com", "token", h.store, "operator", time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(method, path string, want int) string {
+		t.Helper()
+		req := httptest.NewRequest(method, path, nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: sess.ID})
+		w := httptest.NewRecorder()
+		h.server.Handler().ServeHTTP(w, req)
+		if w.Code != want {
+			t.Fatalf("%s %s = %d, want %d", method, path, w.Code, want)
+		}
+		return w.Body.String()
+	}
+	mail := check(http.MethodGet, "/mail", http.StatusOK)
+	if !strings.Contains(mail, "Administrator operator is viewing dana@example.com") || strings.Contains(mail, "href=\"/compose\"") {
+		t.Fatal("administrator mail page did not identify the session or hid sending incorrectly")
+	}
+	check(http.MethodGet, "/compose", http.StatusForbidden)
+	check(http.MethodPost, "/compose", http.StatusForbidden)
+	check(http.MethodPost, "/mail/switch", http.StatusForbidden)
+	check(http.MethodGet, "/calendar", http.StatusForbidden)
+}
+
+func TestAdministratorTokenPostSignsInWithoutSending(t *testing.T) {
+	h := newHarness(t)
+	expires := time.Now().Add(time.Hour)
+	security := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, token, _ := r.BasicAuth()
+		if r.URL.Path != "/v1/security/check" || user != "dana@example.com" || token != "access-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"kind": "admin", "administrator": "operator", "expires": expires})
+	}))
+	t.Cleanup(security.Close)
+	h.server.security = newSecurityClient(security.URL)
+	h.server.dial = func(_ context.Context, user, token string) (Mailstore, error) {
+		if user != "dana@example.com" || token != "access-token" {
+			return nil, ErrAuthFailed
+		}
+		return h.store, nil
+	}
+	resp := h.post("/login/admin", url.Values{"user": {"dana@example.com"}, "token": {"access-token"}})
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/mail" {
+		t.Fatalf("administrator sign-in status %d, location %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp, body := h.get("/mail")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "Administrator operator is viewing dana@example.com") {
+		t.Fatalf("administrator mail page status %d", resp.StatusCode)
+	}
+	resp, _ = h.get("/compose")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("administrator compose status %d", resp.StatusCode)
 	}
 }
 

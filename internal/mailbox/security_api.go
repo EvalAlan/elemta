@@ -18,12 +18,17 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type securityAuth struct {
 	account Account
 	app     bool
+	// admin is an administrator access token (admin_access.go), with the
+	// administrator's name. Only the check accepts one.
+	admin   string
+	expires time.Time
 }
 
 func (s *Service) securityAPI(mux *http.ServeMux) {
@@ -48,6 +53,9 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			defer cancel()
 			auth, err := s.securityLogin(ctx, user, password)
 			if err == nil && auth.app && !allowApp {
+				err = ErrCredentials
+			}
+			if err == nil && auth.admin != "" && pattern != "POST /v1/security/check" {
 				err = ErrCredentials
 			}
 			if err != nil {
@@ -81,11 +89,20 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		if a.app {
 			kind = "app"
 		}
+		if a.admin != "" {
+			// Neither the MTA nor DAV accepts this kind; the webmail shows
+			// whose session it is.
+			kind = "admin"
+		}
 		// The class of service's switches travel with the answer: the
 		// webmail applies webmail, DAV and two-step verification, and the
 		// MTA submission. A class that requires app passwords counts as the
 		// user having chosen it.
 		out := map[string]any{"kind": kind, "totp": st.TOTP, "app_required": st.AppRequired, "account_id": a.account.ID}
+		if a.admin != "" {
+			out["administrator"] = a.admin
+			out["expires"] = a.expires
+		}
 		if p := a.account.Policy; p != nil {
 			out["app_required"] = st.AppRequired || p.RequireAppPasswords
 			out["protocols"] = p.Protocols
@@ -275,6 +292,10 @@ func (s *Service) internalClient(r *http.Request) bool {
 // securityLogin authenticates an API request with the shared failure limit:
 // an app password first (one indexed lookup), then the account password.
 func (s *Service) securityLogin(ctx context.Context, user, password string) (securityAuth, error) {
+	if strings.HasPrefix(password, adminTokenPrefix) {
+		a, actor, expires, err := s.adminLogin(ctx, user, password)
+		return securityAuth{account: a, admin: actor, expires: expires}, err
+	}
 	a, app, err := s.authenticate(ctx, user, password)
 	return securityAuth{account: a, app: app}, err
 }

@@ -42,6 +42,10 @@ type composeView struct {
 }
 
 func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Session) {
+	if sess.AdminActor != "" {
+		http.Error(w, "Sending is unavailable during administrator access.", http.StatusForbidden)
+		return
+	}
 	q := r.URL.Query()
 	prefs := s.prefs(r.Context(), sess)
 	fromAddress := s.sendAddress(r.Context(), sess)
@@ -277,6 +281,10 @@ func parseList(field string) ([]Address, error) {
 }
 
 func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
+	if sess.AdminActor != "" {
+		http.Error(w, "Sending is unavailable during administrator access.", http.StatusForbidden)
+		return
+	}
 	prefs := s.prefs(r.Context(), sess)
 	fromAddress := s.sendAddress(r.Context(), sess)
 	cv := &composeView{

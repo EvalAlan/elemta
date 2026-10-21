@@ -47,7 +47,7 @@ type mailboxSecurity struct {
 }
 
 type securityCheckResult struct {
-	Kind        string `json:"kind"` // "password" or "app"
+	Kind        string `json:"kind"` // "password", "app", or "admin"
 	AppRequired bool   `json:"app_required"`
 	// Protocols is the class of service's protocol switches; a missing
 	// entry, or a mailbox service that predates them, allows.
@@ -147,6 +147,9 @@ func (a *SMTPAuthenticator) AuthenticateFrom(ctx context.Context, username, pass
 	case err != nil:
 		a.logger.Warn("mailbox security check unavailable; refusing login", "username", username, "error", err)
 		return false, err
+	}
+	if check.Kind == "admin" {
+		return false, nil
 	}
 	if allowed, set := check.Protocols[mailpolicy.Submission]; set && !allowed {
 		a.logger.Info("SMTP submission refused by class of service", "username", username, "client", client.String())

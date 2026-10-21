@@ -57,10 +57,12 @@ func newSecurityClient(base string) *securityClient {
 }
 
 type securityCheck struct {
-	AccountID   string `json:"account_id"`
-	Kind        string `json:"kind"` // "password" or "app"
-	TOTP        bool   `json:"totp"`
-	AppRequired bool   `json:"app_required"`
+	AccountID     string    `json:"account_id"`
+	Kind          string    `json:"kind"` // "password", "app", or "admin"
+	Administrator string    `json:"administrator"`
+	Expires       time.Time `json:"expires"`
+	TOTP          bool      `json:"totp"`
+	AppRequired   bool      `json:"app_required"`
 	// The account's class of service (internal/mailpolicy): its protocol
 	// switches, which the webmail applies to itself and to DAV, and
 	// whether two-step verification is required.

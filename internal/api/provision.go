@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +37,43 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		writeJSON(w, map[string]any{"available": true, "min_password_length": max(10, s.provisioner.MinPasswordLength), "mailbox_admin": s.provisioner.Mailbox != nil, "scope": scopeOf(r).view()})
 	}).Methods("GET")
 	s.provisionPolicyRoutes(protected)
+	protected.HandleFunc("/accounts/{address}/access", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+		address, err := provision.Address(mux.Vars(r)["address"])
+		if err != nil {
+			return err
+		}
+		if err := scopeOf(r).checkAddress(address); err != nil {
+			return err
+		}
+		account, err := s.provisioner.Get(ctx, address)
+		if err != nil {
+			return err
+		}
+		// Require the primary address: an alias in an assigned domain may
+		// point at an account in another domain.
+		if account.Address != address || account.Status != "active" {
+			return provision.ErrInvalid
+		}
+		if err := scopeOf(r).checkAddress(account.Address); err != nil {
+			return err
+		}
+		publicURL := strings.TrimRight(os.Getenv("ELEMTA_WEBMAIL_PUBLIC_URL"), "/")
+		u, err := url.Parse(publicURL)
+		if err != nil || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))) || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
+			return mailpolicy.ErrUnavailable
+		}
+		c, err := s.provisioner.MailboxAdmin()
+		if err != nil {
+			return err
+		}
+		ac := GetAuthContext(r)
+		access, err := c.AdminAccess(ctx, address, ac.Username, s.loginAddr(r))
+		if err != nil {
+			return err
+		}
+		writeJSON(w, map[string]any{"address": access.Address, "token": access.Token, "expires": access.Expires, "webmail_url": publicURL})
+		return nil
+	})).Methods("POST")
 	protected.HandleFunc("/audit", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		c, err := s.provisioner.MailboxAdmin()
 		if err != nil {

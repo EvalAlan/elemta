@@ -104,6 +104,11 @@ var ErrProtocolDisabled = errors.New("this account may not use this protocol")
 // (security.go).
 func (s *Service) login(ctx context.Context, user, password string, public bool, protocol string) (Account, error) {
 	if strings.Contains(user, "|") {
+		// An administrator access token opens the one mailbox it names,
+		// not the shared mailboxes its owner may open.
+		if strings.HasPrefix(password, adminTokenPrefix) {
+			return Account{}, ErrCredentials
+		}
 		actorName, mailboxName, ok := strings.Cut(user, "|")
 		actorName, mailboxName = strings.ToLower(strings.TrimSpace(actorName)), strings.ToLower(strings.TrimSpace(mailboxName))
 		if !ok || actorName == "" || mailboxName == "" || strings.Contains(mailboxName, "|") || !strings.Contains(mailboxName, "@") || protocol == mailpolicy.POP3 {
@@ -141,6 +146,15 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 			return Account{}, err
 		}
 		return mailbox, nil
+	}
+	// An administrator access token, on the webmail's internal listener only
+	// (admin_access.go). Elsewhere it is just a wrong password.
+	if strings.HasPrefix(password, adminTokenPrefix) {
+		if public || protocol != "" {
+			return Account{}, ErrCredentials
+		}
+		a, _, _, err := s.adminLogin(ctx, user, password)
+		return a, err
 	}
 	a, app, err := s.authenticate(ctx, user, password)
 	if err != nil {

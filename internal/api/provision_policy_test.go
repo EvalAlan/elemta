@@ -24,6 +24,7 @@ type fakeMailboxAdmin struct {
 	held    map[string]bool
 	audit   []mailpolicy.AuditEntry
 	queries []string // audit queries received
+	access  []string
 }
 
 func (f *fakeMailboxAdmin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -40,6 +41,10 @@ func (f *fakeMailboxAdmin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = enc.Encode(map[string]string{"error": msg})
 	}
 	switch {
+	case strings.HasPrefix(p, "accounts/") && strings.HasSuffix(p, "/access"):
+		address := strings.TrimSuffix(strings.TrimPrefix(p, "accounts/"), "/access")
+		f.access = append(f.access, address)
+		_ = enc.Encode(map[string]string{"address": address, "token": "test-token", "expires": "2026-10-20T11:00:00Z"})
 	case p == "classes":
 		out := []mailpolicy.Class{}
 		for _, c := range f.classes {

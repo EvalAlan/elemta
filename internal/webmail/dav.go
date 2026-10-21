@@ -290,6 +290,13 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 			http.Error(w, "Calendar and contact sync is turned off for this account.", http.StatusForbidden)
 			return nil, false
 		}
+		if check.Kind == "admin" {
+			if st != nil {
+				_ = st.Close()
+			}
+			challenge()
+			return nil, false
+		}
 		if check.Kind == "password" && check.AppRequired {
 			if st != nil {
 				_ = st.Close()

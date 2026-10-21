@@ -173,6 +173,36 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 	handle("DELETE /v1/admin/lists/{address}", func(r *http.Request) (any, error) {
 		return map[string]bool{"ok": true}, s.engine.DeleteList(r.Context(), r.PathValue("address"))
 	})
+	handle("POST /v1/admin/accounts/{address}/access", func(r *http.Request) (any, error) {
+		var in struct {
+			Actor  string `json:"actor"`
+			Client string `json:"client"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(in.Actor) == "" {
+			return nil, errors.Join(mailpolicy.ErrInvalid, errors.New("name the administrator"))
+		}
+		// Only an account that can sign in now: a disabled or deleted one
+		// has no mailbox session to open.
+		a, err := s.auth.Resolve(r.Context(), r.PathValue("address"))
+		if errors.Is(err, ErrCredentials) {
+			return nil, ErrNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := s.engine.EnsureAccount(r.Context(), a); err != nil {
+			return nil, err
+		}
+		token, expires, err := s.engine.CreateAdminAccess(r.Context(), a, in.Actor, in.Client)
+		if err != nil {
+			return nil, err
+		}
+		s.log.Info("mailbox: administrator access issued", "account", a.Address, "administrator", in.Actor, "expires", expires)
+		return map[string]any{"address": a.Address, "token": token, "expires": expires}, nil
+	})
 	handle("POST /v1/admin/audit", func(r *http.Request) (any, error) {
 		var a mailpolicy.AuditEntry
 		if err := decode(r, &a); err != nil {

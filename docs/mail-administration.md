@@ -7,6 +7,28 @@ and alias tables, and account details for names, status, quotas, aliases and
 password resets. Dashboard administrators are separate from mailbox users;
 `elemta user` continues to manage dashboard logins.
 
+## Open mailbox
+
+An administrator can select an active account in **Mail Administration** and
+choose **Open mailbox**. A new webmail tab opens with a banner naming the
+administrator, the account, and the access end time. Domain administrators can
+open only accounts in their assigned domains. Each issue is recorded in the
+mailbox audit log as `mailbox-open` with the administrator, client address,
+target account, and expiry.
+
+The credential is limited to that one account and expires after one hour;
+the webmail session ends at the same time, even if it remains active. It works
+only on webmail's internal IMAP connection. Public IMAP, POP3, SMTP submission,
+DAV, and shared mailboxes refuse it. Webmail hides sending actions and refuses
+compose and other sending routes for this session. It does not notify the
+account owner. The administrator can manage mail in the opened account.
+
+Set `ELEMTA_WEBMAIL_PUBLIC_URL` on the dashboard service to the public webmail
+origin (for example, `https://mail.example.com`). The production Compose
+overlay derives it from `MAIL_DOMAIN`; the local Compose default is
+`http://localhost:8027`. The dashboard sends the short-lived credential to
+webmail in a form POST so it does not appear in a URL or browser history.
+
 ## Commands
 
 Use the running service's configuration, including its shared runtime volume:

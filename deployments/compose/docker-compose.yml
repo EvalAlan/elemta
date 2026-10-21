@@ -187,6 +187,7 @@ services:
       - ELEMTA_DEMO_DATA=${ELEMTA_DEMO_DATA:-true}
       - ELEMTA_DEV_CERT_DAYS=${ELEMTA_DEV_CERT_DAYS:-7}
       - NODE_ID=web
+      - ELEMTA_WEBMAIL_PUBLIC_URL=${ELEMTA_WEBMAIL_PUBLIC_URL:-http://localhost:8027}
       - VALKEY_ADDR=elemta-valkey:6379
     # Security configuration for the container
     security_opt:

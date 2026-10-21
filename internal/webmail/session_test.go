@@ -63,6 +63,47 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestAdministratorSessionEndsAtTokenExpiry(t *testing.T) {
+	m, err := NewSessionManager(24 * time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return now }
+	expires := now.Add(time.Hour)
+	s, err := m.CreateAdmin("dana@example.com", "dana@example.com", "token", nil, "admin", expires)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.AdminActor != "admin" || !s.AdminExpires.Equal(expires) {
+		t.Fatalf("administrator session lost its scope: %+v", s)
+	}
+	now = expires.Add(-time.Second)
+	if _, ok := m.Get(s.ID); !ok {
+		t.Fatal("administrator session ended before the token")
+	}
+	now = expires
+	if _, ok := m.Get(s.ID); ok {
+		t.Fatal("administrator session survived token expiry")
+	}
+	if _, err := m.CreateAdmin("dana@example.com", "dana@example.com", "token", nil, "admin", expires); err == nil {
+		t.Fatal("expired token created a session")
+	}
+}
+
+func TestAdministratorMailRouteScope(t *testing.T) {
+	for _, path := range []string{"/mail", "/mail/body", "/mail/action", "/folders", "/api/counts", "/logout"} {
+		if !adminMailRoute(path) {
+			t.Errorf("administrator mail route %s refused", path)
+		}
+	}
+	for _, path := range []string{"/mail/switch", "/compose", "/calendar", "/settings", "/contacts", "/api/addresses"} {
+		if adminMailRoute(path) {
+			t.Errorf("administrator non-mail route %s allowed", path)
+		}
+	}
+}
+
 func TestSealedPasswordIsBoundToSession(t *testing.T) {
 	m, _ := NewSessionManager(time.Hour)
 	a, _ := m.Create("a", "a@example.com", "pw-a", nil)

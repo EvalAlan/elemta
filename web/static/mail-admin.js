@@ -236,6 +236,7 @@
         el('ma-initial-password').hidden = editing; el('ma-initial-label').hidden = editing;
         el('ma-account-status').hidden = !editing; el('ma-status-label').hidden = !editing;
         el('ma-delete').hidden = !editing; el('ma-account-extras').hidden = !editing;
+        el('ma-open-mailbox').hidden = !editing || !mailboxAdmin || account.status !== 'active';
         el('ma-password').value = ''; el('ma-confirm-password').value = ''; el('ma-alias').value = '';
         el('ma-dialog-message').hidden = true;
         el('ma-account-policy').hidden = !editing || !mailboxAdmin;
@@ -283,6 +284,27 @@
     el('ma-close').addEventListener('click', () => { if (!busy) el('ma-account-dialog').close(); });
     ['ma-account-dialog', 'ma-list-dialog', 'ma-class-dialog'].forEach(id => el(id).addEventListener('cancel', event => { if (busy) event.preventDefault(); }));
     el('ma-refresh').addEventListener('click', window.refreshMailAdmin);
+    el('ma-open-mailbox').addEventListener('click', () => {
+        if (busy || !selected) return;
+        const account = selected.address;
+        const tab = window.open('about:blank', '_blank');
+        if (!tab) { message('Allow pop-ups for this dashboard to open a mailbox.', true); return; }
+        tab.opener = null;
+        tab.name = 'elemta-mailbox-' + Math.random().toString(36).slice(2);
+        perform(async () => {
+            try {
+                const access = await request('/accounts/' + encodeURIComponent(account) + '/access', 'POST');
+                const form = document.createElement('form');
+                form.method = 'POST'; form.action = access.webmail_url + '/login/admin'; form.target = tab.name;
+                for (const [name, value] of Object.entries({ user: access.address, token: access.token })) {
+                    const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = value; form.appendChild(input);
+                }
+                document.body.appendChild(form);
+                try { form.submit(); } finally { form.remove(); }
+                message('Opened ' + account + ' in webmail. Access expires in one hour.');
+            } catch (error) { tab.close(); throw error; }
+        });
+    });
     ['ma-search', 'ma-status'].forEach(id => el(id).addEventListener('input', () => { limit = 250; renderTable(); }));
     el('ma-more').addEventListener('click', () => { if (tab === 'audit') { perform(() => loadAudit(false)); return; } limit += 250; renderTable(); });
     root.querySelectorAll('[data-ma-tab]').forEach(b => b.addEventListener('click', () => {

@@ -33,6 +33,8 @@ type Session struct {
 	User          string // login name as typed, used for IMAP and submission AUTH
 	Address       string // mailbox address the user sends as
 	Mailbox       string // another mailbox selected by this user, or empty for their own
+	AdminActor    string // administrator opening this one mailbox; empty for a normal sign-in
+	AdminExpires  time.Time
 	sealed        []byte
 	nonce         []byte
 	created       time.Time
@@ -72,16 +74,18 @@ type SessionStore interface {
 // SessionRecord is a session as stored: everything but the live IMAP
 // connection, with the password still sealed.
 type SessionRecord struct {
-	ID        string    `json:"id"`
-	CSRF      string    `json:"csrf"`
-	User      string    `json:"user"`
-	Address   string    `json:"address"`
-	Mailbox   string    `json:"mailbox,omitempty"`
-	Sealed    []byte    `json:"sealed"`
-	Nonce     []byte    `json:"nonce"`
-	Created   time.Time `json:"created"`
-	LastSeen  time.Time `json:"last_seen"`
-	SeenNanos string    `json:"seen_ns,omitempty"`
+	ID           string    `json:"id"`
+	CSRF         string    `json:"csrf"`
+	User         string    `json:"user"`
+	Address      string    `json:"address"`
+	Mailbox      string    `json:"mailbox,omitempty"`
+	AdminActor   string    `json:"admin_actor,omitempty"`
+	AdminExpires time.Time `json:"admin_expires,omitempty"`
+	Sealed       []byte    `json:"sealed"`
+	Nonce        []byte    `json:"nonce"`
+	Created      time.Time `json:"created"`
+	LastSeen     time.Time `json:"last_seen"`
+	SeenNanos    string    `json:"seen_ns,omitempty"`
 }
 
 // touchEvery is how often a request refreshes a shared session's expiry;
@@ -117,11 +121,11 @@ func NewSharedSessionManager(ttl time.Duration, key []byte, store SessionStore) 
 }
 
 func (s *Session) record() *SessionRecord {
-	return &SessionRecord{ID: s.ID, CSRF: s.CSRF, User: s.User, Address: s.Address, Mailbox: s.Mailbox, Sealed: s.sealed, Nonce: s.nonce, Created: s.created, LastSeen: s.lastSeen, SeenNanos: strconv.FormatInt(s.lastSeen.UnixNano(), 10)}
+	return &SessionRecord{ID: s.ID, CSRF: s.CSRF, User: s.User, Address: s.Address, Mailbox: s.Mailbox, AdminActor: s.AdminActor, AdminExpires: s.AdminExpires, Sealed: s.sealed, Nonce: s.nonce, Created: s.created, LastSeen: s.lastSeen, SeenNanos: strconv.FormatInt(s.lastSeen.UnixNano(), 10)}
 }
 
 func sessionFromRecord(r *SessionRecord) *Session {
-	return &Session{ID: r.ID, CSRF: r.CSRF, User: r.User, Address: r.Address, Mailbox: r.Mailbox, sealed: r.Sealed, nonce: r.Nonce, created: r.Created, lastSeen: r.LastSeen, lastPersisted: r.LastSeen}
+	return &Session{ID: r.ID, CSRF: r.CSRF, User: r.User, Address: r.Address, Mailbox: r.Mailbox, AdminActor: r.AdminActor, AdminExpires: r.AdminExpires, sealed: r.Sealed, nonce: r.Nonce, created: r.Created, lastSeen: r.LastSeen, lastPersisted: r.LastSeen}
 }
 
 // randomToken returns n random bytes, URL-safe base64 encoded.
@@ -136,6 +140,18 @@ func randomToken(n int) (string, error) {
 // Create starts a session for a user whose password has already been
 // checked against the mail store.
 func (m *SessionManager) Create(user, address, password string, store Mailstore) (*Session, error) {
+	return m.create(user, address, password, store, "", time.Time{})
+}
+
+// CreateAdmin ends when the access token expires, even if the browser stays active.
+func (m *SessionManager) CreateAdmin(user, address, password string, store Mailstore, actor string, expires time.Time) (*Session, error) {
+	if actor == "" || !expires.After(m.now()) {
+		return nil, errors.New("webmail: administrator access has expired")
+	}
+	return m.create(user, address, password, store, actor, expires)
+}
+
+func (m *SessionManager) create(user, address, password string, store Mailstore, actor string, expires time.Time) (*Session, error) {
 	id, err := randomToken(32)
 	if err != nil {
 		return nil, fmt.Errorf("webmail: session id: %w", err)
@@ -149,8 +165,11 @@ func (m *SessionManager) Create(user, address, password string, store Mailstore)
 		return nil, fmt.Errorf("webmail: session nonce: %w", err)
 	}
 	now := m.now()
+	if actor != "" && !now.Before(expires) {
+		return nil, errors.New("webmail: administrator access has expired")
+	}
 	s := &Session{
-		ID: id, CSRF: csrf, User: user, Address: address,
+		ID: id, CSRF: csrf, User: user, Address: address, AdminActor: actor, AdminExpires: expires,
 		// The session ID is the additional data, so a sealed password
 		// copied into another session won't open.
 		sealed: m.aead.Seal(nil, nonce, []byte(password), []byte(id)),
@@ -159,7 +178,7 @@ func (m *SessionManager) Create(user, address, password string, store Mailstore)
 	if m.shared != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := m.shared.Save(ctx, s.record(), m.ttl); err != nil {
+		if err := m.shared.Save(ctx, s.record(), m.recordTTL(s, now)); err != nil {
 			return nil, fmt.Errorf("webmail: save session: %w", err)
 		}
 	}
@@ -167,6 +186,13 @@ func (m *SessionManager) Create(user, address, password string, store Mailstore)
 	m.sessions[id] = s
 	m.mu.Unlock()
 	return s, nil
+}
+
+func (m *SessionManager) recordTTL(s *Session, now time.Time) time.Duration {
+	if s.AdminActor != "" {
+		return min(m.ttl, s.AdminExpires.Sub(now))
+	}
+	return m.ttl
 }
 
 // Get returns the live session with id and extends its idle timer. With a
@@ -217,10 +243,10 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 	}
 	now := m.now()
 	m.mu.Lock()
-	expired := now.Sub(s.lastSeen) > m.ttl
+	expired := now.Sub(s.lastSeen) > m.ttl || s.AdminActor != "" && !now.Before(s.AdminExpires)
 	if sharedRec != nil && sharedRec.LastSeen.After(s.lastSeen) {
 		s.lastSeen = sharedRec.LastSeen
-		expired = now.Sub(s.lastSeen) > m.ttl
+		expired = now.Sub(s.lastSeen) > m.ttl || s.AdminActor != "" && !now.Before(s.AdminExpires)
 	}
 	if sharedRec != nil && sharedRec.LastSeen.After(s.lastPersisted) {
 		s.lastPersisted = sharedRec.LastSeen
@@ -249,7 +275,7 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 		m.mu.Lock()
 		rec := s.record()
 		m.mu.Unlock()
-		err := m.shared.Save(ctx, rec, m.ttl)
+		err := m.shared.Save(ctx, rec, m.recordTTL(s, now))
 		cancel()
 		if err != nil {
 			return nil, false
@@ -285,7 +311,7 @@ func (m *SessionManager) Sweep() int {
 	var expired []*Session
 	m.mu.Lock()
 	for id, s := range m.sessions {
-		if now.Sub(s.lastSeen) > m.ttl {
+		if now.Sub(s.lastSeen) > m.ttl || s.AdminActor != "" && !now.Before(s.AdminExpires) {
 			expired = append(expired, s)
 			delete(m.sessions, id)
 		}

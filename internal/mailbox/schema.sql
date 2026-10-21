@@ -198,3 +198,14 @@ CREATE TABLE IF NOT EXISTS mailbox_freebusy (
     updated timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS mailbox_freebusy_address ON mailbox_freebusy(address);
+
+-- Short-lived tokens that let an administrator open an account's mailbox in
+-- the webmail without its password (admin_access.go). Only the hash is kept.
+CREATE TABLE IF NOT EXISTS mailbox_admin_access (
+    token_hash text PRIMARY KEY,
+    account text NOT NULL,
+    actor text NOT NULL,
+    created timestamptz NOT NULL DEFAULT now(),
+    expires timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mailbox_admin_access_expires ON mailbox_admin_access(expires);

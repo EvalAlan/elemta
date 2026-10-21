@@ -55,6 +55,7 @@ services:
     environment:
       - ELEMTA_DEV_CERT=false
       - ELEMTA_DEMO_DATA=false
+      - ELEMTA_WEBMAIL_PUBLIC_URL=https://${MAIL_DOMAIN:?MAIL_DOMAIN must be set}
     volumes:
       - ./.secrets/cloud/config:/app/config:ro
       - ./.secrets/mailbox-tls:/app/tls:ro

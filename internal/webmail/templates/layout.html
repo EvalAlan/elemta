@@ -14,9 +14,11 @@
   <a class="brand" href="/mail">{{template "logo"}}<span>Elemta</span></a>
   <nav class="apps" aria-label="Apps">
     <a href="/mail" title="Mail"{{if eq .App "mail"}} aria-current="page"{{end}}>{{template "icon-mail"}}<span>Mail</span></a>
+    {{if not .Session.AdminActor}}
     <a href="/calendar" title="Calendar"{{if eq .App "calendar"}} aria-current="page"{{end}}>{{template "icon-calendar"}}<span>Calendar</span></a>
     <a href="/contacts" title="Contacts"{{if eq .App "contacts"}} aria-current="page"{{end}}>{{template "icon-contact"}}<span>Contacts</span></a>
     <a href="/tasks" title="Tasks"{{if eq .App "tasks"}} aria-current="page"{{end}}>{{template "icon-tasks"}}<span>Tasks</span></a>
+    {{end}}
   </nav>
   {{block "search" .}}
   <form class="search" role="search" action="/mail" method="get">
@@ -37,7 +39,7 @@
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
       <button class="icon-link theme-toggle" type="submit" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}" title="Switch between light and dark" data-theme-toggle>{{template "icon-moon"}}{{template "icon-sun"}}<span class="visually-hidden">Switch between light and dark</span></button>
     </form>
-    <a class="icon-link" href="/settings" title="Settings"{{if eq .App "settings"}} aria-current="page"{{end}}>{{template "icon-gear"}}<span class="visually-hidden">Settings</span></a>
+    {{if not .Session.AdminActor}}<a class="icon-link" href="/settings" title="Settings"{{if eq .App "settings"}} aria-current="page"{{end}}>{{template "icon-gear"}}<span class="visually-hidden">Settings</span></a>{{end}}
     <span class="avatar" title="{{.Session.Address}}">{{initials (addrOf .Session.Address)}}</span>
     <form action="/logout" method="post">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
@@ -45,10 +47,11 @@
     </form>
   </div>
 </header>
+{{if .Session.AdminActor}}<div class="admin-access-banner" role="status">Administrator {{.Session.AdminActor}} is viewing {{.Session.Address}}. Sending is disabled. Access ends at {{.Session.AdminExpires.Format "15:04 MST"}}.</div>{{end}}
 <div class="shell">
   <aside class="sidebar" aria-label="{{if eq .App "mail"}}Folders{{else}}Navigation{{end}}">
   {{block "sidebar" .}}
-    {{if or .SharedMailboxes .ActiveMailbox}}
+    {{if and (not .Session.AdminActor) (or .SharedMailboxes .ActiveMailbox)}}
     <form action="/mail/switch" method="post" class="mailbox-switch">
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
       <label for="mailbox-select">Mailbox</label>
@@ -59,7 +62,7 @@
       <button type="submit" class="small">Open</button>
     </form>
     {{end}}
-    <a class="button primary block" href="/compose">{{template "icon-plus"}}New message</a>
+    {{if not .Session.AdminActor}}<a class="button primary block" href="/compose">{{template "icon-plus"}}New message</a>{{end}}
     <nav aria-label="Folders">
       <ul class="folders">
       {{range .Folders}}
@@ -88,11 +91,11 @@
   <div class="dialog" role="dialog" aria-labelledby="shortcuts-title">
     <h2 id="shortcuts-title">Keyboard shortcuts</h2>
     <dl class="keys">
-      <dt>c</dt><dd>New message</dd>
+      {{if not .Session.AdminActor}}<dt>c</dt><dd>New message</dd>{{end}}
       <dt>j / k</dt><dd>Next / previous message</dd>
       <dt>Enter</dt><dd>Open the selected message</dd>
       <dt>u</dt><dd>Back to the list</dd>
-      <dt>r / a / f</dt><dd>Reply / reply all / forward</dd>
+      {{if not .Session.AdminActor}}<dt>r / a / f</dt><dd>Reply / reply all / forward</dd>{{end}}
       <dt>s</dt><dd>Flag or unflag</dd>
       <dt>e</dt><dd>Archive</dd>
       <dt>#</dt><dd>Delete</dd>
