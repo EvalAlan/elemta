@@ -411,6 +411,10 @@ services:
       - path: .secrets/mailbox-postgres.env
         required: true
     volumes: [mailbox_metadata:/var/lib/postgresql/data]
+    # pg_stat_statements records which queries cost the time, the first
+    # thing to look at when the database is the bottleneck (it was, under
+    # the load tests). Its overhead is negligible.
+    command: [postgres, -c, shared_preload_libraries=pg_stat_statements, -c, pg_stat_statements.track=top, -c, track_io_timing=on]
     networks: [elemta_network]
     healthcheck:
       test: [CMD-SHELL, pg_isready -U mailbox -d mailbox]
