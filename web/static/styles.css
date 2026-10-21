@@ -2695,6 +2695,23 @@ input:checked + .plugin-slider:before {
     margin-bottom: 1.25rem;
 }
 
+/* The editor's cards stack with the same gap as cards elsewhere; without it
+   they sat edge to edge. An empty notice takes no slot, or it would double
+   the gap under the heading. */
+.editor-screen {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.editor-screen > .editor-head {
+    margin-bottom: 0;
+}
+
+.editor-screen > :empty {
+    display: none;
+}
+
 .editor-head h2 {
     font-size: 1.25rem;
     font-weight: 600;

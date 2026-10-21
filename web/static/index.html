@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261020-reports2">
+    <link rel="stylesheet" href="/static/styles.css?v=20261021-campaigns">
     <link rel="stylesheet" href="/static/mail-admin.css?v=20261021-status">
 </head>
 
@@ -880,29 +880,28 @@
                             <div id="campaigns-list"></div>
                         </div>
                     </div>
-                </div>
-
-                <div class="card" id="suppression-card" style="margin-top: 1.5rem;">
-                    <div class="card-header">
-                        <h3>Suppression list</h3>
-                        <button class="btn btn-secondary btn-sm" onclick="refreshSuppression()">Refresh</button>
-                    </div>
-                    <div class="card-body">
-                        <p class="panel-intro">
-                            Addresses that permanently failed or complained. Campaigns skip them —
-                            re-mailing addresses that bounced is what damages a sender's reputation.
-                        </p>
-                        <div class="send-row">
-                            <input type="text" id="suppression-search" placeholder="Search addresses">
-                            <button class="btn btn-secondary" onclick="refreshSuppression()">Search</button>
-                            <input type="text" id="suppression-add" placeholder="Suppress an address">
-                            <button class="btn btn-secondary" onclick="suppressAddress()">Add</button>
+                    <div class="card" id="suppression-card" style="margin-top: 1.5rem;">
+                        <div class="card-header">
+                            <h3>Suppression list</h3>
+                            <button class="btn btn-secondary btn-sm" onclick="refreshSuppression()">Refresh</button>
                         </div>
-                        <div id="suppression-list"></div>
+                        <div class="card-body">
+                            <p class="panel-intro">
+                                Addresses that permanently failed or complained. Campaigns skip them —
+                                re-mailing addresses that bounced is what damages a sender's reputation.
+                            </p>
+                            <div class="send-row">
+                                <input type="text" id="suppression-search" placeholder="Search addresses">
+                                <button class="btn btn-secondary" onclick="refreshSuppression()">Search</button>
+                                <input type="text" id="suppression-add" placeholder="Suppress an address">
+                                <button class="btn btn-secondary" onclick="suppressAddress()">Add</button>
+                            </div>
+                            <div id="suppression-list"></div>
+                        </div>
                     </div>
                 </div>
 
-                <div id="campaign-editor-screen" style="display: none;">
+                <div id="campaign-editor-screen" class="editor-screen" style="display: none;">
                     <div class="editor-head">
                         <button class="btn btn-secondary btn-sm" onclick="closeCampaignEditor()">&larr; Campaigns</button>
                         <h2 id="campaign-editor-title">New Campaign</h2>
