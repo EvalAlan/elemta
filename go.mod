@@ -1,6 +1,6 @@
 module github.com/EvalAlan/elemta
 
-go 1.26.9
+go 1.26.10
 
 require (
 	blitiri.com.ar/go/spf v1.6.0

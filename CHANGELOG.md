@@ -1,5 +1,40 @@
 # Elemta Changelog
 
+## v0.5.1 (2026-10-20)
+
+This patch release brings the changes since v0.5.0 into the pinned production
+images. It fixes delivery reporting and avoids refusing legitimate archived
+mail during load testing.
+
+### Upgrade notes
+
+- Keep using the three-file production Compose stack and set `ELEMTA_TAG` to
+  `v0.5.1` after the tag images are published. No schema migration is needed.
+- The minimum Go version for source builds is 1.26.10. The container builds
+  use Go 1.27.3 to include the October `crypto/x509` security fix.
+- `[message_checks]` has `header_mode` and `body_mode` (`reject`, `warn`,
+  `off`). The default `reject` preserves existing discretionary checks;
+  `max_header_length = 0`, `strict_address_headers = false` and
+  `reject_invalid_utf8 = false` continue to leave the known false-positive
+  checks off. See [configuration.md](docs/configuration.md).
+- Rspamd's numeric-IP URL symbol is scored once at five points. A numeric
+  link still contributes to spam classification, but repeating it no longer
+  makes an ordinary newsletter cross the reject threshold by itself.
+
+### Fixes
+
+- Webmail's Mail, Calendar, Contacts and Tasks tabs have icons; messages
+  with legacy 8-bit header and body charsets display as text.
+- Reports show daily, weekly and monthly charts, balanced cards and accurate
+  delivery trends based on per-recipient outcomes.
+- SMTP AUTH LOGIN accepts an initial response and keeps credentials out of
+  logs. Header field names accept RFC 5322 punctuation. The optional
+  unfolded-header length, address and UTF-8 checks can be disabled; the
+  remaining discretionary header and body checks can warn or be turned off.
+- Load tests confirmed all submitted messages in the measured runs arrived
+  once. The scaling results and measured bottlenecks are in
+  [load-performance.md](docs/load-performance.md).
+
 ## v0.5.0 (2026-10-20)
 
 The release where Elemta becomes a complete self-hosted mail platform: its
@@ -365,4 +400,4 @@ concurrency — check that downstream capacity matches.
 ### Configuration
 - **Enhanced Configuration**: Support for local domains, internal networks, and authentication settings
 - **Docker Compose**: Complete stack with LDAP, Dovecot, monitoring, and web interface
-- **Environment Variables**: Flexible configuration for different deployment scenarios 
+- **Environment Variables**: Flexible configuration for different deployment scenarios

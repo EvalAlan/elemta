@@ -373,7 +373,10 @@ func TestBrowserHolidayCountryPicker(t *testing.T) {
 			_ = os.WriteFile(shots+"/holiday-countries.png", png, 0o600)
 		}
 	}
-	b.run(chromedp.Click(chromedp.CSS(".save-bar button"), chromedp.NodeVisible), chromedp.WaitVisible(chromedp.CSS("[data-country-picker]")))
+	// The form redirects after saving. Wait in a fresh run so an in-flight
+	// navigation cannot invalidate the click's target while it is inspected.
+	b.run(chromedp.Click(chromedp.CSS(".save-bar button"), chromedp.NodeVisible))
+	b.run(chromedp.WaitVisible(chromedp.CSS("[data-country-picker]")))
 	got := evalAs[string](b, `[...document.querySelectorAll(".country-chip input")].map(i => i.value).sort().join(",")`)
 	if got != "de,gb" {
 		t.Fatalf("saved countries = %q, want de,gb", got)
