@@ -1,5 +1,41 @@
 # Elemta Changelog
 
+## v0.5.2 (2026-10-21)
+
+This patch release adds two administration features and makes the mailbox
+and webmail faster under load.
+
+### Upgrade notes
+
+- Set `ELEMTA_TAG` to `v0.5.2`. Schema changes (the account status and the
+  administrator access tokens) apply on start and are additive, so rolling
+  back to v0.5.1 keeps working.
+- The mailbox database now starts with `pg_stat_statements` preloaded, so
+  `docker compose up -d` recreates `elemta-mailbox-db` once; the mailbox
+  replicas reconnect within seconds. To read the statistics, run
+  `create extension if not exists pg_stat_statements` in the database.
+- The dashboard's Open mailbox action needs `ELEMTA_WEBMAIL_PUBLIC_URL`; the
+  internet-facing overlay sets it from `MAIL_DOMAIN`.
+
+### Features
+
+- Accounts can be suspended: a suspended account keeps receiving mail but
+  cannot sign in to the webmail, IMAP, POP3, SMTP or calendar and contacts
+  sync. Disabled accounts still neither sign in nor receive.
+- Domain administrators can open a user's mailbox in the webmail from the
+  dashboard. Access lasts one hour, is recorded in the audit log, shows a
+  banner naming the administrator, and cannot send mail, switch to shared
+  mailboxes or use calendar and contacts sync.
+
+### Performance
+
+- Folder listings and counts look up each message's body by key instead of
+  hashing the whole body table: the folder query fell from 13 ms to 1.4 ms on
+  the development server's mailbox, and IMAP, POP3 and webmail throughput
+  under load rose by roughly 10 to 20 percent.
+- Signing in to the webmail republishes the user's free/busy times at most
+  once an hour; edits in the webmail and over CalDAV still publish at once.
+
 ## v0.5.1 (2026-10-20)
 
 This patch release brings the changes since v0.5.0 into the pinned production
