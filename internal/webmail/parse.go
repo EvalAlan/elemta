@@ -8,11 +8,13 @@ import (
 	"mime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/emersion/go-message"
 	// Registers decoders for the non-UTF-8 charsets real mail still uses.
 	_ "github.com/emersion/go-message/charset"
 	"github.com/emersion/go-message/mail"
+	"golang.org/x/text/encoding/charmap"
 )
 
 // maxTextPart caps how much of a single text part is decoded for display,
@@ -78,6 +80,7 @@ func parseMessage(raw []byte) (*Message, error) {
 	msg := &Message{}
 	h := r.Header
 	msg.Subject, _ = h.Subject()
+	msg.Subject = legacyText(msg.Subject)
 	msg.Date, _ = h.Date()
 	msg.MessageID = h.Get("Message-Id")
 	msg.InReplyTo = h.Get("In-Reply-To")
@@ -213,7 +216,22 @@ func findPart(raw []byte, index int, cid string) (Part, []byte, error) {
 
 func readLimited(r io.Reader) string {
 	b, _ := io.ReadAll(io.LimitReader(r, maxTextPart))
-	return string(b)
+	return legacyText(string(b))
+}
+
+// legacyText makes s valid UTF-8 for display. Older mail often carries
+// 8-bit headers, or text parts with no charset, in Windows-1252 or
+// Latin-1. Passing those bytes on made the page itself invalid UTF-8,
+// shown as garbage or refused by strict clients. Valid UTF-8 is unchanged;
+// anything else is read as Windows-1252, which covers Latin-1 too.
+func legacyText(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	if out, err := charmap.Windows1252.NewDecoder().String(s); err == nil {
+		return out
+	}
+	return strings.ToValidUTF8(s, "\uFFFD")
 }
 
 // inlineName recovers a filename from an inline part's Content-Type name
@@ -235,16 +253,22 @@ func inlineName(h *mail.InlineHeader) string {
 func headerAddresses(h mail.Header, key string) []Address {
 	list, err := h.AddressList(key)
 	if err != nil {
+		// Raw 8-bit display names don't parse; once read as text they do.
+		if fixed := legacyText(h.Get(key)); fixed != h.Get(key) {
+			list, err = mail.ParseAddressList(fixed)
+		}
+	}
+	if err != nil {
 		// An unparsable header is shown raw rather than dropped, so a
 		// malformed From still tells the user something.
 		if v := h.Get(key); v != "" {
-			return []Address{{Name: v}}
+			return []Address{{Name: legacyText(v)}}
 		}
 		return nil
 	}
 	out := make([]Address, 0, len(list))
 	for _, a := range list {
-		out = append(out, Address{Name: a.Name, Email: a.Address})
+		out = append(out, Address{Name: legacyText(a.Name), Email: a.Address})
 	}
 	return out
 }

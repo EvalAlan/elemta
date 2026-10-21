@@ -124,3 +124,22 @@ func TestParsePlainMessageWithBadAddress(t *testing.T) {
 		t.Errorf("text = %q", m.Text)
 	}
 }
+
+// 8-bit headers and undeclared text in Windows-1252, common in older mail,
+// display as text instead of making the page invalid UTF-8.
+func TestLegacy8BitTextIsDecoded(t *testing.T) {
+	raw := "From: Jos\xe9 <jose@example.com>\r\nSubject: Price: 5\xa2 per caf\xe9\r\nDate: Mon, 20 Oct 2026 10:00:00 +0000\r\n\r\nNa\xefve body\r\n"
+	msg, err := parseMessage([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Subject != "Price: 5¢ per café" || len(msg.From) != 1 || msg.From[0].Name != "José" {
+		t.Errorf("subject %q, from %+v", msg.Subject, msg.From)
+	}
+	if !strings.Contains(msg.Text, "Naïve body") {
+		t.Errorf("text %q", msg.Text)
+	}
+	if got := legacyText("already UTF-8: café"); got != "already UTF-8: café" {
+		t.Errorf("valid UTF-8 changed: %q", got)
+	}
+}

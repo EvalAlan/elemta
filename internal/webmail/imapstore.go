@@ -449,7 +449,7 @@ func pageRange(total, page, size int, oldestFirst bool) (int, int) {
 func toSummary(m *imapclient.FetchMessageBuffer) Summary {
 	sum := Summary{UID: uint32(m.UID), Size: m.RFC822Size, Date: m.InternalDate}
 	if env := m.Envelope; env != nil {
-		sum.Subject = env.Subject
+		sum.Subject = legacyText(env.Subject)
 		if env.MessageID != "" {
 			sum.MessageID = "<" + strings.Trim(env.MessageID, "<>") + ">"
 		}
@@ -537,7 +537,7 @@ func toAddresses(in []imap.Address) []Address {
 		if in[i].IsGroupStart() || in[i].IsGroupEnd() {
 			continue
 		}
-		out = append(out, Address{Name: in[i].Name, Email: in[i].Addr()})
+		out = append(out, Address{Name: legacyText(in[i].Name), Email: in[i].Addr()})
 	}
 	return out
 }
