@@ -530,15 +530,18 @@ and on shutdown, so a restart loses at most a minute of counts.
 
 ### Message checks
 
-Beyond what SMTP requires, mail from outside (not trusted networks) can be
-checked more strictly at DATA. Each check is off by default, because real
-mail fails them: in a load test with 5,000 messages from public corpora they
-refused about one legitimate message in twelve, which the sender's server
-then bounced. DMARC, spam scoring, malware scanning and the envelope address
-checks apply either way.
+Beyond what SMTP requires, mail from outside (not trusted networks) is
+checked at DATA. The optional address, unfolded-header-length and UTF-8
+checks are off by default because real mail fails them: in a load test with
+5,000 messages from public corpora they refused about one legitimate message
+in twelve, which the sender's server then bounced. The header and body modes
+control the remaining discretionary checks. DMARC, spam scoring, malware
+scanning and the envelope address checks apply either way.
 
 ```toml
 [message_checks]
+header_mode = "reject"          # reject (default), warn, or off
+body_mode = "reject"            # reject (default), warn, or off
 strict_address_headers = false  # refuse From/To/Cc/Bcc/Reply-To that aren't valid address lists
 max_header_length = 0           # refuse any header field longer than this after unfolding; 0 = no limit
 reject_invalid_utf8 = false     # refuse 8-bit text that isn't UTF-8
@@ -551,6 +554,17 @@ reject_invalid_utf8 = false     # refuse 8-bit text that isn't UTF-8
   standard, and refuses long recipient lists that other servers accept.
 - `reject_invalid_utf8` refuses mail in older 8-bit character sets, which
   8BITMIME allows.
+- `header_mode` governs discretionary header syntax, required-field,
+  content-type and enabled address/length checks. `body_mode` governs
+  discretionary DATA-line security patterns and attachment/content checks.
+  `warn` records the finding and accepts the message; `off` skips those
+  checks. The default `reject` preserves enforcement. `header_mode = "warn"`
+  with `max_header_length = 998` records overlong unfolded fields without
+  refusing the message. `body_mode = "warn"` with
+  `reject_invalid_utf8 = true` does the same for non-UTF-8 lines. The two
+  modes do not turn off SMTP framing, the 64 KiB line buffer bound, the
+  header block bound, message size, antivirus or Rspamd verdicts. Unknown
+  mode values are treated as `reject`.
 
 ### Metrics
 

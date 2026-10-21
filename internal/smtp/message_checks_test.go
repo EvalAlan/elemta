@@ -53,7 +53,47 @@ func TestHeaderFieldNames(t *testing.T) {
 			t.Errorf("%q refused: %v", line, err)
 		}
 	}
+	for _, name := range []string{"X.Mailer", "X-Thread#"} {
+		if r := dh.enhancedValidator.ValidateEmailHeaders(name + ": value"); !r.Valid {
+			t.Errorf("enhanced validator refused %q: %s", name, r.ErrorMessage)
+		}
+	}
 	if err := dh.validateHeaderLine(context.Background(), "no colon here"); err == nil {
 		t.Error("a header line without a colon was accepted")
+	}
+}
+
+func TestMessageCheckModes(t *testing.T) {
+	ctx := context.Background()
+	dh := externalDataHandler(t)
+	latin1 := "Caf\xe9\r\n"
+	for _, mode := range []string{"reject", "warn", "off"} {
+		dh.config.MessageChecks = &MessageChecksConfig{
+			HeaderMode: mode, BodyMode: mode, MaxHeaderLength: 998,
+			StrictAddressHeaders: true, RejectInvalidUTF8: true,
+		}
+		dh.enhancedValidator = newMessageValidator(quietLogger(), dh.config)
+		headerErr := dh.validateMessageHeaders(ctx, &MessageMetadata{Headers: map[string]string{
+			"from": "sender@example.com", "date": "Mon, 20 Oct 2026 10:00:00 +0000",
+			"to": "undisclosed-recipients:;", "subject": strings.Repeat("x", 1000),
+		}})
+		bodyErr := dh.validateLineContent(ctx, latin1, &DataReaderState{})
+		lineErr := dh.validateLineContent(ctx, "no colon here\r\n", &DataReaderState{InHeaders: true})
+		if (headerErr != nil || bodyErr != nil || lineErr != nil) != (mode == "reject") {
+			t.Errorf("%s: header=%v body=%v line=%v", mode, headerErr, bodyErr, lineErr)
+		}
+		view := &scanContent{raw: "From: sender@example.com\r\n\r\nContent-Type: application/octet-stream", lower: "from: sender@example.com\r\n\r\ncontent-type: application/octet-stream"}
+		result := &SecurityScanResult{Passed: true}
+		if err := dh.performContentAnalysis(ctx, view, result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Passed != (mode != "reject") {
+			t.Errorf("%s: attachment result passed=%v", mode, result.Passed)
+		}
+	}
+	// The buffer bound is enforced even when discretionary checks are off.
+	dh.config.MessageChecks = &MessageChecksConfig{BodyMode: "off"}
+	if err := dh.validateLineContent(ctx, strings.Repeat("x", 64*1024+1), &DataReaderState{}); err == nil {
+		t.Error("body_mode=off bypassed the hard line limit")
 	}
 }

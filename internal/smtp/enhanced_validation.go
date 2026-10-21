@@ -765,9 +765,9 @@ func (v *EnhancedValidator) validateHeaderLineRelaxed(line string) *EnhancedVali
 		return result
 	}
 
-	// Check for valid header name characters
+	// RFC 5322 permits printable ASCII except the colon in field names.
 	for _, r := range headerName {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' && r != '_' {
+		if r < 33 || r > 126 {
 			result.Valid = false
 			result.ErrorType = "invalid_header_name"
 			result.ErrorMessage = "Header name contains invalid characters"
@@ -1134,9 +1134,9 @@ func (v *EnhancedValidator) validateSingleHeader(header string) *EnhancedValidat
 		return result
 	}
 
-	// Check for valid header name characters
+	// RFC 5322 permits printable ASCII except the colon in field names.
 	for _, r := range headerName {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' && r != '_' {
+		if r < 33 || r > 126 {
 			result.Valid = false
 			result.ErrorType = "invalid_header_name"
 			result.ErrorMessage = "Header name contains invalid characters"

@@ -1,6 +1,9 @@
 package smtp
 
-import "math"
+import (
+	"math"
+	"strings"
+)
 
 // MessageChecksConfig ([message_checks]) sets how strictly the content of
 // mail from outside is checked at DATA, beyond what the protocol requires.
@@ -15,6 +18,12 @@ import "math"
 // its mail bounced. DMARC, spam scoring and the address checks on the SMTP
 // envelope still apply either way.
 type MessageChecksConfig struct {
+	// HeaderMode controls discretionary header syntax, value and content-type
+	// checks: reject (default), warn, or off. Protocol size bounds still apply.
+	HeaderMode string `toml:"header_mode" json:"header_mode"`
+	// BodyMode controls discretionary DATA-line and attachment/content checks:
+	// reject (default), warn, or off. SMTP framing and size bounds still apply.
+	BodyMode string `toml:"body_mode" json:"body_mode"`
 	// StrictAddressHeaders refuses mail whose From, To, Cc, Bcc or Reply-To
 	// isn't a valid address list, or names an address that fails the
 	// envelope address checks. Default false.
@@ -29,6 +38,19 @@ type MessageChecksConfig struct {
 	// 8BITMIME, and older mail is full of it.
 	RejectInvalidUTF8 bool `toml:"reject_invalid_utf8" json:"reject_invalid_utf8"`
 }
+
+func checkMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "off", "warn":
+		return strings.ToLower(strings.TrimSpace(raw))
+	default:
+		// Unknown values preserve enforcement rather than silently disabling it.
+		return "reject"
+	}
+}
+
+func (c MessageChecksConfig) headerMode() string { return checkMode(c.HeaderMode) }
+func (c MessageChecksConfig) bodyMode() string   { return checkMode(c.BodyMode) }
 
 func (c *Config) messageChecks() MessageChecksConfig {
 	if c == nil || c.MessageChecks == nil {

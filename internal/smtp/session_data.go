@@ -1029,6 +1029,13 @@ func (dh *DataHandler) validateLineContent(ctx context.Context, line string, sta
 
 		return nil
 	}
+	mode := dh.config.messageChecks().bodyMode()
+	if state.InHeaders {
+		mode = dh.config.messageChecks().headerMode()
+	}
+	if mode == "off" {
+		return nil
+	}
 
 	// For external connections, use enhanced validator for comprehensive security validation
 	// Note: We only apply enhanced validation for lines within the MUST limit (1000 octets)
@@ -1057,7 +1064,9 @@ func (dh *DataHandler) validateLineContent(ctx context.Context, line string, sta
 					"line_number", state.LineCount,
 				)
 
-				return fmt.Errorf("500 5.5.2 Security violation: %s", validationResult.ErrorMessage)
+				if mode != "warn" {
+					return fmt.Errorf("500 5.5.2 Security violation: %s", validationResult.ErrorMessage)
+				}
 			}
 		}
 
@@ -1079,7 +1088,13 @@ func (dh *DataHandler) validateLineContent(ctx context.Context, line string, sta
 	// Additional header-specific validation for external connections (only for lines within MUST limit)
 	if state.InHeaders && lineBytes <= maxLineLengthMust {
 		dh.logger.DebugContext(ctx, "Applying strict header validation for external connection")
-		return dh.validateHeaderLine(ctx, line)
+		if err := dh.validateHeaderLine(ctx, line); err != nil {
+			if mode == "warn" {
+				dh.logger.WarnContext(ctx, "Header check warning", "error", err)
+				return nil
+			}
+			return err
+		}
 	}
 
 	return nil
@@ -1443,6 +1458,10 @@ func (dh *DataHandler) extractHeaders(data []byte) map[string]string {
 
 // validateMessageHeaders validates message headers using enhanced validation
 func (dh *DataHandler) validateMessageHeaders(ctx context.Context, metadata *MessageMetadata) error {
+	mode := dh.config.messageChecks().headerMode()
+	if mode == "off" {
+		return nil
+	}
 	// Skip strict header requirements for internal connections (like Roundcube) or if auth is not required
 	isInternal := dh.isInternalConnection()
 	authNotRequired := dh.config.Auth != nil && dh.config.Auth.Enabled && !dh.config.Auth.Required
@@ -1453,7 +1472,9 @@ func (dh *DataHandler) validateMessageHeaders(ctx context.Context, metadata *Mes
 		for _, header := range requiredHeaders {
 			if _, exists := metadata.Headers[header]; !exists {
 				dh.logger.WarnContext(ctx, "Missing required header", "header", header)
-				return fmt.Errorf("missing required header: %s", header)
+				if mode != "warn" {
+					return fmt.Errorf("missing required header: %s", header)
+				}
 			}
 		}
 	} else {
@@ -1481,13 +1502,17 @@ func (dh *DataHandler) validateMessageHeaders(ctx context.Context, metadata *Mes
 				"security_score", headerValidationResult.SecurityScore,
 			)
 
-			return fmt.Errorf("header validation failed: %s", headerValidationResult.ErrorMessage)
+			if mode != "warn" {
+				return fmt.Errorf("header validation failed: %s", headerValidationResult.ErrorMessage)
+			}
 		}
 
-		dh.logger.DebugContext(ctx, "Header validation completed successfully",
-			"security_score", headerValidationResult.SecurityScore,
-			"header_count", headerValidationResult.ValidationDetails["header_count"],
-		)
+		if headerValidationResult.Valid {
+			dh.logger.DebugContext(ctx, "Header validation completed successfully",
+				"security_score", headerValidationResult.SecurityScore,
+				"header_count", headerValidationResult.ValidationDetails["header_count"],
+			)
+		}
 	} else {
 		dh.logger.DebugContext(ctx, "Skipping enhanced header validation for internal connection")
 	}
@@ -1505,13 +1530,19 @@ func (dh *DataHandler) validateMessageHeaders(ctx context.Context, metadata *Mes
 	if !isInternal {
 		if dh.config.messageChecks().StrictAddressHeaders {
 			if err := dh.validateEmailAddressesInHeaders(ctx, metadata.Headers); err != nil {
-				return err
+				if mode != "warn" {
+					return err
+				}
+				dh.logger.WarnContext(ctx, "Address header check warning", "error", err)
 			}
 		}
 
 		// Validate content-type restrictions
 		if err := dh.validateContentTypeRestrictions(ctx, metadata.Headers); err != nil {
-			return err
+			if mode != "warn" {
+				return err
+			}
+			dh.logger.WarnContext(ctx, "Content-Type check warning", "error", err)
 		}
 	} else {
 		dh.logger.DebugContext(ctx, "Skipping email address and content-type validation for internal connection")
@@ -2029,12 +2060,15 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, view *scanCon
 	// For external connections, use enhanced validator for comprehensive content analysis
 	// Separate headers and body to avoid false positives on legitimate headers
 	headers, _ := dh.separateHeadersAndBody(content)
+	checks := dh.config.messageChecks()
 
 	// Validate headers separately (more permissive for legitimate headers)
-	if headers != "" {
+	if headers != "" && checks.headerMode() != "off" {
 		headerValidationResult := dh.enhancedValidator.ValidateSMTPParameter("HEADER", headers)
 		if !headerValidationResult.Valid {
-			result.Passed = false
+			if checks.headerMode() == "reject" {
+				result.Passed = false
+			}
 			result.Threats = append(result.Threats, fmt.Sprintf("Header validation failed: %s", headerValidationResult.ErrorMessage))
 
 			LogSecurityEvent(dh.logger, "content_analysis_failed", headerValidationResult.SecurityThreat,
@@ -2070,6 +2104,10 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, view *scanCon
 	// injection patterns at all. Loopback and Docker peers take the internal
 	// branch above, which is why no test or local run ever saw it.
 
+	if checks.bodyMode() == "off" {
+		return nil
+	}
+
 	// Check for executable attachments (enhanced check)
 	if strings.Contains(content, "Content-Type: application/") {
 		dangerousTypes := []string{
@@ -2085,7 +2123,9 @@ func (dh *DataHandler) performContentAnalysis(ctx context.Context, view *scanCon
 
 		for _, dangerousType := range dangerousTypes {
 			if strings.Contains(view.lower, dangerousType) {
-				result.Passed = false
+				if checks.bodyMode() == "reject" {
+					result.Passed = false
+				}
 				result.Threats = append(result.Threats, fmt.Sprintf("Dangerous attachment type: %s", dangerousType))
 
 				LogSecurityEvent(dh.logger, "dangerous_attachment", "attachment_threat",
