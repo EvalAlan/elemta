@@ -67,7 +67,7 @@ spec:
             - { name: local, mountPath: /etc/rspamd/local.d/redis.conf, subPath: redis.conf, readOnly: true }
             - { name: local, mountPath: /etc/rspamd/local.d/greylist.conf, subPath: greylist.conf, readOnly: true }
             - { name: local, mountPath: /etc/rspamd/local.d/actions.conf, subPath: actions.conf, readOnly: true }
-            - { name: local, mountPath: /etc/rspamd/local.d/groups.conf, subPath: groups.conf, readOnly: true }
+            - { name: local, mountPath: /etc/rspamd/local.d/url_suspect_group.conf, subPath: url_suspect_group.conf, readOnly: true }
       volumes:
         - name: data
           persistentVolumeClaim:
