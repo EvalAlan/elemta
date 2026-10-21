@@ -23,3 +23,4 @@ configMapGenerator:
       - ../../../../../docker/rspamd/local.d/redis.conf
       - ../../../../../docker/rspamd/local.d/greylist.conf
       - ../../../../../docker/rspamd/local.d/actions.conf
+      - ../../../../../docker/rspamd/local.d/groups.conf
