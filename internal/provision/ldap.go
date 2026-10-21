@@ -74,7 +74,7 @@ func entryAccount(e *ldap.Entry) (Account, error) {
 	if status == "" {
 		status = "active"
 	}
-	if status != "active" {
+	if status != "active" && status != "suspended" {
 		status = "disabled"
 	}
 	quota := int64(0)

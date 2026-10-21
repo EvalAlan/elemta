@@ -236,7 +236,7 @@
         el('ma-initial-password').hidden = editing; el('ma-initial-label').hidden = editing;
         el('ma-account-status').hidden = !editing; el('ma-status-label').hidden = !editing;
         el('ma-delete').hidden = !editing; el('ma-account-extras').hidden = !editing;
-        el('ma-open-mailbox').hidden = !editing || !mailboxAdmin || account.status !== 'active';
+        el('ma-open-mailbox').hidden = !editing || !mailboxAdmin || (account.status !== 'active' && account.status !== 'suspended');
         el('ma-password').value = ''; el('ma-confirm-password').value = ''; el('ma-alias').value = '';
         el('ma-dialog-message').hidden = true;
         el('ma-account-policy').hidden = !editing || !mailboxAdmin;

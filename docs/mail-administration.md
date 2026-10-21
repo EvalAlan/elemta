@@ -58,6 +58,22 @@ password flag. Initial passwords are applied with LDAP Password Modify and the
 directory's own policy. A new account stays disabled until its password is set.
 Passwords and stored password hashes are never included in account responses.
 
+An account has one of three statuses (`modify-account --status`, or the
+account dialog in the dashboard):
+
+| Status | Sign-in (webmail, IMAP, POP3, SMTP, CalDAV/CardDAV, app passwords) | Incoming mail |
+|---|---|---|
+| `active` | allowed | delivered |
+| `suspended` | refused | delivered |
+| `disabled` | refused | refused (550 at RCPT) |
+
+Suspend an account that must stop being used at once (a leaked password, a
+departing employee, an unpaid bill) while its mail keeps arriving: nothing
+bounces, and reactivating it finds everything in place. Suspending or
+disabling ends its webmail sessions immediately. A suspended account stays in
+the company address book and can still be opened by an administrator ("Open
+mailbox"); a disabled one can't, and it can't be opened as a shared mailbox.
+
 `reset-two-factor` removes an account's authenticator enrollment, pending setup
 and recovery codes. An administrator should verify the user's identity before
 running it. The CLI records the reset in the audit log. If the account's class

@@ -74,11 +74,11 @@ func (a LDAPAuth) lookup(ctx context.Context, address string, delivery bool) (Ac
 		return Account{}, "", ErrCredentials
 	}
 	entry := result.Entries[0]
-	status := entry.GetAttributeValue("accountStatus")
-	if status != "" && !strings.EqualFold(status, "active") {
+	allowed, suspended := statusAllows(entry.GetAttributeValue("accountStatus"), delivery)
+	if !allowed {
 		return Account{}, "", ErrCredentials
 	}
-	account := Account{ID: entry.GetAttributeValue("entryUUID"), Address: strings.ToLower(entry.GetAttributeValue("mail"))}
+	account := Account{ID: entry.GetAttributeValue("entryUUID"), Address: strings.ToLower(entry.GetAttributeValue("mail")), Suspended: suspended}
 	if account.ID == "" || account.Address == "" {
 		return Account{}, "", ErrCredentials
 	}
@@ -138,4 +138,24 @@ func (a LDAPAuth) Exists(ctx context.Context, address string) (bool, error) {
 		return false, err
 	}
 	return len(result.Entries) > 0, nil
+}
+
+// statusAllows applies an account's directory status (accountStatus):
+//
+//	active (or none)  signs in and receives mail
+//	suspended         receives mail but may not sign in, on any protocol
+//	disabled, other   neither: mail to it is refused
+//
+// Suspension is for an account that must stop being used now (a leaked
+// password, a departing employee, an unpaid bill) without its mail
+// bouncing while that is sorted out.
+func statusAllows(status string, delivery bool) (allowed, suspended bool) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "active":
+		return true, false
+	case "suspended":
+		return delivery, true
+	default:
+		return false, false
+	}
 }

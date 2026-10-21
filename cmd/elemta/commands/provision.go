@@ -143,7 +143,7 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 		return s.Update(ctx, args[0], p)
 	})
 	modify.Flags().StringVar(&newName, "name", "", "New display name")
-	modify.Flags().StringVar(&status, "status", "", "active or disabled")
+	modify.Flags().StringVar(&status, "status", "", "active; suspended (can't sign in, still receives mail); or disabled (neither)")
 	modify.Flags().StringVar(&newQuota, "quota", "", "New quota; 0 is unlimited")
 	add("set-password <email>", []string{"sp"}, "Reset a mailbox password and revoke webmail sessions", 1, func(ctx context.Context, cmd *cobra.Command, s *provision.Service, args []string) (any, error) {
 		password, err := readPassword(cmd, true)

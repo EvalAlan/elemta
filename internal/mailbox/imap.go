@@ -122,6 +122,11 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 		if err != nil {
 			return Account{}, err
 		}
+		// Resolve is the delivery lookup, which returns suspended
+		// accounts; a suspended shared mailbox can't be opened.
+		if mailbox.Suspended {
+			return Account{}, ErrCredentials
+		}
 		if mailbox.Address != mailboxName {
 			return Account{}, ErrCredentials
 		}
@@ -208,7 +213,10 @@ func (s *Service) authenticate(ctx context.Context, user, password string) (Acco
 		// The directory still decides whether the account exists and may
 		// sign in; an app password doesn't outlive its account.
 		a, err := s.auth.Resolve(ctx, user)
-		if err == nil && a.ID != id {
+		if err == nil && (a.ID != id || a.Suspended) {
+			// Resolve is the delivery lookup, so it returns a suspended
+			// account; a suspended account may not sign in with an app
+			// password either.
 			err = ErrCredentials
 		}
 		if err != nil {

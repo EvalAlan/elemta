@@ -36,6 +36,9 @@ var schema string
 type Account struct {
 	ID, Address string
 	Quota       int64
+	// Suspended accounts still receive mail but may not sign in; only the
+	// delivery lookup returns one (statusAllows).
+	Suspended bool
 	// Policy is the account's effective class of service, filled in at
 	// login and delivery (Service.applyPolicy). Nil elsewhere.
 	Policy *mailpolicy.Effective

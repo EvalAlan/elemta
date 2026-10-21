@@ -218,8 +218,8 @@ func (s *Service) Update(ctx context.Context, raw string, p Patch) (Account, err
 			return Account{}, fmt.Errorf("%w: invalid display name", ErrInvalid)
 		}
 	}
-	if p.Status != nil && *p.Status != "active" && *p.Status != "disabled" {
-		return Account{}, fmt.Errorf("%w: status must be active or disabled", ErrInvalid)
+	if p.Status != nil && *p.Status != "active" && *p.Status != "suspended" && *p.Status != "disabled" {
+		return Account{}, fmt.Errorf("%w: status must be active, suspended or disabled", ErrInvalid)
 	}
 	if p.QuotaBytes != nil && (*p.QuotaBytes < 0 || *p.QuotaBytes > 1<<50) {
 		return Account{}, fmt.Errorf("%w: invalid quota", ErrInvalid)
@@ -227,7 +227,9 @@ func (s *Service) Update(ctx context.Context, raw string, p Patch) (Account, err
 	if p.Name == nil && p.Status == nil && p.QuotaBytes == nil {
 		return Account{}, fmt.Errorf("%w: no changes supplied", ErrInvalid)
 	}
-	if p.Status != nil && *p.Status == "disabled" {
+	// Suspending, like disabling, ends the account's sessions: webmail
+	// sign-ins and recovery links stop working at once.
+	if p.Status != nil && *p.Status != "active" {
 		if _, err = s.Directory.Get(ctx, address); err != nil {
 			return Account{}, err
 		}
@@ -239,7 +241,7 @@ func (s *Service) Update(ctx context.Context, raw string, p Patch) (Account, err
 		}
 	}
 	account, err := s.Directory.Update(ctx, address, p)
-	if p.Status != nil && *p.Status == "disabled" {
+	if p.Status != nil && *p.Status != "active" {
 		err = errors.Join(err, s.Revoke(ctx, address))
 	}
 	return account, errors.Join(err, s.notify())

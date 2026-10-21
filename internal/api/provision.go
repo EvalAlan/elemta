@@ -50,8 +50,10 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 			return err
 		}
 		// Require the primary address: an alias in an assigned domain may
-		// point at an account in another domain.
-		if account.Address != address || account.Status != "active" {
+		// point at an account in another domain. A suspended account can
+		// be opened (looking into why it was suspended is a common reason);
+		// a disabled one can't.
+		if account.Address != address || (account.Status != "active" && account.Status != "suspended") {
 			return provision.ErrInvalid
 		}
 		if err := scopeOf(r).checkAddress(account.Address); err != nil {

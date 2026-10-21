@@ -60,7 +60,9 @@ func (a LDAPAuth) Directory(ctx context.Context, domain string) ([]DirectoryEntr
 	}
 	var out []DirectoryEntry
 	for _, e := range res.Entries {
-		if st := e.GetAttributeValue("accountStatus"); st != "" && !strings.EqualFold(st, "active") {
+		// Suspended accounts still receive mail, so colleagues can still
+		// find them; disabled ones can't.
+		if ok, _ := statusAllows(e.GetAttributeValue("accountStatus"), true); !ok {
 			continue
 		}
 		name := e.GetAttributeValue("displayName")

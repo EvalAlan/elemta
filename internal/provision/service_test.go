@@ -176,3 +176,26 @@ func TestConfigLockIsSharedAndCancellable(t *testing.T) {
 		t.Fatalf("second writer did not wait: %v", err)
 	}
 }
+
+func TestSuspendedStatus(t *testing.T) {
+	s := testService(t)
+	ctx := context.Background()
+	var revoked []string
+	s.Revoke = func(_ context.Context, a string) error { revoked = append(revoked, a); return nil }
+	a, err := s.Create(ctx, Create{Address: "lee@example.com", Name: "Lee", Password: "long secure password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	suspended := "suspended"
+	got, err := s.Update(ctx, a.Address, Patch{Status: &suspended})
+	if err != nil || got.Status != "suspended" {
+		t.Fatalf("suspend: %+v %v", got, err)
+	}
+	if len(revoked) == 0 {
+		t.Error("suspending didn't end the account's sessions")
+	}
+	frozen := "frozen"
+	if _, err := s.Update(ctx, a.Address, Patch{Status: &frozen}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("unknown status accepted: %v", err)
+	}
+}
