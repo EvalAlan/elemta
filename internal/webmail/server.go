@@ -41,6 +41,8 @@ type Server struct {
 	watch        MailWatcher
 	pushMu       sync.Mutex
 	pushStreams  map[string]int
+	push         pushHub
+	pages        pageCache
 	tmpl         map[string]*template.Template
 	log          *slog.Logger
 	limiter      *loginLimiter
@@ -797,6 +799,7 @@ func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWrit
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, sess *Session) {
 	s.sessions.Destroy(sess.ID)
+	s.pages.forget(sess.ID)
 	s.setCookie(w, sessionCookie, "", -1)
 	http.Redirect(w, r, "/login?n=loggedout", http.StatusSeeOther)
 }

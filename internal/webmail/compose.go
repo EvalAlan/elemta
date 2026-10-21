@@ -281,6 +281,7 @@ func parseList(field string) ([]Address, error) {
 }
 
 func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
+	s.pages.forgetRaw(sess.ID) // saving a draft replaces it
 	if sess.AdminActor != "" {
 		http.Error(w, "Sending is unavailable during administrator access.", http.StatusForbidden)
 		return

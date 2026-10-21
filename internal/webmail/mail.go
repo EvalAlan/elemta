@@ -116,7 +116,7 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	}
 	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		if hasUID {
-			raw, err := st.Raw(r.Context(), ls.Folder, uid, s.maxMessage())
+			raw, err := s.rawMessage(sess, func() ([]byte, error) { return st.Raw(r.Context(), ls.Folder, uid, s.maxMessage()) }, ls.Folder, uid)
 			if err != nil {
 				return err
 			}
@@ -317,7 +317,7 @@ func (s *Server) loadMessage(r *http.Request, sess *Session) (string, uint32, []
 	var raw []byte
 	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		var err error
-		raw, err = st.Raw(r.Context(), folder, uid, s.maxMessage())
+		raw, err = s.rawMessage(sess, func() ([]byte, error) { return st.Raw(r.Context(), folder, uid, s.maxMessage()) }, folder, uid)
 		return err
 	})
 	return folder, uid, raw, err
@@ -537,6 +537,7 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 		return
 	}
 	back := localBack(r.PostFormValue("back"), folderURL(folder, 1, ""))
+	s.pages.forgetRaw(sess.ID)
 	if len(uids) == 0 && op != "empty" && op != "readall" {
 		redirectLocal(w, r, back)
 		return
@@ -692,6 +693,7 @@ func (s *Server) foldersPage(w http.ResponseWriter, r *http.Request, sess *Sessi
 }
 
 func (s *Server) foldersSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
+	s.pages.forgetRaw(sess.ID) // a renamed or recreated folder reuses UIDs
 	op := r.PostFormValue("op")
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	target := r.PostFormValue("folder")

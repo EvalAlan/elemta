@@ -16,6 +16,9 @@ func (s *Server) sharedMailboxes(ctx context.Context, sess *Session) []sharedMai
 	if s.security == nil {
 		return nil
 	}
+	if list, ok := s.pages.getShares(sess.ID, s.now()); ok {
+		return list
+	}
 	pw, err := s.sessions.password(sess)
 	if err != nil {
 		return nil
@@ -25,6 +28,7 @@ func (s *Server) sharedMailboxes(ctx context.Context, sess *Session) []sharedMai
 		s.log.Warn("shared mailbox list unavailable", "error", err)
 		return nil
 	}
+	s.pages.putShares(sess.ID, out, s.now())
 	return out
 }
 

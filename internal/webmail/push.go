@@ -110,6 +110,7 @@ func (s *Server) mailEvents(w http.ResponseWriter, r *http.Request, sess *Sessio
 	if watcher == nil {
 		watcher = watchIMAP(s.cfg)
 	}
+	watcher = s.push.wrap(watcher)
 	folders := []string{"INBOX"}
 	if folder != "INBOX" {
 		folders = append(folders, folder)
