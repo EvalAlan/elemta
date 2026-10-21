@@ -43,3 +43,17 @@ func TestMessageChecksAcceptRealMailByDefault(t *testing.T) {
 		t.Error("reject_invalid_utf8 accepted Latin-1 text")
 	}
 }
+
+// RFC 5322 field names: printable ASCII except the colon. A malformed name
+// is left as text, not a reason to refuse the message.
+func TestHeaderFieldNames(t *testing.T) {
+	dh := externalDataHandler(t)
+	for _, line := range []string{"X_Original_To: a@example.com", "X.Mailer: Old Client 1.0", "X-Thread#: 4", "Bad Name: value"} {
+		if err := dh.validateHeaderLine(context.Background(), line); err != nil {
+			t.Errorf("%q refused: %v", line, err)
+		}
+	}
+	if err := dh.validateHeaderLine(context.Background(), "no colon here"); err == nil {
+		t.Error("a header line without a colon was accepted")
+	}
+}

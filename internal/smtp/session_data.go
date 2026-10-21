@@ -1271,14 +1271,15 @@ func (dh *DataHandler) validateHeaderLine(ctx context.Context, line string) erro
 		return fmt.Errorf("empty header name")
 	}
 
-	// Check for valid header name characters (RFC 5322)
+	// RFC 5322 field names are any printable ASCII but the colon, so
+	// "X_Original_To" and "X.Mailer" are fine; only letters, digits and
+	// hyphens refused real mail. A name that breaks even that rule (a
+	// space before the colon, say) isn't refused either: like other MTAs,
+	// the line is left as text rather than failing the message.
 	for _, char := range headerName {
-		//nolint:staticcheck // Readable as-is, De Morgan's law would make it less clear
-		if !((char >= 'A' && char <= 'Z') ||
-			(char >= 'a' && char <= 'z') ||
-			(char >= '0' && char <= '9') ||
-			char == '-') {
-			return fmt.Errorf("invalid header name character")
+		if char < 33 || char > 126 {
+			dh.logger.DebugContext(ctx, "Header line with a malformed field name left unvalidated")
+			return nil
 		}
 	}
 
