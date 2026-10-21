@@ -103,3 +103,36 @@ func TestFreeBusyLookupAndPublish(t *testing.T) {
 		t.Errorf("published = %s", published)
 	}
 }
+
+func TestFreeBusyAtSignInIsThrottled(t *testing.T) {
+	f := &fakeSecurity{}
+	h := newSecurityHarness(t, f)
+	now := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	h.server.now = func() time.Time { return now }
+	h.server.publishFreeBusyAtSignIn("dana", "secret", "dana@example.com")
+	h.server.publishFreeBusyAtSignIn("dana", "secret", "dana@example.com")
+	h.server.freeBusy.mu.Lock()
+	pending := len(h.server.freeBusy.pending)
+	first := h.server.freeBusy.atSignIn["dana"]
+	h.server.freeBusy.mu.Unlock()
+	if pending != 1 || !first.Equal(now) {
+		t.Fatalf("pending %d, recorded %v", pending, first)
+	}
+	// A second sign-in within the hour schedules nothing new.
+	h.server.freeBusy.mu.Lock()
+	for _, timer := range h.server.freeBusy.pending {
+		timer.Stop()
+	}
+	h.server.freeBusy.pending = map[string]*time.Timer{}
+	h.server.freeBusy.mu.Unlock()
+	now = now.Add(30 * time.Minute)
+	h.server.publishFreeBusyAtSignIn("dana", "secret", "dana@example.com")
+	if len(h.server.freeBusy.pending) != 0 {
+		t.Error("republished within the hour")
+	}
+	now = now.Add(31 * time.Minute)
+	h.server.publishFreeBusyAtSignIn("dana", "secret", "dana@example.com")
+	if len(h.server.freeBusy.pending) != 1 {
+		t.Error("didn't republish after an hour")
+	}
+}

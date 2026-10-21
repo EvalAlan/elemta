@@ -90,6 +90,39 @@ func selfStatus(e *Event, self string) string {
 type freeBusyPublisher struct {
 	mu      sync.Mutex
 	pending map[string]*time.Timer
+	// atSignIn is when each user's busy times were last published because
+	// they signed in (signInRepublish).
+	atSignIn map[string]time.Time
+}
+
+// signInRepublish is how often signing in republishes a user's busy times.
+// Changes made in the webmail or over CalDAV publish at once; signing in
+// only catches changes made another way (a mail app writing the Calendar
+// folder over IMAP), and doing it on every sign-in cost a second IMAP
+// login, a calendar read and an API call each time, which the load suite
+// showed in the webmail's sign-in latency.
+const signInRepublish = time.Hour
+
+// publishFreeBusyAtSignIn publishes at sign-in unless this replica did so
+// for the user within signInRepublish.
+func (s *Server) publishFreeBusyAtSignIn(user, password, self string) {
+	key := strings.ToLower(user)
+	now := s.now()
+	s.freeBusy.mu.Lock()
+	if s.freeBusy.atSignIn == nil {
+		s.freeBusy.atSignIn = map[string]time.Time{}
+	}
+	if last, ok := s.freeBusy.atSignIn[key]; ok && now.Sub(last) < signInRepublish {
+		s.freeBusy.mu.Unlock()
+		return
+	}
+	s.freeBusy.atSignIn[key] = now
+	if len(s.freeBusy.atSignIn) > 100000 {
+		// Bounded: forgetting everyone only means one extra publication each.
+		s.freeBusy.atSignIn = map[string]time.Time{key: now}
+	}
+	s.freeBusy.mu.Unlock()
+	s.publishFreeBusy(user, password, self)
 }
 
 // publishFreeBusy publishes a user's busy times shortly, in the background.

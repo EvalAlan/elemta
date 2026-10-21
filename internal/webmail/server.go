@@ -790,7 +790,7 @@ func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWrit
 	// Catch calendar changes made elsewhere (another mail app over IMAP,
 	// or before free/busy existed).
 	if actor == "" {
-		s.publishFreeBusy(user, password, sess.Address)
+		s.publishFreeBusyAtSignIn(user, password, sess.Address)
 	}
 	return true
 }
