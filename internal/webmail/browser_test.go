@@ -246,7 +246,9 @@ func TestBrowserRichCompose(t *testing.T) {
 	} else {
 		b.run(chromedp.SendKeys(chromedp.ID("body"), "Hello from the browser"))
 	}
-	b.run(chromedp.Click(chromedp.CSS(`button[name="op"][value="send"]`), chromedp.NodeVisible))
+	// A script click, for the reason given in TestBrowserHolidayCountryPicker:
+	// Send submits and navigates, which can cut off an inspecting click.
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelector('button[name="op"][value="send"]').click()`, chromedp.EvalAsValue))
 	select {
 	case <-b.h.sub.sent:
 	case <-time.After(10 * time.Second):
@@ -373,10 +375,27 @@ func TestBrowserHolidayCountryPicker(t *testing.T) {
 			_ = os.WriteFile(shots+"/holiday-countries.png", png, 0o600)
 		}
 	}
-	// The form redirects after saving. Wait in a fresh run so an in-flight
-	// navigation cannot invalidate the click's target while it is inspected.
-	b.run(chromedp.Click(chromedp.CSS(".save-bar button"), chromedp.NodeVisible))
-	b.run(chromedp.WaitVisible(chromedp.CSS("[data-country-picker]")))
+	// The form redirects after saving. Clicking through the DevTools input
+	// protocol raced that navigation: on a slow runner the page went away
+	// while the click was still inspecting the button ("Inspected target
+	// navigated or closed"). A script click returns before the submit
+	// navigates, and a marker on the old page tells it apart from the
+	// reloaded one, so the check below reads what was saved, not what was
+	// still on screen.
+	b.run(chromedp.Evaluate[chromedp.Void](`window.__beforeSave = true; document.querySelector(".save-bar button").click()`, chromedp.EvalAsValue))
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+		reloaded, err := chromedp.Run(ctx, chromedp.Evaluate[bool](`!window.__beforeSave && document.readyState === "complete" && !!document.querySelector("[data-country-picker]")`))
+		cancel()
+		if err == nil && reloaded {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the settings page didn't reload after saving (last error: %v)", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	got := evalAs[string](b, `[...document.querySelectorAll(".country-chip input")].map(i => i.value).sort().join(",")`)
 	if got != "de,gb" {
 		t.Fatalf("saved countries = %q, want de,gb", got)
