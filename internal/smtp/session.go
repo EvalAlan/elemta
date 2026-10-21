@@ -608,7 +608,7 @@ func (s *Session) processCommands(ctx context.Context) error {
 		if err := s.commandHandler.ProcessCommand(ctx, line); err != nil {
 			s.logger.WarnContext(ctx, "Command processing failed",
 				"event_type", "rejection",
-				"command", line,
+				"command", redactCommand(line),
 				"error", err,
 			)
 			s.writeError(ctx, err)

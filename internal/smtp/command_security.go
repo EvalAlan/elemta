@@ -273,7 +273,7 @@ func (csm *CommandSecurityManager) validateCommandStructure(ctx context.Context,
 	cmdRegex := regexp.MustCompile(csm.config.AllowedCommandChars)
 	if !cmdRegex.MatchString(cmd) {
 		csm.logger.WarnContext(ctx, "Command name contains invalid characters",
-			"command", cmd,
+			"command", redactCommand(cmd),
 		)
 		return fmt.Errorf("500 5.5.2 Invalid command name")
 	}
@@ -313,7 +313,7 @@ func (csm *CommandSecurityManager) validateCommandName(ctx context.Context, cmd 
 
 	if !validCommands[cmd] {
 		csm.logger.WarnContext(ctx, "Unknown command received",
-			"command", cmd,
+			"command", redactCommand(cmd),
 		)
 		return fmt.Errorf("502 5.5.1 Command not recognized")
 	}
@@ -331,7 +331,7 @@ func (csm *CommandSecurityManager) validateCommandParameters(ctx context.Context
 	paramRegex := regexp.MustCompile(csm.config.AllowedParameterChars)
 	if !paramRegex.MatchString(args) {
 		csm.logger.WarnContext(ctx, "Command parameters contain invalid characters",
-			"command", cmd,
+			"command", redactCommand(cmd),
 			"parameters", args,
 			"regex_pattern", csm.config.AllowedParameterChars,
 		)
@@ -535,7 +535,7 @@ func (csm *CommandSecurityManager) checkBlockedPatterns(ctx context.Context, cmd
 		regex := regexp.MustCompile(pattern)
 		if regex.MatchString(cmd) {
 			csm.logger.WarnContext(ctx, "Blocked pattern detected in command",
-				"command", cmd,
+				"command", redactCommand(cmd),
 				"pattern", pattern,
 			)
 			return fmt.Errorf("554 5.7.1 Command rejected: security violation")
@@ -548,7 +548,7 @@ func (csm *CommandSecurityManager) checkBlockedPatterns(ctx context.Context, cmd
 			regex := regexp.MustCompile(pattern)
 			if regex.MatchString(args) {
 				csm.logger.WarnContext(ctx, "Blocked pattern detected in parameters",
-					"command", cmd,
+					"command", redactCommand(cmd),
 					"parameters", args,
 					"pattern", pattern,
 				)
@@ -576,7 +576,7 @@ func (csm *CommandSecurityManager) logSuspiciousActivity(ctx context.Context, or
 		if regex.MatchString(cmd + " " + args) {
 			csm.logger.WarnContext(ctx, "Suspicious command pattern detected",
 				"original_line", originalLine,
-				"command", cmd,
+				"command", redactCommand(cmd),
 				"parameters", args,
 				"pattern", pattern,
 			)
@@ -589,7 +589,7 @@ func (csm *CommandSecurityManager) logSuspiciousActivity(ctx context.Context, or
 func (csm *CommandSecurityManager) SanitizeCommand(line string) string {
 	// Remove control characters for safe logging
 	sanitized := ""
-	for _, r := range line {
+	for _, r := range redactCommand(line) {
 		if r >= 32 && r != 127 { // Keep printable characters except DEL
 			sanitized += string(r)
 		} else {
@@ -688,4 +688,16 @@ func (csm *CommandSecurityManager) GetSecurityStats() map[string]interface{} {
 		"memory_monitoring":        csm.config.EnableMemoryMonitoring,
 		"max_memory_per_command":   csm.config.MaxMemoryPerCommand,
 	}
+}
+
+// redactCommand is a command line safe to log. An AUTH argument is
+// credentials: for PLAIN it is the base64 of the username and the
+// password, so logging it puts every password in the log. The mechanism is
+// kept; the rest is replaced.
+func redactCommand(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) >= 3 && strings.EqualFold(fields[0], "AUTH") {
+		return fields[0] + " " + fields[1] + " [redacted]"
+	}
+	return line
 }

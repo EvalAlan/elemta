@@ -137,7 +137,7 @@ func NewAuthHandler(session *Session, state *SessionState, authenticator Authent
 
 // HandleAuth processes the AUTH command
 func (ah *AuthHandler) HandleAuth(ctx context.Context, cmd string) error {
-	ah.logger.DebugContext(ctx, "Processing AUTH command", "command", cmd)
+	ah.logger.DebugContext(ctx, "Processing AUTH command", "command", redactCommand(cmd))
 
 	// Use session state machine if available
 	if ah.sessionStateMachine != nil {
@@ -161,7 +161,7 @@ func (ah *AuthHandler) HandleAuth(ctx context.Context, cmd string) error {
 	// Parse AUTH command
 	parts := strings.Fields(cmd)
 	if len(parts) < 2 {
-		ah.logger.WarnContext(ctx, "Invalid AUTH command format", "command", cmd)
+		ah.logger.WarnContext(ctx, "Invalid AUTH command format", "command", redactCommand(cmd))
 		return fmt.Errorf("501 5.5.4 Syntax: AUTH mechanism")
 	}
 
@@ -196,7 +196,7 @@ func (ah *AuthHandler) HandleAuth(ctx context.Context, cmd string) error {
 	case AuthMethodPlain:
 		return ah.handleAuthPlain(ctx, cmd)
 	case AuthMethodLogin:
-		return ah.handleAuthLogin(ctx)
+		return ah.handleAuthLogin(ctx, cmd)
 	case AuthMethodCramMD5:
 		return ah.handleAuthCramMD5(ctx)
 	default:
@@ -267,22 +267,30 @@ func (ah *AuthHandler) handleAuthPlain(ctx context.Context, cmd string) error {
 }
 
 // handleAuthLogin processes LOGIN authentication
-func (ah *AuthHandler) handleAuthLogin(ctx context.Context) error {
+func (ah *AuthHandler) handleAuthLogin(ctx context.Context, cmd string) error {
 	ah.logger.DebugContext(ctx, "Processing LOGIN authentication")
 
-	// Send username prompt and flush so client sees it before we read
-	if err := ah.session.write("334 " + base64.StdEncoding.EncodeToString([]byte("Username:"))); err != nil {
-		return fmt.Errorf("failed to write username prompt: %w", err)
-	}
-	if err := ah.session.flush(); err != nil {
-		return fmt.Errorf("failed to flush username prompt: %w", err)
-	}
-
-	// Read username
-	userLine, _, err := ah.session.reader.ReadLine()
-	if err != nil {
-		ah.logger.ErrorContext(ctx, "Failed to read username", "error", err)
-		return fmt.Errorf("failed to read username: %w", err)
+	// "AUTH LOGIN <base64 username>" sends the username as an initial
+	// response (RFC 4954), as Python's smtplib and others do; then only the
+	// password is asked for. Prompting for a username anyway took the
+	// password line as the username, failed the login, and logged the
+	// password as the username it had tried.
+	var userLine []byte
+	if fields := strings.Fields(cmd); len(fields) >= 3 && fields[2] != "=" {
+		userLine = []byte(fields[2])
+	} else {
+		if err := ah.session.write("334 " + base64.StdEncoding.EncodeToString([]byte("Username:"))); err != nil {
+			return fmt.Errorf("failed to write username prompt: %w", err)
+		}
+		if err := ah.session.flush(); err != nil {
+			return fmt.Errorf("failed to flush username prompt: %w", err)
+		}
+		line, _, err := ah.session.reader.ReadLine()
+		if err != nil {
+			ah.logger.ErrorContext(ctx, "Failed to read username", "error", err)
+			return fmt.Errorf("failed to read username: %w", err)
+		}
+		userLine = line
 	}
 
 	// Validate and decode username
