@@ -59,10 +59,14 @@ step "Message bodies"
 load mailbox_bodies "$in/mailbox/bodies.tar.gz" 1001:1001
 
 step "Directory"
-load ldap_config "$in/ldap/slapd.d.tar.gz" 911:911
-docker run --rm -i --network none --user 0 --entrypoint sh -v "${project}_ldap_config:/etc/ldap/slapd.d" \
-    -v "${project}_ldap_data:/var/lib/ldap" "$ldap_image" \
-    -c 'find /var/lib/ldap -mindepth 1 -delete && slapadd -q -n 1 -F /etc/ldap/slapd.d && chown -R 911:911 /var/lib/ldap' <"$in/ldap/data.ldif"
+# Created afresh from the entries, as on a new install: the configuration
+# comes from the image and the access rules and passwords from the deploy
+# scripts once it runs, so a backup taken under the previous directory image
+# restores the same way as a current one.
+docker run --rm --network none --user 0 --entrypoint sh --env-file "$secrets/ldap-admin.env" \
+    -v "${project}_ldap_slapd:/etc/ldap/slapd.d" -v "${project}_ldap_db:/var/lib/ldap" \
+    -v "$in/ldap/data.ldif:/import/data.ldif:ro" "$ldap_image" \
+    -c 'find /etc/ldap/slapd.d /var/lib/ldap -mindepth 1 -delete && elemta-ldap init'
 
 step "MTA queue and runtime configuration"
 load elemta_queue "$in/mta/elemta_queue.tar.gz" 1001:1001
@@ -77,5 +81,9 @@ for c in elemta-ldap elemta-mailbox-a elemta-mailbox-b elemta-node0 elemta-webma
         sleep 3
     done
     echo "$c $(docker inspect -f '{{.State.Health.Status}}' "$c")"
+    if [ "$c" = elemta-ldap ]; then
+        "$root/scripts/ldap-admin-password.sh"
+        "$root/scripts/ldap-service-accounts.sh"
+    fi
 done
 echo "Restored $(sed -n 's/^created=//p' "$in/manifest") ($(sed -n 's/^version=//p' "$in/manifest"))"

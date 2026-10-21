@@ -46,6 +46,7 @@ jobs:
           {
             echo "main<<EOF"; echo "$name:$label"; echo "$name:$GITHUB_SHA"; echo "EOF"
             echo "mailbox<<EOF"; echo "$name-mailbox:$label"; echo "$name-mailbox:$GITHUB_SHA"; echo "EOF"
+            echo "ldap<<EOF"; echo "$name-ldap:$label"; echo "$name-ldap:$GITHUB_SHA"; echo "EOF"
           } >> "$GITHUB_OUTPUT"
           if [ "$GITHUB_EVENT_NAME" = push ]; then echo "push=true" >> "$GITHUB_OUTPUT"; else echo "push=false" >> "$GITHUB_OUTPUT"; fi
 
@@ -82,3 +83,12 @@ jobs:
           platforms: linux/amd64
           build-args: |
             VERSION=${{ steps.image.outputs.version }}
+
+      - name: Build and push directory image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: docker/ldap/Dockerfile
+          push: ${{ steps.image.outputs.push == 'true' }}
+          tags: ${{ steps.image.outputs.ldap }}
+          platforms: linux/amd64

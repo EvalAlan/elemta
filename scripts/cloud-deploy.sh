@@ -118,6 +118,9 @@ else
 fi
 
 step "Directory and certificate"
+# Once, on hosts that still have the previous directory image's data; a
+# no-op everywhere else.
+"$root/scripts/ldap-migrate.sh"
 dc up -d elemta-ldap elemta-caddy
 for _ in $(seq 60); do
     docker exec elemta-ldap ldapsearch -Q -Y EXTERNAL -H ldapi:/// \

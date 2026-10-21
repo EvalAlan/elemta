@@ -96,6 +96,9 @@ images:
   - name: elemta-mailbox
     newName: elemta-mailbox
     newTag: dev
+  - name: elemta-ldap
+    newName: elemta-ldap
+    newTag: dev
 
 patches:
   - path: patches.yaml

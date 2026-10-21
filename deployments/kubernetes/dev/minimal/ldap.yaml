@@ -1,8 +1,12 @@
 # elemta-ldap: the directory behind SMTP AUTH, mailbox and webmail logins, and Roundcube.
 #
-# The LDIF files are mounted where the compose stack mounted them. osixia's
-# image does not load them on its own from there; scripts/init-ldap-if-needed.sh
-# does, through kubectl exec, after the pod is ready (install-dev runs it).
+# The LDIF files are mounted where the compose stack mounted them. The image
+# does not load them on its own; scripts/init-ldap-if-needed.sh does, through
+# kubectl exec, after the pod is ready (install-dev runs it).
+#
+# The claims are new with the directory image (docker/ldap): the previous
+# image's database can't be opened by it. A cluster from before can delete
+# elemta-ldap-data and elemta-ldap-config; install-dev reloads the fixtures.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,25 +28,16 @@ spec:
       hostname: elemta-ldap
       containers:
         - name: openldap
-          image: osixia/openldap:latest
+          image: elemta-ldap
+          imagePullPolicy: IfNotPresent
           env:
             - name: LDAP_ORGANISATION
               value: Example Corp
-            - name: LDAP_DOMAIN
-              value: example.com
             # Development only, like everything else in this directory.
             - name: LDAP_ADMIN_PASSWORD
               value: admin
             - name: LDAP_BASE_DN
               value: dc=example,dc=com
-            - name: LDAP_TLS_VERIFY_CLIENT
-              value: never
-            - name: LDAP_RFC2307BIS_SCHEMA
-              value: "true"
-            - name: LDAP_REMOVE_CONFIG_AFTER_SETUP
-              value: "true"
-            - name: LDAP_TLS
-              value: "false"
           ports:
             - name: ldap
               containerPort: 389
@@ -75,10 +70,10 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: elemta-ldap-data
+            claimName: elemta-ldap-db
         - name: config
           persistentVolumeClaim:
-            claimName: elemta-ldap-config
+            claimName: elemta-ldap-slapd
         - name: init
           configMap:
             name: elemta-ldap-init
@@ -100,7 +95,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: elemta-ldap-data
+  name: elemta-ldap-db
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
@@ -110,7 +105,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: elemta-ldap-config
+  name: elemta-ldap-slapd
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:

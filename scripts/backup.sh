@@ -3,7 +3,7 @@
 #
 #   mailbox/   Postgres metadata and message bodies (scripts/mailbox-backup.sh)
 #   ldap/      the directory: accounts, aliases, passwords (slapcat), and
-#              its configuration (slapcat and the files)
+#              its configuration for reference (restores create a fresh one)
 #   mta/       the MTA's queue (mail accepted but not yet delivered) and the
 #              runtime configuration the dashboard saves, with its users file
 #   secrets.tar.gz  deployments/compose/.secrets: TLS and DKIM keys, service
@@ -44,10 +44,6 @@ mkdir "$stage/ldap"
 docker exec elemta-ldap slapcat -n 0 >"$stage/ldap/config.ldif"
 docker exec elemta-ldap slapcat -n 1 >"$stage/ldap/data.ldif"
 grep -q '^dn: ' "$stage/ldap/data.ldif" || { echo "The directory export is empty" >&2; exit 1; }
-# The configuration directory as files too: the directory image keeps its
-# bootstrap markers there, and without them it would bootstrap again over a
-# restored configuration.
-docker run --rm --network none --user 0 --entrypoint tar -v "${project}_ldap_config:/v:ro" "$image" -C /v -czf - . >"$stage/ldap/slapd.d.tar.gz"
 
 echo "== MTA queue and runtime configuration"
 mkdir "$stage/mta"

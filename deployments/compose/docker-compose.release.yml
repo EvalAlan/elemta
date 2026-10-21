@@ -81,9 +81,15 @@ services:
     shm_size: 256m
   elemta-ldap:
     <<: *harden
-    # 2.4.57 in an image no longer maintained upstream. It stays on the
-    # internal network only; replacing it is tracked in docs/production-compose.md.
-    image: osixia/openldap:latest@sha256:3f68751292b43564a2586fc29fb7337573e2dad692b92d4e78e49ad5c22e567b # 1.5.0
+    image: ${ELEMTA_LDAP_IMAGE:-ghcr.io/evalalan/elemta-ldap}:${ELEMTA_TAG:?set ELEMTA_TAG}
+    pull_policy: missing
+    build: !reset null
+    # Root only to create the directory on first start and to bind port 389;
+    # slapd then runs as the ldap user. Nothing else of root is needed.
+    read_only: true
+    tmpfs: ["/tmp:size=16m", "/var/lib/openldap/run:size=1m,uid=100,gid=101"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, NET_BIND_SERVICE]
     mem_limit: 256m
     pids_limit: 256
   elemta-rspamd:

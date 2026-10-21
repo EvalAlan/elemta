@@ -87,8 +87,9 @@ in `release.yml` if/when other platforms are needed.
 ## Container images
 
 The same tag also runs [`.github/workflows/build.yml`](../.github/workflows/build.yml),
-which publishes `ghcr.io/evalalan/elemta:vX.Y.Z` and
-`ghcr.io/evalalan/elemta-mailbox:vX.Y.Z` with the version stamped in. Pushes
+which publishes `ghcr.io/evalalan/elemta:vX.Y.Z`,
+`ghcr.io/evalalan/elemta-mailbox:vX.Y.Z` (version stamped in) and
+`ghcr.io/evalalan/elemta-ldap:vX.Y.Z`, the directory. Pushes
 to `main` publish `:latest` and `:<commit sha>`. The production overlay
 (`docker-compose.release.yml`, see [production-compose.md](production-compose.md))
 runs these by `ELEMTA_TAG`.

@@ -26,13 +26,11 @@ MAILBOX_IMAGE=$image "$root/scripts/mailbox-restore-drill.sh" "$in/mailbox"
 
 echo "== Directory"
 want=$(sed -n 's/^ldap_entries=//p' "$in/manifest")
-got=$(docker run --rm --network none --user 0 --entrypoint sh -v "$in/ldap:/backup:ro" "$ldap_image" -c '
+# Created the way restore.sh creates it, in a throwaway container.
+got=$(docker run --rm --network none --user 0 --entrypoint sh -v "$in/ldap:/backup:ro" \
+    -e LDAP_ADMIN_PASSWORD=drill -e LDAP_CONFIG_DIR=/tmp/c -e LDAP_DATA_DIR=/tmp/d -e LDAP_IMPORT=/backup/data.ldif "$ldap_image" -c '
     set -e
-    mkdir -p /tmp/c /tmp/d
-    tar -C /tmp/c -xzf /backup/slapd.d.tar.gz
-    # Load the data where this throwaway server will look for it.
-    sed -i "s|^olcDbDirectory: .*|olcDbDirectory: /tmp/d|" "/tmp/c/cn=config/olcDatabase={1}mdb.ldif"
-    slapadd -q -n 1 -F /tmp/c -l /backup/data.ldif >/dev/null 2>&1
+    elemta-ldap init >/dev/null
     slapcat -n 1 -F /tmp/c 2>/dev/null | grep -c "^dn: "')
 [ "$got" = "$want" ] || { echo "Directory restored $got entries, the backup has $want" >&2; exit 1; }
 echo "directory entries: $got"

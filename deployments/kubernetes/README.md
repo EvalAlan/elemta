@@ -74,7 +74,7 @@ and `make k8s-down` before going back to `make install-dev`.
 
 Each one does the following:
 
-1. Builds `elemta:dev`, `elemta-mailbox:dev` and `elemta-dns:dev` and makes
+1. Builds `elemta:dev`, `elemta-mailbox:dev`, `elemta-ldap:dev` and `elemta-dns:dev` and makes
    them visible to the cluster.
 2. Applies the plugin and queue settings to `config/elemta.toml`.
 3. Applies the overlay. Anything a previous overlay added and this one does

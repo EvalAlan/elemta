@@ -1,5 +1,37 @@
 # Elemta Changelog
 
+## Unreleased
+
+### Upgrade notes
+
+- **The directory has a new image.** `elemta-ldap` now runs OpenLDAP 2.6.15
+  on Alpine 3.24 (`ghcr.io/evalalan/elemta-ldap`, built with each release)
+  instead of `osixia/openldap`, which was no longer maintained and shipped
+  OpenLDAP 2.4.57. The two databases aren't compatible, so the directory
+  moves to new volumes: `scripts/cloud-deploy.sh` does it with
+  `scripts/ldap-migrate.sh`, which exports the entries with the previous
+  image, creates the new directory from them, reapplies the access rules
+  and service passwords, and checks every entry arrived. Logins pause for
+  about a minute. If you roll service by service, run the script first; the
+  new directory refuses to start empty while the old data is there. The old
+  volumes are left as they were for a rollback.
+- Backups no longer include the directory's configuration files; a restore
+  creates the directory afresh from its entries (`ldap/data.ldif`), so
+  backups taken before this release restore the same way.
+
+### Fixes
+
+- `{SSHA512}` passwords, which Elemta writes when a user's password is set
+  through the directory, can now be checked by the directory; the previous
+  image lacked the module. Password changes made with the LDAP Password
+  Modify operation are stored as `{SSHA512}` too.
+
+### Security
+
+- The directory container runs slapd as an unprivileged user on a read-only
+  root filesystem with only the capabilities to bind port 389 and drop
+  privileges.
+
 ## v0.5.3 (2026-10-21)
 
 A performance patch for the webmail. No configuration or schema changes.

@@ -1,0 +1,90 @@
+# cn=config for a new directory, rendered by entrypoint.sh (@BASE@, @DATA@,
+# @ROOTPW@). It reproduces what the stack relied on from the previous image:
+# root over ldapi:/// manages everything (the deploy and backup scripts work
+# that way), the same schemas, indexes and group overlays. Access rules for
+# the service accounts are applied afterwards by
+# scripts/ldap-service-accounts.sh, which replaces them as a whole.
+dn: cn=config
+objectClass: olcGlobal
+cn: config
+olcArgsFile: /var/lib/openldap/run/slapd.args
+olcPidFile: /var/lib/openldap/run/slapd.pid
+olcLogLevel: none
+olcToolThreads: 1
+
+# pw-sha2 makes {SSHA512} usable: Elemta writes users' passwords that way
+# (internal/datasource/ldap.go), and the previous image could not check them.
+dn: cn=module{0},cn=config
+objectClass: olcModuleList
+cn: module{0}
+olcModulePath: /usr/lib/openldap
+olcModuleLoad: back_mdb
+olcModuleLoad: memberof
+olcModuleLoad: refint
+olcModuleLoad: pw-sha2
+
+dn: cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: schema
+
+include: file:///etc/openldap/schema/core.ldif
+include: file:///etc/openldap/schema/cosine.ldif
+include: file:///etc/openldap/schema/inetorgperson.ldif
+include: file:///etc/openldap/schema/nis.ldif
+include: file:///usr/share/elemta-ldap/10-mail-schema.ldif
+
+dn: olcDatabase={-1}frontend,cn=config
+objectClass: olcDatabaseConfig
+objectClass: olcFrontendConfig
+olcDatabase: {-1}frontend
+olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break
+olcAccess: {1}to dn.exact="" by * read
+olcAccess: {2}to dn.base="cn=Subschema" by * read
+olcPasswordHash: {SSHA512}
+olcSizeLimit: 500
+
+dn: olcDatabase={0}config,cn=config
+objectClass: olcDatabaseConfig
+olcDatabase: {0}config
+olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break
+olcRootDN: cn=admin,cn=config
+
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcDatabaseConfig
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
+olcDbDirectory: @DATA@
+olcSuffix: @BASE@
+olcRootDN: cn=admin,@BASE@
+olcRootPW: @ROOTPW@
+olcLastMod: TRUE
+olcDbCheckpoint: 512 30
+olcDbMaxSize: 1073741824
+olcDbIndex: objectClass eq
+olcDbIndex: uid eq
+olcDbIndex: mail eq
+olcDbIndex: mailAlternateAddress eq
+olcDbIndex: memberOf eq
+olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break
+olcAccess: {1}to attrs=userPassword,shadowLastChange by self write by anonymous auth by * none
+olcAccess: {2}to * by self read by * none
+
+dn: olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcMemberOf
+olcOverlay: {0}memberof
+olcMemberOfDangling: ignore
+olcMemberOfRefInt: TRUE
+olcMemberOfGroupOC: groupOfUniqueNames
+olcMemberOfMemberAD: uniqueMember
+olcMemberOfMemberOfAD: memberOf
+
+dn: olcOverlay={1}refint,olcDatabase={1}mdb,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcRefintConfig
+olcOverlay: {1}refint
+olcRefintAttribute: owner
+olcRefintAttribute: manager
+olcRefintAttribute: uniqueMember
+olcRefintAttribute: member
+olcRefintAttribute: memberOf

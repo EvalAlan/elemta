@@ -369,7 +369,11 @@ services:
       start_period: 120s
 
   elemta-ldap:
-    image: osixia/openldap:latest
+    # OpenLDAP 2.6 on Alpine, configured on first start (docker/ldap).
+    image: elemta-ldap:dev
+    build:
+      context: ../..
+      dockerfile: docker/ldap/Dockerfile
     container_name: elemta-ldap
     hostname: elemta-ldap
     # Everything authenticates against the directory, so it must come back
@@ -377,21 +381,22 @@ services:
     restart: unless-stopped
     ports:
       - "1389:389" # LDAP port
-      - "1636:636" # LDAPS port  
     env_file:
       - path: .secrets/ldap-admin.env
         required: true
     environment:
       - LDAP_ORGANISATION=Example Corp
-      - LDAP_DOMAIN=example.com
       - LDAP_BASE_DN=dc=example,dc=com
-      - LDAP_TLS_VERIFY_CLIENT=never
-      - LDAP_RFC2307BIS_SCHEMA=true
-      - LDAP_REMOVE_CONFIG_AFTER_SETUP=true
-      - LDAP_TLS=false
     volumes:
-      - ldap_data:/var/lib/ldap
-      - ldap_config:/etc/ldap/slapd.d
+      # New volumes: the previous image's database (OpenLDAP 2.4) can't be
+      # opened by this one, and leaving the old volumes untouched keeps a
+      # rollback possible. scripts/ldap-migrate.sh moves the entries over.
+      - ldap_db:/var/lib/ldap
+      - ldap_slapd:/etc/ldap/slapd.d
+      # The previous image's database, read only and only so the new image
+      # can refuse to start empty while a directory that hasn't been moved
+      # is still there.
+      - ldap_data:/legacy:ro
       - ../../docker/ldap:/docker-entrypoint-initdb.d:ro
     networks:
       - elemta_network
@@ -636,7 +641,10 @@ volumes:
     driver: local
   alertmanager_data:
     driver: local
-  ldap_data:
+  ldap_db:
     driver: local
-  ldap_config:
+  ldap_slapd:
+    driver: local
+  # The previous directory image's database; see elemta-ldap.
+  ldap_data:
     driver: local

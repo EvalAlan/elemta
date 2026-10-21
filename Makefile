@@ -975,12 +975,13 @@ k8s-check:
 		exit 1; \
 	fi
 
-# The three images the stack builds rather than pulls: Elemta (MTA, admin
-# console and webmail), the mailbox service, and the caching resolver.
+# The images the stack builds rather than pulls: Elemta (MTA, admin console
+# and webmail), the mailbox service, the directory, and the caching resolver.
 k8s-images:
 	@echo "🔨 Building images ($(IMAGE_TAG))..."
 	docker build $(DOCKER_BUILD_FLAGS) --build-arg VERSION=$$(git rev-parse --short HEAD 2>/dev/null || echo dev) -t elemta:$(IMAGE_TAG) .
 	docker build $(DOCKER_BUILD_FLAGS) -t elemta-mailbox:$(IMAGE_TAG) -f docker/mailbox/Dockerfile .
+	docker build $(DOCKER_BUILD_FLAGS) -t elemta-ldap:$(IMAGE_TAG) -f docker/ldap/Dockerfile .
 	docker build $(DOCKER_BUILD_FLAGS) -t elemta-dns:$(IMAGE_TAG) deployments/dns
 	@$(MAKE) --no-print-directory k8s-load
 
@@ -996,7 +997,7 @@ k8s-load:
 			case "$$context" in kind-*) mode=kind ;; *) mode=k3s ;; esac ;; \
 		esac; \
 	fi; \
-	images="elemta:$(IMAGE_TAG) elemta-mailbox:$(IMAGE_TAG) elemta-dns:$(IMAGE_TAG)"; \
+	images="elemta:$(IMAGE_TAG) elemta-mailbox:$(IMAGE_TAG) elemta-ldap:$(IMAGE_TAG) elemta-dns:$(IMAGE_TAG)"; \
 	case "$$mode" in \
 		docker|none) echo "ℹ️  The cluster runs on Docker; images are already visible to it" ;; \
 		kind) context=$$($(KUBECTL) config current-context); \

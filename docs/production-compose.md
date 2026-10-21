@@ -114,6 +114,17 @@ scripts/cloud-deploy.sh
 Read the release's upgrade notes in [CHANGELOG.md](../CHANGELOG.md) first.
 Schema changes apply on start and are additive.
 
+**From v0.5.3 or earlier:** the directory moved to its own image (OpenLDAP
+2.6, built and published with the release) on new volumes, because the
+previous image's OpenLDAP 2.4 database can't be opened by 2.6.
+`scripts/cloud-deploy.sh` moves it for you with `scripts/ldap-migrate.sh`:
+the previous image exports the entries, the new one is created from them,
+and every entry is checked. If you roll service by service instead, run
+`scripts/ldap-migrate.sh` first; until then the new directory refuses to
+start rather than start empty. The old volumes (`compose_ldap_data`,
+`compose_ldap_config`) are left untouched for a rollback; remove them once
+you are satisfied.
+
 To roll with less disruption than recreating everything at once, pull and
 recreate one service at a time, waiting for each to be healthy: the
 mailbox replicas (`elemta-mailbox-a`, then `-b`; clients reconnect to the
@@ -154,7 +165,9 @@ What the overlay and the stack do:
   a drill.
 - Every container: `no-new-privileges`, memory and process limits, rotated
   logs. Elemta's own containers also run as uid 1001 with all capabilities
-  dropped and a read-only root filesystem.
+  dropped and a read-only root filesystem. The directory runs slapd as its
+  own unprivileged user on a read-only root filesystem, keeping only the
+  capabilities to bind port 389 and drop to that user.
 - Only mail and HTTPS ports are public. LDAP, Postgres, Valkey, Rspamd,
   ManageSieve, plaintext IMAP, LMTP and metrics are on loopback or the
   internal network. The dashboard is reachable only from
@@ -171,10 +184,6 @@ What the overlay and the stack do:
 
 Known gaps:
 
-- The directory image (`osixia/openldap`) is no longer maintained upstream
-  and ships OpenLDAP 2.4.57. It is reachable only on the internal network
-  and loopback, but it should be replaced with a maintained OpenLDAP image
-  (or an external directory) in a coming release.
 - One host is one failure domain. The mailbox replicas protect against a
   crashed process, not a lost host; the backups are the disaster plan.
 - Rspamd and ClamAV run as root inside their containers (their images
