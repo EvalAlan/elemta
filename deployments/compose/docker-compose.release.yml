@@ -7,7 +7,7 @@
 #     -f docker-compose.release.yml up -d
 #
 # scripts/cloud-deploy.sh does this when ELEMTA_TAG is set (a release such
-# as v0.5.2, or a commit SHA built on main). See docs/production-compose.md.
+# as v0.5.3, or a commit SHA built on main). See docs/production-compose.md.
 #
 # Why each piece:
 #
@@ -30,7 +30,7 @@ x-harden: &harden
     options: { max-size: "20m", max-file: "5" }
 
 x-elemta-image: &elemta-image
-  image: ${ELEMTA_IMAGE:-ghcr.io/evalalan/elemta}:${ELEMTA_TAG:?set ELEMTA_TAG to a release (v0.5.2) or a commit built on main}
+  image: ${ELEMTA_IMAGE:-ghcr.io/evalalan/elemta}:${ELEMTA_TAG:?set ELEMTA_TAG to a release (v0.5.3) or a commit built on main}
   pull_policy: missing
 
 x-mailbox-image: &mailbox-image

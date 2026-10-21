@@ -39,11 +39,11 @@ relaying to mailboxes elsewhere. See [production-deployment.md](production-deplo
 
 ```sh
 git clone https://github.com/EvalAlan/elemta.git && cd elemta
-git checkout v0.5.2                     # the scripts and compose files of the release
+git checkout v0.5.3                     # the scripts and compose files of the release
 mkdir -p deployments/compose/.secrets && chmod 700 deployments/compose/.secrets
 cat > deployments/compose/.secrets/cloud.env <<'EOF'
 MAIL_DOMAIN=mail.example.org          # host name = mail domain
-ELEMTA_TAG=v0.5.2                     # run the release images
+ELEMTA_TAG=v0.5.3                     # run the release images
 DKIM_SELECTOR=s2026
 ELEMTA_ADMIN_ALLOWED_IP=203.0.113.7   # who may reach the dashboard on :8025
 ELEMTA_ADMIN_BIND_IP=0.0.0.0          # omit to keep the dashboard on loopback (SSH tunnel)

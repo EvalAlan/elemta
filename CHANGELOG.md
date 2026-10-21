@@ -1,5 +1,34 @@
 # Elemta Changelog
 
+## v0.5.3 (2026-10-21)
+
+A performance patch for the webmail. No configuration or schema changes.
+
+### Upgrade notes
+
+- Set `ELEMTA_TAG` to `v0.5.3`. Only the webmail's behaviour changes;
+  rolling back to v0.5.2 is a matter of changing the tag.
+
+### Performance
+
+- Each page view in the webmail no longer opens its own connection to the
+  mailbox for live updates. One connection per user is shared between their
+  pages, kept for 30 seconds after the last one closes, and replaced every
+  few minutes so a changed password or a disabled account still ends it.
+- The shared-mailbox switcher is cached for a minute per session instead of
+  reauthenticating on every page; the mailbox still authorizes every access.
+- Opening a message fetches it once instead of twice: the reading pane
+  reuses the copy the page just read (messages up to 2 MB, for 30 seconds,
+  dropped on any change to messages or on sign-out).
+- Measured on the development server: about 85% fewer authentications and
+  half as many folder selections per webmail action, 20 to 25 percent more
+  actions per second, and the slowest 5% of actions about a fifth faster.
+
+### Repository
+
+- Removed outdated handoff and planning notes; the docs, `make gotchas` and
+  this changelog carry what they held that still applies.
+
 ## v0.5.2 (2026-10-21)
 
 This patch release adds two administration features and makes the mailbox
