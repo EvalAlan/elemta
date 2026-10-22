@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -280,6 +281,33 @@ func TestSecuritySettings(t *testing.T) {
 	// Changes need the session's CSRF token like every other form.
 	if resp := h.post("/settings/app-passwords", url.Values{"name": {"x"}}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("without CSRF = %d", resp.StatusCode)
+	}
+}
+
+func TestBlockSenderPreservesRulesAndLimit(t *testing.T) {
+	f := &fakeSecurity{allow: []string{"friend@example.org", "priya@northwind.example"}, block: []string{"old@example.org"}, maxSenders: 3}
+	h := newSecurityHarness(t, f)
+	csrf := h.login()
+	_, page := h.get("/mail?f=INBOX&uid=7")
+	if !strings.Contains(page, `>Block sender</button>`) || !strings.Contains(page, `name="sender" value="priya@northwind.example"`) {
+		t.Fatal("message view lacks the sender action")
+	}
+	form := url.Values{"csrf": {csrf}, "sender": {"priya@northwind.example"}, "back": {"/mail?f=INBOX&uid=7"}}
+	if resp := h.post("/mail/block-sender", form); resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "sender-blocked") {
+		t.Fatalf("block response: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if !slices.Equal(f.allow, []string{"friend@example.org"}) || !slices.Equal(f.block, []string{"old@example.org", "priya@northwind.example"}) {
+		t.Fatalf("rules after block: allow=%v block=%v", f.allow, f.block)
+	}
+	if resp := h.post("/mail/block-sender", form); resp.StatusCode != http.StatusSeeOther || len(f.block) != 2 {
+		t.Fatalf("repeat block: %d block=%v", resp.StatusCode, f.block)
+	}
+	form.Set("sender", "new@example.org")
+	if resp := h.post("/mail/block-sender", form); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("over-limit block = %d", resp.StatusCode)
+	}
+	if len(f.block) != 2 || len(f.allow) != 1 {
+		t.Fatalf("failed block changed rules: allow=%v block=%v", f.allow, f.block)
 	}
 }
 

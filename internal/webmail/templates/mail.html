@@ -144,6 +144,12 @@
             <button class="menu-item" name="op" value="unread">Mark unread</button>
             {{if isRole .Folder $.Folders "junk"}}<button class="menu-item" name="op" value="notjunk">Not junk</button>{{else}}<button class="menu-item" name="op" value="junk">Report junk</button>{{end}}
           </form>
+          {{if and .From (not $.Session.AdminActor)}}
+          <form action="/mail/block-sender" method="post">
+            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="sender" value="{{(index .From 0).Email}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+            <button class="menu-item" type="submit">Block sender</button>
+          </form>
+          {{end}}
           {{if .From}}<a href="/filters?new=1&amp;from={{(index .From 0).Email}}">Filter mail like this…</a>{{end}}
           <a href="{{printURL .Folder .UID}}" target="_blank" rel="noopener">Print</a>
           <a href="{{sourceURL .Folder .UID}}" target="_blank" rel="noopener">View original</a>
