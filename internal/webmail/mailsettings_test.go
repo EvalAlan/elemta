@@ -45,7 +45,8 @@ func TestForwardingSettings(t *testing.T) {
 		t.Errorf("saved %+v as %s", fake.mail, fake.user)
 	}
 	// Problems are explained, and nothing is saved.
-	for _, bad := range []string{"not an address", h.server.sessionAddress(t, h)} {
+	// Three is the default limit without a class saying otherwise.
+	for _, bad := range []string{"not an address", h.server.sessionAddress(t, h), "a@x.example, b@x.example, c@x.example, d@x.example"} {
 		resp = h.post("/settings/forwarding", url.Values{"csrf": {csrf}, "forward": {bad}})
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("forward to %q = %d", bad, resp.StatusCode)

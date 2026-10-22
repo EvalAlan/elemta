@@ -16,7 +16,7 @@
     // and "Inherit" leave the setting to the next layer.
     const LIMITS = [
         ['quota_bytes', 'Quota', 'size'], ['max_message_bytes', 'Largest message', 'size'], ['max_attachment_bytes', 'Largest attachment', 'size'],
-        ['messages_per_hour', 'Messages sent per hour', 'count'], ['recipients_per_message', 'Recipients per message', 'count'], ['recipients_per_day', 'Recipients per day', 'count'],
+        ['messages_per_hour', 'Messages sent per hour', 'count'], ['recipients_per_message', 'Recipients per message', 'count'], ['recipients_per_day', 'Recipients per day', 'count'], ['max_forward_addresses', 'Forwarding addresses (default 3)', 'count'],
     ];
     const PROTOCOLS = [['imap', 'IMAP'], ['pop3', 'POP3'], ['webmail', 'Webmail'], ['dav', 'Calendar and contact sync (DAV)'], ['submission', 'SMTP submission from mail apps']];
     const SWITCHES = [['external_forwarding', 'Forwarding outside the server'], ['filters', 'Filters and vacation replies'], ['require_app_passwords', 'Require app passwords'], ['require_two_factor', 'Require two-step verification']];

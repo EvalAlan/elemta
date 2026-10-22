@@ -68,6 +68,9 @@ type securityCheck struct {
 	// whether two-step verification is required.
 	Protocols        map[string]bool `json:"protocols"`
 	RequireTwoFactor bool            `json:"require_two_factor"`
+	// MaxForwardAddresses is how many forwarding addresses the class
+	// allows; 0 from a mailbox service that predates the setting.
+	MaxForwardAddresses int `json:"max_forward_addresses"`
 }
 
 // allows reports whether the class of service lets the account use a

@@ -41,6 +41,8 @@ func (f *fakeMailboxAdmin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = enc.Encode(map[string]string{"error": msg})
 	}
 	switch {
+	case p == "effective" && r.Method == http.MethodGet:
+		_ = enc.Encode(mailpolicy.Resolve(r.URL.Query().Get("address"), mailpolicy.DefaultClass))
 	case strings.HasPrefix(p, "accounts/") && strings.HasSuffix(p, "/access"):
 		address := strings.TrimSuffix(strings.TrimPrefix(p, "accounts/"), "/access")
 		f.access = append(f.access, address)

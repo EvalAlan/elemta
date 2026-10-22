@@ -37,3 +37,20 @@ func TestLargestAttachment(t *testing.T) {
 		t.Errorf("plain message = %d", got)
 	}
 }
+
+func TestForwardLimit(t *testing.T) {
+	if got := Resolve("a@example.com", "default").ForwardLimit(); got != DefaultMaxForwardAddresses {
+		t.Errorf("built-in limit = %d", got)
+	}
+	one, unlimited := 1, 0
+	if got := Resolve("a@example.com", "x", Layer{Name: "class x", Settings: Settings{MaxForwardAddresses: &one}}).ForwardLimit(); got != 1 {
+		t.Errorf("class limit = %d", got)
+	}
+	if got := Resolve("a@example.com", "x", Layer{Name: "class x", Settings: Settings{MaxForwardAddresses: &unlimited}}).ForwardLimit(); got != MaxForwardAddressesLimit {
+		t.Errorf("0 = %d, want the ceiling", got)
+	}
+	tooMany := MaxForwardAddressesLimit + 1
+	if err := (Settings{MaxForwardAddresses: &tooMany}).Validate(); err == nil {
+		t.Error("a limit over the ceiling was accepted")
+	}
+}

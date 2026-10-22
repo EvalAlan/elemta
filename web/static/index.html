@@ -1081,7 +1081,7 @@
                         <form id="ma-mail-form" class="ma-form">
                             <label for="ma-forward">Forward all mail to</label><input id="ma-forward" type="text" placeholder="someone@example.org, other@example.net" aria-describedby="ma-forward-help">
                             <label class="ma-check"><input id="ma-keep-copy" type="checkbox"> Keep a copy in this mailbox</label>
-                            <p class="field-hint" id="ma-forward-help">Up to 10 addresses, separated by commas. Leave empty to stop forwarding. The account's own filters see only the copy kept here.</p>
+                            <p class="field-hint" id="ma-forward-help">Separated by commas, up to the class of service's limit (3 unless the class sets another). Leave empty to stop forwarding. The account's own filters see only the copy kept here.</p>
                             <label for="ma-send-as">May also send as</label><input id="ma-send-as" type="text" placeholder="sales@example.com, @example.com" aria-describedby="ma-send-as-help">
                             <p class="field-hint" id="ma-send-as-help">Addresses this account may use as its sender: aliases, lists or shared addresses. @domain allows every address in the domain.</p>
                             <p class="field-hint" id="ma-directory-class" hidden></p>
@@ -1511,7 +1511,7 @@
     <script src="/static/app.js?v=20261020-reports"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
-    <script src="/static/mail-admin.js?v=20261022-directory"></script>
+    <script src="/static/mail-admin.js?v=20261022-forwardlimit"></script>
 </body>
 
 </html>

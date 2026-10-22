@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/go-ldap/ldap/v3"
 )
 
@@ -35,9 +36,6 @@ type MailSettings interface {
 	ReadMailSettings(ctx context.Context, user, password string) (AccountMail, error)
 	SetForwarding(ctx context.Context, user, password string, forward []string, keepCopy bool) error
 }
-
-// maxForward matches the provisioning limit (internal/provision).
-const maxForward = 10
 
 func (l ldapPasswords) asUser(ctx context.Context, user, password string) (*ldap.Conn, string, error) {
 	conn, dn, err := l.find(ctx, user)
@@ -155,9 +153,25 @@ func (s *Server) chosenFrom(ctx context.Context, sess *Session, asked string) st
 	return choices[0]
 }
 
+// forwardLimit is how many forwarding addresses the user's class of
+// service allows, from the mailbox service; the default when it can't say.
+// Delivery applies the same limit, whatever is stored.
+func (s *Server) forwardLimit(ctx context.Context, sess *Session) int {
+	if s.security != nil {
+		if pw, err := s.sessions.password(sess); err == nil {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			if c, err := s.security.check(ctx, sess.User, pw); err == nil && c.MaxForwardAddresses > 0 {
+				return c.MaxForwardAddresses
+			}
+		}
+	}
+	return mailpolicy.DefaultMaxForwardAddresses
+}
+
 // parseForward reads the forwarding addresses a form posted, separated by
 // commas, semicolons or line breaks.
-func parseForward(raw, own string) ([]string, string) {
+func parseForward(raw, own string, maxForward int) ([]string, string) {
 	out := []string{}
 	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' || r == '\n' || r == '\r' || r == ' ' || r == '\t' }) {
 		a, err := mail.ParseAddress(part)
@@ -173,7 +187,10 @@ func parseForward(raw, own string) ([]string, string) {
 		}
 	}
 	if len(out) > maxForward {
-		return nil, fmt.Sprintf("Forward to at most %d addresses.", maxForward)
+		if maxForward == 1 {
+			return nil, "You can forward to one address."
+		}
+		return nil, fmt.Sprintf("You can forward to at most %d addresses.", maxForward)
 	}
 	return out, ""
 }
@@ -183,7 +200,7 @@ func (s *Server) forwardingSubmit(w http.ResponseWriter, r *http.Request, sess *
 		http.Error(w, "Forwarding can't be changed here.", http.StatusForbidden)
 		return
 	}
-	forward, problem := parseForward(r.PostFormValue("forward"), sess.Address)
+	forward, problem := parseForward(r.PostFormValue("forward"), sess.Address, s.forwardLimit(r.Context(), sess))
 	if problem != "" {
 		v, err := s.settingsView(r, sess, "account")
 		if err != nil {

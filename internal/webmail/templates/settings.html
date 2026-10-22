@@ -136,7 +136,7 @@
     {{if eq .NoticeCard "forwarding"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
     <label for="forward">Forward all mail to</label><input id="forward" name="forward" type="text" value="{{.ForwardText}}" placeholder="you@example.org" autocomplete="off">
     <span></span><label class="checkline"><input type="checkbox" name="keep_copy" value="1"{{if .Forwarding.KeepCopy}} checked{{end}}> Keep a copy here too</label>
-    <span></span><span class="small muted">Up to 10 addresses, separated by commas. Leave it empty to stop forwarding. Without a copy, forwarded mail isn't kept here and your filters don't see it. Your organisation may not allow forwarding outside it.</span>
+    <span></span><span class="small muted">{{if eq .ForwardLimit 1}}One address.{{else}}Up to {{.ForwardLimit}} addresses, separated by commas.{{end}} Leave it empty to stop forwarding. Without a copy, forwarded mail isn't kept here and your filters don't see it. Your organisation may not allow forwarding outside it.</span>
     {{if .Forwarding.SendAs}}<span class="label">You may also send as</span><span>{{range $i, $a := .Forwarding.SendAs}}{{if $i}}, {{end}}<span class="mono">{{$a}}</span>{{end}} <span class="small muted">(choose it as From when you write; set by your administrator)</span></span>{{end}}
     <div class="form-actions"><button class="button primary" type="submit">Save forwarding</button></div>
   </form>

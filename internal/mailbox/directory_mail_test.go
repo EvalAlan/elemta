@@ -78,9 +78,21 @@ func TestDirectoryForwarding(t *testing.T) {
 		t.Error("a retried delivery was forwarded again")
 	}
 
+	// More addresses than the class allows (three by default): only the
+	// first ones get a copy.
+	r.setAccount("ana", func(a *Account) {
+		a.Forward = []string{"f1@remote.example", "f2@remote.example", "f3@remote.example", "f4@remote.example", "f5@remote.example"}
+	})
+	r.send("x@example.org", "", []string{r.addr("ana")}, msgWith("many"))
+	if got := len(r.submit.messages()); got != 2+mailpolicy.DefaultMaxForwardAddresses {
+		t.Errorf("forwarded %d copies in all, want %d", got, 2+mailpolicy.DefaultMaxForwardAddresses)
+	}
+	r.setAccount("ana", func(a *Account) { a.Forward = []string{"far@remote.example"} })
+	before := len(r.submit.messages())
+
 	// Mail this account already forwarded that comes back stays here.
 	r.send("x@example.org", "", []string{r.addr("ana")}, redirectHeader+": "+r.addr("ana")+"\r\n"+msgWith("came back"))
-	if len(r.inbox("ana")) != 1 || len(r.submit.messages()) != 2 {
+	if len(r.inbox("ana")) != 1 || len(r.submit.messages()) != before {
 		t.Error("a forwarding loop wasn't stopped")
 	}
 }

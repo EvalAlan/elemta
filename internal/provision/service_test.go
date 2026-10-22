@@ -241,6 +241,11 @@ func TestForwardingAndSendAs(t *testing.T) {
 			t.Errorf("%s accepted: %v", name, err)
 		}
 	}
+	// Three by default, without a class of service saying otherwise.
+	four := []string{"a@remote.example", "b@remote.example", "c@remote.example", "d@remote.example"}
+	if _, err := s.Update(ctx, a.Address, Patch{Forward: &four}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("four forwarding addresses accepted by default: %v", err)
+	}
 	many := make([]string, maxForward+1)
 	for i := range many {
 		many[i] = fmt.Sprintf("f%d@remote.example", i)

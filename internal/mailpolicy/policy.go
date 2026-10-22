@@ -56,6 +56,9 @@ type Settings struct {
 	MessagesPerHour      *int   `json:"messages_per_hour,omitempty"`
 	RecipientsPerMessage *int   `json:"recipients_per_message,omitempty"`
 	RecipientsPerDay     *int   `json:"recipients_per_day,omitempty"`
+	// MaxForwardAddresses bounds how many addresses an account's mail may
+	// be forwarded to (the directory's elemtaForwardTo).
+	MaxForwardAddresses *int `json:"max_forward_addresses,omitempty"`
 
 	// Protocols maps a protocol name to whether it is allowed. A missing
 	// entry is unset.
@@ -95,6 +98,7 @@ type Effective struct {
 	MessagesPerHour      int               `json:"messages_per_hour"`
 	RecipientsPerMessage int               `json:"recipients_per_message"`
 	RecipientsPerDay     int               `json:"recipients_per_day"`
+	MaxForwardAddresses  int               `json:"max_forward_addresses"`
 	Protocols            map[string]bool   `json:"protocols"`
 	ExternalForwarding   bool              `json:"external_forwarding"`
 	Filters              bool              `json:"filters"`
@@ -119,10 +123,27 @@ type Layer struct {
 	Settings Settings
 }
 
+// Forwarding limits. Accounts may forward to DefaultMaxForwardAddresses
+// addresses unless a class says otherwise; a class can allow up to
+// MaxForwardAddressesLimit, which 0 (unlimited) also means, so one entry
+// can't fan mail out without bound.
+const (
+	DefaultMaxForwardAddresses = 3
+	MaxForwardAddressesLimit   = 50
+)
+
+// ForwardLimit is how many forwarding addresses the account may have.
+func (e Effective) ForwardLimit() int {
+	if e.MaxForwardAddresses <= 0 || e.MaxForwardAddresses > MaxForwardAddressesLimit {
+		return MaxForwardAddressesLimit
+	}
+	return e.MaxForwardAddresses
+}
+
 // Builtin is what applies when no layer sets a value: everything allowed,
-// nothing limited, the user's own choices respected.
+// nothing limited but forwarding, the user's own choices respected.
 func Builtin() Effective {
-	e := Effective{Protocols: map[string]bool{}, ExternalForwarding: true, Filters: true, Source: map[string]string{}}
+	e := Effective{Protocols: map[string]bool{}, ExternalForwarding: true, Filters: true, MaxForwardAddresses: DefaultMaxForwardAddresses, Source: map[string]string{}}
 	for _, p := range Protocols {
 		e.Protocols[p] = true
 	}
@@ -161,6 +182,10 @@ func Resolve(address, class string, layers ...Layer) Effective {
 		if s.RecipientsPerDay != nil {
 			e.RecipientsPerDay = *s.RecipientsPerDay
 			set("recipients_per_day", l.Name)
+		}
+		if s.MaxForwardAddresses != nil {
+			e.MaxForwardAddresses = *s.MaxForwardAddresses
+			set("max_forward_addresses", l.Name)
 		}
 		for p, allowed := range s.Protocols {
 			e.Protocols[p] = allowed
@@ -232,6 +257,9 @@ func (s Settings) Validate() error {
 		if v != nil && (*v < 0 || *v > 10_000_000) {
 			return fmt.Errorf("%w: %s must be 0 (unlimited) up to 10000000", ErrInvalid, name)
 		}
+	}
+	if v := s.MaxForwardAddresses; v != nil && (*v < 0 || *v > MaxForwardAddressesLimit) {
+		return fmt.Errorf("%w: max_forward_addresses must be 0 (up to %d) to %d", ErrInvalid, MaxForwardAddressesLimit, MaxForwardAddressesLimit)
 	}
 	for name, v := range map[string]*int{"trash_days": s.TrashDays, "junk_days": s.JunkDays, "retention_days": s.RetentionDays} {
 		if v != nil && (*v < 0 || *v > 36500) {

@@ -329,6 +329,12 @@ func (s *Service) forward(ctx context.Context, d delivery) (keep bool, err error
 	if len(targets) == 0 {
 		return true, nil
 	}
+	if p := d.account.Policy; p != nil && len(targets) > p.ForwardLimit() {
+		// More than the class allows (the directory was edited directly):
+		// the first ones, in the directory's order.
+		s.log.Info("directory forwarding over the class limit; forwarding to the first addresses only", "account", d.account.ID, "limit", p.ForwardLimit())
+		targets = targets[:p.ForwardLimit()]
+	}
 	for _, t := range targets {
 		if err := s.redirect(ctx, d, t); err != nil {
 			return false, err

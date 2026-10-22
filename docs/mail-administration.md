@@ -127,6 +127,7 @@ deleted either.
 | Messages per hour | `--messages-per-hour 200` | MTA, for a signed-in sender |
 | Recipients per message | `--recipients-per-message 100` | MTA, at RCPT |
 | Recipients per day | `--recipients-per-day 1000` | MTA, at RCPT |
+| Forwarding addresses | `--max-forward-addresses 1` | dashboard, CLI and webmail when forwarding is set; mailbox: only that many get a copy. 3 unless a class sets it; at most 50, which `0` also means |
 | Protocols | `--protocols pop3=off,imap=on` | `imap`, `pop3`: mailbox sign-in; `webmail`, `dav`: webmail; `submission`: MTA |
 | External forwarding | `--external-forwarding off` | mailbox: a filter redirecting outside the server keeps the mail instead |
 | Filters | `--filters off` | mailbox: stored filters are ignored and ManageSieve refuses; turning filters back on restores them |

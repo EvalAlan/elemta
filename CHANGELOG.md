@@ -27,7 +27,9 @@
   whole domain); both are editable in the dashboard and with
   `elemta provision modify-account --forward/--keep-copy/--send-as`. Users
   set their own forwarding in the webmail (Settings, Account), and choose
-  among their send-as addresses as From when they write. A
+  among their send-as addresses as From when they write. How many forwarding
+  addresses an account may have is a class-of-service setting
+  (`max_forward_addresses`, `--max-forward-addresses`), 3 by default. A
   directory can also assign classes of service to accounts and domains, hold
   distribution lists as groups (member DNs and member addresses), and hold
   mail domains with their catch-all and alias. Where the directory sets

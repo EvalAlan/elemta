@@ -108,6 +108,7 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			out["protocols"] = p.Protocols
 			out["require_two_factor"] = p.RequireTwoFactor
 			out["filters"] = p.Filters
+			out["max_forward_addresses"] = p.ForwardLimit()
 		}
 		return out, nil
 	})

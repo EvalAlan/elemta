@@ -25,6 +25,7 @@ type addCommand func(use string, aliases []string, short string, argc int, fn fu
 type settingsFlags struct {
 	quota, maxMessage, maxAttachment                        string
 	messagesPerHour, recipientsPerMessage, recipientsPerDay string
+	maxForward                                              string
 	protocols                                               string
 	forwarding, filters, appPasswords, twoFactor            string
 	trashDays, junkDays, retentionDays, legalHold           string
@@ -38,6 +39,7 @@ func (f *settingsFlags) register(c *cobra.Command) {
 	fl.StringVar(&f.messagesPerHour, "messages-per-hour", "", "Messages the user may send per hour; 0 is unlimited")
 	fl.StringVar(&f.recipientsPerMessage, "recipients-per-message", "", "Recipients per message sent; 0 is unlimited")
 	fl.StringVar(&f.recipientsPerDay, "recipients-per-day", "", "Recipients per day across all mail sent; 0 is unlimited")
+	fl.StringVar(&f.maxForward, "max-forward-addresses", "", "Addresses an account's mail may be forwarded to (default 3); 0 is the most allowed, 50")
 	fl.StringVar(&f.protocols, "protocols", "", "Protocol switches, such as pop3=off,imap=on,dav=inherit (imap, pop3, webmail, dav, submission)")
 	fl.StringVar(&f.forwarding, "external-forwarding", "", "Filters may forward mail outside the server: on, off or inherit")
 	fl.StringVar(&f.filters, "filters", "", "Users may keep filters and vacation replies: on, off or inherit")
@@ -104,6 +106,7 @@ func (f *settingsFlags) apply(c *cobra.Command, s *mailpolicy.Settings) error {
 		count("messages-per-hour", f.messagesPerHour, &s.MessagesPerHour),
 		count("recipients-per-message", f.recipientsPerMessage, &s.RecipientsPerMessage),
 		count("recipients-per-day", f.recipientsPerDay, &s.RecipientsPerDay),
+		count("max-forward-addresses", f.maxForward, &s.MaxForwardAddresses),
 		toggle("external-forwarding", f.forwarding, &s.ExternalForwarding),
 		toggle("filters", f.filters, &s.Filters),
 		toggle("require-app-passwords", f.appPasswords, &s.RequireAppPasswords),
@@ -353,6 +356,7 @@ func printSettings(w *tabwriter.Writer, s mailpolicy.Settings) {
 	count("messages per hour", s.MessagesPerHour)
 	count("recipients per message", s.RecipientsPerMessage)
 	count("recipients per day", s.RecipientsPerDay)
+	count("forwarding addresses", s.MaxForwardAddresses)
 	names := make([]string, 0, len(s.Protocols))
 	for p := range s.Protocols {
 		names = append(names, p)
@@ -387,6 +391,7 @@ func printEffective(w *tabwriter.Writer, e mailpolicy.Effective) {
 	fmt.Fprintf(w, "  messages per hour:\t%s\t(%s)\n", formatCount(e.MessagesPerHour), src("messages_per_hour"))
 	fmt.Fprintf(w, "  recipients per message:\t%s\t(%s)\n", formatCount(e.RecipientsPerMessage), src("recipients_per_message"))
 	fmt.Fprintf(w, "  recipients per day:\t%s\t(%s)\n", formatCount(e.RecipientsPerDay), src("recipients_per_day"))
+	fmt.Fprintf(w, "  forwarding addresses:\t%d\t(%s)\n", e.ForwardLimit(), src("max_forward_addresses"))
 	for _, p := range mailpolicy.Protocols {
 		fmt.Fprintf(w, "  protocol %s:\t%s\t(%s)\n", p, onOff(e.Allows(p)), src("protocols."+p))
 	}

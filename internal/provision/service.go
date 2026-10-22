@@ -57,10 +57,11 @@ type Patch struct {
 	SendAs          *[]string `json:"send_as,omitempty"`
 }
 
-// Limits on the lists an account carries, so one entry can't fan mail out
-// or grant itself without bound.
+// Bounds on the lists an account carries, so one entry can't fan mail out
+// or grant itself without bound. The class of service sets the account's
+// own forwarding limit (forwardLimit), which can't exceed the first.
 const (
-	maxForward = 10
+	maxForward = mailpolicy.MaxForwardAddressesLimit
 	maxSendAs  = 50
 )
 
@@ -290,6 +291,11 @@ func (s *Service) Update(ctx context.Context, raw string, p Patch) (Account, err
 		}
 		if slices.Contains(forward, address) {
 			return Account{}, fmt.Errorf("%w: an account can't forward to itself", ErrInvalid)
+		}
+		if limit, err := s.forwardLimit(ctx, address); err != nil {
+			return Account{}, err
+		} else if len(forward) > limit {
+			return Account{}, fmt.Errorf("%w: this account's class of service allows %d forwarding addresses", ErrInvalid, limit)
 		}
 		p.Forward = &forward
 	}
@@ -640,4 +646,18 @@ func (s *Service) CheckPurgeable(ctx context.Context, raw string) error {
 		return fmt.Errorf("%w: %s is on legal hold; lift the hold (set-policy --legal-hold off) before purging", ErrInvalid, address)
 	}
 	return nil
+}
+
+// forwardLimit is how many forwarding addresses the account's class of
+// service allows: asked of the mailbox service, or the default when its
+// admin API isn't configured.
+func (s *Service) forwardLimit(ctx context.Context, address string) (int, error) {
+	if s.Mailbox == nil {
+		return mailpolicy.DefaultMaxForwardAddresses, nil
+	}
+	eff, err := s.Mailbox.Effective(ctx, address)
+	if err != nil {
+		return 0, fmt.Errorf("checking the forwarding limit: %w", err)
+	}
+	return eff.ForwardLimit(), nil
 }

@@ -39,7 +39,7 @@ this setting doesn't gain `memberOf` values until its members change.
 | `mailAlternateAddress` | Aliases. Mail to them is delivered to the account. |
 | `accountStatus` | `active` (or unset), `suspended` (receives mail, can't sign in), or anything else for disabled (neither). |
 | `mailQuotaSize` | Quota in bytes. Unset means the class of service decides. |
-| `elemtaForwardTo` | Forward all mail to these addresses (up to 10). |
+| `elemtaForwardTo` | Forward all mail to these addresses: 3 at most, unless the class of service allows another number (`max_forward_addresses`, up to 50). |
 | `elemtaForwardKeepCopy` | `TRUE` also keeps a copy in the mailbox. Without it, forwarded mail isn't stored. |
 | `elemtaSendAs` | Addresses the account may use as its sender, besides its own: an alias, a list or a shared address. `@example.com` allows every address in that domain. |
 | `elemtaClassOfService` | The name of a class of service defined in the mailbox service. |

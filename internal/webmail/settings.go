@@ -285,8 +285,9 @@ type settingsView struct {
 	// Forwarding is the account's directory forwarding; nil hides the card
 	// (no directory, or the mail settings couldn't be read). ForwardText
 	// keeps what was typed when the form is shown again with a problem.
-	Forwarding  *AccountMail
-	ForwardText string
+	Forwarding   *AccountMail
+	ForwardText  string
+	ForwardLimit int
 }
 
 // noticeCards places each settings notice in the card it is about. The
@@ -376,6 +377,7 @@ func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view,
 		if m, ok := s.accountMail(r.Context(), sess); ok {
 			v.Settings.Forwarding = &m
 			v.Settings.ForwardText = strings.Join(m.Forward, ", ")
+			v.Settings.ForwardLimit = s.forwardLimit(r.Context(), sess)
 		}
 	}
 	if s.recovery != nil && tab == "account" {
