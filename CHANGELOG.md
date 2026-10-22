@@ -41,6 +41,10 @@
   `scripts/ldap-schema.sh` adds the definitions to an existing directory and
   moves the accounts over; deploys run it.
 
+- Plus addressing: `name+tag@domain` is delivered to `name@domain` (account,
+  alias or list) unless the tagged address exists itself; filters can sort
+  on the tag.
+
 ### Fixes
 
 - The directory now keeps `memberOf` for `groupOfNames`, the group style

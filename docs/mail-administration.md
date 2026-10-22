@@ -188,6 +188,12 @@ The MTA's recipient check asks the mailbox, so these rules also decide what
 the MTA accepts. A disabled account keeps its address: its mail is refused,
 not handed to the catch-all.
 
+**Plus addressing.** `name+anything@example.com` is delivered as
+`name@example.com` (an account, an alias or a list) when the tagged address
+isn't itself taken, so people can give each sign-up its own address. The
+message keeps the address it was sent to, so filters can sort by the tag
+(Sieve's `subaddress` extension, `:detail`).
+
 ```sh
 provision create-list team@example.com --name 'Team' --owner dana@example.com --posting members \
   --members 'dana@example.com,lee@example.com,partner@other.example'

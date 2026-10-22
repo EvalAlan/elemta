@@ -401,3 +401,33 @@ func TestImportMessages(t *testing.T) {
 		t.Errorf("unknown account = %d", code)
 	}
 }
+
+func TestPlusAddressing(t *testing.T) {
+	r := newAddressingRig(t)
+	ctx := context.Background()
+	if _, err := r.e.PutList(ctx, mailpolicy.List{Address: r.addr("crew"), Members: []string{r.addr("ben")}}); err != nil {
+		t.Fatal(err)
+	}
+	st := r.send("x@example.org", "", []string{r.addr("ana+news"), r.addr("benny+shop"), r.addr("crew+x"), r.addr("gone+x"), r.addr("+x")}, msgWith("tagged"))
+	for _, ok := range []string{r.addr("ana+news"), r.addr("benny+shop"), r.addr("crew+x")} {
+		if st[ok] != nil {
+			t.Errorf("%s refused: %v", ok, st[ok])
+		}
+	}
+	for _, refused := range []string{r.addr("gone+x"), r.addr("+x")} {
+		if st[refused] == nil || st[refused].Code != 550 {
+			t.Errorf("%s = %v, want refused", refused, st[refused])
+		}
+	}
+	// Ben twice: once by his tagged alias, once through the tagged list.
+	if len(r.inbox("ana")) != 1 || len(r.inbox("ben")) != 2 {
+		t.Fatalf("ana %d (want 1), ben %d (want 2)", len(r.inbox("ana")), len(r.inbox("ben")))
+	}
+	// A disabled account's tagged address isn't the catch-all's either.
+	if _, err := r.e.SetRoute(ctx, mailpolicy.DomainRoute{Domain: r.domain, CatchAll: r.addr("ana")}); err != nil {
+		t.Fatal(err)
+	}
+	if st := r.send("x@example.org", "", []string{r.addr("gone+x")}, msgWith("tagged")); st[r.addr("gone+x")] == nil {
+		t.Error("a disabled account's tagged address went to the catch-all")
+	}
+}

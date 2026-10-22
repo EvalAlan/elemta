@@ -46,17 +46,19 @@ type recipient struct {
 // ErrCredentials means nothing claims it.
 func (s *Service) resolveRecipient(ctx context.Context, address string) (recipient, error) {
 	address = strings.ToLower(strings.TrimSpace(address))
-	r, ok, err := s.resolveDirect(ctx, address)
+	r, ok, err := s.resolvePlus(ctx, address)
 	if ok || err != nil {
 		return r, err
 	}
-	// A disabled account still owns its address: its mail is refused, not
-	// handed to a catch-all.
-	if exists, err := s.auth.Exists(ctx, address); err != nil || exists {
-		if err != nil {
-			return recipient{}, err
+	// A disabled account still owns its address (and its tagged ones): its
+	// mail is refused, not handed to a catch-all.
+	for _, a := range []string{address, withoutTag(address)} {
+		if exists, err := s.auth.Exists(ctx, a); err != nil || exists {
+			if err != nil {
+				return recipient{}, err
+			}
+			return recipient{}, ErrCredentials
 		}
-		return recipient{}, ErrCredentials
 	}
 	local, domain, found := strings.Cut(address, "@")
 	if !found {
@@ -67,7 +69,7 @@ func (s *Service) resolveRecipient(ctx context.Context, address string) (recipie
 		return recipient{}, err
 	}
 	if route.AliasOf != "" {
-		if r, ok, err := s.resolveDirect(ctx, local+"@"+route.AliasOf); ok || err != nil {
+		if r, ok, err := s.resolvePlus(ctx, local+"@"+route.AliasOf); ok || err != nil {
 			return r, err
 		}
 		// The target domain's catch-all applies to its aliases too.
@@ -82,6 +84,37 @@ func (s *Service) resolveRecipient(ctx context.Context, address string) (recipie
 		s.log.Warn("catch-all address doesn't exist", "domain", route.Domain, "catch_all", route.CatchAll)
 	}
 	return recipient{}, ErrCredentials
+}
+
+// Plus addressing: name+anything@domain is delivered as name@domain, so
+// people can give each sign-up its own address and file or filter by it
+// (Sieve's subaddress extension sees the tag; the delivery keeps the
+// address it was sent to). An address that really exists with a + in it
+// is found first, and the tagged form of a list reaches the list.
+const tagSeparator = "+"
+
+// withoutTag returns the address without its +tag, or itself.
+func withoutTag(address string) string {
+	local, domain, ok := strings.Cut(address, "@")
+	if !ok {
+		return address
+	}
+	if base, _, tagged := strings.Cut(local, tagSeparator); tagged && base != "" {
+		return base + "@" + domain
+	}
+	return address
+}
+
+// resolvePlus is resolveDirect, then the same without the tag.
+func (s *Service) resolvePlus(ctx context.Context, address string) (recipient, bool, error) {
+	r, ok, err := s.resolveDirect(ctx, address)
+	if ok || err != nil {
+		return r, ok, err
+	}
+	if base := withoutTag(address); base != address {
+		return s.resolveDirect(ctx, base)
+	}
+	return recipient{}, false, nil
 }
 
 // resolveDirect looks an address up as an account, alias or list, without
