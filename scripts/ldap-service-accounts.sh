@@ -27,11 +27,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$root/deployments/compose/.secrets/ldap-services.env"
 
-if [ "${ELEMTA_STACK:-}" = "k8s" ]; then
-    EXEC=(kubectl -n "${K8S_NAMESPACE:-elemta}" exec -i deploy/elemta-ldap --)
-else
-    EXEC=(docker exec -i elemta-ldap)
-fi
+# shellcheck source=SCRIPTDIR/lib/ldap.sh
+. "$root/scripts/lib/ldap.sh"
+# Accounts are data, written once and replicated; the access rules are each
+# node's configuration, applied to all of them below.
+EXEC=(ldap_exec "$(ldap_first)")
 BASE="dc=example,dc=com"
 SVC="ou=services,$BASE"
 ADMIN=(-Q -Y EXTERNAL -H ldapi:///)
@@ -68,7 +68,7 @@ account provisioner "$LDAP_PROVISIONER_PASSWORD" "Mail administration"
 d() { echo "dn.exact=\"cn=$1,$SVC\""; }
 # Order matters: OpenLDAP uses the first rule whose target matches. Rule 0,
 # root over the local socket, is the image's own and is kept.
-"${EXEC[@]}" ldapmodify -Y EXTERNAL -H ldapi:/// >/dev/null 2>&1 <<LDIF
+rules=$(cat <<LDIF
 dn: olcDatabase={1}mdb,cn=config
 changetype: modify
 replace: olcAccess
@@ -83,4 +83,8 @@ olcAccess: {7}to dn.subtree="ou=domains,$BASE" by $(d provisioner) write by $(d 
 olcAccess: {8}to dn.base="$BASE" by users read by * none
 olcAccess: {9}to * by self read by * none
 LDIF
+)
+for node in $(ldap_nodes); do
+    printf '%s\n' "$rules" | ldap_exec "$node" ldapmodify -Y EXTERNAL -H ldapi:/// >/dev/null 2>&1
+done
 echo "✅ LDAP service accounts and access rules in place"

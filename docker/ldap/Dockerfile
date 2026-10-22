@@ -11,7 +11,8 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 
 RUN apk add --no-cache \
         openldap openldap-clients openldap-back-mdb \
-        openldap-overlay-memberof openldap-overlay-refint openldap-passwd-sha2 \
+        openldap-overlay-memberof openldap-overlay-refint openldap-overlay-syncprov \
+        openldap-passwd-sha2 \
     # The package's sample slapd.conf would win over slapd.d for tools run
     # without -F (backup.sh's slapcat); configuration lives in slapd.d only.
     && rm -f /etc/openldap/slapd.conf /etc/openldap/slapd.ldif \

@@ -15,11 +15,8 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 schema="$root/docker/ldap/10-mail-schema.ldif"
-if [ "${ELEMTA_STACK:-}" = k8s ]; then
-    EXEC=(kubectl -n "${K8S_NAMESPACE:-elemta}" exec -i deploy/elemta-ldap --)
-else
-    EXEC=(docker exec -i elemta-ldap)
-fi
+# shellcheck source=SCRIPTDIR/lib/ldap.sh
+. "$root/scripts/lib/ldap.sh"
 BASE="dc=example,dc=com"
 ROOT=(-Q -Y EXTERNAL -H ldapi:///)
 # Pipe searches into a grep that reads everything (not grep -q): under
@@ -28,6 +25,9 @@ ROOT=(-Q -Y EXTERNAL -H ldapi:///)
 search() { "${EXEC[@]}" ldapsearch -LLL -o ldif-wrap=no "${ROOT[@]}" "$@" 2>/dev/null; }
 modify() { "${EXEC[@]}" ldapmodify "${ROOT[@]}" >/dev/null; }
 
+# Schema, overlays and indexes are each node's configuration: every node
+# gets them. Branches and accounts are data: written once, replicated.
+configure() {
 # --- schema ---------------------------------------------------------------
 dn=$(search -b cn=schema,cn=config '(cn=*elemta-mail)' dn | sed -n 's/^dn: //p')
 if [ -z "$dn" ]; then
@@ -60,6 +60,12 @@ for index in "member eq" "elemtaDomainName eq"; do
     grep -qx "olcDbIndex: $index" <<<"$indexes" && continue
     printf 'dn: %s\nchangetype: modify\nadd: olcDbIndex\nolcDbIndex: %s\n' "$db" "$index" | modify
 done
+}
+for node in $(ldap_nodes); do
+    EXEC=(ldap_exec "$node")
+    configure
+done
+EXEC=(ldap_exec "$(ldap_first)")
 
 # --- branches ---------------------------------------------------------------
 for ou in people groups domains mail-addresses; do

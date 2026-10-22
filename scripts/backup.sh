@@ -41,8 +41,13 @@ MAILBOX_IMAGE=$image MAILBOX_BODIES_VOLUME=${project}_mailbox_bodies "$root/scri
 
 echo "== Directory"
 mkdir "$stage/ldap"
-docker exec elemta-ldap slapcat -n 0 >"$stage/ldap/config.ldif"
-docker exec elemta-ldap slapcat -n 1 >"$stage/ldap/data.ldif"
+# Any node of a replicated directory holds all of it; its configuration is
+# the first node's.
+# shellcheck source=SCRIPTDIR/lib/ldap.sh
+. "$root/scripts/lib/ldap.sh"
+ldap=$(ldap_first)
+docker exec "$ldap" slapcat -n 0 >"$stage/ldap/config.ldif"
+docker exec "$ldap" slapcat -n 1 >"$stage/ldap/data.ldif"
 grep -q '^dn: ' "$stage/ldap/data.ldif" || { echo "The directory export is empty" >&2; exit 1; }
 
 echo "== MTA queue and runtime configuration"
