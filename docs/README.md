@@ -46,6 +46,7 @@ are in the [CHANGELOG](../CHANGELOG.md).
 - [Cloud Dev Server](cloud-dev.md): the whole stack on one internet-facing host
 - [Cloud Stress Testing](cloud-stress-testing.md)
 - [Production Deployment](production-deployment.md)
+- [Running more than one of everything](scaling.md): every tier behind load balancers, scaling up and down, rolling updates
 - [Production Readiness: honest assessment and limitations](production-readiness.md)
 - [Testing](testing.md)
 - [Troubleshooting](troubleshooting.md)

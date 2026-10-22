@@ -12,7 +12,9 @@ set -eu
 in=${1:?usage: $0 <backup directory>}
 root=$(cd "$(dirname "$0")/.." && pwd)
 [ -f "$in/complete" ] || { echo "Backup is incomplete" >&2; exit 1; }
-image=${MAILBOX_IMAGE:-$(docker inspect -f '{{.Config.Image}}' elemta-mailbox-a)}
+# shellcheck source=SCRIPTDIR/lib/compose.sh
+. "$root/scripts/lib/compose.sh"
+image=${MAILBOX_IMAGE:-$(docker inspect -f '{{.Config.Image}}' "$(svc_container elemta-mailbox-server)")}
 ldap_image=${LDAP_IMAGE:-$(docker inspect -f '{{.Config.Image}}' elemta-ldap)}
 in=$(cd "$in" && pwd)
 

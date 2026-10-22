@@ -42,10 +42,12 @@ files=(-f "$compose_dir/docker-compose.yml" -f "$compose_dir/docker-compose.clou
 dc() { docker compose -p "$project" --env-file "$env_file" "${files[@]}" "$@"; }
 
 step "Stopping mail services"
-dc stop elemta elemta-web elemta-webmail elemta-mailbox elemta-mailbox-a elemta-mailbox-b elemta-ldap
+dc stop elemta elemta-web elemta-webmail elemta-mailbox elemta-mailbox-server elemta-ldap
 dc up -d elemta-mailbox-db
 until docker exec elemta-mailbox-db sh -c 'pg_isready -q -U "$POSTGRES_USER"'; do sleep 1; done
-image=$(docker inspect -f '{{.Config.Image}}' elemta-mailbox-a)
+# shellcheck source=SCRIPTDIR/lib/compose.sh
+. "$root/scripts/lib/compose.sh"
+image=$(docker inspect -f '{{.Config.Image}}' "$(docker ps -a --filter label=com.docker.compose.service=elemta-mailbox-server --format '{{.Names}}' | sort | head -n 1)")
 ldap_image=$(docker inspect -f '{{.Config.Image}}' elemta-ldap)
 # load <volume> <archive> [owner]: replace a volume's contents.
 load() {
@@ -75,13 +77,16 @@ load elemta_config "$in/mta/elemta_config.tar.gz" 1001:1001
 step "Starting the stack"
 # The restored runtime configuration is kept, not reseeded from the host.
 ELEMTA_CONFIG_RESEED=false dc up -d
-for c in elemta-ldap elemta-mailbox-a elemta-mailbox-b elemta-node0 elemta-webmail elemta-web; do
-    for _ in $(seq 100); do
-        [ "$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null)" = healthy ] && break
-        sleep 3
+# By service: a scaled service has several containers, with Compose's names.
+for svc in elemta-ldap elemta-mailbox-server elemta elemta-webmail elemta-web; do
+    for c in $(svc_containers "$svc"); do
+        for _ in $(seq 100); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null)" = healthy ] && break
+            sleep 3
+        done
+        echo "$c $(docker inspect -f '{{.State.Health.Status}}' "$c")"
     done
-    echo "$c $(docker inspect -f '{{.State.Health.Status}}' "$c")"
-    if [ "$c" = elemta-ldap ]; then
+    if [ "$svc" = elemta-ldap ]; then
         "$root/scripts/ldap-schema.sh"
         "$root/scripts/ldap-admin-password.sh"
         "$root/scripts/ldap-service-accounts.sh"

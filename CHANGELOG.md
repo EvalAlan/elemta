@@ -4,6 +4,21 @@
 
 ### Upgrade notes
 
+- **Every tier can run several times** ([scaling.md](docs/scaling.md)). The
+  scaling overlay (`docker-compose.scale.yml`) runs the MTA, webmail and
+  dashboard as several containers behind load balancers, the MTAs sharing a
+  queue in Postgres, and the directory as two replicating nodes;
+  `scripts/rolling-update.sh` replaces containers a few at a time.
+- The two mailbox replicas, `elemta-mailbox-a` and `-b`, are now one
+  scalable service, `elemta-mailbox-server` (`ELEMTA_MAILBOX_REPLICAS`,
+  default 2); `up -d --remove-orphans` replaces the pair. HAProxy passes mail
+  apps' addresses to it with the PROXY protocol, so per-address sign-in
+  throttling sees the client again rather than HAProxy.
+- The webmail sends on the MTA's own webmail submission port
+  (`listen_webmail_submission`, 2588) instead of having a fixed address
+  exempted from app passwords, so it can run as several instances. Rendered
+  configurations need `submission_addr` on port 2588 (cloud-deploy does it).
+
 - The directory image can run as a replicated, multi-provider cluster
   (`LDAP_REPLICATION_PEERS`, `LDAP_SERVER_ID`); a single directory is
   unchanged. The schema, password and service-account scripts now apply

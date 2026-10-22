@@ -109,6 +109,11 @@ fi
 write mailbox-postgres.env \
     "POSTGRES_DB=mailbox" "POSTGRES_USER=mailbox" \
     "POSTGRES_PASSWORD=$MAILBOX_DB_PASSWORD"
+# The MTA's shared queue when it runs as several instances
+# (docker-compose.scale.yml): tables in the mailbox database.
+write queue.env \
+    "ELEMTA_QUEUE_BACKEND=postgres" \
+    "ELEMTA_QUEUE_POSTGRES_DSN=postgres://mailbox:$MAILBOX_DB_PASSWORD@elemta-mailbox-db:5432/mailbox?sslmode=disable"
 write mailbox-client.env \
     "PGHOST=elemta-mailbox-db" "PGPORT=5432" "PGDATABASE=mailbox" \
     "PGUSER=mailbox" "PGPASSWORD=$MAILBOX_DB_PASSWORD" "PGSSLMODE=disable"

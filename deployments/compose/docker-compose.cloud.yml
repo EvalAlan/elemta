@@ -67,12 +67,11 @@ services:
     volumes:
       - ./.secrets/cloud/config:/app/config:ro
 
-  elemta-mailbox-a: &cloud-mailbox
+  elemta-mailbox-server:
     volumes: !override
       - ./.secrets/cloud/mailbox.toml:/etc/elemta/mailbox.toml:ro
       - ./.secrets/mailbox-tls:/etc/elemta/tls:ro
       - mailbox_bodies:/var/lib/elemta/bodies
-  elemta-mailbox-b: *cloud-mailbox
 
   elemta-mailbox:
     ports: !override

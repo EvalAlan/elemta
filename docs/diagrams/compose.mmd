@@ -9,10 +9,10 @@ flowchart TB
     subgraph net["elemta_network 10.253.53.0/24"]
         direction TB
         node0["elemta-node0<br/>MTA"]
-        webmail["elemta-webmail<br/>10.253.53.250"]
+        webmail["elemta-webmail"]
         web["elemta-web<br/>admin console"]
         haproxy["elemta-mailbox<br/>HAProxy"]
-        replicas["elemta-mailbox-a<br/>elemta-mailbox-b"]
+        replicas["elemta-mailbox-server<br/>(scaled)"]
         db[("elemta-mailbox-db<br/>Postgres")]
         support["elemta-dns · elemta-valkey<br/>elemta-clamav · elemta-rspamd (full)"]
     end

@@ -126,20 +126,29 @@ start rather than start empty. The old volumes (`compose_ldap_data`,
 you are satisfied.
 
 To roll with less disruption than recreating everything at once, pull and
-recreate one service at a time, waiting for each to be healthy: the
-mailbox replicas (`elemta-mailbox-a`, then `-b`; clients reconnect to the
-other), then `elemta`, `elemta-webmail` and `elemta-web`:
+replace one service at a time with `scripts/rolling-update.sh`: for a
+service with several containers (the mailbox servers, and every tier under
+the scaling overlay) it starts as many new ones as are running, waits for
+them to be healthy and removes the old ones one by one, so the load
+balancers always have somewhere to send connections; a service that runs
+once is recreated.
 
 ```sh
 C="docker compose --env-file deployments/compose/.secrets/cloud.env \
   -f deployments/compose/docker-compose.yml -f deployments/compose/docker-compose.cloud.yml \
   -f deployments/compose/docker-compose.release.yml"
 $C pull --ignore-buildable
-for s in elemta-mailbox-a elemta-mailbox-b elemta elemta-webmail elemta-web; do
-  $C up -d --no-deps $s   # then wait for: docker inspect -f '{{.State.Health.Status}}' <container>
-done
+scripts/rolling-update.sh      # elemta-ldap, elemta-mailbox-server, elemta, elemta-webmail, elemta-web
 $C up -d
 ```
+
+**From v0.5.3 or earlier:** the two mailbox replicas, `elemta-mailbox-a`
+and `-b`, are now one service, `elemta-mailbox-server`, run twice by default
+(`ELEMTA_MAILBOX_REPLICAS`). `$C up -d --remove-orphans` starts the new
+containers and removes the old pair; HAProxy follows within seconds. The
+webmail no longer has a fixed address: it sends on the MTA's own webmail
+submission port (`listen_webmail_submission`, 2588), which replaces
+exempting its address from app passwords.
 
 **Rollback:** set `ELEMTA_TAG` back and do the same. A release that changed
 the schema keeps working with the previous one's code, because changes are

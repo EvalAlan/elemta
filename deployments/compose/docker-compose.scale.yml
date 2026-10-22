@@ -1,0 +1,162 @@
+# Runs every Elemta service more than once on one Docker host, behind load
+# balancers, so one crashed or restarting container doesn't stop mail, and
+# each tier can be scaled up and down. Applied last, after the cloud and
+# release overlays (docs/scaling.md):
+#
+#   docker compose --env-file .secrets/cloud.env \
+#     -f docker-compose.yml -f docker-compose.cloud.yml \
+#     -f docker-compose.release.yml -f docker-compose.scale.yml up -d
+#
+#   ... up -d --no-deps --scale elemta=3 --scale elemta-webmail=3 \
+#             --scale elemta-web=2 --scale elemta-mailbox-server=3
+#   scripts/rolling-update.sh      # replace containers a few at a time
+#
+# What changes:
+#
+#   MTA (elemta)      several containers sharing one queue in Postgres
+#                     ([queue] backend = postgres, leased claims), behind
+#                     elemta-edge, which publishes ports 25 and 587 and
+#                     passes each client's address on (PROXY protocol).
+#   webmail           several containers behind Caddy, which keeps a browser
+#                     on one; sessions are in Valkey already.
+#   dashboard         several containers behind Caddy, sessions in Valkey.
+#   mailbox servers   as many as --scale says; also so without this file.
+#   directory         two replicating nodes (elemta-ldap-1, -2) behind
+#                     elemta-ldap, which becomes their load balancer; node 1
+#                     keeps the existing directory's volumes.
+#
+# One host is still one failure domain: this is for availability through
+# container failures and updates, and for using a large host fully. Losing
+# the host needs the Kubernetes deployment, or the backups.
+#
+# Before switching the MTA to the shared queue, let the file queue empty
+# (Queues in the dashboard): mail still in it isn't moved.
+
+x-ldap-node: &ldap-node
+  extends:
+    file: docker-compose.yml
+    service: elemta-ldap
+  image: ${ELEMTA_LDAP_IMAGE:-elemta-ldap:dev}
+  ports: !reset []
+  read_only: true
+  tmpfs: ["/tmp:size=16m", "/var/lib/openldap/run:size=1m,uid=100,gid=101"]
+  cap_drop: [ALL]
+  cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, NET_BIND_SERVICE]
+  security_opt: [no-new-privileges:true]
+  mem_limit: 256m
+  pids_limit: 256
+
+services:
+  elemta:
+    container_name: !reset null
+    deploy:
+      replicas: ${ELEMTA_MTA_REPLICAS:-2}
+    # elemta-edge publishes the SMTP ports.
+    ports: !reset []
+    env_file:
+      - path: .secrets/queue.env
+        required: true
+    environment:
+      - ELEMTA_PROXY_PROTOCOL_FROM=${ELEMTA_EDGE_IP:-10.253.53.25}
+    depends_on:
+      elemta-mailbox-db:
+        condition: service_healthy
+
+  elemta-edge:
+    image: haproxy:3.0-alpine@sha256:d84eb36e91830bcaa67b23cfde1909850b99f11eb60da3abd185bd0daf3f75bb # 3.0.30
+    restart: unless-stopped
+    mem_limit: 128m
+    pids_limit: 128
+    ports:
+      - "${ELEMTA_SMTP_PORT:-2525}:2525"
+      - "${ELEMTA_SUBMISSION_PORT:-2587}:2587"
+    volumes:
+      - ./scale/edge-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      elemta_network:
+        # Fixed: the MTAs take the PROXY protocol from this address only.
+        ipv4_address: ${ELEMTA_EDGE_IP:-10.253.53.25}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8404/]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      - elemta
+
+  elemta-webmail:
+    container_name: !reset null
+    deploy:
+      replicas: ${ELEMTA_WEBMAIL_REPLICAS:-2}
+    # Reached through Caddy; one host port can't go to several containers.
+    ports: !reset []
+
+  elemta-web:
+    container_name: !reset null
+    deploy:
+      replicas: ${ELEMTA_WEB_REPLICAS:-2}
+    ports: !reset []
+    environment:
+      - ELEMTA_API_SESSION_STORE=valkey
+      - ELEMTA_API_VALKEY_ADDR=elemta-valkey:6379
+
+  # The directory's address, now a load balancer in front of its nodes.
+  elemta-ldap:
+    image: haproxy:3.0-alpine@sha256:d84eb36e91830bcaa67b23cfde1909850b99f11eb60da3abd185bd0daf3f75bb # 3.0.30
+    build: !reset null
+    env_file: !reset []
+    environment: !reset []
+    labels: !reset {}
+    volumes: !override
+      - ./scale/ldap-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    tmpfs: !reset []
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: !reset []
+    # Port 389 without root.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    healthcheck: !override
+      test: [CMD-SHELL, "nc -z 127.0.0.1 389"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      elemta-ldap-1:
+        condition: service_healthy
+
+  elemta-ldap-1:
+    <<: *ldap-node
+    container_name: elemta-ldap-1
+    hostname: elemta-ldap-1
+    environment:
+      - LDAP_ORGANISATION=Example Corp
+      - LDAP_BASE_DN=dc=example,dc=com
+      - LDAP_SERVER_ID=1
+      - LDAP_REPLICATION_PEERS=ldap://elemta-ldap-1:389 ldap://elemta-ldap-2:389
+    labels:
+      elemta.ldap.node: "1"
+
+  elemta-ldap-2:
+    <<: *ldap-node
+    container_name: elemta-ldap-2
+    hostname: elemta-ldap-2
+    environment:
+      - LDAP_ORGANISATION=Example Corp
+      - LDAP_BASE_DN=dc=example,dc=com
+      - LDAP_SERVER_ID=2
+      - LDAP_REPLICATION_PEERS=ldap://elemta-ldap-1:389 ldap://elemta-ldap-2:389
+    labels:
+      elemta.ldap.node: "2"
+    # Its own copy, filled from node 1. No /legacy: a joining node never
+    # holds the previous image's data.
+    volumes: !override
+      - ldap_db_2:/var/lib/ldap
+      - ldap_slapd_2:/etc/ldap/slapd.d
+
+volumes:
+  ldap_db_2:
+  ldap_slapd_2:

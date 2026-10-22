@@ -62,13 +62,12 @@ services:
     tmpfs: !override ["/tmp:size=128m", "/app/logs:size=64m,uid=1001,gid=1001", "/app/queue:size=1m,uid=1001,gid=1001,mode=0700"]
     mem_limit: 512m
     pids_limit: 256
-  elemta-mailbox-a: &mailbox
+  elemta-mailbox-server:
     <<: [*ours, *mailbox-image]
     build: !reset null
     tmpfs: !override ["/tmp:size=64m", "/app/logs:size=64m,uid=1001,gid=1001"]
     mem_limit: 768m
     pids_limit: 256
-  elemta-mailbox-b: *mailbox
 
   elemta-mailbox: # HAProxy in front of the mailbox replicas
     <<: *harden

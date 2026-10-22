@@ -29,7 +29,10 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 project=${ELEMTA_COMPOSE_PROJECT:-compose}
 secrets=$root/deployments/compose/.secrets
 [ ! -e "$out" ] || { echo "Backup destination already exists: $out" >&2; exit 1; }
-image=${MAILBOX_IMAGE:-$(docker inspect -f '{{.Config.Image}}' elemta-mailbox-a)}
+# shellcheck source=SCRIPTDIR/lib/compose.sh
+. "$root/scripts/lib/compose.sh"
+mailbox=$(svc_container elemta-mailbox-server)
+image=${MAILBOX_IMAGE:-$(docker inspect -f '{{.Config.Image}}' "$mailbox")}
 parent=$(dirname "$out")
 mkdir -p "$parent"
 stage=$(mktemp -d "$parent/.elemta-backup.XXXXXXXX")
@@ -72,7 +75,7 @@ fi
     echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     # From a mailbox replica: they run throughout, while the MTA may have
     # been stopped for a quiet backup.
-    echo "version=$(docker exec elemta-mailbox-a /app/elemta version 2>/dev/null | tail -1)"
+    echo "version=$(docker exec "$mailbox" /app/elemta version 2>/dev/null | tail -1)"
     echo "ldap_entries=$(grep -c '^dn: ' "$stage/ldap/data.ldif")"
     (cd "$stage" && find . -type f ! -name manifest ! -name complete ! -path './mailbox/*' | sort | while read -r f; do
         echo "sha256 $(sha256sum "$f" | cut -d ' ' -f 1) $f"

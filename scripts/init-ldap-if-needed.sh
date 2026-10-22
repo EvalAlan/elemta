@@ -6,12 +6,16 @@ set -e
 
 # The Compose dev stack by default; ELEMTA_STACK=k8s (set by the k8s-* make
 # targets) runs the same commands in the Kubernetes one.
+# Data goes to the directory's first node; a replicated directory passes it
+# to the others (scripts/lib/ldap.sh).
+# shellcheck source=SCRIPTDIR/lib/ldap.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/ldap.sh"
+node=$(ldap_first)
+LDAP_EXEC=(ldap_exec "$node")
 if [ "${ELEMTA_STACK:-}" = "k8s" ]; then
-    LDAP_EXEC=(kubectl -n "${K8S_NAMESPACE:-elemta}" exec deploy/elemta-ldap --)
-    LDAP_LOGS="kubectl -n ${K8S_NAMESPACE:-elemta} logs deploy/elemta-ldap"
+    LDAP_LOGS="kubectl -n ${K8S_NAMESPACE:-elemta} logs $node"
 else
-    LDAP_EXEC=(docker exec elemta-ldap)
-    LDAP_LOGS="docker logs elemta-ldap"
+    LDAP_LOGS="docker logs $node"
 fi
 
 echo "🔍 Checking if LDAP users need initialization..."
