@@ -83,6 +83,32 @@ fi
 # so tighten whatever we ended up with rather than assuming.
 chmod 600 "$RUNTIME_CONFIG" 2>/dev/null || true
 
+# The webmail submission port, for configurations saved before it existed.
+#
+# The webmail used to send through the ordinary submission port, exempted from
+# the app-password requirement by its fixed address. That exemption is gone
+# (scaled webmail has no fixed address), so a configuration still pointing the
+# webmail at 2587 would have every message it sends refused for want of an app
+# password. The runtime copy outlives image upgrades, so the template's new
+# setting never reaches it: add the port once, and move a webmail that sends to
+# the default submission port onto it. An address on any other port was
+# chosen by the operator and is left alone. Once listen_webmail_submission is
+# present this never runs again, so removing the port later sticks.
+if ! grep -q '^listen_webmail_submission' "$RUNTIME_CONFIG" &&
+    grep -q '^listen_submission' "$RUNTIME_CONFIG"; then
+    tmp="$RUNTIME_CONFIG.migrate.$$"
+    if awk '
+        /^listen_submission[ \t]*=/ && !done { print; print "listen_webmail_submission = \":2588\""; done = 1; next }
+        /^submission_addr[ \t]*=.*:2587"/ { sub(/:2587"/, ":2588\"") }
+        { print }' "$RUNTIME_CONFIG" > "$tmp" 2>/dev/null; then
+        chmod 600 "$tmp" 2>/dev/null || true
+        mv "$tmp" "$RUNTIME_CONFIG"
+        echo "prepare-config: added the webmail submission port (:2588)" >&2
+    else
+        rm -f "$tmp"
+    fi
+fi
+
 # TLS material.
 #
 # A certificate and its key are one thing, not two files, and every rule below

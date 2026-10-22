@@ -148,7 +148,8 @@ and `-b`, are now one service, `elemta-mailbox-server`, run twice by default
 containers and removes the old pair; HAProxy follows within seconds. The
 webmail no longer has a fixed address: it sends on the MTA's own webmail
 submission port (`listen_webmail_submission`, 2588), which replaces
-exempting its address from app passwords.
+exempting its address from app passwords. The saved configuration is updated
+on the first start.
 
 **Rollback:** set `ELEMTA_TAG` back and do the same. A release that changed
 the schema keeps working with the previous one's code, because changes are

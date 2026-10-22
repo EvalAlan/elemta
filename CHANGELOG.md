@@ -16,8 +16,9 @@
   throttling sees the client again rather than HAProxy.
 - The webmail sends on the MTA's own webmail submission port
   (`listen_webmail_submission`, 2588) instead of having a fixed address
-  exempted from app passwords, so it can run as several instances. Rendered
-  configurations need `submission_addr` on port 2588 (cloud-deploy does it).
+  exempted from app passwords, so it can run as several instances. A saved
+  configuration gets the port on the next start, and a webmail sending to
+  port 2587 is moved to it; one sending elsewhere is left alone.
 
 - The directory image can run as a replicated, multi-provider cluster
   (`LDAP_REPLICATION_PEERS`, `LDAP_SERVER_ID`); a single directory is
