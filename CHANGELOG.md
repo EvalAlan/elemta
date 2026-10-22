@@ -46,6 +46,12 @@
   `address_book`, **off by default**: turn it on for the classes that should
   have it. An account or list can be hidden from it
   (`--hide-from-address-book`, or the dashboard's account dialog).
+- Junk mail: mail the spam check flags but lets through (`X-Spam-Status:
+  Yes`) is now filed in Junk instead of the INBOX. Users keep allowed and
+  blocked senders (addresses or `@domain`) in the webmail, Settings, Account:
+  allowed senders always reach the INBOX, blocked ones always go to Junk. How
+  many they may keep is a class-of-service setting (`max_sender_rules`, 100
+  by default).
 - Quota warnings: a note in the user's INBOX as their mailbox passes 80% and
   95% of its quota, once per threshold (`[quota] warn_percent` in the mailbox
   configuration; `[]` turns them off).

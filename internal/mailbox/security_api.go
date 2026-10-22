@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
 type securityAuth struct {
@@ -45,8 +47,11 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 				return
 			}
 			limit := int64(4096)
-			if r.URL.Path == "/v1/freebusy" {
+			switch r.URL.Path {
+			case "/v1/freebusy":
 				limit = 1 << 20 // a year of busy times
+			case "/v1/security/senders":
+				limit = 1 << 19 // the most allowed and blocked senders a class can allow
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
@@ -113,6 +118,25 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			out["address_book"] = p.AddressBook
 		}
 		return out, nil
+	})
+	// The user's allowed and blocked senders (sender_rules.go).
+	senderMax := func(a securityAuth) int {
+		if p := a.account.Policy; p != nil {
+			return p.SenderRuleLimit()
+		}
+		return mailpolicy.DefaultMaxSenderRules
+	}
+	handle("GET /v1/security/senders", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		rules, err := s.engine.SenderRules(r.Context(), a.account.ID)
+		rules.Max = senderMax(a)
+		return rules, err
+	})
+	handle("PUT /v1/security/senders", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in SenderRules
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return s.engine.SetSenderRules(r.Context(), a.account.ID, in.Allow, in.Block, senderMax(a))
 	})
 	// The address book of the user's own domain, for address autocomplete.
 	handle("GET /v1/directory", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
@@ -269,6 +293,10 @@ func writeSecurityError(w http.ResponseWriter, err error) {
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.As(err, &re):
 		http.Error(w, re.msg, http.StatusBadRequest)
+	case errors.Is(err, mailpolicy.ErrInvalid):
+		// A user's own input refused (allowed and blocked senders): the
+		// reason is for them, without the package's prefix.
+		http.Error(w, strings.TrimPrefix(err.Error(), mailpolicy.ErrInvalid.Error()+": "), http.StatusBadRequest)
 	default:
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 	}

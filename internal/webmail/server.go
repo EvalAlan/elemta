@@ -247,6 +247,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/mail-calendar", s.authed(s.mailCalendarSubmit))
 	mux.HandleFunc("POST /settings/password", s.authed(s.passwordSubmit))
 	mux.HandleFunc("POST /settings/forwarding", s.authed(s.forwardingSubmit))
+	mux.HandleFunc("POST /settings/senders", s.authed(s.sendersSubmit))
 	mux.HandleFunc("GET /contacts", s.authed(s.contactsPage))
 	mux.HandleFunc("POST /contacts", s.authed(s.contactsSubmit))
 	mux.HandleFunc("GET /contacts/export", s.authed(s.contactsExport))
@@ -497,6 +498,8 @@ var notices = map[string]string{
 	"recovery-removed":     "Your recovery email was removed.",
 	"password-changed":     "Your password was changed. Use the new one everywhere you read mail.",
 	"forwarding-saved":     "Forwarding saved.",
+	"senders-saved":        "Allowed and blocked senders saved.",
+	"senders-failed":       "Allowed and blocked senders couldn't be saved. Try again later.",
 	"forwarding-failed":    "Forwarding couldn't be saved. Try again, or ask your administrator.",
 	"contact-saved":        "Contact saved.",
 	"contact-exists":       "That sender is already in your contacts.",

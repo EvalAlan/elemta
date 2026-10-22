@@ -29,6 +29,9 @@ type fakeSecurity struct {
 	published map[string]any
 	freeBusy  []map[string]any
 	lookups   []string
+	// Allowed and blocked senders, and the most allowed.
+	allow, block []string
+	maxSenders   int
 }
 
 func (f *fakeSecurity) handler(t *testing.T) http.Handler {
@@ -49,6 +52,24 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		switch {
 		case r.URL.Path == "/v1/security/shares":
 			_ = json.NewEncoder(w).Encode(f.shares)
+			return
+		case r.URL.Path == "/v1/security/senders":
+			if r.Method == http.MethodPut {
+				toList := func(v any) []string {
+					var out []string
+					for _, x := range v.([]any) {
+						out = append(out, x.(string))
+					}
+					return out
+				}
+				allow, block := toList(in["allow"]), toList(in["block"])
+				if len(allow)+len(block) > f.maxSenders {
+					http.Error(w, "at most 2 allowed and blocked senders", http.StatusBadRequest)
+					return
+				}
+				f.allow, f.block = allow, block
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"allow": f.allow, "block": f.block, "max": f.maxSenders})
 			return
 		case r.URL.Path == "/v1/directory":
 			_ = json.NewEncoder(w).Encode(f.directory)

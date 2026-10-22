@@ -355,3 +355,30 @@ func TestAddressBookFollowsClass(t *testing.T) {
 		t.Error("a class turning the address book on shows nothing")
 	}
 }
+
+// TestSenderRulesAPI pins the user's own endpoint and the class's limit.
+func TestSenderRulesAPI(t *testing.T) {
+	e, a := testEngine(t)
+	s, _, _ := startTestService(t, e, a)
+	t.Cleanup(func() { _, _ = e.DB.Exec(`DELETE FROM mailbox_account_policy WHERE address=$1`, a.Address) })
+	call := func(method, body string) (int, string) {
+		r := httptest.NewRequest(method, "/v1/security/senders", strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:5000"
+		r.SetBasicAuth(a.Address, "testpass")
+		w := httptest.NewRecorder()
+		s.http.Handler.ServeHTTP(w, r)
+		return w.Code, w.Body.String()
+	}
+	if code, body := call("PUT", `{"allow":["friend@good.example"],"block":["@spammy.example"]}`); code != http.StatusOK || !strings.Contains(body, `"max":100`) {
+		t.Fatalf("set = %d %s", code, body)
+	}
+	if err := e.PutAccountPolicy(context.Background(), mailpolicy.AccountPolicy{Address: a.Address, Class: testClass(t, e, mailpolicy.Settings{MaxSenderRules: iptr(1)})}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := call("PUT", `{"allow":["friend@good.example"],"block":["@spammy.example"]}`); code != http.StatusBadRequest || !strings.Contains(body, "at most 1") {
+		t.Fatalf("over the class limit = %d %s", code, body)
+	}
+	if code, body := call("GET", ""); code != http.StatusOK || !strings.Contains(body, "friend@good.example") || !strings.Contains(body, `"max":1`) {
+		t.Fatalf("get = %d %s", code, body)
+	}
+}

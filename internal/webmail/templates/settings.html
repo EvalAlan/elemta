@@ -141,6 +141,18 @@
     <div class="form-actions"><button class="button primary" type="submit">Save forwarding</button></div>
   </form>
   {{end}}
+  {{if .Senders}}
+  <form class="card form-grid" id="senders" action="/settings/senders#senders" method="post">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <h2 class="card-title">Junk mail</h2>
+    {{if eq .NoticeCard "senders"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
+    <span></span><span class="small muted">Mail the spam check flags goes to Junk. Mail from allowed senders always reaches your inbox; mail from blocked senders always goes to Junk. Enter addresses, or @example.com for a whole domain, one per line.</span>
+    <label for="allow">Allowed senders</label><textarea id="allow" name="allow" rows="4" placeholder="friend@example.org">{{.AllowText}}</textarea>
+    <label for="block">Blocked senders</label><textarea id="block" name="block" rows="4" placeholder="@annoying.example">{{.BlockText}}</textarea>
+    <span></span><span class="small muted">Up to {{.Senders.Max}} entries in all.</span>
+    <div class="form-actions"><button class="button primary" type="submit">Save senders</button></div>
+  </form>
+  {{end}}
   {{if .CanChangePassword}}
   <form class="card form-grid" id="password" action="/settings/password#password" method="post" autocomplete="off">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">

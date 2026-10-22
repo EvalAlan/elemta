@@ -128,6 +128,13 @@ func storeToken(token, target string) string {
 
 // deliver stores one recipient's copy, running their Sieve script.
 func (s *Service) deliver(ctx context.Context, d delivery) error {
+	// Blocked senders and flagged spam go to Junk first: not forwarded,
+	// not filtered, never in the INBOX.
+	if junk, err := s.fileAsJunk(ctx, d); err != nil {
+		return err
+	} else if junk {
+		return s.store(ctx, d, s.junkFolder(ctx, d.account.ID), nil, true, map[string]bool{})
+	}
 	if len(d.account.Forward) > 0 {
 		// Forwarding from the directory comes before the account's own
 		// filters, which then see only the copy kept here, if any.

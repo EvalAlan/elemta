@@ -127,6 +127,7 @@ deleted either.
 | Messages per hour | `--messages-per-hour 200` | MTA, for a signed-in sender |
 | Recipients per message | `--recipients-per-message 100` | MTA, at RCPT |
 | Recipients per day | `--recipients-per-day 1000` | MTA, at RCPT |
+| Allowed and blocked senders | `--max-sender-rules 200` | mailbox: how many a user may keep in the webmail (Settings, Account, "Junk mail"), together. 100 unless a class sets it; at most 5000, which `0` also means |
 | Address book | `--address-book on` | webmail: offers the accounts and lists of the user's domain as they type an address. Off unless a class turns it on |
 | Forwarding addresses | `--max-forward-addresses 1` | dashboard, CLI and webmail when forwarding is set; mailbox: only that many get a copy. 3 unless a class sets it; at most 50, which `0` also means |
 | Protocols | `--protocols pop3=off,imap=on` | `imap`, `pop3`: mailbox sign-in; `webmail`, `dav`: webmail; `submission`: MTA |
@@ -480,3 +481,22 @@ a CLI change that couldn't be recorded prints a warning.
 Verification includes service validation and configuration-lock tests, admin
 API permissions and lifecycle tests, CLI output/alias tests, SMTP cache tests,
 and real LDAP/IMAP/SMTP checks against the development stack.
+
+## Junk mail and users' allowed and blocked senders
+
+The MTA's spam check refuses mail over its reject threshold and marks mail it
+lets through with `X-Spam-Status: Yes` or `No`. The mailbox files flagged
+mail in the user's Junk folder (created if it doesn't exist) instead of the
+INBOX, before forwarding and the user's filters.
+
+Each user keeps allowed and blocked senders in the webmail (Settings,
+Account, "Junk mail"): addresses, or `@example.com` for a whole domain,
+matched against the envelope sender and the message's From. Mail from an
+allowed sender stays in the INBOX even when flagged; mail from a blocked
+sender goes to Junk even when it isn't. A blocked envelope sender wins over
+an allowed From, so a forged From can't lift a block. Mail the MTA refused
+outright never reaches the mailbox, so allowing a sender can't bring that
+back; raise the reject threshold or allow the sender in Rspamd for that.
+
+How many entries a user may keep is the class of service's
+`max_sender_rules` (100 by default).

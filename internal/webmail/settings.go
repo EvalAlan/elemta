@@ -288,12 +288,19 @@ type settingsView struct {
 	Forwarding   *AccountMail
 	ForwardText  string
 	ForwardLimit int
+	// Senders are the allowed and blocked senders; nil hides the card.
+	// AllowText and BlockText keep what was typed when shown again with a
+	// problem.
+	Senders              *senderRules
+	AllowText, BlockText string
 }
 
 // noticeCards places each settings notice in the card it is about. The
 // cards' ids match the anchors their forms and redirects return to.
 var noticeCards = map[string]string{
 	"forwarding-saved":     "forwarding",
+	"senders-saved":        "senders",
+	"senders-failed":       "senders",
 	"forwarding-failed":    "forwarding",
 	"settings-saved":       "general",
 	"password-changed":     "password",
@@ -378,6 +385,12 @@ func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view,
 			v.Settings.Forwarding = &m
 			v.Settings.ForwardText = strings.Join(m.Forward, ", ")
 			v.Settings.ForwardLimit = s.forwardLimit(r.Context(), sess)
+		}
+		if rules, err := s.senderRules(r.Context(), sess); err != nil {
+			s.log.Warn("webmail: read sender rules", "user", sess.User, "error", err)
+		} else if rules != nil {
+			v.Settings.Senders = rules
+			v.Settings.AllowText, v.Settings.BlockText = strings.Join(rules.Allow, "\n"), strings.Join(rules.Block, "\n")
 		}
 	}
 	if s.recovery != nil && tab == "account" {
