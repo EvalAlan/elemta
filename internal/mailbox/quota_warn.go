@@ -73,29 +73,57 @@ func (s *Service) quotaWarning(ctx context.Context, a Account) {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return // another replica has told them
 	}
-	msg := quotaMessage(a.Address, level, used, limit, slices.Max(thresholds), time.Now())
-	if _, err := s.engine.Append(ctx, a.ID, "INBOX", msg, nil, time.Now(), ""); err != nil {
+	now := time.Now()
+	msg := quotaMessage(a.Address, a.Address, level, used, limit, slices.Max(thresholds), now)
+	if _, err := s.engine.Append(ctx, a.ID, "INBOX", msg, nil, now, ""); err != nil {
 		s.log.Warn("quota warning not delivered", "account", a.ID, "error", err)
 		return
 	}
 	s.log.Info("quota warning sent", "account", a.ID, "percent", level)
+	if to := s.cfg.Quota.CopyTo; to != "" && !strings.EqualFold(to, a.Address) {
+		if err := s.copyQuotaWarning(ctx, to, a.Address, level, used, limit, slices.Max(thresholds), now); err != nil {
+			s.log.Warn("quota warning copy not delivered", "account", a.ID, "error", err)
+		}
+	}
+}
+
+func (s *Service) copyQuotaWarning(ctx context.Context, to, address string, level int, used, limit int64, highest int, now time.Time) error {
+	admin, err := s.auth.Resolve(ctx, to)
+	if err != nil {
+		return err
+	}
+	if err := s.applyPolicy(ctx, &admin); err != nil {
+		return err
+	}
+	if err := s.engine.EnsureAccount(ctx, admin); err != nil {
+		return err
+	}
+	_, err = s.engine.Append(ctx, admin.ID, "INBOX", quotaMessage(address, to, level, used, limit, highest, now), nil, now, "")
+	return err
 }
 
 // quotaMessage is the warning itself.
-func quotaMessage(address string, level int, used, limit int64, highest int, now time.Time) []byte {
+func quotaMessage(address, to string, level int, used, limit int64, highest int, now time.Time) []byte {
 	domain := domainOf(address)
 	subject := fmt.Sprintf("Your mailbox is %d%% full", level)
+	if !strings.EqualFold(to, address) {
+		subject = fmt.Sprintf("Mailbox %s is %d%% full", address, level)
+	}
 	next := "Mail to you will be refused once it is completely full."
 	if level < highest {
 		next = "You'll get another note if it keeps filling up; mail to you is refused once it is completely full."
 	}
-	body := fmt.Sprintf("Your mailbox (%s) is using %s of its %s.\r\n\r\n%s\r\n\r\n"+
+	owner := "Your mailbox"
+	if !strings.EqualFold(to, address) {
+		owner = "Mailbox"
+	}
+	body := fmt.Sprintf("%s (%s) is using %s of its %s.\r\n\r\n%s\r\n\r\n"+
 		"To make room, empty Trash and Junk, and delete or move large messages\r\n"+
 		"you no longer need. Your administrator can also raise the limit.\r\n",
-		address, humanBytes(used), humanBytes(limit), next)
+		owner, address, humanBytes(used), humanBytes(limit), next)
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: Mail system <postmaster@%s>\r\n", domain)
-	fmt.Fprintf(&b, "To: <%s>\r\n", address)
+	fmt.Fprintf(&b, "To: <%s>\r\n", to)
 	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
 	fmt.Fprintf(&b, "Date: %s\r\n", now.Format(time.RFC1123Z))
 	fmt.Fprintf(&b, "Message-ID: <quota-%s@%s>\r\n", uuid.NewString(), domain)

@@ -47,3 +47,21 @@ func TestQuotaWarnings(t *testing.T) {
 		t.Fatalf("at 95%%: %d warnings %v", n, s)
 	}
 }
+
+func TestQuotaWarningAdministratorCopy(t *testing.T) {
+	r := newAddressingRig(t)
+	r.setAccount("ana", func(a *Account) { a.Quota = 100 << 10 })
+	r.send("x@example.org", "", []string{r.addr("ana")}, msgWith("first")+strings.Repeat("x", 82<<10)+"\r\n")
+	if got := r.inbox("ben"); len(got) != 0 {
+		t.Fatalf("default configuration copied a warning: %d messages", len(got))
+	}
+
+	r.svc.cfg.Quota.CopyTo = r.addr("ben")
+	r.send("x@example.org", "", []string{r.addr("ana")}, msgWith("second")+strings.Repeat("x", 14<<10)+"\r\n")
+	copies := r.inbox("ben")
+	if len(copies) != 1 || !strings.Contains(copies[0], "To: <"+r.addr("ben")+">") ||
+		!strings.Contains(copies[0], "Mailbox "+r.addr("ana")+" is 95% full") ||
+		!strings.Contains(copies[0], "Mailbox ("+r.addr("ana")+")") {
+		t.Fatalf("administrator warning copy: %v", copies)
+	}
+}

@@ -52,3 +52,5 @@ hostname = "mail.example.com"
 # quota, once per threshold. [] turns the warnings off.
 [quota]
 warn_percent = [80, 95]
+# Optional mailbox that also receives each warning; empty leaves copies off.
+copy_to = ""

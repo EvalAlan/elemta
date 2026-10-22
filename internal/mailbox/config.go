@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"os"
 	"strings"
 
@@ -33,6 +34,9 @@ type QuotaConfig struct {
 	// the user is told (quota_warn.go). Unset means 80 and 95; an empty
 	// list turns warnings off.
 	WarnPercent []int `toml:"warn_percent"`
+	// CopyTo receives a separate copy of each warning. Empty keeps
+	// quota notices private to the mailbox owner.
+	CopyTo string `toml:"copy_to"`
 }
 
 // AdminConfig controls the admin API (admin_api.go).
@@ -231,6 +235,12 @@ func (c Config) WithDefaults() Config {
 	return c
 }
 func (c Config) Validate() error {
+	if c.Quota.CopyTo != "" {
+		a, err := mail.ParseAddress(c.Quota.CopyTo)
+		if err != nil || a.Address != c.Quota.CopyTo {
+			return errors.New("quota copy_to must be a single email address")
+		}
+	}
 	if !c.Server.AllowPlaintextAuth && !strings.HasPrefix(c.Auth.LDAPURL, "ldaps://") {
 		return errors.New("verified LDAPS required unless plaintext development authentication is explicitly allowed")
 	}
