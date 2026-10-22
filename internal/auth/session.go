@@ -1,10 +1,12 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -40,6 +42,9 @@ type SessionManager struct {
 	secureCookie bool
 	httpOnly     bool
 	sameSite     http.SameSite
+	// shared, when set, holds the sessions instead of the map, so every
+	// dashboard instance sees them (session_shared.go).
+	shared SessionBackend
 }
 
 // SessionConfig represents session configuration
@@ -115,7 +120,15 @@ func (sm *SessionManager) CreateSession(username, userAgent, ipAddress string) (
 		IsActive:  true,
 	}
 
-	sm.sessions[sessionID] = session
+	if sm.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), sharedTimeout)
+		defer cancel()
+		if err := sm.shared.Save(ctx, session); err != nil {
+			return nil, fmt.Errorf("failed to store session: %w", err)
+		}
+	} else {
+		sm.sessions[sessionID] = session
+	}
 
 	// Return a copy to prevent external modification
 	sessionCopy := *session
@@ -133,6 +146,15 @@ func (sm *SessionManager) ValidateSession(sessionID string) (*Session, error) {
 	defer sm.mu.Unlock()
 
 	session, exists := sm.sessions[sessionID]
+	if sm.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), sharedTimeout)
+		defer cancel()
+		stored, err := sm.shared.Load(ctx, sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read session: %w", err)
+		}
+		session, exists = stored, stored != nil
+	}
 	if !exists {
 		return nil, ErrSessionNotFound
 	}
@@ -258,6 +280,11 @@ func (sm *SessionManager) RevokeSession(sessionID string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	if sm.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), sharedTimeout)
+		defer cancel()
+		return sm.shared.Delete(ctx, sessionID)
+	}
 	session, exists := sm.sessions[sessionID]
 	if !exists {
 		return ErrSessionNotFound
@@ -294,6 +321,17 @@ func (sm *SessionManager) RevokeUserSessions(username string) int {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	revoked := 0
+	if sm.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), sharedTimeout)
+		defer cancel()
+		n, err := sm.shared.DeleteUser(ctx, username)
+		if err != nil {
+			// Revocation must not silently fail: the caller is disabling or
+			// resetting an account. Fall through to the local map and say so.
+			slog.Warn("dashboard sessions: revoking a user's sessions failed", "user", username, "error", err)
+		}
+		revoked += n
+	}
 	for id, session := range sm.sessions {
 		if session.Username == username {
 			delete(sm.sessions, id)

@@ -225,6 +225,12 @@ restart.
 - `[queue.indexedfs]` settings (`index_path`, `content_dir`, `sync_mode`, `recovery_on_startup`)
 - `[queue.postgres]` settings (`dsn`, pool sizing)
 
+Several MTA instances can share the `postgres` backend: each claims the
+messages it delivers with a 15-minute lease (`SELECT … FOR UPDATE SKIP
+LOCKED`), so a message goes out from one instance and one left by an
+instance that stopped is taken up by another when its lease runs out. The
+other backends belong to one instance each.
+
 ### API/web
 
 - `[api].enabled`
@@ -232,6 +238,11 @@ restart.
 - `[api].web_root`
 - `[api].auth_enabled`
 - `[api].auth_file`
+- `[api].session_store` — `memory` (the default: sessions live in one
+  dashboard process and a restart signs everyone out) or `valkey`, shared by
+  every dashboard instance at `[api].valkey_addr`, for running more than one.
+  Each request reads the shared store, so signing out or revoking a user's
+  sessions holds on every instance at once.
 
 > Use `elemta user add --file <path>` to create the users file; see the
 > hardening section of [Production Deployment](production-deployment.md).

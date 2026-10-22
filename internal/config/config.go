@@ -251,7 +251,10 @@ type Config struct {
 		AuthEnabled bool   `toml:"auth_enabled"`
 		AuthFile    string `toml:"auth_file"`
 		ValkeyAddr  string `toml:"valkey_addr"`
-		RateLimit   struct {
+		// SessionStore: "memory" or "valkey" (shared by every dashboard
+		// instance); see internal/api.
+		SessionStore string `toml:"session_store"`
+		RateLimit    struct {
 			Enabled           bool    `toml:"enabled"`
 			RequestsPerSecond float64 `toml:"requests_per_second"`
 			Burst             int     `toml:"burst"`

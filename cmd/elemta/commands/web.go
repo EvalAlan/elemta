@@ -306,12 +306,13 @@ func runWeb(cmd *cobra.Command, args []string) {
 	}
 
 	apiConfig := &api.Config{
-		Enabled:     true,
-		ListenAddr:  resolvedListenAddr,
-		WebRoot:     resolvedWebRoot,
-		AuthEnabled: resolvedAuthEnabled,
-		AuthFile:    resolvedAuthFile,
-		ValkeyAddr:  cfg.API.ValkeyAddr,
+		Enabled:      true,
+		ListenAddr:   resolvedListenAddr,
+		WebRoot:      resolvedWebRoot,
+		AuthEnabled:  resolvedAuthEnabled,
+		AuthFile:     resolvedAuthFile,
+		ValkeyAddr:   cfg.API.ValkeyAddr,
+		SessionStore: cfg.API.SessionStore,
 		RateLimit: api.RateLimitConfig{
 			Enabled:           cfg.API.RateLimit.Enabled,
 			RequestsPerSecond: cfg.API.RateLimit.RequestsPerSecond,

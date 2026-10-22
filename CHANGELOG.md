@@ -8,6 +8,9 @@
   (`LDAP_REPLICATION_PEERS`, `LDAP_SERVER_ID`); a single directory is
   unchanged. The schema, password and service-account scripts now apply
   configuration to every directory node.
+- The dashboard can keep its sessions in Valkey (`[api] session_store =
+  "valkey"`), so several dashboard instances share them; the default is
+  unchanged.
 - The MTA and the mailbox service accept the PROXY protocol from load
   balancers listed in `[server] proxy_protocol_from`, so clients keep their
   own addresses behind one. Nothing changes until it is set.

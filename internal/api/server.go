@@ -274,14 +274,18 @@ type HourlyStatsData struct {
 
 // Config represents API server configuration
 type Config struct {
-	Enabled     bool            `toml:"enabled" json:"enabled"`
-	ListenAddr  string          `toml:"listen_addr" json:"listen_addr"`
-	WebRoot     string          `toml:"web_root" json:"web_root"`
-	AuthEnabled bool            `toml:"auth_enabled" json:"auth_enabled"`
-	AuthFile    string          `toml:"auth_file" json:"auth_file"`
-	ValkeyAddr  string          `toml:"valkey_addr" json:"valkey_addr"`
-	RateLimit   RateLimitConfig `toml:"rate_limit" json:"rate_limit"`
-	CORS        CORSConfig      `toml:"cors" json:"cors"`
+	Enabled     bool   `toml:"enabled" json:"enabled"`
+	ListenAddr  string `toml:"listen_addr" json:"listen_addr"`
+	WebRoot     string `toml:"web_root" json:"web_root"`
+	AuthEnabled bool   `toml:"auth_enabled" json:"auth_enabled"`
+	AuthFile    string `toml:"auth_file" json:"auth_file"`
+	ValkeyAddr  string `toml:"valkey_addr" json:"valkey_addr"`
+	// SessionStore is "memory" (the default: one instance, signed out by a
+	// restart) or "valkey" (shared by every dashboard instance, at
+	// valkey_addr), as the webmail's.
+	SessionStore string          `toml:"session_store" json:"session_store"`
+	RateLimit    RateLimitConfig `toml:"rate_limit" json:"rate_limit"`
+	CORS         CORSConfig      `toml:"cors" json:"cors"`
 }
 
 // NewServer creates a new API server
@@ -545,6 +549,20 @@ func (s *Server) initializeAuth() error {
 		SameSite:     "lax",
 	}
 	sessionManager := auth.NewSessionManager(sessionConfig)
+	switch s.config.SessionStore {
+	case "", "memory":
+	case "valkey":
+		if s.config.ValkeyAddr == "" {
+			return fmt.Errorf("api session_store = \"valkey\" needs valkey_addr")
+		}
+		backend, err := auth.NewValkeySessionBackend(s.config.ValkeyAddr)
+		if err != nil {
+			return err
+		}
+		sessionManager.SetBackend(backend)
+	default:
+		return fmt.Errorf("api session_store must be memory or valkey, not %q", s.config.SessionStore)
+	}
 
 	// Create authentication middleware
 	authMiddleware := NewAuthMiddleware(rbac, apiKeyManager, sessionManager)
