@@ -125,8 +125,19 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 	_ = create.MarkFlagRequired("name")
 	create.Flags().StringVar(&quota, "quota", "0", "Quota such as 5G, or 0 for unlimited")
 	var newName, status, newQuota string
-	modify := add("modify-account <email>", []string{"ma"}, "Update name, status or quota", 1, func(ctx context.Context, cmd *cobra.Command, s *provision.Service, args []string) (any, error) {
+	var forward, sendAs []string
+	var keepCopy bool
+	modify := add("modify-account <email>", []string{"ma"}, "Update name, status, quota, forwarding or send-as rights", 1, func(ctx context.Context, cmd *cobra.Command, s *provision.Service, args []string) (any, error) {
 		p := provision.Patch{}
+		if cmd.Flags().Changed("forward") {
+			p.Forward = &forward
+		}
+		if cmd.Flags().Changed("keep-copy") {
+			p.ForwardKeepCopy = &keepCopy
+		}
+		if cmd.Flags().Changed("send-as") {
+			p.SendAs = &sendAs
+		}
 		if cmd.Flags().Changed("name") {
 			p.Name = &newName
 		}
@@ -145,6 +156,9 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 	modify.Flags().StringVar(&newName, "name", "", "New display name")
 	modify.Flags().StringVar(&status, "status", "", "active; suspended (can't sign in, still receives mail); or disabled (neither)")
 	modify.Flags().StringVar(&newQuota, "quota", "", "New quota; 0 is unlimited")
+	modify.Flags().StringSliceVar(&forward, "forward", nil, `Forward all mail to these addresses (comma separated); --forward "" stops forwarding`)
+	modify.Flags().BoolVar(&keepCopy, "keep-copy", false, "Keep a copy of forwarded mail in the mailbox")
+	modify.Flags().StringSliceVar(&sendAs, "send-as", nil, `Addresses, or @domain, the account may also send as; --send-as "" removes them all`)
 	add("set-password <email>", []string{"sp"}, "Reset a mailbox password and revoke webmail sessions", 1, func(ctx context.Context, cmd *cobra.Command, s *provision.Service, args []string) (any, error) {
 		password, err := readPassword(cmd, true)
 		if err != nil {

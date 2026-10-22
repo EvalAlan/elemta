@@ -1,9 +1,34 @@
-# Standard mail-directory attribute OIDs from the published LDAP mail schema.
-# Only the three attributes needed here are installed; existing directories
-# with these attributes already defined should keep their current schema.
+# Elemta's mail schema: the attributes and object classes mail entries use.
+#
+# The first three attributes keep the OIDs of the published LDAP mail schema
+# they come from, so a directory that already defines them can keep its own
+# definitions. Everything else is Elemta's, under an OID arc derived from a
+# UUID (2.25, ITU-T X.667), which needs no registration and can't collide:
+#   2.25.264978151140743919262615765353185555365.1.n   attributes
+#   2.25.264978151140743919262615765353185555365.2.n   object classes
+#
+# New directories load this file when they are created (docker/ldap). An
+# existing directory gets what it lacks from scripts/ldap-schema.sh, which
+# adds definitions by name and never changes one already there. Add new
+# definitions at the end with the next number; never renumber or reuse one.
+#
+# What each part is for: docs/directory.md.
 dn: cn=elemta-mail,cn=schema,cn=config
 objectClass: olcSchemaConfig
 cn: elemta-mail
 olcAttributeTypes: ( 1.3.6.1.4.1.7914.1.2.1.4 NAME 'mailAlternateAddress' DESC 'Mailbox delivery aliases' EQUALITY caseIgnoreIA5Match SUBSTR caseIgnoreIA5SubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{256} )
 olcAttributeTypes: ( 1.3.6.1.4.1.7914.1.2.1.12 NAME 'accountStatus' DESC 'Mailbox account status' EQUALITY caseIgnoreIA5Match SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 SINGLE-VALUE )
 olcAttributeTypes: ( 1.3.6.1.4.1.7914.1.2.1.15 NAME 'mailQuotaSize' DESC 'Mailbox quota in bytes' EQUALITY integerMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.27 SINGLE-VALUE )
+olcAttributeTypes: ( 2.25.264978151140743919262615765353185555365.1.1 NAME 'elemtaForwardTo' DESC 'Addresses all mail for the account is forwarded to' EQUALITY caseIgnoreIA5Match SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{256} )
+olcAttributeTypes: ( 2.25.264978151140743919262615765353185555365.1.2 NAME 'elemtaForwardKeepCopy' DESC 'TRUE keeps a copy of forwarded mail in the mailbox' EQUALITY booleanMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.7 SINGLE-VALUE )
+olcAttributeTypes: ( 2.25.264978151140743919262615765353185555365.1.3 NAME 'elemtaSendAs' DESC 'Addresses, or @domain, the account may send as' EQUALITY caseIgnoreIA5Match SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{256} )
+olcAttributeTypes: ( 2.25.264978151140743919262615765353185555365.1.4 NAME 'elemtaClassOfService' DESC 'Name of a class of service defined in the mailbox service' EQUALITY caseIgnoreMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{64} SINGLE-VALUE )
+olcAttributeTypes: ( 2.25.264978151140743919262615765353185555365.1.5 NAME 'elemtaListMember' DESC 'A list member by address, inside or outside the server' EQUALITY caseIgnoreIA5Match SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{256} )
+olcAttributeTypes: ( 2.25.264978151140743919262615765353185555365.1.6 NAME 'elemtaListPosting' DESC 'Who may post: anyone, members, domain or owner' EQUALITY caseIgnoreIA5Match SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{16} SINGLE-VALUE )
+olcAttributeTypes: ( 2.25.264978151140743919262615765353185555365.1.7 NAME 'elemtaListOwner' DESC 'Address that gets the bounces of the list and may always post' EQUALITY caseIgnoreIA5Match SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{256} SINGLE-VALUE )
+olcAttributeTypes: ( 2.25.264978151140743919262615765353185555365.1.8 NAME 'elemtaDomainName' DESC 'A mail domain' EQUALITY caseIgnoreIA5Match SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{253} SINGLE-VALUE )
+olcAttributeTypes: ( 2.25.264978151140743919262615765353185555365.1.9 NAME 'elemtaCatchAll' DESC 'Address that receives mail for unknown addresses in the domain' EQUALITY caseIgnoreIA5Match SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{256} SINGLE-VALUE )
+olcAttributeTypes: ( 2.25.264978151140743919262615765353185555365.1.10 NAME 'elemtaAliasDomainOf' DESC 'Domain that addresses in this domain stand for' EQUALITY caseIgnoreIA5Match SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{253} SINGLE-VALUE )
+olcObjectClasses: ( 2.25.264978151140743919262615765353185555365.2.1 NAME 'elemtaMailAccount' DESC 'A mailbox account' AUXILIARY MAY ( mailAlternateAddress $ accountStatus $ mailQuotaSize $ elemtaForwardTo $ elemtaForwardKeepCopy $ elemtaSendAs $ elemtaClassOfService ) )
+olcObjectClasses: ( 2.25.264978151140743919262615765353185555365.2.2 NAME 'elemtaMailList' DESC 'A distribution list; members are member DNs and elemtaListMember addresses' AUXILIARY MUST mail MAY ( mailAlternateAddress $ elemtaListMember $ elemtaListPosting $ elemtaListOwner $ displayName $ description ) )
+olcObjectClasses: ( 2.25.264978151140743919262615765353185555365.2.3 NAME 'elemtaMailDomain' DESC 'A mail domain and its routing' STRUCTURAL MUST elemtaDomainName MAY ( description $ elemtaCatchAll $ elemtaAliasDomainOf $ elemtaClassOfService ) )

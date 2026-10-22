@@ -1,5 +1,7 @@
-# Elemta Demo LDAP Data
-# Complete test environment with users, groups, and mail features
+# Elemta demo directory: ten people, distribution lists, forwarding and a
+# domain entry, in the current mail schema (docker/ldap/10-mail-schema.ldif).
+# The passwords are published demo values: never load this on a server
+# anyone else can reach.
 
 # Base organizational structure
 dn: dc=example,dc=com
@@ -17,20 +19,16 @@ dn: ou=groups,dc=example,dc=com
 objectClass: organizationalUnit
 ou: groups
 
-dn: ou=mailgroups,dc=example,dc=com
-objectClass: organizationalUnit
-ou: mailgroups
-
 dn: ou=domains,dc=example,dc=com
 objectClass: organizationalUnit
 ou: domains
 
 # Domain entry
-dn: dc=example,ou=domains,dc=example,dc=com
-objectClass: dNSDomain
-objectClass: mailDomain
-dc: example
-mailDomain: example.com
+dn: elemtaDomainName=example.com,ou=domains,dc=example,dc=com
+objectClass: elemtaMailDomain
+elemtaDomainName: example.com
+elemtaCatchAll: demo@example.com
+description: The demo domain; unknown addresses go to demo@example.com
 
 # Users - 10 comprehensive test users
 # 1. Demo User (main test account)
@@ -38,6 +36,7 @@ dn: uid=demo,ou=people,dc=example,dc=com
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+objectClass: elemtaMailAccount
 uid: demo
 cn: Demo User
 sn: User
@@ -52,19 +51,20 @@ title: Test Account
 departmentNumber: testing
 employeeType: test
 telephoneNumber: +1-555-0001
-description: role|demo-filter|require ["fileinto"]; if header :contains "subject" ["test", "demo"] { fileinto "Demo"; } elsif header :contains "from" ["noreply"] { fileinto "Automated"; } else { keep; }
 
 # 2. CEO (forwards to assistant)
 dn: uid=john.smith,ou=people,dc=example,dc=com
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+objectClass: elemtaMailAccount
 uid: john.smith
 cn: John Smith
 sn: Smith
 givenName: John
 mail: john.smith@example.com
-mailForwardingAddress: alice.wilson@example.com
+elemtaForwardTo: alice.wilson@example.com
+elemtaForwardKeepCopy: TRUE
 userPassword: password123
 uidNumber: 5002
 gidNumber: 5002
@@ -74,13 +74,13 @@ title: Chief Executive Officer
 departmentNumber: executive
 employeeType: management
 telephoneNumber: +1-555-0002
-description: role|urgent-priority|require ["fileinto", "imap4flags"]; if header :contains "subject" ["urgent", "important"] { setflag "\\Flagged"; fileinto "Priority"; } else { keep; }
 
 # 3. CTO (technical lead)
 dn: uid=sarah.johnson,ou=people,dc=example,dc=com
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+objectClass: elemtaMailAccount
 uid: sarah.johnson
 cn: Sarah Johnson
 sn: Johnson
@@ -95,13 +95,13 @@ title: Chief Technology Officer
 departmentNumber: engineering
 employeeType: management
 telephoneNumber: +1-555-0003
-description: role|development-alerts|require ["fileinto"]; if header :contains "from" ["github", "gitlab", "jenkins"] { fileinto "Development"; } elsif header :contains "subject" ["build", "deploy"] { fileinto "CI-CD"; } else { keep; }
 
 # 4. Sales Manager
 dn: uid=mike.davis,ou=people,dc=example,dc=com
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+objectClass: elemtaMailAccount
 uid: mike.davis
 cn: Mike Davis
 sn: Davis
@@ -116,13 +116,13 @@ title: Sales Manager
 departmentNumber: sales
 employeeType: staff
 telephoneNumber: +1-555-0004
-description: role|sales-leads|require ["fileinto"]; if header :contains "subject" ["lead", "prospect", "quote"] { fileinto "Leads"; } elsif header :contains "from" ["crm", "salesforce"] { fileinto "CRM"; } else { keep; }
 
 # 5. Executive Assistant (receives CEO forwards)
 dn: uid=alice.wilson,ou=people,dc=example,dc=com
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+objectClass: elemtaMailAccount
 uid: alice.wilson
 cn: Alice Wilson
 sn: Wilson
@@ -137,13 +137,13 @@ title: Executive Assistant
 departmentNumber: executive
 employeeType: staff
 telephoneNumber: +1-555-0005
-description: role|executive-filter|require ["fileinto"]; if header :contains "from" ["john.smith"] { fileinto "CEO"; } elsif header :contains "subject" ["meeting", "calendar"] { fileinto "Schedule"; } else { keep; }
 
 # 6. Developer
 dn: uid=tom.anderson,ou=people,dc=example,dc=com
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+objectClass: elemtaMailAccount
 uid: tom.anderson
 cn: Tom Anderson
 sn: Anderson
@@ -158,19 +158,20 @@ title: Senior Developer
 departmentNumber: engineering
 employeeType: developer
 telephoneNumber: +1-555-0006
-description: role|dev-notifications|require ["fileinto"]; if header :contains "from" ["github.com"] { fileinto "GitHub"; } elsif header :contains "subject" ["bug", "issue"] { fileinto "Issues"; } else { keep; }
 
 # 7. Marketing Manager (forwards to team)
 dn: uid=lisa.chen,ou=people,dc=example,dc=com
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+objectClass: elemtaMailAccount
 uid: lisa.chen
 cn: Lisa Chen
 sn: Chen
 givenName: Lisa
 mail: lisa.chen@example.com
-mailForwardingAddress: marketing-team@example.com
+elemtaForwardTo: marketing-team@example.com
+elemtaForwardKeepCopy: TRUE
 userPassword: password123
 uidNumber: 5007
 gidNumber: 5007
@@ -180,13 +181,13 @@ title: Marketing Manager
 departmentNumber: marketing
 employeeType: management
 telephoneNumber: +1-555-0007
-description: role|marketing-filter|require ["fileinto"]; if header :contains "subject" ["campaign", "newsletter"] { fileinto "Campaigns"; } elsif header :contains "from" ["analytics", "mailchimp"] { fileinto "Analytics"; } else { keep; }
 
 # 8. Support Engineer
 dn: uid=robert.kim,ou=people,dc=example,dc=com
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+objectClass: elemtaMailAccount
 uid: robert.kim
 cn: Robert Kim
 sn: Kim
@@ -201,13 +202,13 @@ title: Support Engineer
 departmentNumber: support
 employeeType: staff
 telephoneNumber: +1-555-0008
-description: role|support-tickets|require ["fileinto"]; if header :contains "subject" ["ticket", "support"] { fileinto "Tickets"; } elsif header :contains "from" ["helpdesk"] { fileinto "System"; } else { keep; }
 
 # 9. QA Engineer
 dn: uid=emily.brown,ou=people,dc=example,dc=com
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+objectClass: elemtaMailAccount
 uid: emily.brown
 cn: Emily Brown
 sn: Brown
@@ -222,13 +223,13 @@ title: QA Engineer
 departmentNumber: engineering
 employeeType: qa
 telephoneNumber: +1-555-0009
-description: role|qa-reports|require ["fileinto"]; if header :contains "subject" ["test", "bug"] { fileinto "Testing"; } elsif header :contains "from" ["jenkins", "ci"] { fileinto "Automation"; } else { keep; }
 
 # 10. HR Manager
 dn: uid=david.martinez,ou=people,dc=example,dc=com
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+objectClass: elemtaMailAccount
 uid: david.martinez
 cn: David Martinez
 sn: Martinez
@@ -243,13 +244,12 @@ title: HR Manager
 departmentNumber: hr
 employeeType: management
 telephoneNumber: +1-555-0010
-description: role|hr-filter|require ["fileinto"]; if header :contains "subject" ["application", "resume"] { fileinto "Recruitment"; } elsif header :contains "from" ["linkedin", "indeed"] { fileinto "Candidates"; } else { keep; }
 
 # Distribution Lists
 # 1. All company
-dn: cn=all,ou=mailgroups,dc=example,dc=com
+dn: cn=all,ou=groups,dc=example,dc=com
 objectClass: groupOfNames
-objectClass: mailGroup
+objectClass: elemtaMailList
 cn: all
 mail: all@example.com
 member: uid=demo,ou=people,dc=example,dc=com
@@ -264,9 +264,9 @@ member: uid=emily.brown,ou=people,dc=example,dc=com
 member: uid=david.martinez,ou=people,dc=example,dc=com
 
 # 2. Management team
-dn: cn=management,ou=mailgroups,dc=example,dc=com
+dn: cn=management,ou=groups,dc=example,dc=com
 objectClass: groupOfNames
-objectClass: mailGroup
+objectClass: elemtaMailList
 cn: management
 mail: management@example.com
 member: uid=john.smith,ou=people,dc=example,dc=com
@@ -276,9 +276,9 @@ member: uid=lisa.chen,ou=people,dc=example,dc=com
 member: uid=david.martinez,ou=people,dc=example,dc=com
 
 # 3. Engineering team
-dn: cn=engineering,ou=mailgroups,dc=example,dc=com
+dn: cn=engineering,ou=groups,dc=example,dc=com
 objectClass: groupOfNames
-objectClass: mailGroup
+objectClass: elemtaMailList
 cn: engineering
 mail: engineering@example.com
 member: uid=sarah.johnson,ou=people,dc=example,dc=com
@@ -286,64 +286,28 @@ member: uid=tom.anderson,ou=people,dc=example,dc=com
 member: uid=emily.brown,ou=people,dc=example,dc=com
 
 # 4. Sales and Marketing
-dn: cn=revenue,ou=mailgroups,dc=example,dc=com
+dn: cn=revenue,ou=groups,dc=example,dc=com
 objectClass: groupOfNames
-objectClass: mailGroup
+objectClass: elemtaMailList
 cn: revenue
 mail: revenue@example.com
 member: uid=mike.davis,ou=people,dc=example,dc=com
 member: uid=lisa.chen,ou=people,dc=example,dc=com
 
 # 5. Support team (virtual - forwards to multiple users)
-dn: cn=support,ou=mailgroups,dc=example,dc=com
+dn: cn=support,ou=groups,dc=example,dc=com
 objectClass: groupOfNames
-objectClass: mailGroup
+objectClass: elemtaMailList
 cn: support
 mail: support@example.com
 member: uid=robert.kim,ou=people,dc=example,dc=com
 member: uid=tom.anderson,ou=people,dc=example,dc=com
 
 # 6. Marketing team (used for forwarding)
-dn: cn=marketing-team,ou=mailgroups,dc=example,dc=com
+dn: cn=marketing-team,ou=groups,dc=example,dc=com
 objectClass: groupOfNames
-objectClass: mailGroup
+objectClass: elemtaMailList
 cn: marketing-team
 mail: marketing-team@example.com
 member: uid=lisa.chen,ou=people,dc=example,dc=com
 member: uid=alice.wilson,ou=people,dc=example,dc=com
-
-# POSIX Groups for system access
-dn: cn=users,ou=groups,dc=example,dc=com
-objectClass: posixGroup
-cn: users
-gidNumber: 5001
-
-dn: cn=management,ou=groups,dc=example,dc=com
-objectClass: posixGroup
-cn: management
-gidNumber: 5002
-memberUid: john.smith
-memberUid: sarah.johnson
-memberUid: mike.davis
-memberUid: lisa.chen
-memberUid: david.martinez
-
-dn: cn=engineering,ou=groups,dc=example,dc=com
-objectClass: posixGroup
-cn: engineering
-gidNumber: 5003
-memberUid: sarah.johnson
-memberUid: tom.anderson
-memberUid: emily.brown
-
-dn: cn=sales,ou=groups,dc=example,dc=com
-objectClass: posixGroup
-cn: sales
-gidNumber: 5004
-memberUid: mike.davis
-
-dn: cn=support,ou=groups,dc=example,dc=com
-objectClass: posixGroup
-cn: support
-gidNumber: 5005
-memberUid: robert.kim 

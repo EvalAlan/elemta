@@ -40,6 +40,7 @@ type Service struct {
 	tlsConfig  *tls.Config
 	http       *http.Server
 	dir        directoryCache
+	dirMail    directoryMail
 	ctx        context.Context
 	cancel     context.CancelFunc
 }
@@ -89,6 +90,9 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel, adminToken: os.Getenv(c.Admin.TokenEnv)}
+	if s.mailDirectory() != nil {
+		e.directoryClasses = s.directoryClasses
+	}
 	var tlsConfig *tls.Config
 	if c.Server.TLSCert != "" {
 		certs, err := newCertReloader(c.Server.TLSCert, c.Server.TLSKey)

@@ -82,6 +82,7 @@ for c in elemta-ldap elemta-mailbox-a elemta-mailbox-b elemta-node0 elemta-webma
     done
     echo "$c $(docker inspect -f '{{.State.Health.Status}}' "$c")"
     if [ "$c" = elemta-ldap ]; then
+        "$root/scripts/ldap-schema.sh"
         "$root/scripts/ldap-admin-password.sh"
         "$root/scripts/ldap-service-accounts.sh"
     fi

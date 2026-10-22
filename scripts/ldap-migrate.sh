@@ -84,6 +84,7 @@ done
 
 # The configuration is new, so the rules and passwords a deploy applies are
 # applied here too; without the rules the services couldn't read anything.
+"$root/scripts/ldap-schema.sh"
 "$root/scripts/ldap-admin-password.sh"
 "$root/scripts/ldap-service-accounts.sh"
 

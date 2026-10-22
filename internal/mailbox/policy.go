@@ -212,18 +212,30 @@ ON CONFLICT(address) DO UPDATE SET class=EXCLUDED.class, settings=EXCLUDED.setti
 func (e *Engine) EffectivePolicy(ctx context.Context, address string, directoryQuota int64) (mailpolicy.Effective, error) {
 	address = strings.ToLower(address)
 	domain := address[strings.LastIndex(address, "@")+1:]
+	var dirDomain, dirAccount string
+	if e.directoryClasses != nil {
+		var err error
+		if dirDomain, dirAccount, err = e.directoryClasses(ctx, address); err != nil {
+			return mailpolicy.Effective{}, err
+		}
+	}
 	var (
-		defaultRaw, domainRaw, accountClassRaw, accountRaw []byte
-		domainClass, accountClass                          sql.NullString
+		defaultRaw, domainRaw, dirDomainRaw, dirAccountRaw, accountClassRaw, accountRaw []byte
+		domainClass, dirDomainClass, dirAccountClass, accountClass                      sql.NullString
 	)
+	// A class the directory names that isn't defined here is ignored, as if
+	// unset, rather than refusing the account's mail over a typo.
 	err := e.DB.QueryRowContext(ctx, `SELECT
  (SELECT settings FROM mailbox_classes WHERE name='default'),
- d.class, dc.settings, ap.class, ac.settings, ap.settings
+ d.class, dc.settings, ddc.name, ddc.settings, dac.name, dac.settings, ap.class, ac.settings, ap.settings
 FROM (SELECT 1) one
 LEFT JOIN mailbox_domain_policy d ON d.domain=$2
 LEFT JOIN mailbox_classes dc ON dc.name=d.class
+LEFT JOIN mailbox_classes ddc ON ddc.name=NULLIF($3,'')
+LEFT JOIN mailbox_classes dac ON dac.name=NULLIF($4,'')
 LEFT JOIN mailbox_account_policy ap ON ap.address=$1
-LEFT JOIN mailbox_classes ac ON ac.name=ap.class`, address, domain).Scan(&defaultRaw, &domainClass, &domainRaw, &accountClass, &accountClassRaw, &accountRaw)
+LEFT JOIN mailbox_classes ac ON ac.name=ap.class`, address, domain, dirDomain, dirAccount).Scan(&defaultRaw, &domainClass, &domainRaw,
+		&dirDomainClass, &dirDomainRaw, &dirAccountClass, &dirAccountRaw, &accountClass, &accountClassRaw, &accountRaw)
 	if err != nil {
 		return mailpolicy.Effective{}, err
 	}
@@ -243,6 +255,18 @@ LEFT JOIN mailbox_classes ac ON ac.name=ap.class`, address, domain).Scan(&defaul
 	if domainClass.Valid {
 		class = domainClass.String
 		if err := add("domain class "+domainClass.String, domainRaw); err != nil {
+			return mailpolicy.Effective{}, err
+		}
+	}
+	if dirDomainClass.Valid {
+		class = dirDomainClass.String
+		if err := add("directory domain class "+dirDomainClass.String, dirDomainRaw); err != nil {
+			return mailpolicy.Effective{}, err
+		}
+	}
+	if dirAccountClass.Valid {
+		class = dirAccountClass.String
+		if err := add("directory class "+dirAccountClass.String, dirAccountRaw); err != nil {
 			return mailpolicy.Effective{}, err
 		}
 	}

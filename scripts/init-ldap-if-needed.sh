@@ -8,11 +8,9 @@ set -e
 # targets) runs the same commands in the Kubernetes one.
 if [ "${ELEMTA_STACK:-}" = "k8s" ]; then
     LDAP_EXEC=(kubectl -n "${K8S_NAMESPACE:-elemta}" exec deploy/elemta-ldap --)
-    LDAP_SCHEMA_EXEC=(kubectl -n "${K8S_NAMESPACE:-elemta}" exec -i deploy/elemta-ldap --)
     LDAP_LOGS="kubectl -n ${K8S_NAMESPACE:-elemta} logs deploy/elemta-ldap"
 else
     LDAP_EXEC=(docker exec elemta-ldap)
-    LDAP_SCHEMA_EXEC=(docker exec -i elemta-ldap)
     LDAP_LOGS="docker logs elemta-ldap"
 fi
 
@@ -30,15 +28,9 @@ while ! "${LDAP_EXEC[@]}" ldapsearch -Q -Y EXTERNAL -H ldapi:/// -b "dc=example,
     fi
 done
 
-# Mail administration uses standard mail aliases, status and quota attributes.
-# Existing full mail schemas already define them; never register duplicate OIDs.
-if ! "${LDAP_EXEC[@]}" ldapsearch -LLL -o ldif-wrap=no -Y EXTERNAL -H ldapi:/// \
-    -b cn=schema,cn=config '(objectClass=olcSchemaConfig)' olcAttributeTypes 2>/dev/null | grep -q "NAME 'mailAlternateAddress'"; then
-    # Stream the shipped schema so this works on both compose mounts and
-    # Kubernetes deployments whose existing ConfigMap predates this file.
-    "${LDAP_SCHEMA_EXEC[@]}" ldapadd -Y EXTERNAL -H ldapi:/// \
-        < "$(dirname "${BASH_SOURCE[0]}")/../docker/ldap/10-mail-schema.ldif"
-fi
+# The mail schema and branches, current whatever the directory was created
+# with. Idempotent.
+"$(dirname "${BASH_SOURCE[0]}")/ldap-schema.sh"
 
 # Every service binds as its own least-privilege account; create them (and
 # the access rules) before anything needs them. Idempotent.

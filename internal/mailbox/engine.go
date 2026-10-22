@@ -42,6 +42,13 @@ type Account struct {
 	// Policy is the account's effective class of service, filled in at
 	// login and delivery (Service.applyPolicy). Nil elsewhere.
 	Policy *mailpolicy.Effective
+	// From the directory entry (directory_mail.go): where its mail is
+	// forwarded and whether a copy stays, the addresses it may send as,
+	// and the class of service the directory assigns.
+	Forward         []string
+	ForwardKeepCopy bool
+	SendAs          []string
+	DirectoryClass  string
 }
 type Folder struct {
 	ID             int64
@@ -73,6 +80,10 @@ type Engine struct {
 	bodyGrace     time.Duration
 	readinessMu   sync.Mutex
 	lastBodyCheck time.Time
+	// directoryClasses returns the classes of service the directory assigns
+	// to an address's domain and account (Service.directoryClasses); nil
+	// when the directory carries none.
+	directoryClasses func(ctx context.Context, address string) (domainClass, accountClass string, err error)
 }
 
 func NewEngine(ctx context.Context, db *sql.DB, bodies BodyStore, c Config) (*Engine, error) {

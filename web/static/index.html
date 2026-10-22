@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261021-campaigns">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261021-status">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261022-directory">
 </head>
 
 <body>
@@ -1077,6 +1077,16 @@
                         </section>
                         <h4>Delivery aliases</h4><ul id="ma-alias-list" class="ma-alias-list"></ul>
                         <form id="ma-alias-form" class="ma-inline"><label class="sr-only" for="ma-alias">Alias address</label><input id="ma-alias" type="email" placeholder="alias@example.com" required><button class="btn btn-secondary" type="submit">Add alias</button></form>
+                        <h4>Forwarding and sending</h4>
+                        <form id="ma-mail-form" class="ma-form">
+                            <label for="ma-forward">Forward all mail to</label><input id="ma-forward" type="text" placeholder="someone@example.org, other@example.net" aria-describedby="ma-forward-help">
+                            <label class="ma-check"><input id="ma-keep-copy" type="checkbox"> Keep a copy in this mailbox</label>
+                            <p class="field-hint" id="ma-forward-help">Up to 10 addresses, separated by commas. Leave empty to stop forwarding. The account's own filters see only the copy kept here.</p>
+                            <label for="ma-send-as">May also send as</label><input id="ma-send-as" type="text" placeholder="sales@example.com, @example.com" aria-describedby="ma-send-as-help">
+                            <p class="field-hint" id="ma-send-as-help">Addresses this account may use as its sender: aliases, lists or shared addresses. @domain allows every address in the domain.</p>
+                            <p class="field-hint" id="ma-directory-class" hidden></p>
+                            <div class="ma-form-actions"><button type="submit" class="btn btn-secondary">Save forwarding and sending</button></div>
+                        </form>
                         <h4>Reset password</h4><form id="ma-password-form" class="ma-form">
                             <label for="ma-password">New password</label><input id="ma-password" type="password" autocomplete="new-password" minlength="10" required>
                             <label for="ma-confirm-password">Repeat password</label><input id="ma-confirm-password" type="password" autocomplete="new-password" minlength="10" required>
@@ -1501,7 +1511,7 @@
     <script src="/static/app.js?v=20261020-reports"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
-    <script src="/static/mail-admin.js?v=20261021-status"></script>
+    <script src="/static/mail-admin.js?v=20261022-directory"></script>
 </body>
 
 </html>

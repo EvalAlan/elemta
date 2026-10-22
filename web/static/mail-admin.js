@@ -250,7 +250,14 @@
             });
             if (!account.aliases.length) list.appendChild(node('li', 'No delivery aliases.'));
         }
+        el('ma-forward').value = editing ? (account.forward || []).join(', ') : '';
+        el('ma-keep-copy').checked = editing && !!account.forward_keep_copy;
+        el('ma-send-as').value = editing ? (account.send_as || []).join(', ') : '';
+        const dirClass = el('ma-directory-class');
+        dirClass.hidden = !(editing && account.directory_class);
+        dirClass.textContent = dirClass.hidden ? '' : 'The directory assigns this account the class of service “' + account.directory_class + '”. A class chosen above takes precedence.';
     }
+    const addressList = value => value.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean);
     function effectiveValue(e, key) {
         if (key.startsWith('protocols.')) return (e.protocols || {})[key.slice(10)] === false ? 'Off' : 'On';
         const v = e[key];
@@ -322,6 +329,10 @@
     el('ma-policy-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
         const view = await request(accountPath() + '/policy', 'PUT', { class: el('ma-policy-class').value, settings: accountEditor.read() });
         fillPolicy(view); message('Class of service saved. Mail apps pick it up when they next sign in.'); await refresh();
+    }); });
+    el('ma-mail-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+        const updated = await request(accountPath(), 'PATCH', { forward: addressList(el('ma-forward').value), forward_keep_copy: el('ma-keep-copy').checked, send_as: addressList(el('ma-send-as').value) });
+        fillAccount(updated); message('Forwarding and sending saved.'); await refresh();
     }); });
     el('ma-alias-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => { const updated = await request(accountPath() + '/aliases', 'POST', { alias: el('ma-alias').value }); fillAccount(updated); el('ma-account-policy').hidden = !mailboxAdmin; message('Delivery alias added.'); await refresh(); }); });
     el('ma-password-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {

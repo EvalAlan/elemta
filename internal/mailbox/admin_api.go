@@ -253,15 +253,21 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		return s.engine.SharesForMailbox(r.Context(), owner.ID)
 	})
 	handle("GET /v1/admin/share-access", func(r *http.Request) (any, error) {
-		owner, err := s.directoryAccount(r.Context(), r.URL.Query().Get("mailbox"))
-		if err != nil {
-			return nil, err
-		}
+		sending := r.URL.Query().Get("send") == "true"
 		member, err := s.directoryAccount(r.Context(), r.URL.Query().Get("member"))
 		if err != nil {
 			return nil, err
 		}
-		allowed, err := s.engine.HasShare(r.Context(), owner.ID, member.ID, r.URL.Query().Get("send") == "true")
+		// Send-as rights in the directory cover any address (an alias, a
+		// list, a shared or role address), whether or not it is a mailbox.
+		if sending && sendAsAllowed(member.SendAs, r.URL.Query().Get("mailbox")) {
+			return map[string]bool{"allowed": true}, nil
+		}
+		owner, err := s.directoryAccount(r.Context(), r.URL.Query().Get("mailbox"))
+		if err != nil {
+			return nil, err
+		}
+		allowed, err := s.engine.HasShare(r.Context(), owner.ID, member.ID, sending)
 		return map[string]bool{"allowed": allowed}, err
 	})
 	handle("PUT /v1/admin/accounts/{address}/shares/{member}", func(r *http.Request) (any, error) {
@@ -466,6 +472,12 @@ func (s *Service) addressInfo(ctx context.Context, raw string) (mailpolicy.Addre
 		return info, err
 	} else if exists {
 		info.Kind = "account" // disabled: Resolve won't say which
+		return info, nil
+	}
+	if l, err := s.directoryList(ctx, address); err != nil {
+		return info, err
+	} else if l != nil {
+		info.Kind = "list"
 		return info, nil
 	}
 	if isList, err := s.engine.isList(ctx, address); err != nil {

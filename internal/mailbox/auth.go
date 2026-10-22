@@ -49,24 +49,18 @@ func (a LDAPAuth) lookup(ctx context.Context, address string, delivery bool) (Ac
 	if !strings.Contains(address, "@") || len(address) > 320 {
 		return Account{}, "", ErrCredentials
 	}
-	c, err := a.dial()
+	c, err := a.bound()
 	if err != nil {
 		return Account{}, "", err
 	}
 	defer c.Close()
-	dn, pw := os.Getenv(a.Config.BindDNEnv), os.Getenv(a.Config.BindPasswordEnv)
-	if dn == "" || pw == "" {
-		return Account{}, "", errors.New("LDAP service credentials are required")
-	}
-	if err = c.Bind(dn, pw); err != nil {
-		return Account{}, "", err
-	}
 	escaped := ldap.EscapeFilter(address)
 	filter := strings.Replace(a.Config.LDAPFilter, "%s", escaped, 1)
 	if delivery {
 		filter = "(&(objectClass=posixAccount)(|(mail=" + escaped + ")(mailAlternateAddress=" + escaped + ")))"
 	}
-	result, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, filter, []string{"entryUUID", "mail", "accountStatus", "mailQuotaSize"}, nil))
+	result, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, filter,
+		[]string{"entryUUID", "mail", "accountStatus", "mailQuotaSize", "elemtaForwardTo", "elemtaForwardKeepCopy", "elemtaSendAs", "elemtaClassOfService"}, nil))
 	if err != nil {
 		return Account{}, "", err
 	}
@@ -88,7 +82,39 @@ func (a LDAPAuth) lookup(ctx context.Context, address string, delivery bool) (Ac
 			return Account{}, "", errors.New("invalid directory quota")
 		}
 	}
+	account.Forward = lowerAll(entry.GetAttributeValues("elemtaForwardTo"))
+	account.ForwardKeepCopy = strings.EqualFold(entry.GetAttributeValue("elemtaForwardKeepCopy"), "TRUE")
+	account.SendAs = lowerAll(entry.GetAttributeValues("elemtaSendAs"))
+	account.DirectoryClass = strings.TrimSpace(entry.GetAttributeValue("elemtaClassOfService"))
 	return account, entry.DN, nil
+}
+
+// bound dials the directory and binds as the mailbox service's account.
+func (a LDAPAuth) bound() (*ldap.Conn, error) {
+	c, err := a.dial()
+	if err != nil {
+		return nil, err
+	}
+	dn, pw := os.Getenv(a.Config.BindDNEnv), os.Getenv(a.Config.BindPasswordEnv)
+	if dn == "" || pw == "" {
+		c.Close()
+		return nil, errors.New("LDAP service credentials are required")
+	}
+	if err = c.Bind(dn, pw); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
+func lowerAll(values []string) []string {
+	var out []string
+	for _, v := range values {
+		if v = strings.ToLower(strings.TrimSpace(v)); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 func (a LDAPAuth) Login(ctx context.Context, user, password string) (Account, error) {
 	if password == "" {

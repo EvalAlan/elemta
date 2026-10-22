@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,8 +29,17 @@ type Account struct {
 	Status     string   `json:"status"`
 	QuotaBytes int64    `json:"quota_bytes"`
 	Aliases    []string `json:"aliases"`
-	Created    string   `json:"created,omitempty"`
-	Modified   string   `json:"modified,omitempty"`
+	// Forward lists where all of the account's mail goes; with
+	// ForwardKeepCopy a copy also stays in the mailbox. SendAs lists the
+	// addresses, or @domain, it may send as besides its own. DirectoryClass
+	// is a class of service set in the directory itself (read only here;
+	// the dashboard assigns classes in the mailbox service).
+	Forward         []string `json:"forward"`
+	ForwardKeepCopy bool     `json:"forward_keep_copy"`
+	SendAs          []string `json:"send_as"`
+	DirectoryClass  string   `json:"directory_class,omitempty"`
+	Created         string   `json:"created,omitempty"`
+	Modified        string   `json:"modified,omitempty"`
 }
 type Create struct {
 	Address    string `json:"address"`
@@ -41,7 +51,56 @@ type Patch struct {
 	Name       *string `json:"name,omitempty"`
 	Status     *string `json:"status,omitempty"`
 	QuotaBytes *int64  `json:"quota_bytes,omitempty"`
+	// Forward and SendAs replace the whole list; an empty list clears it.
+	Forward         *[]string `json:"forward,omitempty"`
+	ForwardKeepCopy *bool     `json:"forward_keep_copy,omitempty"`
+	SendAs          *[]string `json:"send_as,omitempty"`
 }
+
+// Limits on the lists an account carries, so one entry can't fan mail out
+// or grant itself without bound.
+const (
+	maxForward = 10
+	maxSendAs  = 50
+)
+
+// SendAsGrant normalises a send-as grant: an address, or @domain for every
+// address in a domain.
+func SendAsGrant(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if domain, ok := strings.CutPrefix(value, "@"); ok {
+		d, err := DomainName(domain)
+		if err != nil {
+			return "", err
+		}
+		return "@" + d, nil
+	}
+	return Address(value)
+}
+
+// cleanList normalises a list of addresses (or grants), without duplicates.
+func cleanList(raw []string, max int, what string, normal func(string) (string, error)) ([]string, error) {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, v := range raw {
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		n, err := normal(v)
+		if err != nil {
+			return nil, err
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	if len(out) > max {
+		return nil, fmt.Errorf("%w: at most %d %s", ErrInvalid, max, what)
+	}
+	return out, nil
+}
+
 type Directory interface {
 	List(context.Context) ([]Account, error)
 	Get(context.Context, string) (Account, error)
@@ -224,7 +283,24 @@ func (s *Service) Update(ctx context.Context, raw string, p Patch) (Account, err
 	if p.QuotaBytes != nil && (*p.QuotaBytes < 0 || *p.QuotaBytes > 1<<50) {
 		return Account{}, fmt.Errorf("%w: invalid quota", ErrInvalid)
 	}
-	if p.Name == nil && p.Status == nil && p.QuotaBytes == nil {
+	if p.Forward != nil {
+		forward, err := cleanList(*p.Forward, maxForward, "forwarding addresses", Address)
+		if err != nil {
+			return Account{}, err
+		}
+		if slices.Contains(forward, address) {
+			return Account{}, fmt.Errorf("%w: an account can't forward to itself", ErrInvalid)
+		}
+		p.Forward = &forward
+	}
+	if p.SendAs != nil {
+		grants, err := cleanList(*p.SendAs, maxSendAs, "send-as addresses", SendAsGrant)
+		if err != nil {
+			return Account{}, err
+		}
+		p.SendAs = &grants
+	}
+	if p.Name == nil && p.Status == nil && p.QuotaBytes == nil && p.Forward == nil && p.ForwardKeepCopy == nil && p.SendAs == nil {
 		return Account{}, fmt.Errorf("%w: no changes supplied", ErrInvalid)
 	}
 	// Suspending, like disabling, ends the account's sessions: webmail

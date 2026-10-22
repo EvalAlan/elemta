@@ -151,6 +151,9 @@ func TestDelegatedDomainAdministration(t *testing.T) {
 		{"GET", "/accounts/eve@other.example", nil},
 		{"POST", "/accounts/eve@other.example/access", nil},
 		{"PATCH", "/accounts/eve@other.example", map[string]any{"name": "Mallory"}},
+		// Their own account may not be given another domain's addresses.
+		{"PATCH", "/accounts/dana@example.com", map[string]any{"send_as": []string{"ceo@other.example"}}},
+		{"PATCH", "/accounts/dana@example.com", map[string]any{"send_as": []string{"@other.example"}}},
 		{"DELETE", "/accounts/eve@other.example", map[string]any{"confirm": "eve@other.example"}},
 		{"POST", "/accounts/eve@other.example/password", map[string]any{"password": "new-private-password"}},
 		{"POST", "/accounts/dana@example.com/aliases", map[string]any{"alias": "dana@other.example"}},
@@ -169,6 +172,8 @@ func TestDelegatedDomainAdministration(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, code, "%s %s: %s", c.method, c.path, body)
 	}
 	require.Equal(t, "Eve", directory.accounts["eve@other.example"].Name)
+	code, body = deleg("PATCH", "/api/provision/accounts/dana@example.com", map[string]any{"send_as": []string{"sales@example.com", "@example.com"}, "forward": []string{"dana@elsewhere.example"}})
+	require.Equal(t, http.StatusOK, code, body)
 	code, body = deleg("POST", "/api/provision/accounts/dana@example.com/access", nil)
 	require.Equal(t, http.StatusOK, code, body)
 	require.Contains(t, body, `"webmail_url":"https://mail.example.com"`)

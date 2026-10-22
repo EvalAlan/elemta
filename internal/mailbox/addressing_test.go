@@ -61,6 +61,13 @@ type addressingRig struct {
 
 func newAddressingRig(t *testing.T) *addressingRig {
 	t.Helper()
+	return newAddressingRigWith(t, nil)
+}
+
+// newAddressingRigWith builds the rig with the directory wrap returns, so
+// a test can give it lists and domains (directory_mail_test.go).
+func newAddressingRigWith(t *testing.T, wrap func(directoryAuth) Authenticator) *addressingRig {
+	t.Helper()
 	e, _ := testEngine(t)
 	domain := "d" + uuid.NewString()[:8] + ".example"
 	acct := func(local string) Account {
@@ -84,7 +91,11 @@ func newAddressingRig(t *testing.T) *addressingRig {
 	cfg.Server.AllowPlaintextAuth = true
 	cfg.Server.LMTPAllowedNetworks = []string{"127.0.0.0/8"}
 	cfg.Sieve.SubmitAddr = submitAddr
-	svc, err := newService(cfg, e, dir, nil)
+	var auth Authenticator = dir
+	if wrap != nil {
+		auth = wrap(dir)
+	}
+	svc, err := newService(cfg, e, auth, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -37,7 +37,7 @@ with care.
 - `setup-elk.sh`, `create-mta-index-patterns.sh`, `import-mta-dashboards.sh`,
   `populate-dashboards.sh`, `dashboard-keepalive.py` — ELK/Kibana helpers
 - `build_plugins.sh` — build example plugins
-- `deploy-and-test.sh`, `deploy-demo.sh`, `run.sh` — older one-shot dev wrappers
+- `deploy-and-test.sh`, `run.sh` — older one-shot dev wrappers
 - `realistic-smtp-test.py`, `test-dashboard-population.py`, `mock-queue.py`, `api_server.py` — ad-hoc test helpers
 
 ## Prerequisites

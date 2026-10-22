@@ -33,6 +33,7 @@ are in the [CHANGELOG](../CHANGELOG.md).
 ## Accounts and administration
 
 - [Mail Administration](mail-administration.md): domains, accounts, aliases, LDAP service accounts, admin API
+- [The directory](directory.md): the mail schema, forwarding, send-as, lists, domains and classes of service in LDAP
 
 ## Queue and delivery
 

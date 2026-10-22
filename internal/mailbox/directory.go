@@ -71,6 +71,19 @@ func (a LDAPAuth) Directory(ctx context.Context, domain string) ([]DirectoryEntr
 		}
 		out = append(out, DirectoryEntry{Address: strings.ToLower(e.GetAttributeValue("mail")), Name: name, Kind: "account"})
 	}
+	// The domain's lists kept in the directory (elemtaMailList).
+	res, err = c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, maxDirectory, 10, false,
+		"(&(objectClass=elemtaMailList)(mail=*@"+ldap.EscapeFilter(domain)+"))", []string{"mail", "cn", "displayName"}, nil))
+	if err != nil && (res == nil || !ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded)) {
+		return nil, err
+	}
+	for _, e := range res.Entries {
+		name := e.GetAttributeValue("displayName")
+		if name == "" {
+			name = e.GetAttributeValue("cn")
+		}
+		out = append(out, DirectoryEntry{Address: strings.ToLower(e.GetAttributeValue("mail")), Name: name, Kind: "list"})
+	}
 	return out, nil
 }
 
@@ -114,8 +127,13 @@ func (s *Service) directory(ctx context.Context, address string) ([]DirectoryEnt
 	if err != nil {
 		return nil, err
 	}
+	seen := map[string]bool{}
+	for _, e := range entries {
+		seen[e.Address] = true
+	}
 	for _, l := range lists {
-		if strings.HasSuffix(l.Address, "@"+domain) {
+		// A directory list hides a database list with its address.
+		if strings.HasSuffix(l.Address, "@"+domain) && !seen[l.Address] {
 			entries = append(entries, DirectoryEntry{Address: l.Address, Name: l.Name, Kind: "list"})
 		}
 	}

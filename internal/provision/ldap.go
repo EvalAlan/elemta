@@ -55,7 +55,8 @@ func (l *LDAP) connect(ctx context.Context) (*ldap.Conn, func(), error) {
 	return c, closeConn, nil
 }
 
-var accountAttrs = []string{"mail", "uid", "cn", "displayName", "objectClass", "accountStatus", "mailQuotaSize", "mailAlternateAddress", "createTimestamp", "modifyTimestamp"}
+var accountAttrs = []string{"mail", "uid", "cn", "displayName", "objectClass", "accountStatus", "mailQuotaSize", "mailAlternateAddress",
+	"elemtaForwardTo", "elemtaForwardKeepCopy", "elemtaSendAs", "elemtaClassOfService", "createTimestamp", "modifyTimestamp"}
 
 func entryAccount(e *ldap.Entry) (Account, error) {
 	values := e.GetAttributeValues("mail")
@@ -89,7 +90,19 @@ func entryAccount(e *ldap.Entry) (Account, error) {
 		aliases = []string{}
 	}
 	sort.Strings(aliases)
-	return Account{Address: address, Name: name, Status: status, QuotaBytes: quota, Aliases: aliases, Created: e.GetAttributeValue("createTimestamp"), Modified: e.GetAttributeValue("modifyTimestamp")}, nil
+	return Account{Address: address, Name: name, Status: status, QuotaBytes: quota, Aliases: aliases,
+		Forward: sortedLower(e.GetAttributeValues("elemtaForwardTo")), ForwardKeepCopy: strings.EqualFold(e.GetAttributeValue("elemtaForwardKeepCopy"), "TRUE"),
+		SendAs: sortedLower(e.GetAttributeValues("elemtaSendAs")), DirectoryClass: e.GetAttributeValue("elemtaClassOfService"),
+		Created: e.GetAttributeValue("createTimestamp"), Modified: e.GetAttributeValue("modifyTimestamp")}, nil
+}
+
+func sortedLower(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		out = append(out, strings.ToLower(v))
+	}
+	sort.Strings(out)
+	return out
 }
 func (l *LDAP) find(c *ldap.Conn, address string) (*ldap.Entry, error) {
 	res, err := c.Search(ldap.NewSearchRequest(l.config.Base, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 15, false, "(&(objectClass=posixAccount)(mail="+ldap.EscapeFilter(address)+"))", accountAttrs, nil))
@@ -207,7 +220,7 @@ func (l *LDAP) Create(ctx context.Context, in Create) (Account, error) {
 		return Account{}, err
 	}
 	add := ldap.NewAddRequest(dn, nil)
-	for key, values := range map[string][]string{"objectClass": {"top", "inetOrgPerson", "posixAccount", "extensibleObject"}, "uid": {in.Address}, "mail": {in.Address}, "cn": {in.Name}, "sn": {in.Name}, "displayName": {in.Name}, "uidNumber": {"5000"}, "gidNumber": {"5000"}, "homeDirectory": {"/var/mail/home/" + in.Address}, "accountStatus": {"disabled"}, "mailQuotaSize": {strconv.FormatInt(in.QuotaBytes, 10)}} {
+	for key, values := range map[string][]string{"objectClass": {"top", "inetOrgPerson", "posixAccount", "elemtaMailAccount"}, "uid": {in.Address}, "mail": {in.Address}, "cn": {in.Name}, "sn": {in.Name}, "displayName": {in.Name}, "uidNumber": {"5000"}, "gidNumber": {"5000"}, "homeDirectory": {"/var/mail/home/" + in.Address}, "accountStatus": {"disabled"}, "mailQuotaSize": {strconv.FormatInt(in.QuotaBytes, 10)}} {
 		add.Attribute(key, values)
 	}
 	if err = c.Add(add); err != nil {
@@ -233,13 +246,18 @@ func (l *LDAP) Create(ctx context.Context, in Create) (Account, error) {
 	}
 	return entryAccount(e)
 }
+
+// ensureMailAttrs makes sure the entry may hold the mail attributes: an
+// account made outside Elemta may lack the class. (extensibleObject, which
+// older versions used, allows them too; scripts/ldap-schema.sh moves those
+// entries over.)
 func ensureMailAttrs(e *ldap.Entry, change *ldap.ModifyRequest) {
 	for _, class := range e.GetAttributeValues("objectClass") {
-		if strings.EqualFold(class, "extensibleObject") {
+		if strings.EqualFold(class, "elemtaMailAccount") || strings.EqualFold(class, "extensibleObject") {
 			return
 		}
 	}
-	change.Add("objectClass", []string{"extensibleObject"})
+	change.Add("objectClass", []string{"elemtaMailAccount"})
 }
 func (l *LDAP) Update(ctx context.Context, address string, p Patch) (Account, error) {
 	c, closeConn, err := l.connect(ctx)
@@ -256,8 +274,18 @@ func (l *LDAP) Update(ctx context.Context, address string, p Patch) (Account, er
 		change.Replace("cn", []string{*p.Name})
 		change.Replace("displayName", []string{*p.Name})
 	}
-	if p.Status != nil || p.QuotaBytes != nil {
+	if p.Status != nil || p.QuotaBytes != nil || p.Forward != nil || p.ForwardKeepCopy != nil || p.SendAs != nil {
 		ensureMailAttrs(e, change)
+	}
+	// Replace with no values removes the attribute.
+	if p.Forward != nil {
+		change.Replace("elemtaForwardTo", *p.Forward)
+	}
+	if p.ForwardKeepCopy != nil {
+		change.Replace("elemtaForwardKeepCopy", []string{strings.ToUpper(strconv.FormatBool(*p.ForwardKeepCopy))})
+	}
+	if p.SendAs != nil {
+		change.Replace("elemtaSendAs", *p.SendAs)
 	}
 	if p.Status != nil {
 		change.Replace("accountStatus", []string{*p.Status})

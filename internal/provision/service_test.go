@@ -3,6 +3,7 @@ package provision
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +48,15 @@ func (m *memoryDirectory) Update(ctx context.Context, key string, p Patch) (Acco
 	}
 	if p.QuotaBytes != nil {
 		a.QuotaBytes = *p.QuotaBytes
+	}
+	if p.Forward != nil {
+		a.Forward = *p.Forward
+	}
+	if p.ForwardKeepCopy != nil {
+		a.ForwardKeepCopy = *p.ForwardKeepCopy
+	}
+	if p.SendAs != nil {
+		a.SendAs = *p.SendAs
 	}
 	m.accounts[key] = a
 	return a, nil
@@ -197,5 +207,48 @@ func TestSuspendedStatus(t *testing.T) {
 	frozen := "frozen"
 	if _, err := s.Update(ctx, a.Address, Patch{Status: &frozen}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("unknown status accepted: %v", err)
+	}
+}
+
+func TestForwardingAndSendAs(t *testing.T) {
+	s := testService(t)
+	ctx := context.Background()
+	a, err := s.Create(ctx, Create{Address: "kim@example.com", Name: "Kim", Password: "long secure password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := true
+	got, err := s.Update(ctx, a.Address, Patch{
+		Forward:         &[]string{" Far@Remote.Example ", "far@remote.example", ""},
+		ForwardKeepCopy: &keep,
+		SendAs:          &[]string{"Sales@Example.com", "@Brand.Example"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.Forward, ",") != "far@remote.example" || !got.ForwardKeepCopy {
+		t.Errorf("forwarding = %v keep %v", got.Forward, got.ForwardKeepCopy)
+	}
+	if strings.Join(got.SendAs, ",") != "sales@example.com,@brand.example" {
+		t.Errorf("send as = %v", got.SendAs)
+	}
+	for name, p := range map[string]Patch{
+		"forward to itself":  {Forward: &[]string{"kim@example.com"}},
+		"bad forward":        {Forward: &[]string{"not an address"}},
+		"bad send-as domain": {SendAs: &[]string{"@-bad-"}},
+	} {
+		if _, err := s.Update(ctx, a.Address, p); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s accepted: %v", name, err)
+		}
+	}
+	many := make([]string, maxForward+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("f%d@remote.example", i)
+	}
+	if _, err := s.Update(ctx, a.Address, Patch{Forward: &many}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("%d forwarding addresses accepted: %v", len(many), err)
+	}
+	if got, err := s.Update(ctx, a.Address, Patch{Forward: &[]string{}}); err != nil || len(got.Forward) != 0 {
+		t.Errorf("clearing forwarding: %v %v", got.Forward, err)
 	}
 }

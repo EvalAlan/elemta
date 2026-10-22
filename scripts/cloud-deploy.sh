@@ -127,20 +127,9 @@ for _ in $(seq 60); do
         -b "dc=example,dc=com" -s base dn >/dev/null 2>&1 && break
     sleep 2
 done
-if ! docker exec elemta-ldap ldapsearch -LLL -o ldif-wrap=no -Y EXTERNAL -H ldapi:/// \
-    -b cn=schema,cn=config '(objectClass=olcSchemaConfig)' olcAttributeTypes 2>/dev/null |
-    grep -q "NAME 'mailAlternateAddress'"; then
-    docker exec -i elemta-ldap ldapadd -Y EXTERNAL -H ldapi:/// <"$root/docker/ldap/10-mail-schema.ldif" >/dev/null
-fi
-# The containers the dev stack fills from fixtures, created empty: no demo
+# The mail schema and the branches entries live in, created empty: no demo
 # accounts with published passwords on a public server.
-for ou in people groups mailgroups domains; do
-    if ! docker exec elemta-ldap ldapsearch -Q -Y EXTERNAL -H ldapi:/// \
-        -b "ou=$ou,dc=example,dc=com" -s base dn >/dev/null 2>&1; then
-        printf 'dn: ou=%s,dc=example,dc=com\nobjectClass: organizationalUnit\nou: %s\n' "$ou" "$ou" |
-            docker exec -i elemta-ldap ldapadd -Q -Y EXTERNAL -H ldapi:/// >/dev/null
-    fi
-done
+"$root/scripts/ldap-schema.sh"
 "$root/scripts/ldap-admin-password.sh"
 "$root/scripts/ldap-service-accounts.sh"
 

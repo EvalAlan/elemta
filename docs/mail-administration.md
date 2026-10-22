@@ -39,6 +39,8 @@ elemta --config /path/to/elemta.toml provision create-account dana@example.com -
 elemta --config /path/to/elemta.toml provision get-account dana@example.com
 elemta --config /path/to/elemta.toml provision modify-account dana@example.com --status disabled
 elemta --config /path/to/elemta.toml provision modify-account dana@example.com --status active --quota 10G
+elemta --config /path/to/elemta.toml provision modify-account dana@example.com --forward dana@home.example --keep-copy
+elemta --config /path/to/elemta.toml provision modify-account dana@example.com --send-as sales@example.com,@brand.example
 elemta --config /path/to/elemta.toml provision set-password dana@example.com
 elemta --config /path/to/elemta.toml provision reset-two-factor dana@example.com
 elemta --config /path/to/elemta.toml provision add-alias dana@example.com sales@example.com
@@ -351,16 +353,16 @@ account separate from the read-only LDAP lookup account. The runtime config
 and its sidecars must be writable and shared by the CLI, dashboard and SMTP
 service. Use LDAPS in production; the shipped plain LDAP setup is dev-only.
 
-The standard `mailAlternateAddress`, `accountStatus`, and `mailQuotaSize`
-attribute definitions are in `docker/ldap/10-mail-schema.ldif`. They use the
-registered attribute OIDs from the published
-[mail directory schema](https://github.com/amery/qmail/blob/master/qmail.schema).
-The development LDAP initializer installs this subset if the attributes are
-absent. An existing directory that already provides them should keep its own
-schema. The provisioning service uses the standard `extensibleObject` auxiliary
-class and an explicit field allowlist rather than accepting arbitrary LDAP
-attribute writes. Existing accounts with no accountStatus are treated as active;
-missing mailQuotaSize means unlimited.
+The mail schema (`docker/ldap/10-mail-schema.ldif`) gives accounts the
+`elemtaMailAccount` class, with aliases, status, quota, forwarding, send-as
+rights and a class of service; lists are `groupOfNames` with `elemtaMailList`;
+domains are `elemtaMailDomain` entries. [directory.md](directory.md) describes
+each attribute and how the directory and the dashboard settings combine.
+`scripts/ldap-schema.sh` brings an existing directory up to date and moves
+accounts from `extensibleObject`, which older versions used, to
+`elemtaMailAccount`. The provisioning service writes only the attributes it
+knows rather than accepting arbitrary LDAP attribute writes. Accounts with no
+accountStatus are treated as active; missing mailQuotaSize means unlimited.
 
 The mailbox service delivers mail for an alias (`mailAlternateAddress`) to the
 account's mailbox, identifies accounts by `entryUUID` so a renamed address

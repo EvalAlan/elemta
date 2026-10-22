@@ -19,8 +19,32 @@
   creates the directory afresh from its entries (`ldap/data.ldif`), so
   backups taken before this release restore the same way.
 
+### Features
+
+- **The directory carries mail settings** ([directory.md](docs/directory.md)).
+  Accounts can forward all mail elsewhere, optionally keeping a copy, and can
+  be allowed to send as other addresses (aliases, lists, shared addresses or a
+  whole domain); both are editable in the dashboard and with
+  `elemta provision modify-account --forward/--keep-copy/--send-as`. A
+  directory can also assign classes of service to accounts and domains, hold
+  distribution lists as groups (member DNs and member addresses), and hold
+  mail domains with their catch-all and alias. Where the directory sets
+  something it wins; elsewhere the dashboard's settings apply, and a class
+  chosen for an account in the dashboard still overrides the directory's.
+- Accounts have a real object class, `elemtaMailAccount`, instead of
+  `extensibleObject`, which switched schema checking off for each account;
+  lists (`elemtaMailList`) and domains (`elemtaMailDomain`) have theirs.
+  `scripts/ldap-schema.sh` adds the definitions to an existing directory and
+  moves the accounts over; deploys run it.
+
 ### Fixes
 
+- The directory now keeps `memberOf` for `groupOfNames`, the group style
+  Elemta creates; it was set up for another style, so `memberOf` never
+  filled in.
+- The unused `ou=mailgroups` branch is no longer created (and is removed when
+  empty), the demo directory data uses the current schema, and the old demo
+  deploy script, which targeted the previous mailbox server, is gone.
 - `{SSHA512}` passwords, which Elemta writes when a user's password is set
   through the directory, can now be checked by the directory; the previous
   image lacked the module. Password changes made with the LDAP Password

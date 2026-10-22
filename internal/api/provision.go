@@ -137,6 +137,19 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 			if !decodeJSONBody(w, r, &patch) {
 				return nil
 			}
+			// A domain administrator may only let an account send as
+			// addresses in their own domains.
+			if patch.SendAs != nil {
+				for _, g := range *patch.SendAs {
+					if d, whole := strings.CutPrefix(strings.TrimSpace(g), "@"); whole {
+						if err := scopeOf(r).checkDomain(d); err != nil {
+							return err
+						}
+					} else if err := scopeOf(r).checkAddress(g); err != nil {
+						return err
+					}
+				}
+			}
 			account, err := s.provisioner.Update(ctx, address, patch)
 			if err != nil {
 				return err
@@ -324,5 +337,21 @@ func patchDetail(p provision.Patch) string {
 	if p.QuotaBytes != nil {
 		parts = append(parts, fmt.Sprintf("quota %d", *p.QuotaBytes))
 	}
+	if p.Forward != nil {
+		parts = append(parts, "forwarding "+listOrNone(*p.Forward))
+	}
+	if p.ForwardKeepCopy != nil {
+		parts = append(parts, fmt.Sprintf("keep copy %t", *p.ForwardKeepCopy))
+	}
+	if p.SendAs != nil {
+		parts = append(parts, "send as "+listOrNone(*p.SendAs))
+	}
 	return strings.Join(parts, ", ")
+}
+
+func listOrNone(v []string) string {
+	if len(v) == 0 {
+		return "none"
+	}
+	return strings.Join(v, " ")
 }

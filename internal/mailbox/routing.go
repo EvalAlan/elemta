@@ -62,7 +62,7 @@ func (s *Service) resolveRecipient(ctx context.Context, address string) (recipie
 	if !found {
 		return recipient{}, ErrCredentials
 	}
-	route, err := s.engine.Route(ctx, domain)
+	route, err := s.route(ctx, domain)
 	if err != nil {
 		return recipient{}, err
 	}
@@ -71,7 +71,7 @@ func (s *Service) resolveRecipient(ctx context.Context, address string) (recipie
 			return r, err
 		}
 		// The target domain's catch-all applies to its aliases too.
-		if route, err = s.engine.Route(ctx, route.AliasOf); err != nil {
+		if route, err = s.route(ctx, route.AliasOf); err != nil {
 			return recipient{}, err
 		}
 	}
@@ -93,6 +93,12 @@ func (s *Service) resolveDirect(ctx context.Context, address string) (recipient,
 	}
 	if !errors.Is(err, ErrCredentials) {
 		return recipient{}, false, err
+	}
+	if l, err := s.directoryList(ctx, address); err != nil || l != nil {
+		if err != nil {
+			return recipient{}, false, err
+		}
+		return recipient{list: l.Address}, true, nil
 	}
 	isList, err := s.engine.isList(ctx, address)
 	if err != nil || !isList {
@@ -160,7 +166,7 @@ func (s *Service) expandList(ctx context.Context, l mailpolicy.List) ([]listTarg
 					s.log.Warn("nested lists too deep; skipping", "list", l.Address, "member", m)
 					continue
 				}
-				nested, err := s.engine.List(ctx, r.list)
+				nested, err := s.list(ctx, r.list)
 				if err != nil {
 					return err
 				}
@@ -187,7 +193,7 @@ func (s *Service) expandList(ctx context.Context, l mailpolicy.List) ([]listTarg
 // members already delivered (their delivery tokens) and an external copy
 // already sent (the list's sent record).
 func (s *Service) deliverList(ctx context.Context, address, from string, raw []byte, token string) error {
-	l, err := s.engine.List(ctx, address)
+	l, err := s.list(ctx, address)
 	if err != nil {
 		return err
 	}

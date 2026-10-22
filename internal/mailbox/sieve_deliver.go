@@ -128,6 +128,14 @@ func storeToken(token, target string) string {
 
 // deliver stores one recipient's copy, running their Sieve script.
 func (s *Service) deliver(ctx context.Context, d delivery) error {
+	if len(d.account.Forward) > 0 {
+		// Forwarding from the directory comes before the account's own
+		// filters, which then see only the copy kept here, if any.
+		keep, err := s.forward(ctx, d)
+		if err != nil || !keep {
+			return err
+		}
+	}
 	if p := d.account.Policy; p != nil && !p.Filters {
 		// Filters turned off by the class of service: stored scripts stay,
 		// unused, so turning filters back on restores them.
@@ -277,7 +285,7 @@ func (s *Service) redirect(ctx context.Context, d delivery, to string) error {
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 0}, Message: "Forwarding address is invalid"}
 	}
 	target := strings.ToLower(addr.Address)
-	if bytes.Contains(bytes.ToLower(headerBlock(d.raw)), []byte(strings.ToLower(redirectHeader+": "+d.rcpt))) {
+	if hasRedirectMark(d.raw, d.rcpt) {
 		s.log.Info("sieve redirect loop stopped", "account", d.account.ID, "address", target)
 		return s.store(ctx, d, "INBOX", nil, false, map[string]bool{})
 	}
@@ -296,6 +304,12 @@ func (s *Service) redirect(ctx context.Context, d delivery, to string) error {
 	}
 	_, err = s.engine.claimSent(ctx, d.account.ID, key, 7*24*time.Hour)
 	return err
+}
+
+// hasRedirectMark reports whether rcpt already forwarded this message: it
+// has come back round.
+func hasRedirectMark(raw []byte, rcpt string) bool {
+	return bytes.Contains(bytes.ToLower(headerBlock(raw)), []byte(strings.ToLower(redirectHeader+": "+rcpt)))
 }
 
 func headerBlock(raw []byte) []byte {
