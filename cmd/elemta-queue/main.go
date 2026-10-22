@@ -22,7 +22,7 @@ func main() {
 
 	queueManager, err := queue.NewManagerFromBackend(
 		cfg.Queue.Dir,
-		cfg.Queue.Backend,
+		cfg.EffectiveQueueBackend(),
 		queue.SQLiteConfig{
 			Path:          cfg.Queue.SQLite.Path,
 			BusyTimeoutMS: cfg.Queue.SQLite.BusyTimeoutMS,
@@ -30,7 +30,7 @@ func main() {
 			Synchronous:   cfg.Queue.SQLite.Synchronous,
 		},
 		queue.PostgresConfig{
-			DSN:                    cfg.Queue.Postgres.DSN,
+			DSN:                    cfg.EffectiveQueuePostgresDSN(),
 			MaxOpenConns:           cfg.Queue.Postgres.MaxOpenConns,
 			MaxIdleConns:           cfg.Queue.Postgres.MaxIdleConns,
 			ConnMaxLifetimeSeconds: cfg.Queue.Postgres.ConnMaxLifetimeSeconds,

@@ -174,6 +174,12 @@ type Config struct {
 		Hostname         string `toml:"hostname"`
 		Listen           string `toml:"listen"`
 		ListenSubmission string `toml:"listen_submission"`
+		// ListenWebmailSubmission is a submission listener only the webmail
+		// reaches (never publish it): sessions there may use the account
+		// password even when the account requires app passwords. It
+		// replaces exempting the webmail by address, which can't follow a
+		// webmail that runs as several instances or in Kubernetes.
+		ListenWebmailSubmission string `toml:"listen_webmail_submission"`
 		// ProxyProtocolFrom lists the load balancers (addresses or CIDR
 		// networks) that put a PROXY protocol header on each connection;
 		// connections from them must carry one (internal/proxyproto).

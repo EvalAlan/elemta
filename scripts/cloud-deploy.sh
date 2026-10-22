@@ -75,7 +75,7 @@ render "$root/config/elemta.toml" "$secrets/cloud/config/elemta.toml" \
     "s|^key_file = .*|key_file = \"/app/tls/key.pem\"|" \
     "s|^lmtp_tls_ca_file = .*|lmtp_tls_ca_file = \"\"|" \
     "s|^lmtp_tls_server_name = .*|lmtp_tls_server_name = \"$d\"|" \
-    "s|^submission_addr = .*|submission_addr = \"$d:2587\"|" \
+    "s|^submission_addr = .*|submission_addr = \"$d:2588\"|" \
     "s|^insecure_skip_verify = true|insecure_skip_verify = false|" \
     "s|^secure_cookies = false|secure_cookies = true|" \
     "s|^recovery_url = .*|recovery_url = \"https://$d\"|" \

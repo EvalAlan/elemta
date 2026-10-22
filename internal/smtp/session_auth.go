@@ -367,6 +367,9 @@ func (ah *AuthHandler) performAuthentication(ctx context.Context, username, pass
 	var authenticated bool
 	var err error
 	if ca, ok := ah.authenticator.(clientAuthenticator); ok {
+		if ah.session != nil && ah.session.webmailSubmission {
+			ctx = withWebmailSubmission(ctx)
+		}
 		authenticated, err = ca.AuthenticateFrom(ctx, username, password, ah.clientIP())
 	} else {
 		authenticated, err = ah.authenticator.Authenticate(ctx, username, password)

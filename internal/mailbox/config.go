@@ -152,6 +152,11 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) WithDefaults() Config {
+	// The load balancers in front, from the environment of a scaled-out
+	// deployment (deployments/compose), as the MTA's.
+	if v := strings.TrimSpace(os.Getenv("ELEMTA_MAILBOX_PROXY_PROTOCOL_FROM")); v != "" {
+		c.Server.ProxyProtocolFrom = strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' })
+	}
 	if c.Bodies.DriverEnv != "" {
 		if driver := os.Getenv(c.Bodies.DriverEnv); driver != "" {
 			c.Bodies.Driver = driver

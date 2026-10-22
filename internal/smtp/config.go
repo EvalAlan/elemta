@@ -29,6 +29,10 @@ type Config struct {
 	// SubmissionAddr is the optional submission listener (RFC 6409, usually
 	// :587), where a client must authenticate or be in allowed_relays.
 	SubmissionAddr string `toml:"submission_addr" json:"submission_addr"`
+	// WebmailSubmissionAddr is a submission listener for the webmail alone,
+	// where the account password is accepted even from accounts that
+	// require app passwords. Reachable only inside the deployment.
+	WebmailSubmissionAddr string `toml:"webmail_submission_addr" json:"webmail_submission_addr"`
 	// ProxyProtocolFrom lists the load balancers whose connections carry a
 	// PROXY protocol header with the client's own address.
 	ProxyProtocolFrom []string `toml:"proxy_protocol_from" json:"proxy_protocol_from"`

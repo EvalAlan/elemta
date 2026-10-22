@@ -30,6 +30,9 @@ type Session struct {
 	// submission marks a session on the submission port: it must
 	// authenticate (or come from allowed_relays) before MAIL FROM.
 	submission bool
+	// webmailSubmission: the session arrived on the webmail's own
+	// submission port (Config.WebmailSubmissionAddr).
+	webmailSubmission bool
 
 	// Context for session lifecycle and cancellation
 	ctx    context.Context

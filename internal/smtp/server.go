@@ -41,9 +41,12 @@ type Server struct {
 	// submissionListener is the optional submission port; nil when
 	// submission_addr is not set. Guarded by listenerMu.
 	submissionListener net.Listener
-	running            atomic.Bool
-	pluginManager      *plugin.Manager
-	authenticator      Authenticator
+	// webmailListener is the optional webmail submission port (see
+	// WebmailSubmissionAddr); nil when it isn't configured.
+	webmailListener net.Listener
+	running         atomic.Bool
+	pluginManager   *plugin.Manager
+	authenticator   Authenticator
 	// authSecurity counts failed SMTP AUTH attempts across every session, so
 	// reconnecting does not reset the limits.
 	authSecurity *AuthenticationSecurityManager
@@ -1080,6 +1083,17 @@ func (s *Server) Start() error {
 		s.listenerMu.Unlock()
 		s.slogger.Info("Submission listener running", "event_type", "system", "listen_addr", s.config.SubmissionAddr)
 	}
+	if s.config.WebmailSubmissionAddr != "" {
+		wm, err := net.Listen("tcp", s.config.WebmailSubmissionAddr)
+		if err != nil {
+			_ = listener.Close()
+			return fmt.Errorf("failed to create webmail submission listener: %w", err)
+		}
+		s.listenerMu.Lock()
+		s.webmailListener = wm
+		s.listenerMu.Unlock()
+		s.slogger.Info("Webmail submission listener running", "event_type", "system", "listen_addr", s.config.WebmailSubmissionAddr)
+	}
 	s.running.Store(true)
 	s.slogger.Info("SMTP server running",
 		"event_type", "system",
@@ -1122,6 +1136,11 @@ func (s *Server) Start() error {
 	s.errGroup.Go(s.acceptConnections)
 	if s.getSubmissionListener() != nil {
 		s.errGroup.Go(s.acceptSubmission)
+	}
+	if s.getWebmailListener() != nil {
+		s.errGroup.Go(func() error {
+			return s.acceptLoop(s.getWebmailListener, func(c net.Conn) net.Conn { return submissionConn{Conn: c, webmail: true} })
+		})
 	}
 
 	return nil
@@ -1204,11 +1223,21 @@ func (s *Server) acceptConnections() error {
 // acceptSubmission runs the same loop for the submission port, marking each
 // connection so its session applies submission rules.
 func (s *Server) acceptSubmission() error {
-	return s.acceptLoop(s.getSubmissionListener, func(c net.Conn) net.Conn { return submissionConn{c} })
+	return s.acceptLoop(s.getSubmissionListener, func(c net.Conn) net.Conn { return submissionConn{Conn: c} })
 }
 
-// submissionConn marks a connection that arrived on the submission port.
-type submissionConn struct{ net.Conn }
+// submissionConn marks a connection that arrived on a submission port, and
+// whether it was the webmail's.
+type submissionConn struct {
+	net.Conn
+	webmail bool
+}
+
+func (s *Server) getWebmailListener() net.Listener {
+	s.listenerMu.RLock()
+	defer s.listenerMu.RUnlock()
+	return s.webmailListener
+}
 
 func (s *Server) getSubmissionListener() net.Listener {
 	s.listenerMu.RLock()
@@ -1419,8 +1448,9 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	session.useAuthSecurity(s.authSecurity)
 	session.rcptVerifier = s.rcptVerifier
 	session.senderPolicies = s.senderPolicies
-	if _, ok := conn.(submissionConn); ok {
+	if sc, ok := conn.(submissionConn); ok {
 		session.submission = true
+		session.webmailSubmission = sc.webmail
 	}
 	s.slogger.Debug("SMTP session created successfully")
 
@@ -1492,7 +1522,12 @@ func (s *Server) closeListener(shutdownErr *error) {
 	s.listenerMu.Lock()
 	sub := s.submissionListener
 	s.submissionListener = nil
+	wm := s.webmailListener
+	s.webmailListener = nil
 	s.listenerMu.Unlock()
+	if wm != nil {
+		_ = wm.Close()
+	}
 	if sub != nil {
 		if err := sub.Close(); err != nil {
 			s.slogger.Error("Error closing submission listener", "error", err)

@@ -137,7 +137,7 @@ func (a *SMTPAuthenticator) AuthenticateFrom(ctx context.Context, username, pass
 	if err != nil {
 		return false, err
 	}
-	if ok && a.security.isExempt(client) {
+	if ok && (isWebmailSubmission(ctx) || a.security.isExempt(client)) {
 		return true, nil
 	}
 	check, err := a.security.check(ctx, username, password)
@@ -168,4 +168,19 @@ func (a *SMTPAuthenticator) AuthenticateFrom(ctx context.Context, username, pass
 		return false, nil
 	}
 	return true, nil
+}
+
+type webmailSubmissionKey struct{}
+
+// withWebmailSubmission marks an authentication as coming from the
+// webmail's own submission port, whose sessions may use the account
+// password when the account requires app passwords (the webmail signs
+// users in with it; app passwords are for mail apps).
+func withWebmailSubmission(ctx context.Context) context.Context {
+	return context.WithValue(ctx, webmailSubmissionKey{}, true)
+}
+
+func isWebmailSubmission(ctx context.Context) bool {
+	v, _ := ctx.Value(webmailSubmissionKey{}).(bool)
+	return v
 }

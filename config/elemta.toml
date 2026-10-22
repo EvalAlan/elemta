@@ -60,6 +60,10 @@ dev_mode = false
 # The MX port above (listen_addr / listen) takes inbound mail for local_domains
 # from anyone and relays for nobody else.
 listen_submission = ":2587"
+# The webmail's own submission port, reachable only inside the stack (never
+# publish it). Sessions there may use the account password even when the
+# account requires app passwords, from any webmail instance.
+listen_webmail_submission = ":2588"
 
 # TLS Configuration - disabled by default in container builds
 # TLS certs/keys should be mounted and enabled via custom config in production.
@@ -511,7 +515,7 @@ listen = ":8027"
 # Dev mailbox authentication is plaintext on the isolated network.
 imap_addr = "elemta-mailbox:1143"
 imap_tls = "none"
-submission_addr = "elemta:2587"
+submission_addr = "elemta:2588"
 submission_tls = "starttls"
 # Filters and out-of-office replies are stored by the mailbox service's
 # ManageSieve (RFC 5804) and run at delivery. Plaintext on the isolated dev

@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/smtp"
@@ -36,13 +38,14 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 	out := &smtp.Config{
 		ListenAddr:               c.EffectiveListenAddr(),
 		QueueDir:                 c.EffectiveQueueDir(),
-		QueueBackend:             c.Queue.Backend,
+		QueueBackend:             c.EffectiveQueueBackend(),
 		QueueRetainTombstoneBody: c.Queue.RetainTombstoneBody,
 		MaxSize:                  c.EffectiveMaxSize(),
 		DevMode:                  c.Server.DevMode,
 		AllowedRelays:            c.AllowedRelays,
 		SubmissionAddr:           c.Server.ListenSubmission,
-		ProxyProtocolFrom:        c.Server.ProxyProtocolFrom,
+		ProxyProtocolFrom:        c.EffectiveProxyProtocolFrom(),
+		WebmailSubmissionAddr:    c.Server.ListenWebmailSubmission,
 		LocalDomains:             c.EffectiveLocalDomains(),
 		Hostname:                 c.EffectiveHostname(),
 		MaxWorkers:               c.MaxWorkers,
@@ -64,7 +67,7 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 			Synchronous:   c.Queue.SQLite.Synchronous,
 		},
 		QueuePostgres: smtp.QueuePostgresConfig{
-			DSN:                    c.Queue.Postgres.DSN,
+			DSN:                    c.EffectiveQueuePostgresDSN(),
 			MaxOpenConns:           c.Queue.Postgres.MaxOpenConns,
 			MaxIdleConns:           c.Queue.Postgres.MaxIdleConns,
 			ConnMaxLifetimeSeconds: c.Queue.Postgres.ConnMaxLifetimeSeconds,
@@ -199,4 +202,62 @@ func (c *Config) EffectiveQueueDir() string {
 func (c *Config) SetListenAddr(addr string) {
 	c.ListenAddr = addr
 	c.Server.Listen = addr
+}
+
+// Settings a container may set in its environment, for running several
+// instances from one configuration file (deployments/compose's scaling
+// overlay): the shared queue, and the load balancers in front. They apply
+// where the settings are used, never to the configuration itself, so the
+// dashboard saving its settings can't write them, a queue password among
+// them, into the file.
+const (
+	EnvQueueBackend      = "ELEMTA_QUEUE_BACKEND"
+	EnvQueuePostgresDSN  = "ELEMTA_QUEUE_POSTGRES_DSN"
+	EnvProxyProtocolFrom = "ELEMTA_PROXY_PROTOCOL_FROM"
+	EnvAPISessionStore   = "ELEMTA_API_SESSION_STORE"
+	EnvAPIValkeyAddr     = "ELEMTA_API_VALKEY_ADDR"
+)
+
+// EffectiveAPIValkeyAddr is the dashboard's Valkey, from the environment
+// first.
+func (c *Config) EffectiveAPIValkeyAddr() string {
+	if v := strings.TrimSpace(os.Getenv(EnvAPIValkeyAddr)); v != "" {
+		return v
+	}
+	return c.API.ValkeyAddr
+}
+
+// EffectiveQueueBackend is the queue backend, from the environment first.
+func (c *Config) EffectiveQueueBackend() string {
+	if v := strings.TrimSpace(os.Getenv(EnvQueueBackend)); v != "" {
+		return strings.ToLower(v)
+	}
+	return c.Queue.Backend
+}
+
+// EffectiveQueuePostgresDSN is the postgres queue's DSN, from the
+// environment first.
+func (c *Config) EffectiveQueuePostgresDSN() string {
+	if v := strings.TrimSpace(os.Getenv(EnvQueuePostgresDSN)); v != "" {
+		return v
+	}
+	return c.Queue.Postgres.DSN
+}
+
+// EffectiveProxyProtocolFrom is the load balancers trusted to send the
+// PROXY protocol, from the environment (comma- or space-separated) first.
+func (c *Config) EffectiveProxyProtocolFrom() []string {
+	if v := strings.TrimSpace(os.Getenv(EnvProxyProtocolFrom)); v != "" {
+		return strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' })
+	}
+	return c.Server.ProxyProtocolFrom
+}
+
+// EffectiveSessionStore is the dashboard's session store, from the
+// environment first.
+func (c *Config) EffectiveSessionStore() string {
+	if v := strings.TrimSpace(os.Getenv(EnvAPISessionStore)); v != "" {
+		return v
+	}
+	return c.API.SessionStore
 }

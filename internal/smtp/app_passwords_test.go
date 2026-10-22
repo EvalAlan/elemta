@@ -124,3 +124,20 @@ func TestSubmissionSwitch(t *testing.T) {
 	ok, _ = a.AuthenticateFrom(ctx, "dana@example.com", "account-pw", webmail)
 	assert.True(t, ok, "the webmail still sends")
 }
+
+// TestWebmailSubmissionPort pins that a session on the webmail's own
+// submission port may use the account password when the account requires
+// app passwords, from any address, and that other sessions may not.
+func TestWebmailSubmissionPort(t *testing.T) {
+	var required, apiUp, off atomic.Bool
+	apiUp.Store(true)
+	required.Store(true)
+	a := appPasswordAuthenticator(t, &required, &apiUp, &off)
+	pod := net.ParseIP("10.42.7.19") // any address: a webmail pod or replica
+	ok, _ := a.AuthenticateFrom(context.Background(), "dana@example.com", "account-pw", pod)
+	assert.False(t, ok, "account password refused on the ordinary submission port")
+	ok, _ = a.AuthenticateFrom(withWebmailSubmission(context.Background()), "dana@example.com", "account-pw", pod)
+	assert.True(t, ok, "account password accepted on the webmail's port")
+	ok, _ = a.AuthenticateFrom(withWebmailSubmission(context.Background()), "dana@example.com", "wrong", pod)
+	assert.False(t, ok, "the webmail's port still checks the password")
+}
