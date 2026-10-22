@@ -16,10 +16,10 @@
     // and "Inherit" leave the setting to the next layer.
     const LIMITS = [
         ['quota_bytes', 'Quota', 'size'], ['max_message_bytes', 'Largest message', 'size'], ['max_attachment_bytes', 'Largest attachment', 'size'],
-        ['messages_per_hour', 'Messages sent per hour', 'count'], ['recipients_per_message', 'Recipients per message', 'count'], ['recipients_per_day', 'Recipients per day', 'count'], ['max_forward_addresses', 'Forwarding addresses (default 3)', 'count'],
+        ['messages_per_hour', 'Messages sent per hour', 'count'], ['recipients_per_message', 'Recipients per message', 'count'], ['recipients_per_day', 'Recipients per day', 'count'], ['max_forward_addresses', 'Forwarding addresses (default 3)', 'count'], ['max_sender_rules', 'Allowed and blocked senders (default 100)', 'count'],
     ];
     const PROTOCOLS = [['imap', 'IMAP'], ['pop3', 'POP3'], ['webmail', 'Webmail'], ['dav', 'Calendar and contact sync (DAV)'], ['submission', 'SMTP submission from mail apps']];
-    const SWITCHES = [['external_forwarding', 'Forwarding outside the server'], ['filters', 'Filters and vacation replies'], ['require_app_passwords', 'Require app passwords'], ['require_two_factor', 'Require two-step verification']];
+    const SWITCHES = [['address_book', 'Organisation address book (off by default)'], ['external_forwarding', 'Forwarding outside the server'], ['filters', 'Filters and vacation replies'], ['require_app_passwords', 'Require app passwords'], ['require_two_factor', 'Require two-step verification']];
     const RETENTION = [['trash_days', 'Empty Trash after (days)', 'days'], ['junk_days', 'Empty Junk after (days)', 'days'], ['retention_days', 'Delete all mail older than (days)', 'days'], ['legal_hold', 'Legal hold (keep everything)', 'switch']];
 
     async function request(path, method = 'GET', body) {
@@ -235,6 +235,7 @@
         el('ma-initial-password').value = ''; el('ma-initial-password').required = !editing;
         el('ma-initial-password').hidden = editing; el('ma-initial-label').hidden = editing;
         el('ma-account-status').hidden = !editing; el('ma-status-label').hidden = !editing;
+        el('ma-hidden').checked = editing && !!account.hidden_from_address_book; el('ma-hidden-label').hidden = !editing;
         el('ma-delete').hidden = !editing; el('ma-account-extras').hidden = !editing;
         el('ma-open-mailbox').hidden = !editing || !mailboxAdmin || (account.status !== 'active' && account.status !== 'suspended');
         el('ma-password').value = ''; el('ma-confirm-password').value = ''; el('ma-alias').value = '';
@@ -320,7 +321,7 @@
     }));
     el('ma-account-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
         const payload = { name: el('ma-name').value, quota_bytes: parseQuota(el('ma-quota').value) };
-        if (selected) payload.status = el('ma-account-status').value;
+        if (selected) { payload.status = el('ma-account-status').value; payload.hidden_from_address_book = el('ma-hidden').checked; }
         else { payload.address = el('ma-address').value; payload.password = el('ma-initial-password').value; }
         const updated = await request(selected ? accountPath() : '/accounts', selected ? 'PATCH' : 'POST', payload);
         fillAccount(updated); message('Account saved.'); await refresh();

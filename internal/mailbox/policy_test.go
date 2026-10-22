@@ -319,3 +319,39 @@ func TestRequiredTwoFactorCantBeTurnedOff(t *testing.T) {
 		t.Fatalf("turning off required two-step verification = %d", code)
 	}
 }
+
+// TestAddressBookFollowsClass pins that the organisation's address book is
+// off unless the account's class turns it on.
+func TestAddressBookFollowsClass(t *testing.T) {
+	e, a := testEngine(t)
+	s, _, _ := startTestService(t, e, a)
+	t.Cleanup(func() { _, _ = e.DB.Exec(`DELETE FROM mailbox_account_policy WHERE address=$1`, a.Address) })
+	if _, err := e.PutList(context.Background(), mailpolicy.List{Address: "everyone@" + domainOf(a.Address), Members: []string{a.Address}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = e.DB.Exec(`DELETE FROM mailbox_lists WHERE address=$1`, "everyone@"+domainOf(a.Address))
+	})
+	book := func() int {
+		r := httptest.NewRequest("GET", "/v1/directory", nil)
+		r.RemoteAddr = "127.0.0.1:5000"
+		r.SetBasicAuth(a.Address, "testpass")
+		w := httptest.NewRecorder()
+		s.http.Handler.ServeHTTP(w, r)
+		var out []DirectoryEntry
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatalf("%d %s", w.Code, w.Body)
+		}
+		return len(out)
+	}
+	if n := book(); n != 0 {
+		t.Errorf("address book without a class allowing it has %d entries", n)
+	}
+	if err := e.PutAccountPolicy(context.Background(), mailpolicy.AccountPolicy{Address: a.Address, Class: testClass(t, e, mailpolicy.Settings{AddressBook: bptr(true)})}); err != nil {
+		t.Fatal(err)
+	}
+	s.dir = directoryCache{}
+	if n := book(); n == 0 {
+		t.Error("a class turning the address book on shows nothing")
+	}
+}

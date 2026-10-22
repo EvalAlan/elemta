@@ -66,6 +66,16 @@ details, "Forwarding and sending"), with
 the directory directly. A domain administrator can grant only addresses in
 their own domains.
 
+## The address book
+
+The webmail offers the accounts and lists of the user's own domain as they
+type an address, when their class of service turns the address book on (off
+by default). To keep an entry out of it, a role or service account for
+example, give it the `elemtaAddressBookEntry` class with
+`elemtaHideFromAddressBook: TRUE`; the dashboard's account dialog ("Hide from
+the address book") and `provision modify-account --hide-from-address-book` do
+that. Lists in the directory can carry it too.
+
 ## Distribution lists: `elemtaMailList`
 
 Add `elemtaMailList` to a group to make it a list:

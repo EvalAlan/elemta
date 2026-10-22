@@ -59,6 +59,8 @@ type Settings struct {
 	// MaxForwardAddresses bounds how many addresses an account's mail may
 	// be forwarded to (the directory's elemtaForwardTo).
 	MaxForwardAddresses *int `json:"max_forward_addresses,omitempty"`
+	// MaxSenderRules bounds a user's allowed and blocked senders together.
+	MaxSenderRules *int `json:"max_sender_rules,omitempty"`
 
 	// Protocols maps a protocol name to whether it is allowed. A missing
 	// entry is unset.
@@ -66,6 +68,10 @@ type Settings struct {
 
 	// ExternalForwarding lets filters redirect mail outside the server.
 	ExternalForwarding *bool `json:"external_forwarding,omitempty"`
+	// AddressBook offers the user the organisation's address book (the
+	// accounts and lists of their domain) when they write. Off unless a
+	// class turns it on.
+	AddressBook *bool `json:"address_book,omitempty"`
 	// Filters lets the user keep Sieve filters, vacation replies included.
 	Filters *bool `json:"filters,omitempty"`
 	// RequireAppPasswords makes mail apps sign in with app passwords, as if
@@ -99,6 +105,8 @@ type Effective struct {
 	RecipientsPerMessage int               `json:"recipients_per_message"`
 	RecipientsPerDay     int               `json:"recipients_per_day"`
 	MaxForwardAddresses  int               `json:"max_forward_addresses"`
+	MaxSenderRules       int               `json:"max_sender_rules"`
+	AddressBook          bool              `json:"address_book"`
 	Protocols            map[string]bool   `json:"protocols"`
 	ExternalForwarding   bool              `json:"external_forwarding"`
 	Filters              bool              `json:"filters"`
@@ -132,6 +140,22 @@ const (
 	MaxForwardAddressesLimit   = 50
 )
 
+// Allowed and blocked senders, together: DefaultMaxSenderRules unless a
+// class says otherwise, at most MaxSenderRulesLimit, which 0 also means.
+const (
+	DefaultMaxSenderRules = 100
+	MaxSenderRulesLimit   = 5000
+)
+
+// SenderRuleLimit is how many allowed and blocked senders the account may
+// keep.
+func (e Effective) SenderRuleLimit() int {
+	if e.MaxSenderRules <= 0 || e.MaxSenderRules > MaxSenderRulesLimit {
+		return MaxSenderRulesLimit
+	}
+	return e.MaxSenderRules
+}
+
 // ForwardLimit is how many forwarding addresses the account may have.
 func (e Effective) ForwardLimit() int {
 	if e.MaxForwardAddresses <= 0 || e.MaxForwardAddresses > MaxForwardAddressesLimit {
@@ -143,7 +167,7 @@ func (e Effective) ForwardLimit() int {
 // Builtin is what applies when no layer sets a value: everything allowed,
 // nothing limited but forwarding, the user's own choices respected.
 func Builtin() Effective {
-	e := Effective{Protocols: map[string]bool{}, ExternalForwarding: true, Filters: true, MaxForwardAddresses: DefaultMaxForwardAddresses, Source: map[string]string{}}
+	e := Effective{Protocols: map[string]bool{}, ExternalForwarding: true, Filters: true, MaxForwardAddresses: DefaultMaxForwardAddresses, MaxSenderRules: DefaultMaxSenderRules, Source: map[string]string{}}
 	for _, p := range Protocols {
 		e.Protocols[p] = true
 	}
@@ -186,6 +210,14 @@ func Resolve(address, class string, layers ...Layer) Effective {
 		if s.MaxForwardAddresses != nil {
 			e.MaxForwardAddresses = *s.MaxForwardAddresses
 			set("max_forward_addresses", l.Name)
+		}
+		if s.MaxSenderRules != nil {
+			e.MaxSenderRules = *s.MaxSenderRules
+			set("max_sender_rules", l.Name)
+		}
+		if s.AddressBook != nil {
+			e.AddressBook = *s.AddressBook
+			set("address_book", l.Name)
 		}
 		for p, allowed := range s.Protocols {
 			e.Protocols[p] = allowed
@@ -260,6 +292,9 @@ func (s Settings) Validate() error {
 	}
 	if v := s.MaxForwardAddresses; v != nil && (*v < 0 || *v > MaxForwardAddressesLimit) {
 		return fmt.Errorf("%w: max_forward_addresses must be 0 (up to %d) to %d", ErrInvalid, MaxForwardAddressesLimit, MaxForwardAddressesLimit)
+	}
+	if v := s.MaxSenderRules; v != nil && (*v < 0 || *v > MaxSenderRulesLimit) {
+		return fmt.Errorf("%w: max_sender_rules must be 0 (up to %d) to %d", ErrInvalid, MaxSenderRulesLimit, MaxSenderRulesLimit)
 	}
 	for name, v := range map[string]*int{"trash_days": s.TrashDays, "junk_days": s.JunkDays, "retention_days": s.RetentionDays} {
 		if v != nil && (*v < 0 || *v > 36500) {

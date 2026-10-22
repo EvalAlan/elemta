@@ -109,11 +109,17 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			out["require_two_factor"] = p.RequireTwoFactor
 			out["filters"] = p.Filters
 			out["max_forward_addresses"] = p.ForwardLimit()
+			out["max_sender_rules"] = p.SenderRuleLimit()
+			out["address_book"] = p.AddressBook
 		}
 		return out, nil
 	})
 	// The address book of the user's own domain, for address autocomplete.
 	handle("GET /v1/directory", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		// Off unless the account's class of service turns it on.
+		if p := a.account.Policy; p == nil || !p.AddressBook {
+			return []DirectoryEntry{}, nil
+		}
 		return s.directory(r.Context(), a.account.Address)
 	})
 	handle("GET /v1/security/shares", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {

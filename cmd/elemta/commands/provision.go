@@ -126,7 +126,7 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 	create.Flags().StringVar(&quota, "quota", "0", "Quota such as 5G, or 0 for unlimited")
 	var newName, status, newQuota string
 	var forward, sendAs []string
-	var keepCopy bool
+	var keepCopy, hideFromBook bool
 	modify := add("modify-account <email>", []string{"ma"}, "Update name, status, quota, forwarding or send-as rights", 1, func(ctx context.Context, cmd *cobra.Command, s *provision.Service, args []string) (any, error) {
 		p := provision.Patch{}
 		if cmd.Flags().Changed("forward") {
@@ -137,6 +137,9 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 		}
 		if cmd.Flags().Changed("send-as") {
 			p.SendAs = &sendAs
+		}
+		if cmd.Flags().Changed("hide-from-address-book") {
+			p.HiddenFromAddressBook = &hideFromBook
 		}
 		if cmd.Flags().Changed("name") {
 			p.Name = &newName
@@ -158,6 +161,7 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 	modify.Flags().StringVar(&newQuota, "quota", "", "New quota; 0 is unlimited")
 	modify.Flags().StringSliceVar(&forward, "forward", nil, `Forward all mail to these addresses (comma separated); --forward "" stops forwarding`)
 	modify.Flags().BoolVar(&keepCopy, "keep-copy", false, "Keep a copy of forwarded mail in the mailbox")
+	modify.Flags().BoolVar(&hideFromBook, "hide-from-address-book", false, "Keep the account out of the organisation's address book (--hide-from-address-book=false shows it again)")
 	modify.Flags().StringSliceVar(&sendAs, "send-as", nil, `Addresses, or @domain, the account may also send as; --send-as "" removes them all`)
 	add("set-password <email>", []string{"sp"}, "Reset a mailbox password and revoke webmail sessions", 1, func(ctx context.Context, cmd *cobra.Command, s *provision.Service, args []string) (any, error) {
 		password, err := readPassword(cmd, true)

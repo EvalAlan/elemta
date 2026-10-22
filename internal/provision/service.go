@@ -38,8 +38,11 @@ type Account struct {
 	ForwardKeepCopy bool     `json:"forward_keep_copy"`
 	SendAs          []string `json:"send_as"`
 	DirectoryClass  string   `json:"directory_class,omitempty"`
-	Created         string   `json:"created,omitempty"`
-	Modified        string   `json:"modified,omitempty"`
+	// HiddenFromAddressBook keeps the account out of the organisation's
+	// address book (role and service accounts).
+	HiddenFromAddressBook bool   `json:"hidden_from_address_book"`
+	Created               string `json:"created,omitempty"`
+	Modified              string `json:"modified,omitempty"`
 }
 type Create struct {
 	Address    string `json:"address"`
@@ -55,6 +58,8 @@ type Patch struct {
 	Forward         *[]string `json:"forward,omitempty"`
 	ForwardKeepCopy *bool     `json:"forward_keep_copy,omitempty"`
 	SendAs          *[]string `json:"send_as,omitempty"`
+	// HiddenFromAddressBook keeps the account out of the address book.
+	HiddenFromAddressBook *bool `json:"hidden_from_address_book,omitempty"`
 }
 
 // Bounds on the lists an account carries, so one entry can't fan mail out
@@ -306,7 +311,7 @@ func (s *Service) Update(ctx context.Context, raw string, p Patch) (Account, err
 		}
 		p.SendAs = &grants
 	}
-	if p.Name == nil && p.Status == nil && p.QuotaBytes == nil && p.Forward == nil && p.ForwardKeepCopy == nil && p.SendAs == nil {
+	if p.Name == nil && p.Status == nil && p.QuotaBytes == nil && p.Forward == nil && p.ForwardKeepCopy == nil && p.SendAs == nil && p.HiddenFromAddressBook == nil {
 		return Account{}, fmt.Errorf("%w: no changes supplied", ErrInvalid)
 	}
 	// Suspending, like disabling, ends the account's sessions: webmail

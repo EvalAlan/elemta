@@ -54,7 +54,7 @@ func (a LDAPAuth) Directory(ctx context.Context, domain string) ([]DirectoryEntr
 		return nil, err
 	}
 	filter := "(&(objectClass=posixAccount)(mail=*@" + ldap.EscapeFilter(domain) + "))"
-	res, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, maxDirectory, 10, false, filter, []string{"mail", "cn", "displayName", "accountStatus"}, nil))
+	res, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, maxDirectory, 10, false, filter, []string{"mail", "cn", "displayName", "accountStatus", "elemtaHideFromAddressBook"}, nil))
 	if err != nil && (res == nil || !ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded)) {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func (a LDAPAuth) Directory(ctx context.Context, domain string) ([]DirectoryEntr
 	for _, e := range res.Entries {
 		// Suspended accounts still receive mail, so colleagues can still
 		// find them; disabled ones can't.
-		if ok, _ := statusAllows(e.GetAttributeValue("accountStatus"), true); !ok {
+		if ok, _ := statusAllows(e.GetAttributeValue("accountStatus"), true); !ok || hidden(e) {
 			continue
 		}
 		name := e.GetAttributeValue("displayName")
@@ -73,11 +73,14 @@ func (a LDAPAuth) Directory(ctx context.Context, domain string) ([]DirectoryEntr
 	}
 	// The domain's lists kept in the directory (elemtaMailList).
 	res, err = c.Search(ldap.NewSearchRequest(a.directoryBase(), ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, maxDirectory, 10, false,
-		"(&(objectClass=elemtaMailList)(mail=*@"+ldap.EscapeFilter(domain)+"))", []string{"mail", "cn", "displayName"}, nil))
+		"(&(objectClass=elemtaMailList)(mail=*@"+ldap.EscapeFilter(domain)+"))", []string{"mail", "cn", "displayName", "elemtaHideFromAddressBook"}, nil))
 	if err != nil && (res == nil || !ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded)) {
 		return nil, err
 	}
 	for _, e := range res.Entries {
+		if hidden(e) {
+			continue
+		}
 		name := e.GetAttributeValue("displayName")
 		if name == "" {
 			name = e.GetAttributeValue("cn")
@@ -148,4 +151,11 @@ func (s *Service) directory(ctx context.Context, address string) ([]DirectoryEnt
 	s.dir.domains[domain] = directoryCached{entries: entries, at: time.Now()}
 	s.dir.mu.Unlock()
 	return entries, nil
+}
+
+// hidden reports an entry kept out of the address book. It is checked here
+// rather than in the search filter: a directory whose schema predates the
+// attribute would evaluate the filter as undefined and hide everyone.
+func hidden(e *ldap.Entry) bool {
+	return strings.EqualFold(e.GetAttributeValue("elemtaHideFromAddressBook"), "TRUE")
 }

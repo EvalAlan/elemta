@@ -56,7 +56,7 @@ func (l *LDAP) connect(ctx context.Context) (*ldap.Conn, func(), error) {
 }
 
 var accountAttrs = []string{"mail", "uid", "cn", "displayName", "objectClass", "accountStatus", "mailQuotaSize", "mailAlternateAddress",
-	"elemtaForwardTo", "elemtaForwardKeepCopy", "elemtaSendAs", "elemtaClassOfService", "createTimestamp", "modifyTimestamp"}
+	"elemtaForwardTo", "elemtaForwardKeepCopy", "elemtaSendAs", "elemtaClassOfService", "elemtaHideFromAddressBook", "createTimestamp", "modifyTimestamp"}
 
 func entryAccount(e *ldap.Entry) (Account, error) {
 	values := e.GetAttributeValues("mail")
@@ -93,7 +93,8 @@ func entryAccount(e *ldap.Entry) (Account, error) {
 	return Account{Address: address, Name: name, Status: status, QuotaBytes: quota, Aliases: aliases,
 		Forward: sortedLower(e.GetAttributeValues("elemtaForwardTo")), ForwardKeepCopy: strings.EqualFold(e.GetAttributeValue("elemtaForwardKeepCopy"), "TRUE"),
 		SendAs: sortedLower(e.GetAttributeValues("elemtaSendAs")), DirectoryClass: e.GetAttributeValue("elemtaClassOfService"),
-		Created: e.GetAttributeValue("createTimestamp"), Modified: e.GetAttributeValue("modifyTimestamp")}, nil
+		HiddenFromAddressBook: strings.EqualFold(e.GetAttributeValue("elemtaHideFromAddressBook"), "TRUE"),
+		Created:               e.GetAttributeValue("createTimestamp"), Modified: e.GetAttributeValue("modifyTimestamp")}, nil
 }
 
 func sortedLower(values []string) []string {
@@ -287,6 +288,12 @@ func (l *LDAP) Update(ctx context.Context, address string, p Patch) (Account, er
 	if p.SendAs != nil {
 		change.Replace("elemtaSendAs", *p.SendAs)
 	}
+	if p.HiddenFromAddressBook != nil {
+		if !hasClass(e, "elemtaAddressBookEntry") {
+			change.Add("objectClass", []string{"elemtaAddressBookEntry"})
+		}
+		change.Replace("elemtaHideFromAddressBook", []string{strings.ToUpper(strconv.FormatBool(*p.HiddenFromAddressBook))})
+	}
 	if p.Status != nil {
 		change.Replace("accountStatus", []string{*p.Status})
 	}
@@ -367,4 +374,13 @@ func (l *LDAP) Delete(ctx context.Context, address string) error {
 		}
 	}
 	return nil
+}
+
+func hasClass(e *ldap.Entry, class string) bool {
+	for _, c := range e.GetAttributeValues("objectClass") {
+		if strings.EqualFold(c, class) {
+			return true
+		}
+	}
+	return false
 }

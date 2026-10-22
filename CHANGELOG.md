@@ -41,6 +41,11 @@
   `scripts/ldap-schema.sh` adds the definitions to an existing directory and
   moves the accounts over; deploys run it.
 
+- The organisation's address book (accounts and lists of the user's domain,
+  offered as they type an address) is now a class-of-service switch,
+  `address_book`, **off by default**: turn it on for the classes that should
+  have it. An account or list can be hidden from it
+  (`--hide-from-address-book`, or the dashboard's account dialog).
 - Plus addressing: `name+tag@domain` is delivered to `name@domain` (account,
   alias or list) unless the tagged address exists itself; filters can sort
   on the tag.

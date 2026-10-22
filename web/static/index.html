@@ -1061,6 +1061,7 @@
                         <label for="ma-name">Display name</label><input id="ma-name" type="text" maxlength="120" required>
                         <label for="ma-quota">Mailbox quota</label><input id="ma-quota" type="text" value="0" placeholder="5G or 0 for unlimited" required>
                         <label for="ma-account-status" id="ma-status-label">Account status</label><select id="ma-account-status" aria-describedby="ma-status-help"><option value="active">Active</option><option value="suspended">Suspended</option><option value="disabled">Disabled</option></select><p class="field-hint" id="ma-status-help">Suspended: can't sign in anywhere, but mail is still delivered. Disabled: can't sign in, and mail to it is refused.</p>
+                        <label class="ma-check" id="ma-hidden-label"><input id="ma-hidden" type="checkbox"> Hide from the address book</label>
                         <label for="ma-initial-password" id="ma-initial-label">Initial password</label><input id="ma-initial-password" type="password" autocomplete="new-password" minlength="10">
                         <p class="field-hint">Quota changes apply to new mail sessions. Disabling an account revokes its webmail sessions and recovery links.</p>
                         <div class="ma-form-actions"><button class="btn btn-primary" type="submit">Save account</button><button class="btn btn-secondary" type="button" id="ma-open-mailbox" hidden>Open mailbox</button><button class="btn btn-danger" type="button" id="ma-delete">Delete account</button></div>
@@ -1511,7 +1512,7 @@
     <script src="/static/app.js?v=20261020-reports"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
-    <script src="/static/mail-admin.js?v=20261022-forwardlimit"></script>
+    <script src="/static/mail-admin.js?v=20261022-addressbook"></script>
 </body>
 
 </html>

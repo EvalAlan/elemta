@@ -346,6 +346,9 @@ func patchDetail(p provision.Patch) string {
 	if p.SendAs != nil {
 		parts = append(parts, "send as "+listOrNone(*p.SendAs))
 	}
+	if p.HiddenFromAddressBook != nil {
+		parts = append(parts, fmt.Sprintf("hidden from address book %t", *p.HiddenFromAddressBook))
+	}
 	return strings.Join(parts, ", ")
 }
 

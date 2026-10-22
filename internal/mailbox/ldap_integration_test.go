@@ -116,6 +116,21 @@ func TestLDAPDirectoryMail(t *testing.T) {
 	if kinds["ana@"+domain] != "account" || kinds["crew@"+domain] != "list" {
 		t.Errorf("address book = %+v", book)
 	}
+	// An entry can keep itself out of it.
+	hide := ldap.NewModifyRequest(person, nil)
+	hide.Add("objectClass", []string{"elemtaAddressBookEntry"})
+	hide.Add("elemtaHideFromAddressBook", []string{"TRUE"})
+	if err := c.Modify(hide); err != nil {
+		t.Fatal(err)
+	}
+	if book, err = a.Directory(ctx, domain); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range book {
+		if e.Address == "ana@"+domain {
+			t.Error("a hidden account is in the address book")
+		}
+	}
 
 	// The memberof overlay follows groupOfNames.
 	res, err := c.Search(ldap.NewSearchRequest(person, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 1, 5, false, "(objectClass=*)", []string{"memberOf"}, nil))
