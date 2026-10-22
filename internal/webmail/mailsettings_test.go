@@ -62,6 +62,20 @@ func TestForwardingSettings(t *testing.T) {
 	}
 }
 
+func TestForwardingLimitFromMailboxPolicy(t *testing.T) {
+	h := newSecurityHarness(t, &fakeSecurity{maxForward: 9})
+	h.server.mailSettings = &fakeMailSettings{}
+	csrf := h.login()
+	_, body := h.get("/settings/account")
+	if !strings.Contains(body, "Up to 9 addresses") {
+		t.Fatal("account forwarding card did not show the effective limit")
+	}
+	addresses := "a@example.org, b@example.org, c@example.org, d@example.org, e@example.org, f@example.org, g@example.org, h@example.org, i@example.org"
+	if resp := h.post("/settings/forwarding", url.Values{"csrf": {csrf}, "forward": {addresses}}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("nine forwarding addresses were refused: %d", resp.StatusCode)
+	}
+}
+
 func TestComposeSendAs(t *testing.T) {
 	h := newHarness(t)
 	h.server.mailSettings = &fakeMailSettings{mail: AccountMail{SendAs: []string{"sales@example.com", "@brand.example"}}}

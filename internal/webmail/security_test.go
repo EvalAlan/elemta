@@ -32,6 +32,7 @@ type fakeSecurity struct {
 	// Allowed and blocked senders, and the most allowed.
 	allow, block []string
 	maxSenders   int
+	maxForward   int
 }
 
 func (f *fakeSecurity) handler(t *testing.T) http.Handler {
@@ -85,7 +86,7 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		}
 		switch r.URL.Path {
 		case "/v1/security/check":
-			out = map[string]any{"kind": kind, "totp": f.totp, "app_required": f.appRequired, "protocols": f.protocols, "require_two_factor": f.requireTwoFactor}
+			out = map[string]any{"kind": kind, "totp": f.totp, "app_required": f.appRequired, "protocols": f.protocols, "require_two_factor": f.requireTwoFactor, "max_forward_addresses": f.maxForward}
 		case "/v1/security/totp/begin":
 			out = map[string]any{"secret": "JBSWY3DPEHPK3PXP", "uri": "otpauth://totp/x"}
 		case "/v1/security/totp/confirm":
