@@ -47,3 +47,8 @@ listen = ":4190"
 submit_addr = "elemta:2587"
 submit_tls = "none"
 hostname = "mail.example.com"
+
+# A note in the user's INBOX as their mailbox passes each threshold of its
+# quota, once per threshold. [] turns the warnings off.
+[quota]
+warn_percent = [80, 95]

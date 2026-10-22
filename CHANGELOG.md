@@ -46,6 +46,9 @@
   `address_book`, **off by default**: turn it on for the classes that should
   have it. An account or list can be hidden from it
   (`--hide-from-address-book`, or the dashboard's account dialog).
+- Quota warnings: a note in the user's INBOX as their mailbox passes 80% and
+  95% of its quota, once per threshold (`[quota] warn_percent` in the mailbox
+  configuration; `[]` turns them off).
 - Plus addressing: `name+tag@domain` is delivered to `name@domain` (account,
   alias or list) unless the tagged address exists itself; filters can sort
   on the tag.

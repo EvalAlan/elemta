@@ -121,7 +121,7 @@ deleted either.
 
 | Setting | Flag | Enforced by |
 |---|---|---|
-| Quota | `--quota 5G` | mailbox: delivery, IMAP APPEND |
+| Quota | `--quota 5G` | mailbox: delivery, IMAP APPEND. Users get a note in their INBOX at 80% and 95% full (`[quota] warn_percent` in the mailbox configuration) |
 | Largest message | `--max-message 25M` | mailbox for mail received, MTA for mail sent |
 | Largest attachment | `--max-attachment 10M` | the same; measured after decoding, so 10M lets a 10 MB file through |
 | Messages per hour | `--messages-per-hour 200` | MTA, for a signed-in sender |

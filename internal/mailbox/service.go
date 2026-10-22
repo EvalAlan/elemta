@@ -472,6 +472,9 @@ func (l *lmtpSession) LMTPData(r io.Reader, status smtp.StatusCollector) error {
 			token = hex.EncodeToString(digest[:])
 		}
 		err := l.service.deliver(ctx, delivery{account: a, from: l.from, rcpt: l.addresses[i], raw: raw, token: token})
+		if err == nil {
+			l.service.quotaWarning(ctx, a)
+		}
 		cancel()
 		var result error
 		var smtpErr *smtp.SMTPError

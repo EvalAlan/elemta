@@ -298,6 +298,7 @@ func (s *Service) deliverListMember(ctx context.Context, l mailpolicy.List, a Ac
 	var smtpErr *smtp.SMTPError
 	switch {
 	case err == nil:
+		s.quotaWarning(ctx, a)
 		return nil
 	case errors.Is(err, ErrQuota), errors.As(err, &smtpErr) && smtpErr.Code >= 500:
 		s.log.Info("list member skipped", "list", l.Address, "account", a.ID, "reason", err)

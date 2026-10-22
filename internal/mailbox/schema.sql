@@ -209,3 +209,15 @@ CREATE TABLE IF NOT EXISTS mailbox_admin_access (
     expires timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS mailbox_admin_access_expires ON mailbox_admin_access(expires);
+-- The highest quota warning threshold (percent) the account was last told
+-- about (quota_warn.go); 0 when none.
+ALTER TABLE mailbox_accounts ADD COLUMN IF NOT EXISTS quota_warned INTEGER NOT NULL DEFAULT 0;
+-- Each user's allowed and blocked senders (sender_rules.go): an address,
+-- or @domain.
+CREATE TABLE IF NOT EXISTS mailbox_sender_rules (
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    entry text NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('allow', 'block')),
+    created timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (account, entry)
+);

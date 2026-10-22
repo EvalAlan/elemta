@@ -24,6 +24,15 @@ type Config struct {
 	Maintenance MaintenanceConfig `toml:"maintenance"`
 	Sieve       SieveConfig       `toml:"sieve"`
 	Admin       AdminConfig       `toml:"admin"`
+	Quota       QuotaConfig       `toml:"quota"`
+}
+
+// QuotaConfig controls the warnings users get as their mailbox fills.
+type QuotaConfig struct {
+	// WarnPercent lists the thresholds, in percent of the quota, at which
+	// the user is told (quota_warn.go). Unset means 80 and 95; an empty
+	// list turns warnings off.
+	WarnPercent []int `toml:"warn_percent"`
 }
 
 // AdminConfig controls the admin API (admin_api.go).
@@ -197,6 +206,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.Auth.LDAPFilter == "" {
 		c.Auth.LDAPFilter = "(&(objectClass=posixAccount)(mail=%s))"
+	}
+	if c.Quota.WarnPercent == nil {
+		c.Quota.WarnPercent = []int{80, 95}
 	}
 	if c.Auth.DirectoryBase == "" {
 		c.Auth.DirectoryBase = directoryBase(c.Auth.LDAPBase)
