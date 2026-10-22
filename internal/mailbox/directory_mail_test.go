@@ -186,3 +186,16 @@ func TestDirectorySendAs(t *testing.T) {
 		}
 	}
 }
+
+func TestDirectoryBaseDefault(t *testing.T) {
+	for base, want := range map[string]string{
+		"ou=people,dc=example,dc=com": "dc=example,dc=com",
+		"dc=example,dc=com":           "dc=example,dc=com",
+		"ou=people,dc=com":            "ou=people,dc=com",
+		"not a dn":                    "not a dn",
+	} {
+		if got := directoryBase(base); got != want {
+			t.Errorf("directoryBase(%q) = %q, want %q", base, got, want)
+		}
+	}
+}

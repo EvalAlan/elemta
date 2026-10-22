@@ -68,7 +68,9 @@ func TestLDAPDirectoryMail(t *testing.T) {
 		"elemtaAliasDomainOf": {"main.example"}, "elemtaClassOfService": {"basic"},
 	})
 
-	a := LDAPAuth{Config: AuthConfig{LDAPURL: url, LDAPBase: base, LDAPFilter: "(&(objectClass=posixAccount)(mail=%s))",
+	// Configured as the stack is: accounts searched under ou=people, lists
+	// and domains found beside it.
+	a := LDAPAuth{Config: AuthConfig{LDAPURL: url, LDAPBase: "ou=people," + base, LDAPFilter: "(&(objectClass=posixAccount)(mail=%s))",
 		BindDNEnv: "TEST_LDAP_BIND_DN", BindPasswordEnv: "TEST_LDAP_BIND_PW"}}
 	ctx := context.Background()
 

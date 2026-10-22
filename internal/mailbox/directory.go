@@ -72,7 +72,7 @@ func (a LDAPAuth) Directory(ctx context.Context, domain string) ([]DirectoryEntr
 		out = append(out, DirectoryEntry{Address: strings.ToLower(e.GetAttributeValue("mail")), Name: name, Kind: "account"})
 	}
 	// The domain's lists kept in the directory (elemtaMailList).
-	res, err = c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, maxDirectory, 10, false,
+	res, err = c.Search(ldap.NewSearchRequest(a.directoryBase(), ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, maxDirectory, 10, false,
 		"(&(objectClass=elemtaMailList)(mail=*@"+ldap.EscapeFilter(domain)+"))", []string{"mail", "cn", "displayName"}, nil))
 	if err != nil && (res == nil || !ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded)) {
 		return nil, err

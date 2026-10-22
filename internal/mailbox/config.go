@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/go-ldap/ldap/v3"
+
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -97,9 +99,14 @@ type BodyConfig struct {
 	SecretKeyEnv string `toml:"secret_key_env"`
 }
 type AuthConfig struct {
-	LDAPURL         string `toml:"ldap_url"`
-	LDAPBase        string `toml:"ldap_base"`
-	LDAPFilter      string `toml:"ldap_user_filter"`
+	LDAPURL    string `toml:"ldap_url"`
+	LDAPBase   string `toml:"ldap_base"`
+	LDAPFilter string `toml:"ldap_user_filter"`
+	// DirectoryBase is where distribution lists and domains are searched
+	// (directory_mail.go). By default the parent of ldap_base when that is
+	// an organisational unit (ou=people,dc=example,dc=com gives
+	// dc=example,dc=com), so ou=groups and ou=domains beside it are found.
+	DirectoryBase   string `toml:"ldap_directory_base"`
 	BindDNEnv       string `toml:"ldap_bind_dn_env"`
 	BindPasswordEnv string `toml:"ldap_bind_password_env"`
 	DefaultDomain   string `toml:"default_domain"`
@@ -191,6 +198,9 @@ func (c Config) WithDefaults() Config {
 	if c.Auth.LDAPFilter == "" {
 		c.Auth.LDAPFilter = "(&(objectClass=posixAccount)(mail=%s))"
 	}
+	if c.Auth.DirectoryBase == "" {
+		c.Auth.DirectoryBase = directoryBase(c.Auth.LDAPBase)
+	}
 	if c.Auth.BindDNEnv == "" {
 		c.Auth.BindDNEnv = "ELEMTA_MAILBOX_LDAP_DN"
 	}
@@ -267,4 +277,14 @@ func (c Config) Validate() error {
 		return errors.New("LDAP URL, base and a filter with one %s are required")
 	}
 	return nil
+}
+
+// directoryBase is the default ldap_directory_base: the parent of an
+// organisational unit, or the base itself.
+func directoryBase(base string) string {
+	dn, err := ldap.ParseDN(base)
+	if err != nil || len(dn.RDNs) < 3 || len(dn.RDNs[0].Attributes) != 1 || !strings.EqualFold(dn.RDNs[0].Attributes[0].Type, "ou") {
+		return base
+	}
+	return (&ldap.DN{RDNs: dn.RDNs[1:]}).String()
 }

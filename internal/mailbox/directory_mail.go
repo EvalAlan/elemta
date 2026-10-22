@@ -60,7 +60,7 @@ func (a LDAPAuth) DirectoryList(ctx context.Context, address string) (mailpolicy
 	}
 	defer c.Close()
 	escaped := ldap.EscapeFilter(address)
-	res, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false,
+	res, err := c.Search(ldap.NewSearchRequest(a.directoryBase(), ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false,
 		"(&(objectClass=elemtaMailList)(|(mail="+escaped+")(mailAlternateAddress="+escaped+")))",
 		[]string{"mail", "cn", "displayName", "description", "elemtaListOwner", "elemtaListPosting", "elemtaListMember", "member"}, nil))
 	if err != nil {
@@ -139,7 +139,7 @@ func (a LDAPAuth) DirectoryDomain(ctx context.Context, domain string) (Directory
 		return DirectoryDomain{}, false, err
 	}
 	defer c.Close()
-	res, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 5, false,
+	res, err := c.Search(ldap.NewSearchRequest(a.directoryBase(), ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 5, false,
 		"(&(objectClass=elemtaMailDomain)(elemtaDomainName="+ldap.EscapeFilter(domain)+"))",
 		[]string{"elemtaCatchAll", "elemtaAliasDomainOf", "elemtaClassOfService"}, nil))
 	if err != nil {
@@ -335,4 +335,13 @@ func (s *Service) forward(ctx context.Context, d delivery) (keep bool, err error
 		}
 	}
 	return d.account.ForwardKeepCopy, nil
+}
+
+// directoryBase is where lists and domains are searched; a config made
+// without WithDefaults (a test) falls back the same way.
+func (a LDAPAuth) directoryBase() string {
+	if a.Config.DirectoryBase != "" {
+		return a.Config.DirectoryBase
+	}
+	return directoryBase(a.Config.LDAPBase)
 }

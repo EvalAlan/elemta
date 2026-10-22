@@ -22,6 +22,12 @@ bootstrap run it on every deploy.
 | `ou=mail-addresses` | Reservations that keep two accounts from claiming one address |
 | `ou=services` | The accounts Elemta's own components bind as |
 
+The mailbox service looks accounts up under `ldap_base` (`ou=people,…`) and
+lists and domains under `ldap_directory_base`, which defaults to the parent of
+`ldap_base` when that is an `ou` (here `dc=example,dc=com`). Set it in the
+mailbox configuration's `[auth]` section if your groups and domains live
+elsewhere.
+
 Groups use `groupOfNames` with `member` DNs, and the directory keeps each
 member's `memberOf` up to date (the `memberof` overlay). A group that predates
 this setting doesn't gain `memberOf` values until its members change.
