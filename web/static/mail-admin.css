@@ -27,7 +27,7 @@
 .ma-domain-form p { width: 100%; }
 .ma-dialog { width: min(600px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; margin: auto; padding: 1.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--bg-secondary); color: var(--text-primary); box-shadow: var(--shadow-lg); }
 .ma-dialog::backdrop { background: rgba(2, 6, 23, .65); }
-.ma-dialog-heading { margin-bottom: 1.25rem; }
+.ma-dialog-heading { position: sticky; top: 0; z-index: 1; margin: -1.5rem -1.5rem 1.25rem; padding: 1.5rem 1.5rem 1rem; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); }
 .ma-dialog h4 { margin-top: 1.5rem; margin-bottom: .75rem; }
 .ma-form { display: grid; gap: .5rem; }
 .ma-form label { font-size: .8rem; color: var(--text-secondary); margin-top: .4rem; }
