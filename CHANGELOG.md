@@ -4,6 +4,14 @@
 
 ### Upgrade notes
 
+- The directory image can run as a replicated, multi-provider cluster
+  (`LDAP_REPLICATION_PEERS`, `LDAP_SERVER_ID`); a single directory is
+  unchanged. The schema, password and service-account scripts now apply
+  configuration to every directory node.
+- The MTA and the mailbox service accept the PROXY protocol from load
+  balancers listed in `[server] proxy_protocol_from`, so clients keep their
+  own addresses behind one. Nothing changes until it is set.
+
 - **The directory has a new image.** `elemta-ldap` now runs OpenLDAP 2.6.15
   on Alpine 3.24 (`ghcr.io/evalalan/elemta-ldap`, built with each release)
   instead of `osixia/openldap`, which was no longer maintained and shipped

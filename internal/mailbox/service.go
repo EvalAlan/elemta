@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/proxyproto"
+
 	"github.com/EvalAlan/elemta/internal/imapfork/imapserver"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/emersion/go-imap/v2"
@@ -201,7 +203,7 @@ func (s *Service) Run(ctx context.Context) error {
 		if endpoint.addr == "" {
 			continue
 		}
-		ln, err := net.Listen("tcp", endpoint.addr)
+		ln, err := s.publicListen(endpoint.addr)
 		if err != nil {
 			s.cancel()
 			_ = s.imap.Close()
@@ -223,7 +225,7 @@ func (s *Service) Run(ctx context.Context) error {
 		// Implicit TLS (port 993), which most clients default to. TLS wraps
 		// the connection limiter, so the IMAP server sees a *tls.Conn and
 		// knows the session is encrypted.
-		ln, err := net.Listen("tcp", s.cfg.Server.IMAPSListen)
+		ln, err := s.publicListen(s.cfg.Server.IMAPSListen)
 		if err != nil {
 			s.cancel()
 			for _, l := range listeners {
@@ -238,7 +240,7 @@ func (s *Service) Run(ctx context.Context) error {
 		})
 	}
 	if s.cfg.Sieve.Listen != "" {
-		ln, err := net.Listen("tcp", s.cfg.Sieve.Listen)
+		ln, err := s.publicListen(s.cfg.Sieve.Listen)
 		if err != nil {
 			s.cancel()
 			for _, l := range listeners {
@@ -561,4 +563,22 @@ var tls12Suites = []uint16{
 	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+}
+
+// publicListen opens a listener for mail apps, which may sit behind a load
+// balancer: its PROXY protocol header gives the client's own address, for
+// sign-in throttling, logs and the security API's view of the client
+// (proxy_protocol_from). The internal listeners (the webmail's IMAP, LMTP,
+// HTTP) are reached directly and don't take it.
+func (s *Service) publicListen(addr string) (net.Listener, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	wrapped, err := proxyproto.Wrap(ln, s.cfg.Server.ProxyProtocolFrom)
+	if err != nil {
+		_ = ln.Close()
+		return nil, err
+	}
+	return wrapped, nil
 }

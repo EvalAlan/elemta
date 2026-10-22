@@ -103,6 +103,14 @@ file = "/var/log/elemta/elemta.log"
 - `listen_addr`
 - `[server].listen_submission` — optional submission port (RFC 6409, usually
   `:587`); `MAIL FROM` there needs a login or an `allowed_relays` network
+- `[server].proxy_protocol_from` — load balancers (addresses or CIDRs) in
+  front of the SMTP, submission and SMTPS ports that send a PROXY protocol
+  header (v1 or v2) with each client's own address. Connections from them
+  must carry one; anyone else is taken as connecting directly, and a header
+  they send is not read. Without it, every client behind a balancer looks
+  like the balancer to spam checks, rate limits and relay rules. The mailbox
+  service's `[server] proxy_protocol_from` does the same for IMAP, IMAPS,
+  POP3 and ManageSieve.
 - `max_size`
 - `local_domains`
 - `allowed_relays` — IPs, CIDRs, or the names `"private"` / `"loopback"`,

@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/EvalAlan/elemta/internal/proxyproto"
+
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
@@ -94,6 +96,10 @@ type ServerConfig struct {
 	TLSCert             string   `toml:"tls_cert"`
 	TLSKey              string   `toml:"tls_key"`
 	LMTPAllowedNetworks []string `toml:"lmtp_allowed_networks"`
+	// ProxyProtocolFrom lists the load balancers (addresses or networks)
+	// in front of the public listeners (IMAP, IMAPS, POP3, ManageSieve)
+	// that send a PROXY protocol header with the client's own address.
+	ProxyProtocolFrom []string `toml:"proxy_protocol_from"`
 }
 type MetadataConfig struct {
 	DSNEnv                        string `toml:"dsn_env"`
@@ -235,6 +241,9 @@ func (c Config) WithDefaults() Config {
 	return c
 }
 func (c Config) Validate() error {
+	if _, err := proxyproto.ParseTrusted(c.Server.ProxyProtocolFrom); err != nil {
+		return err
+	}
 	if c.Quota.CopyTo != "" {
 		a, err := mail.ParseAddress(c.Quota.CopyTo)
 		if err != nil || a.Address != c.Quota.CopyTo {

@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/proxyproto"
+
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -759,11 +761,17 @@ func (m *TLSManager) StartTLSListener(ctx context.Context) (net.Listener, error)
 		listenAddr = ":2465" // Default SMTPS port (non-privileged)
 	}
 
-	// Create TLS listener
-	listener, err := tls.Listen("tcp", listenAddr, m.tlsConfig)
+	// The PROXY header, when a load balancer sends one, comes before TLS.
+	raw, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TLS listener: %w", err)
 	}
+	balanced, err := proxyproto.Wrap(raw, m.config.ProxyProtocolFrom)
+	if err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	listener := tls.NewListener(balanced, m.tlsConfig)
 
 	m.logger.Printf("Started TLS listener on %s", listenAddr)
 	return listener, nil

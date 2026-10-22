@@ -27,6 +27,7 @@ require (
 	github.com/miekg/dns v1.1.73
 	github.com/minio/minio-go/v7 v7.4.1
 	github.com/pelletier/go-toml/v2 v2.4.3
+	github.com/pires/go-proxyproto v0.8.1
 	github.com/prometheus/client_golang v1.25.0
 	github.com/sony/gobreaker v1.0.0
 	github.com/spf13/cobra v1.10.2

@@ -171,15 +171,19 @@ type Config struct {
 
 	// Server configuration (legacy nested structure)
 	Server struct {
-		Hostname         string   `toml:"hostname"`
-		Listen           string   `toml:"listen"`
-		ListenSubmission string   `toml:"listen_submission"`
-		MaxSize          int64    `toml:"max_size"`
-		LocalDomains     []string `toml:"local_domains"`
-		TLS              bool     `toml:"tls"`
-		CertFile         string   `toml:"cert_file"`
-		KeyFile          string   `toml:"key_file"`
-		DevMode          bool     `toml:"dev_mode"`
+		Hostname         string `toml:"hostname"`
+		Listen           string `toml:"listen"`
+		ListenSubmission string `toml:"listen_submission"`
+		// ProxyProtocolFrom lists the load balancers (addresses or CIDR
+		// networks) that put a PROXY protocol header on each connection;
+		// connections from them must carry one (internal/proxyproto).
+		ProxyProtocolFrom []string `toml:"proxy_protocol_from"`
+		MaxSize           int64    `toml:"max_size"`
+		LocalDomains      []string `toml:"local_domains"`
+		TLS               bool     `toml:"tls"`
+		CertFile          string   `toml:"cert_file"`
+		KeyFile           string   `toml:"key_file"`
+		DevMode           bool     `toml:"dev_mode"`
 	} `toml:"server"`
 
 	// Enhanced TLS configuration

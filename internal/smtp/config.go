@@ -28,13 +28,16 @@ type Config struct {
 	AllowedRelays            []string `toml:"allowed_relays" json:"allowed_relays"`
 	// SubmissionAddr is the optional submission listener (RFC 6409, usually
 	// :587), where a client must authenticate or be in allowed_relays.
-	SubmissionAddr string   `toml:"submission_addr" json:"submission_addr"`
-	LocalDomains   []string `toml:"local_domains" json:"local_domains"`
-	Hostname       string   `toml:"hostname" json:"hostname"`
-	MaxWorkers     int      `toml:"max_workers" json:"max_workers"`
-	MaxRetries     int      `toml:"max_retries" json:"max_retries"`
-	MaxQueueTime   int      `toml:"max_queue_time" json:"max_queue_time"`
-	RetrySchedule  []int    `toml:"retry_schedule" json:"retry_schedule"`
+	SubmissionAddr string `toml:"submission_addr" json:"submission_addr"`
+	// ProxyProtocolFrom lists the load balancers whose connections carry a
+	// PROXY protocol header with the client's own address.
+	ProxyProtocolFrom []string `toml:"proxy_protocol_from" json:"proxy_protocol_from"`
+	LocalDomains      []string `toml:"local_domains" json:"local_domains"`
+	Hostname          string   `toml:"hostname" json:"hostname"`
+	MaxWorkers        int      `toml:"max_workers" json:"max_workers"`
+	MaxRetries        int      `toml:"max_retries" json:"max_retries"`
+	MaxQueueTime      int      `toml:"max_queue_time" json:"max_queue_time"`
+	RetrySchedule     []int    `toml:"retry_schedule" json:"retry_schedule"`
 
 	// SQLite queue backend configuration (used when QueueBackend=sqlite)
 	QueueSQLite QueueSQLiteConfig `toml:"queue_sqlite" json:"queue_sqlite"`

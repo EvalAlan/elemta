@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/proxyproto"
+
 	arcplugin "github.com/EvalAlan/elemta/internal/arc"
 	"github.com/EvalAlan/elemta/internal/authresult"
 	"github.com/EvalAlan/elemta/internal/dane"
@@ -1056,7 +1058,7 @@ func (s *Server) Start() error {
 
 	// Create listener
 	s.slogger.Info("Creating TCP listener", "address", s.config.ListenAddr)
-	listener, err := net.Listen("tcp", s.config.ListenAddr)
+	listener, err := s.listen(s.config.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("failed to create listener: %w", err)
 	}
@@ -1068,7 +1070,7 @@ func (s *Server) Start() error {
 	// session here must authenticate (or come from allowed_relays) before
 	// MAIL FROM, and nothing is accepted anonymously.
 	if s.config.SubmissionAddr != "" {
-		sub, err := net.Listen("tcp", s.config.SubmissionAddr)
+		sub, err := s.listen(s.config.SubmissionAddr)
 		if err != nil {
 			_ = listener.Close()
 			return fmt.Errorf("failed to create submission listener: %w", err)
@@ -1654,4 +1656,20 @@ func (s *Server) SetDirectoryGenerationFile(path string) {
 		}
 		return fmt.Sprintf("%d:%d", info.ModTime().UnixNano(), info.Size())
 	}
+}
+
+// listen opens a TCP listener that takes the PROXY protocol from the
+// configured load balancers (proxy_protocol_from), so a client behind one
+// is seen by its own address.
+func (s *Server) listen(addr string) (net.Listener, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	wrapped, err := proxyproto.Wrap(ln, s.config.ProxyProtocolFrom)
+	if err != nil {
+		_ = ln.Close()
+		return nil, err
+	}
+	return wrapped, nil
 }

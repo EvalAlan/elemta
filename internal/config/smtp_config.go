@@ -42,6 +42,7 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 		DevMode:                  c.Server.DevMode,
 		AllowedRelays:            c.AllowedRelays,
 		SubmissionAddr:           c.Server.ListenSubmission,
+		ProxyProtocolFrom:        c.Server.ProxyProtocolFrom,
 		LocalDomains:             c.EffectiveLocalDomains(),
 		Hostname:                 c.EffectiveHostname(),
 		MaxWorkers:               c.MaxWorkers,
