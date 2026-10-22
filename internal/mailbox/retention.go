@@ -168,25 +168,31 @@ func (e *Engine) Retention(ctx context.Context, now time.Time) (RetentionReport,
 		if err != nil {
 			return rep, err
 		}
-		if eff.LegalHold || eff.TrashDays == 0 && eff.JunkDays == 0 && eff.RetentionDays == 0 {
+		if eff.LegalHold {
 			continue
 		}
-		rep.Accounts++
-		day := 24 * time.Hour
-		rules := []struct {
-			folders []string
-			days    int
-			column  string
-		}{
-			{[]string{"Trash", "Deleted Items", "Deleted Messages"}, eff.TrashDays, "added"},
-			{[]string{"Junk", "Spam", "Junk E-mail"}, eff.JunkDays, "added"},
+		folders, err := e.Folders(ctx, a.id)
+		if err != nil {
+			return rep, err
 		}
-		for _, r := range rules {
-			if r.days == 0 {
+		active := eff.RetentionDays > 0
+		day := 24 * time.Hour
+		for _, folder := range folders {
+			if retentionDataFolder(folder.Name) {
 				continue
 			}
-			for _, folder := range r.folders {
-				n, err := e.expireFolder(ctx, a.id, folder, r.column, now.Add(-time.Duration(r.days)*day))
+			days := folder.RetentionDays
+			switch {
+			case retentionFolderName(folder.Name, "Trash", "Deleted Items", "Deleted Messages"):
+				days = shorterRetention(days, eff.TrashDays)
+			case retentionFolderName(folder.Name, "Junk", "Spam", "Junk E-mail"):
+				days = shorterRetention(days, eff.JunkDays)
+			case retentionFolderName(folder.Name, "Sent", "Sent Items", "Sent Messages"):
+				days = shorterRetention(days, eff.SentDays)
+			}
+			if days > 0 {
+				active = true
+				n, err := e.expireFolder(ctx, a.id, folder.Name, "added", now.Add(-time.Duration(days)*day))
 				if err != nil {
 					return rep, err
 				}
@@ -194,11 +200,10 @@ func (e *Engine) Retention(ctx context.Context, now time.Time) (RetentionReport,
 			}
 		}
 		if eff.RetentionDays > 0 {
-			folders, err := e.Folders(ctx, a.id)
-			if err != nil {
-				return rep, err
-			}
 			for _, f := range folders {
+				if retentionDataFolder(f.Name) {
+					continue
+				}
 				n, err := e.expireFolder(ctx, a.id, f.Name, "internal_date", now.Add(-time.Duration(eff.RetentionDays)*day))
 				if err != nil {
 					return rep, err
@@ -206,8 +211,31 @@ func (e *Engine) Retention(ctx context.Context, now time.Time) (RetentionReport,
 				rep.Deleted += n
 			}
 		}
+		if active {
+			rep.Accounts++
+		}
 	}
 	return rep, nil
+}
+
+func retentionFolderName(name string, aliases ...string) bool {
+	for _, alias := range aliases {
+		if strings.EqualFold(name, alias) {
+			return true
+		}
+	}
+	return false
+}
+
+func retentionDataFolder(name string) bool {
+	return retentionFolderName(name, "Calendar", "Contacts", "Tasks", "Settings")
+}
+
+func shorterRetention(user, administrator int) int {
+	if user == 0 || administrator > 0 && administrator < user {
+		return administrator
+	}
+	return user
 }
 
 // expireQueries are the two ways a message's age is measured, written out

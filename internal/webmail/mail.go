@@ -689,6 +689,15 @@ func (s *Server) foldersPage(w http.ResponseWriter, r *http.Request, sess *Sessi
 		s.fail(w, r, sess, err)
 		return
 	}
+	if settings, err := s.folderRetentions(r.Context(), sess); err == nil {
+		byName := make(map[string]int, len(settings))
+		for _, setting := range settings {
+			byName[setting.Name] = setting.Days
+		}
+		for i := range v.Folders {
+			v.Folders[i].RetentionDays = byName[v.Folders[i].Name]
+		}
+	}
 	s.render(w, "folders.html", http.StatusOK, v)
 }
 

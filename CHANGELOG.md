@@ -21,6 +21,11 @@
 
 ### Features
 
+- Users can set maximum ages for Trash, Junk and Sent in webmail Settings,
+  and for custom folders from the folder menu. Mailbox retention runs hourly;
+  class and account policy limits take precedence when shorter. Administrators
+  can set a Sent maximum with `--sent-days` or the dashboard. Existing mail
+  remains until a user or administrator sets a limit.
 - **The directory carries mail settings** ([directory.md](docs/directory.md)).
   Accounts can forward all mail elsewhere, optionally keeping a copy, and can
   be allowed to send as other addresses (aliases, lists, shared addresses or a

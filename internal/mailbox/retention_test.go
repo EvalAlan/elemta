@@ -106,3 +106,78 @@ func TestRetentionAndLegalHold(t *testing.T) {
 		t.Errorf("after retention: Trash %d (want 1), INBOX %d (want 0: the recent one was deleted while held, the ancient one by age)", count("Trash"), count("INBOX"))
 	}
 }
+
+func TestUserFolderRetention(t *testing.T) {
+	e, a := testEngine(t)
+	ctx := context.Background()
+	t.Cleanup(func() { _, _ = e.DB.Exec(`DELETE FROM mailbox_account_policy WHERE address=$1`, a.Address) })
+	for _, name := range []string{"Trash", "Junk", "Sent", "Projects"} {
+		if err := e.Create(ctx, a.ID, name); err != nil {
+			t.Fatal(err)
+		}
+		for _, subject := range []string{"old", "new"} {
+			if _, err := e.Append(ctx, a.ID, name, []byte("Subject: "+subject+"\r\n\r\nbody\r\n"), nil, time.Now(), ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := e.DB.Exec(`UPDATE mailbox_messages SET added=now()-interval '20 days' WHERE folder=(SELECT id FROM mailbox_folders WHERE account=$1 AND name=$2) AND uid=1`, a.ID, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.SetFolderRetentions(ctx, a.ID, []FolderRetention{{Name: "Sent", Days: 10}, {Name: "missing", Days: 10}}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("atomic update with a missing folder: %v", err)
+	}
+	if got, err := e.Folder(ctx, a.ID, "Sent"); err != nil || got.RetentionDays != 0 {
+		t.Fatalf("partial update left Sent at %d days: %v", got.RetentionDays, err)
+	}
+	if _, err := e.SetFolderRetentions(ctx, a.ID, []FolderRetention{{Name: "Trash", Days: 30}, {Name: "Junk", Days: 10}, {Name: "Sent", Days: 30}, {Name: "Projects", Days: 10}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Rename(ctx, a.ID, "Projects", "Projects-Renamed"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := e.Folder(ctx, a.ID, "Projects-Renamed"); err != nil || got.RetentionDays != 10 {
+		t.Fatalf("rename lost retention: %d, %v", got.RetentionDays, err)
+	}
+	class := testClass(t, e, mailpolicy.Settings{TrashDays: iptr(10), SentDays: iptr(10)})
+	if err := e.PutAccountPolicy(ctx, mailpolicy.AccountPolicy{Address: a.Address, Class: class, Settings: mailpolicy.Settings{LegalHold: bptr(true)}}); err != nil {
+		t.Fatal(err)
+	}
+	if rep, err := e.Retention(ctx, time.Now()); err != nil || rep.Deleted != 0 {
+		t.Fatalf("legal hold did not stop user retention: %+v, %v", rep, err)
+	}
+	if err := e.PutAccountPolicy(ctx, mailpolicy.AccountPolicy{Address: a.Address, Class: class}); err != nil {
+		t.Fatal(err)
+	}
+	if rep, err := e.Retention(ctx, time.Now()); err != nil || rep.Deleted != 4 {
+		t.Fatalf("folder retention deleted %d messages, want four: %v", rep.Deleted, err)
+	}
+	for _, name := range []string{"Trash", "Junk", "Sent", "Projects-Renamed"} {
+		_, messages, err := e.Snapshot(ctx, a.ID, name)
+		if err != nil || len(messages) != 1 {
+			t.Errorf("%s retained %d messages, want one: %v", name, len(messages), err)
+		}
+	}
+}
+
+func TestRetentionKeepsApplicationData(t *testing.T) {
+	e, a := testEngine(t)
+	ctx := context.Background()
+	t.Cleanup(func() { _, _ = e.DB.Exec(`DELETE FROM mailbox_account_policy WHERE address=$1`, a.Address) })
+	if err := e.Create(ctx, a.ID, "Settings"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Append(ctx, a.ID, "Settings", []byte("Subject: preferences\r\n\r\nbody\r\n"), nil, time.Now().AddDate(-1, 0, 0), ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.SetFolderRetentions(ctx, a.ID, []FolderRetention{{Name: "Settings", Days: 1}}); !errors.Is(err, mailpolicy.ErrInvalid) {
+		t.Fatalf("application data retention accepted: %v", err)
+	}
+	class := testClass(t, e, mailpolicy.Settings{RetentionDays: iptr(1)})
+	if err := e.PutAccountPolicy(ctx, mailpolicy.AccountPolicy{Address: a.Address, Class: class}); err != nil {
+		t.Fatal(err)
+	}
+	if rep, err := e.Retention(ctx, time.Now()); err != nil || rep.Deleted != 0 {
+		t.Fatalf("application data expired: %+v, %v", rep, err)
+	}
+}

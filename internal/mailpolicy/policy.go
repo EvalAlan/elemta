@@ -81,11 +81,12 @@ type Settings struct {
 	// before they can use the webmail.
 	RequireTwoFactor *bool `json:"require_two_factor,omitempty"`
 
-	// Retention, in days; 0 keeps mail forever. TrashDays and JunkDays
+	// Retention, in days; 0 keeps mail forever. TrashDays, JunkDays and SentDays
 	// count from when a message reached that folder; RetentionDays deletes
-	// mail in every folder by the message's own date.
+	// mail in every mail folder by the message's own date.
 	TrashDays     *int `json:"trash_days,omitempty"`
 	JunkDays      *int `json:"junk_days,omitempty"`
+	SentDays      *int `json:"sent_days,omitempty"`
 	RetentionDays *int `json:"retention_days,omitempty"`
 	// LegalHold keeps everything: mail the user deletes is held out of
 	// sight, retention skips the account, and it can't be purged.
@@ -114,6 +115,7 @@ type Effective struct {
 	RequireTwoFactor     bool              `json:"require_two_factor"`
 	TrashDays            int               `json:"trash_days"`
 	JunkDays             int               `json:"junk_days"`
+	SentDays             int               `json:"sent_days"`
 	RetentionDays        int               `json:"retention_days"`
 	LegalHold            bool              `json:"legal_hold"`
 	Source               map[string]string `json:"source,omitempty"`
@@ -247,6 +249,10 @@ func Resolve(address, class string, layers ...Layer) Effective {
 			e.JunkDays = *s.JunkDays
 			set("junk_days", l.Name)
 		}
+		if s.SentDays != nil {
+			e.SentDays = *s.SentDays
+			set("sent_days", l.Name)
+		}
 		if s.RetentionDays != nil {
 			e.RetentionDays = *s.RetentionDays
 			set("retention_days", l.Name)
@@ -296,7 +302,7 @@ func (s Settings) Validate() error {
 	if v := s.MaxSenderRules; v != nil && (*v < 0 || *v > MaxSenderRulesLimit) {
 		return fmt.Errorf("%w: max_sender_rules must be 0 (up to %d) to %d", ErrInvalid, MaxSenderRulesLimit, MaxSenderRulesLimit)
 	}
-	for name, v := range map[string]*int{"trash_days": s.TrashDays, "junk_days": s.JunkDays, "retention_days": s.RetentionDays} {
+	for name, v := range map[string]*int{"trash_days": s.TrashDays, "junk_days": s.JunkDays, "sent_days": s.SentDays, "retention_days": s.RetentionDays} {
 		if v != nil && (*v < 0 || *v > 36500) {
 			return fmt.Errorf("%w: %s must be 0 (keep forever) up to 36500", ErrInvalid, name)
 		}

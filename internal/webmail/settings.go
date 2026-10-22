@@ -293,6 +293,7 @@ type settingsView struct {
 	// problem.
 	Senders              *senderRules
 	AllowText, BlockText string
+	Retention            []folderRetention
 }
 
 // noticeCards places each settings notice in the card it is about. The
@@ -302,6 +303,7 @@ var noticeCards = map[string]string{
 	"senders-saved":        "senders",
 	"senders-failed":       "senders",
 	"forwarding-failed":    "forwarding",
+	"retention-saved":      "retention",
 	"settings-saved":       "general",
 	"password-changed":     "password",
 	"recovery-sent":        "recovery",
@@ -413,6 +415,24 @@ func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view,
 		v.Settings.Security = &securityView{Status: st, Unavailable: err != nil}
 	}
 	s.withFolders(r, sess, &v)
+	if tab == "account" {
+		if saved, err := s.folderRetentions(r.Context(), sess); err != nil {
+			s.log.Warn("webmail: read folder retention", "user", sess.User, "error", err)
+		} else if saved != nil {
+			byName := make(map[string]int, len(saved))
+			for _, setting := range saved {
+				byName[setting.Name] = setting.Days
+			}
+			for _, role := range []Role{RoleTrash, RoleJunk, RoleSent} {
+				for _, folder := range v.Folders {
+					if folder.Role == role {
+						v.Settings.Retention = append(v.Settings.Retention, folderRetention{Name: folder.Name, Days: byName[folder.Name], Role: role})
+						break
+					}
+				}
+			}
+		}
+	}
 	return v, nil
 }
 

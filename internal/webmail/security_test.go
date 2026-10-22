@@ -34,6 +34,7 @@ type fakeSecurity struct {
 	allow, block []string
 	maxSenders   int
 	maxForward   int
+	retention    map[string]int
 }
 
 func (f *fakeSecurity) handler(t *testing.T) http.Handler {
@@ -44,6 +45,36 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		kind := map[string]string{"secret": "password", "app-pass": "app"}[pw]
 		if user != "dana" || kind == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/v1/security/retention" {
+			if f.retention == nil {
+				f.retention = map[string]int{}
+			}
+			if r.Method == http.MethodPut {
+				var settings []folderRetention
+				if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+					http.Error(w, "invalid retention", http.StatusBadRequest)
+					return
+				}
+				for _, setting := range settings {
+					if setting.Days < 0 || setting.Days > 36500 {
+						http.Error(w, "retention must be 0 to 36500 days", http.StatusBadRequest)
+						return
+					}
+					f.retention[setting.Name] = setting.Days
+				}
+			}
+			out := []folderRetention{}
+			for _, name := range []string{"INBOX", "Sent", "Junk", "Trash", "Drafts", "Archive"} {
+				out = append(out, folderRetention{Name: name, Days: f.retention[name]})
+			}
+			for name, days := range f.retention {
+				if name != "INBOX" && name != "Sent" && name != "Junk" && name != "Trash" && name != "Drafts" && name != "Archive" {
+					out = append(out, folderRetention{Name: name, Days: days})
+				}
+			}
+			_ = json.NewEncoder(w).Encode(out)
 			return
 		}
 		var in map[string]any
@@ -308,6 +339,46 @@ func TestBlockSenderPreservesRulesAndLimit(t *testing.T) {
 	}
 	if len(f.block) != 2 || len(f.allow) != 1 {
 		t.Fatalf("failed block changed rules: allow=%v block=%v", f.allow, f.block)
+	}
+}
+
+func TestRetentionSettingsAndCustomFolder(t *testing.T) {
+	f := &fakeSecurity{retention: map[string]int{"Projects": 0}}
+	h := newSecurityHarness(t, f)
+	csrf := h.login()
+	if err := h.store.CreateFolder(context.Background(), "Projects"); err != nil {
+		t.Fatal(err)
+	}
+	_, page := h.get("/settings/account")
+	if !strings.Contains(page, `id="retention"`) || !strings.Contains(page, `id="retention-trash"`) || !strings.Contains(page, `id="retention-junk"`) || !strings.Contains(page, `id="retention-sent"`) {
+		t.Fatal("account settings lack the three retention controls")
+	}
+	form := url.Values{"csrf": {csrf}, "folder": {"Trash", "Junk", "Sent"}, "days": {"7", "14", "30"}}
+	if resp := h.post("/settings/retention", form); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save retention = %d", resp.StatusCode)
+	}
+	if f.retention["Trash"] != 7 || f.retention["Junk"] != 14 || f.retention["Sent"] != 30 {
+		t.Fatalf("saved special folder retention = %v", f.retention)
+	}
+	_, page = h.get("/folders")
+	if !strings.Contains(page, `action="/folders/retention"`) || !strings.Contains(page, `value="Projects"`) {
+		t.Fatal("custom folder lacks a retention form")
+	}
+	resp, body := h.get("/folders/retention?folder=Projects")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"days":0`) {
+		t.Fatalf("custom folder retention lookup = %d %s", resp.StatusCode, body)
+	}
+	if resp := h.post("/folders/retention", url.Values{"csrf": {csrf}, "folder": {"Projects"}, "days": {"21"}, "back": {"/mail?f=Projects"}}); resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "retention-saved") {
+		t.Fatalf("custom folder save = %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if f.retention["Projects"] != 21 {
+		t.Fatalf("custom folder retention = %d", f.retention["Projects"])
+	}
+	if resp := h.post("/folders/retention", url.Values{"csrf": {csrf}, "folder": {"Projects"}, "days": {"36501"}}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid retention = %d", resp.StatusCode)
+	}
+	if f.retention["Projects"] != 21 {
+		t.Fatal("invalid retention was stored")
 	}
 }
 

@@ -1030,8 +1030,7 @@
   // ---- context menus -----------------------------------------------------
   // Right-click (or the Menu key, or Shift+F10) on a message, folder,
   // event, contact or task opens a menu of what can be done to it. Every
-  // item uses the same endpoints as the page's own buttons and forms, so
-  // the menus add no new server behaviour. Holding Shift, or right-clicking
+  // item uses the page's own actions and forms. Holding Shift, or right-clicking
   // where nothing has a menu, keeps the browser's own menu.
   var ctxMenu = null;
 
@@ -1192,6 +1191,20 @@
       } });
       items.push({ label: "Delete folder", danger: true, run: function () {
         if (window.confirm("Delete the folder " + name + " and every message in it?")) submitPost("/folders", { op: "delete", folder: name });
+      } });
+    }
+    if (!a.hasAttribute("data-retention-disabled") && (!role || role === "trash" || role === "junk" || role === "sent")) {
+      items.push({ label: "Set retention…", run: function () {
+        fetch("/folders/retention?" + new URLSearchParams({ folder: name })).then(function (response) {
+          if (!response.ok) throw new Error("Couldn't read this folder's retention setting.");
+          return response.json();
+        }).then(function (setting) {
+          var typed = window.prompt("Delete messages in " + display + " after how many days? Enter 0 to keep them until you delete them.", String(setting.days));
+          if (typed === null) return;
+          typed = typed.trim();
+          if (!/^\d+$/.test(typed) || Number(typed) > 36500) { window.alert("Enter 0 to 36500 days."); return; }
+          submitPost("/folders/retention", { folder: name, days: typed, back: location.pathname + location.search });
+        }).catch(function (error) { window.alert(error.message); });
       } });
     }
     if (role === "trash" || role === "junk") {

@@ -56,6 +56,7 @@ type Folder struct {
 	Validity, Next uint32
 	ModSeq         uint64
 	Subscribed     bool
+	RetentionDays  int
 }
 type Message struct {
 	UID      uint32
@@ -300,14 +301,14 @@ type rowScanner interface{ Scan(...any) error }
 
 func scanFolder(row rowScanner) (Folder, error) {
 	var f Folder
-	err := row.Scan(&f.ID, &f.Name, &f.Validity, &f.Next, &f.ModSeq, &f.Subscribed)
+	err := row.Scan(&f.ID, &f.Name, &f.Validity, &f.Next, &f.ModSeq, &f.Subscribed, &f.RetentionDays)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
 	return f, err
 }
 
-const folderCols = `id,name,uidvalidity,next_uid,modseq,subscribed`
+const folderCols = `id,name,uidvalidity,next_uid,modseq,subscribed,retention_days`
 
 func folderTx(ctx context.Context, tx *sql.Tx, account, name string) (Folder, error) {
 	return scanFolder(tx.QueryRowContext(ctx, `SELECT `+folderCols+` FROM mailbox_folders WHERE account=$1 AND name=$2`, account, canonicalMailbox(name)))

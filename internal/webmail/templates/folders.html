@@ -4,7 +4,7 @@
 <section class="page settings">
   <header class="page-head">
     <h1>Folders</h1>
-    <p class="muted">Create, rename and remove your mail folders.</p>
+    <p class="muted">Create, rename, remove and set retention for your mail folders.</p>
   </header>
   {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
   <form class="card form-grid" action="/folders" method="post">
@@ -40,6 +40,15 @@
               <button class="button" type="submit">Save</button>
             </form>
           </details>
+          {{if and (not $.Session.AdminActor) (not $.ActiveMailbox)}}<details class="menu">
+            <summary class="button small-button">Retention</summary>
+            <form class="menu-body" action="/folders/retention" method="post">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="folder" value="{{.Name}}"><input type="hidden" name="back" value="/folders">
+              <label for="ret-{{.Name}}">Delete after (days; 0 keeps mail)</label>
+              <input id="ret-{{.Name}}" name="days" type="number" min="0" max="36500" value="{{.RetentionDays}}" required>
+              <button class="button" type="submit">Save</button>
+            </form>
+          </details>{{end}}
           <form action="/folders" method="post" class="inline">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="folder" value="{{.Name}}">
             <button class="button small-button danger" data-confirm="Delete the folder {{.Name}} and every message in it?">Delete</button>

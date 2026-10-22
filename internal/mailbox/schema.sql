@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS mailbox_folders (
  next_uid BIGINT NOT NULL DEFAULT 1, modseq BIGINT NOT NULL DEFAULT 1,
  subscribed BOOLEAN NOT NULL DEFAULT TRUE, UNIQUE(account,name)
 );
+-- A user's own maximum age for mail in this folder. Zero leaves the
+-- administrator's class limits in effect, or keeps mail when there is none.
+ALTER TABLE mailbox_folders ADD COLUMN IF NOT EXISTS retention_days INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS mailbox_bodies (
  key TEXT PRIMARY KEY, size BIGINT NOT NULL, checksum TEXT NOT NULL,
  store TEXT NOT NULL,

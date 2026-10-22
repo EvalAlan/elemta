@@ -236,6 +236,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /compose", s.authed(s.composeSubmit))
 	mux.HandleFunc("GET /folders", s.authed(s.foldersPage))
 	mux.HandleFunc("POST /folders", s.authed(s.foldersSubmit))
+	mux.HandleFunc("GET /folders/retention", s.authed(s.folderRetentionGet))
+	mux.HandleFunc("POST /folders/retention", s.authed(s.folderRetentionSubmit))
 	mux.HandleFunc("GET /settings", s.authed(s.settingsPage))
 	mux.HandleFunc("GET /settings/account", s.authed(s.settingsTab("account")))
 	mux.HandleFunc("GET /settings/security", s.authed(s.settingsTab("security")))
@@ -248,6 +250,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/password", s.authed(s.passwordSubmit))
 	mux.HandleFunc("POST /settings/forwarding", s.authed(s.forwardingSubmit))
 	mux.HandleFunc("POST /settings/senders", s.authed(s.sendersSubmit))
+	mux.HandleFunc("POST /settings/retention", s.authed(s.retentionSubmit))
 	mux.HandleFunc("POST /mail/block-sender", s.authed(s.blockSender))
 	mux.HandleFunc("GET /contacts", s.authed(s.contactsPage))
 	mux.HandleFunc("POST /contacts", s.authed(s.contactsSubmit))
@@ -503,6 +506,7 @@ var notices = map[string]string{
 	"senders-failed":       "Allowed and blocked senders couldn't be saved. Try again later.",
 	"forwarding-failed":    "Forwarding couldn't be saved. Try again, or ask your administrator.",
 	"sender-blocked":       "Sender blocked. Future messages from this address go to Junk.",
+	"retention-saved":      "Folder retention saved.",
 	"contact-saved":        "Contact saved.",
 	"contact-exists":       "That sender is already in your contacts.",
 	"contact-deleted":      "Contact deleted.",

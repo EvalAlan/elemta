@@ -32,6 +32,9 @@ type Folder struct {
 	Total      uint32
 	Unread     uint32
 	Selectable bool
+	// RetentionDays is filled for the folder management view from the
+	// mailbox security API, rather than from IMAP LIST.
+	RetentionDays int
 }
 
 // Address is a parsed mailbox address.

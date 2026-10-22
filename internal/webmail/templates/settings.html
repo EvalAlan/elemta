@@ -153,6 +153,20 @@
     <div class="form-actions"><button class="button primary" type="submit">Save senders</button></div>
   </form>
   {{end}}
+  {{if eq (len .Retention) 3}}
+  <form class="card form-grid" id="retention" action="/settings/retention#retention" method="post">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <h2 class="card-title">Folder retention</h2>
+    {{if eq .NoticeCard "retention"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
+    <span></span><span class="small muted">Delete messages after this many days in each folder. Enter 0 to keep them until you delete them. Your administrator may set a shorter limit.</span>
+    {{range .Retention}}
+    <label for="retention-{{.Role}}">{{if eq .Role "trash"}}Trash{{else if eq .Role "junk"}}Junk{{else}}Sent{{end}}</label>
+    <span><input type="hidden" name="folder" value="{{.Name}}"><input id="retention-{{.Role}}" name="days" type="number" min="0" max="36500" value="{{.Days}}" required> <span class="small muted">days</span></span>
+    {{end}}
+    <span></span><span class="small muted">You can set retention for other folders from their right-click menu.</span>
+    <div class="form-actions"><button class="button primary" type="submit">Save retention</button></div>
+  </form>
+  {{end}}
   {{if .CanChangePassword}}
   <form class="card form-grid" id="password" action="/settings/password#password" method="post" autocomplete="off">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">

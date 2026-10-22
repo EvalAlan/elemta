@@ -137,7 +137,8 @@ deleted either.
 | Require two-step verification | `--require-two-factor on` | webmail: sign-in leads through setting it up, and it can't be turned off |
 | Empty Trash | `--trash-days 30` | mailbox: hourly, mail in Trash longer than this is deleted |
 | Empty Junk | `--junk-days 14` | the same, for Junk |
-| Retention | `--retention-days 2555` | mailbox: hourly, mail in any folder older than this (by its date) is deleted |
+| Empty Sent | `--sent-days 90` | the same, for Sent |
+| Retention | `--retention-days 2555` | mailbox: hourly, mail in every mail folder older than this (by its date) is deleted |
 | Legal hold | `--legal-hold on` | mailbox: nothing the user deletes is lost (see below) |
 
 Sizes accept the same suffixes as quotas; for every limit `0` means
@@ -292,9 +293,14 @@ POP3 does not expose shared mailboxes.
 
 Retention rules delete old mail once an hour, on one mailbox replica at a
 time, through the normal delete path, so quotas, mail apps and the webmail
-see it like any other delete. Trash and Junk count from when a message
+see it like any other delete. Trash, Junk and Sent count from when a message
 arrived in the folder; `--retention-days` counts from the message's own
-date, in every folder. A first run over years of mail works through it in
+date, in every mail folder. Users can set Trash, Junk and Sent retention in
+webmail Settings → Account and custom folder retention through the folder's
+right-click menu or the Folders page. Zero means no user limit. A class or
+account policy can enforce a shorter limit, and the account-wide policy still
+applies. Calendar, Contacts, Tasks and Settings data folders are excluded.
+A first run over years of mail works through it in
 batches across successive hours.
 
 Legal hold (`set-policy dana@example.com --legal-hold on`, or on a class)

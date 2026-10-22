@@ -52,6 +52,8 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 				limit = 1 << 20 // a year of busy times
 			case "/v1/security/senders":
 				limit = 1 << 19 // the most allowed and blocked senders a class can allow
+			case "/v1/security/retention":
+				limit = 1 << 16 // up to 100 folder names and their day limits
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
@@ -137,6 +139,16 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			return nil, err
 		}
 		return s.engine.SetSenderRules(r.Context(), a.account.ID, in.Allow, in.Block, senderMax(a))
+	})
+	handle("GET /v1/security/retention", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.FolderRetentions(r.Context(), a.account.ID)
+	})
+	handle("PUT /v1/security/retention", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in []FolderRetention
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return s.engine.SetFolderRetentions(r.Context(), a.account.ID, in)
 	})
 	// The address book of the user's own domain, for address autocomplete.
 	handle("GET /v1/directory", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {

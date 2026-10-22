@@ -47,7 +47,7 @@ func (e *Engine) Changes(ctx context.Context, account string, folderID int64, si
 	defer func() { _ = tx.Rollback() }()
 	var floor uint64
 	err = tx.QueryRowContext(ctx, `SELECT `+folderCols+`,journal_floor FROM mailbox_folders WHERE account=$1 AND id=$2`, account, folderID).
-		Scan(&out.Folder.ID, &out.Folder.Name, &out.Folder.Validity, &out.Folder.Next, &out.Folder.ModSeq, &out.Folder.Subscribed, &floor)
+		Scan(&out.Folder.ID, &out.Folder.Name, &out.Folder.Validity, &out.Folder.Next, &out.Folder.ModSeq, &out.Folder.Subscribed, &out.Folder.RetentionDays, &floor)
 	if err == sql.ErrNoRows {
 		return out, ErrNotFound
 	}

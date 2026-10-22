@@ -382,3 +382,31 @@ func TestSenderRulesAPI(t *testing.T) {
 		t.Fatalf("get = %d %s", code, body)
 	}
 }
+
+func TestFolderRetentionAPI(t *testing.T) {
+	e, a := testEngine(t)
+	if err := e.Create(context.Background(), a.ID, "Sent"); err != nil {
+		t.Fatal(err)
+	}
+	s, _, _ := startTestService(t, e, a)
+	call := func(method, password, body string) (int, string) {
+		r := httptest.NewRequest(method, "/v1/security/retention", strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:5000"
+		r.SetBasicAuth(a.Address, password)
+		w := httptest.NewRecorder()
+		s.http.Handler.ServeHTTP(w, r)
+		return w.Code, w.Body.String()
+	}
+	if code, body := call("PUT", "testpass", `[{"name":"Sent","days":14}]`); code != http.StatusOK || !strings.Contains(body, `"days":14`) {
+		t.Fatalf("save = %d %s", code, body)
+	}
+	if code, body := call("GET", "testpass", ""); code != http.StatusOK || !strings.Contains(body, `"name":"Sent","days":14`) {
+		t.Fatalf("read = %d %s", code, body)
+	}
+	if code, _ := call("PUT", "testpass", `[{"name":"Sent","days":36501}]`); code != http.StatusBadRequest {
+		t.Fatalf("out-of-range retention = %d", code)
+	}
+	if code, _ := call("PUT", "wrong", `[{"name":"Sent","days":1}]`); code != http.StatusUnauthorized {
+		t.Fatalf("wrong password = %d", code)
+	}
+}
