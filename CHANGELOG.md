@@ -25,7 +25,9 @@
   Accounts can forward all mail elsewhere, optionally keeping a copy, and can
   be allowed to send as other addresses (aliases, lists, shared addresses or a
   whole domain); both are editable in the dashboard and with
-  `elemta provision modify-account --forward/--keep-copy/--send-as`. A
+  `elemta provision modify-account --forward/--keep-copy/--send-as`. Users
+  set their own forwarding in the webmail (Settings, Account), and choose
+  among their send-as addresses as From when they write. A
   directory can also assign classes of service to accounts and domains, hold
   distribution lists as groups (member DNs and member addresses), and hold
   mail domains with their catch-all and alias. Where the directory sets

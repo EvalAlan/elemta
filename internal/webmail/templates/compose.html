@@ -11,7 +11,11 @@
     <h1>{{if eq .Mode "reply" "replyall"}}Reply{{else if eq .Mode "forward"}}Forward{{else if eq .Mode "draft"}}Draft{{else}}New message{{end}}</h1>
   </div>
   {{if $.Problem}}<p class="problem" role="alert">{{$.Problem}}</p>{{end}}
+  {{if gt (len .FromChoices) 1}}
+  <div class="field"><label class="field-label" for="from">From</label><select id="from" name="from">{{range .FromChoices}}<option value="{{.}}"{{if eq . $.Compose.From.Email}} selected{{end}}>{{if $.Compose.From.Name}}{{$.Compose.From.Name}} &lt;{{.}}&gt;{{else}}{{.}}{{end}}</option>{{end}}</select><a class="small push" href="/settings">Change name or signature</a></div>
+  {{else}}
   <div class="field"><span class="field-label">From</span><span>{{if .From.Name}}{{.From.Name}} <span class="mono muted">&lt;{{.From.Email}}&gt;</span>{{else}}<span class="mono">{{.From.Email}}</span>{{end}}</span><a class="small push" href="/settings">Change name or signature</a></div>
+  {{end}}
   <div class="field"><label class="field-label" for="to">To</label><input id="to" name="to" type="text" value="{{.To}}" autocomplete="off" data-addresses></div>
   <details class="field-group"{{if .ShowCc}} open{{end}}>
     <summary>Cc and Bcc</summary>

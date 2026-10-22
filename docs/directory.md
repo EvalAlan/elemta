@@ -51,15 +51,20 @@ retried. A message that comes back to the account it was forwarded from is
 kept there instead of going round again. A class of service that turns off
 forwarding outside the server stops forwarding to outside addresses too.
 
-Send-as rights are checked when a mail app sends through submission. Users
-can't change their own entry's mail attributes; only the provisioning
-account and the directory administrator can. A domain administrator in the
-dashboard can grant only addresses in their own domains.
+Send-as rights are checked whenever mail is sent through submission, from
+the webmail or a mail app. In the webmail, the addresses an account may send
+as appear as choices for From when writing, and a reply to mail sent to one
+of them goes out from it. (A grant for a whole `@domain` isn't offered there,
+since there's no one address to offer; mail apps can use any address in it.)
 
-Set forwarding and send-as rights in the dashboard (account details,
-"Forwarding and sending"), with
+Users change their own forwarding in the webmail (Settings, Account,
+"Forwarding"); the webmail does it as them, and the directory lets a user
+write those two attributes of their own entry and nothing else. Send-as
+rights are only for administrators to grant: in the dashboard (account
+details, "Forwarding and sending"), with
 `elemta provision modify-account --forward … --keep-copy --send-as …`, or in
-the directory directly.
+the directory directly. A domain administrator can grant only addresses in
+their own domains.
 
 ## Distribution lists: `elemtaMailList`
 
@@ -138,8 +143,9 @@ to 30 seconds, so a change in the directory takes effect within that time.
 
 `scripts/ldap-service-accounts.sh` sets who may read what. The mailbox and
 SMTP service accounts read people, groups and domains; the provisioning
-account writes them. No service account can read a password, and anonymous
-binds see nothing but the root entry.
+account writes them. Users may change their own forwarding and nothing
+else in their entry but their password. No service account can read a
+password, and anonymous binds see nothing but the root entry.
 
 ## Object identifiers
 

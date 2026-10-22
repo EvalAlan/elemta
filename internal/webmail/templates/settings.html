@@ -127,8 +127,20 @@
 {{if eq .Tab "account"}}
   <header class="page-head">
     <h1>Account</h1>
-    <p class="muted">Your password, and how to get back in if you forget it.</p>
+    <p class="muted">Your password, how to get back in if you forget it, and where your mail goes.</p>
   </header>
+  {{if .Forwarding}}
+  <form class="card form-grid" id="forwarding" action="/settings/forwarding#forwarding" method="post">
+    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+    <h2 class="card-title">Forwarding</h2>
+    {{if eq .NoticeCard "forwarding"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
+    <label for="forward">Forward all mail to</label><input id="forward" name="forward" type="text" value="{{.ForwardText}}" placeholder="you@example.org" autocomplete="off">
+    <span></span><label class="checkline"><input type="checkbox" name="keep_copy" value="1"{{if .Forwarding.KeepCopy}} checked{{end}}> Keep a copy here too</label>
+    <span></span><span class="small muted">Up to 10 addresses, separated by commas. Leave it empty to stop forwarding. Without a copy, forwarded mail isn't kept here and your filters don't see it. Your organisation may not allow forwarding outside it.</span>
+    {{if .Forwarding.SendAs}}<span class="label">You may also send as</span><span>{{range $i, $a := .Forwarding.SendAs}}{{if $i}}, {{end}}<span class="mono">{{$a}}</span>{{end}} <span class="small muted">(choose it as From when you write; set by your administrator)</span></span>{{end}}
+    <div class="form-actions"><button class="button primary" type="submit">Save forwarding</button></div>
+  </form>
+  {{end}}
   {{if .CanChangePassword}}
   <form class="card form-grid" id="password" action="/settings/password#password" method="post" autocomplete="off">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">

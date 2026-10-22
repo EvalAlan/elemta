@@ -282,11 +282,18 @@ type settingsView struct {
 	// was made in, rather than at the top of the page: after a change the
 	// page returns to that card, so a notice at the top would go unseen.
 	Notice, NoticeCard string
+	// Forwarding is the account's directory forwarding; nil hides the card
+	// (no directory, or the mail settings couldn't be read). ForwardText
+	// keeps what was typed when the form is shown again with a problem.
+	Forwarding  *AccountMail
+	ForwardText string
 }
 
 // noticeCards places each settings notice in the card it is about. The
 // cards' ids match the anchors their forms and redirects return to.
 var noticeCards = map[string]string{
+	"forwarding-saved":     "forwarding",
+	"forwarding-failed":    "forwarding",
 	"settings-saved":       "general",
 	"password-changed":     "password",
 	"recovery-sent":        "recovery",
@@ -364,6 +371,12 @@ func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view,
 		v.Settings.HolidayCountries = holidayRegionChoices(true)
 		v.Settings.HolidayDefault = holidayRegionLabel(inferredHolidayRegion(p.Timezone, s.defaultLoc.String()))
 		v.Settings.HiddenHolidays = hiddenHolidayChoices(p.HolidayHidden)
+	}
+	if tab == "account" {
+		if m, ok := s.accountMail(r.Context(), sess); ok {
+			v.Settings.Forwarding = &m
+			v.Settings.ForwardText = strings.Join(m.Forward, ", ")
+		}
 	}
 	if s.recovery != nil && tab == "account" {
 		rec, err := s.recoveryRecord(r.Context(), s.recoveryAccount(sess.User))

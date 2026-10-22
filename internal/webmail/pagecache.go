@@ -23,6 +23,38 @@ type pageCache struct {
 	mu     sync.Mutex
 	shares map[string]cachedShares
 	raw    map[string]cachedRaw
+	mail   map[string]cachedMail
+}
+
+type cachedMail struct {
+	at   time.Time
+	mail AccountMail
+}
+
+// The user's directory mail settings, like the shares, for a minute.
+func (c *pageCache) getMail(session string, now time.Time) (AccountMail, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.mail[session]
+	if !ok || now.Sub(e.at) >= sharesTTL || now.Before(e.at) {
+		return AccountMail{}, false
+	}
+	return e.mail, true
+}
+
+func (c *pageCache) putMail(session string, m AccountMail, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mail == nil || len(c.mail) >= maxCacheSessions {
+		c.mail = map[string]cachedMail{}
+	}
+	c.mail[session] = cachedMail{at: now, mail: m}
+}
+
+func (c *pageCache) forgetMail(session string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.mail, session)
 }
 
 const (
@@ -96,6 +128,7 @@ func (c *pageCache) forget(session string) {
 	defer c.mu.Unlock()
 	delete(c.shares, session)
 	delete(c.raw, session)
+	delete(c.mail, session)
 }
 
 func (c *pageCache) forgetRaw(session string) {

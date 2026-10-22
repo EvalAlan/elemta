@@ -17,7 +17,8 @@
 #   cn=mailbox        The mailbox service: read mailbox entries (delivery and
 #                     sign-in lookups, forwarding, send-as), lists and domains.
 #
-# No account can read a password. cn=admin remains the directory's root for
+# Users may change their own forwarding (the webmail does it as them);
+# nothing else in their entry. No account can read a password. cn=admin remains the directory's root for
 # bootstrap only; no running service binds as it.
 set -euo pipefail
 
@@ -74,11 +75,12 @@ replace: olcAccess
 olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break
 olcAccess: {1}to dn.subtree="ou=people,$BASE" attrs=userPassword,shadowLastChange by self write by $(d webmail-reset) write by $(d provisioner) write by anonymous auth by * none
 olcAccess: {2}to attrs=userPassword,shadowLastChange by self write by anonymous auth by * none
-olcAccess: {3}to dn.subtree="ou=people,$BASE" by $(d provisioner) write by $(d elemta-smtp) read by $(d webmail) read by $(d mailbox) read by $(d webmail-reset) read by self read by * none
-olcAccess: {4}to dn.subtree="ou=mail-addresses,$BASE" by $(d provisioner) write by $(d elemta-smtp) read by * none
-olcAccess: {5}to dn.subtree="ou=groups,$BASE" by $(d provisioner) write by $(d elemta-smtp) read by $(d mailbox) read by * none
-olcAccess: {6}to dn.subtree="ou=domains,$BASE" by $(d provisioner) write by $(d elemta-smtp) read by $(d mailbox) read by * none
-olcAccess: {7}to dn.base="$BASE" by users read by * none
-olcAccess: {8}to * by self read by * none
+olcAccess: {3}to dn.subtree="ou=people,$BASE" attrs=elemtaForwardTo,elemtaForwardKeepCopy by self write by $(d provisioner) write by $(d elemta-smtp) read by $(d webmail) read by $(d mailbox) read by * none
+olcAccess: {4}to dn.subtree="ou=people,$BASE" by $(d provisioner) write by $(d elemta-smtp) read by $(d webmail) read by $(d mailbox) read by $(d webmail-reset) read by self read by * none
+olcAccess: {5}to dn.subtree="ou=mail-addresses,$BASE" by $(d provisioner) write by $(d elemta-smtp) read by * none
+olcAccess: {6}to dn.subtree="ou=groups,$BASE" by $(d provisioner) write by $(d elemta-smtp) read by $(d mailbox) read by * none
+olcAccess: {7}to dn.subtree="ou=domains,$BASE" by $(d provisioner) write by $(d elemta-smtp) read by $(d mailbox) read by * none
+olcAccess: {8}to dn.base="$BASE" by users read by * none
+olcAccess: {9}to * by self read by * none
 LDIF
 echo "✅ LDAP service accounts and access rules in place"

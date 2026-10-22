@@ -9,11 +9,15 @@ import (
 	"net/http"
 	"net/mail"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
 
 type composeView struct {
+	// FromChoices are the senders offered when there is more than one
+	// (mailsettings.go fromChoices).
+	FromChoices []string
 	To, Cc, Bcc string
 	Subject     string
 	Text        string
@@ -48,8 +52,8 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 	}
 	q := r.URL.Query()
 	prefs := s.prefs(r.Context(), sess)
-	fromAddress := s.sendAddress(r.Context(), sess)
-	cv := &composeView{Mode: q.Get("mode"), To: q.Get("to"), Subject: q.Get("subject"), From: prefs.fromAddress(fromAddress)}
+	choices := s.fromChoices(r.Context(), sess)
+	cv := &composeView{Mode: q.Get("mode"), To: q.Get("to"), Subject: q.Get("subject"), From: prefs.fromAddress(choices[0]), FromChoices: choices}
 	v := view{Title: "New message", Session: sess, Folder: q.Get("f"), Compose: cv}
 	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		folders, err := st.Folders(r.Context())
@@ -81,7 +85,15 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 			return nil
 		}
 		cv.OrigFolder, cv.OrigUID = q.Get("f"), uid
-		prefillReply(cv, orig, fromAddress, prefs)
+		prefillReply(cv, orig, choices[0], prefs)
+		// A reply to mail sent to one of the user's other addresses (a
+		// role address they may send as) goes out from that address.
+		for _, a := range append(append([]Address{}, orig.To...), orig.Cc...) {
+			if addr := strings.ToLower(a.Email); addr != choices[0] && slices.Contains(choices, addr) {
+				cv.From = prefs.fromAddress(addr)
+				break
+			}
+		}
 		if cv.Mode == "forward" {
 			cv.Forwarded = orig.Attachments()
 		}
@@ -287,9 +299,10 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		return
 	}
 	prefs := s.prefs(r.Context(), sess)
-	fromAddress := s.sendAddress(r.Context(), sess)
+	fromAddress := s.chosenFrom(r.Context(), sess, r.PostFormValue("from"))
 	cv := &composeView{
-		To: r.PostFormValue("to"), Cc: r.PostFormValue("cc"), Bcc: r.PostFormValue("bcc"),
+		FromChoices: s.fromChoices(r.Context(), sess),
+		To:          r.PostFormValue("to"), Cc: r.PostFormValue("cc"), Bcc: r.PostFormValue("bcc"),
 		Subject: r.PostFormValue("subject"), Text: r.PostFormValue("body"),
 		InReplyTo: r.PostFormValue("in_reply_to"), References: r.PostFormValue("references"),
 		Mode: r.PostFormValue("mode"), OrigFolder: r.PostFormValue("orig_f"),

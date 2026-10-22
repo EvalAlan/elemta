@@ -34,7 +34,10 @@ type Server struct {
 	// configured, which hides the feature.
 	sieve SieveDialer
 	// passwords changes users' passwords; nil hides the feature.
-	passwords    PasswordChanger
+	passwords PasswordChanger
+	// mailSettings reads and changes a user's forwarding and send-as
+	// addresses in the directory (mailsettings.go); nil hides them.
+	mailSettings MailSettings
 	recovery     RecoveryStore
 	recoveryMail chan struct{}
 	resetter     PasswordResetter
@@ -88,15 +91,17 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		sieve = ManageSieveDialer(cfg.SieveAddr, cfg.SieveTLS, cfg.InsecureSkipVerify)
 	}
 	var passwords PasswordChanger
+	var mailSettings MailSettings
 	if cfg.LDAPURL != "" {
 		pw := cfg.LDAPSearchPassword
 		if env := os.Getenv("ELEMTA_WEBMAIL_LDAP_SEARCH_PASSWORD"); env != "" {
 			pw = env
 		}
-		passwords = ldapPasswords{url: cfg.LDAPURL, base: cfg.LDAPBase, filter: cfg.LDAPUserFilter, searchDN: cfg.LDAPSearchDN, searchPassword: pw, insecureSkipVerify: cfg.InsecureSkipVerify}
+		l := ldapPasswords{url: cfg.LDAPURL, base: cfg.LDAPBase, filter: cfg.LDAPUserFilter, searchDN: cfg.LDAPSearchDN, searchPassword: pw, insecureSkipVerify: cfg.InsecureSkipVerify}
+		passwords, mailSettings = l, l
 	}
 	server := &Server{
-		passwords: passwords, recoveryMail: make(chan struct{}, 4),
+		passwords: passwords, mailSettings: mailSettings, recoveryMail: make(chan struct{}, 4),
 		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
 		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now, dav: newDAVPool(),
 		defaultLoc: cfg.location(),
@@ -241,6 +246,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/conversations", s.authed(s.conversationsSubmit))
 	mux.HandleFunc("POST /settings/mail-calendar", s.authed(s.mailCalendarSubmit))
 	mux.HandleFunc("POST /settings/password", s.authed(s.passwordSubmit))
+	mux.HandleFunc("POST /settings/forwarding", s.authed(s.forwardingSubmit))
 	mux.HandleFunc("GET /contacts", s.authed(s.contactsPage))
 	mux.HandleFunc("POST /contacts", s.authed(s.contactsSubmit))
 	mux.HandleFunc("GET /contacts/export", s.authed(s.contactsExport))
@@ -490,6 +496,8 @@ var notices = map[string]string{
 	"recovery-verified":    "Your recovery email is verified.",
 	"recovery-removed":     "Your recovery email was removed.",
 	"password-changed":     "Your password was changed. Use the new one everywhere you read mail.",
+	"forwarding-saved":     "Forwarding saved.",
+	"forwarding-failed":    "Forwarding couldn't be saved. Try again, or ask your administrator.",
 	"contact-saved":        "Contact saved.",
 	"contact-exists":       "That sender is already in your contacts.",
 	"contact-deleted":      "Contact deleted.",
