@@ -22,6 +22,9 @@ else
 fi
 BASE="dc=example,dc=com"
 ROOT=(-Q -Y EXTERNAL -H ldapi:///)
+# Pipe searches into a grep that reads everything (not grep -q): under
+# pipefail, grep -q quitting at the first match fails ldapsearch with a
+# broken pipe, and the test reads false at random.
 search() { "${EXEC[@]}" ldapsearch -LLL -o ldif-wrap=no "${ROOT[@]}" "$@" 2>/dev/null; }
 modify() { "${EXEC[@]}" ldapmodify "${ROOT[@]}" >/dev/null; }
 
@@ -48,7 +51,7 @@ fi
 # --- groups and indexes ---------------------------------------------------
 db="olcDatabase={1}mdb,cn=config"
 overlay=$(search -b "$db" '(objectClass=olcMemberOf)' dn | sed -n 's/^dn: //p')
-if [ -n "$overlay" ] && ! search -b "$overlay" -s base olcMemberOfGroupOC | grep -q '^olcMemberOfGroupOC: groupOfNames$'; then
+if [ -n "$overlay" ] && ! search -b "$overlay" -s base olcMemberOfGroupOC | grep '^olcMemberOfGroupOC: groupOfNames$' >/dev/null; then
     printf 'dn: %s\nchangetype: modify\nreplace: olcMemberOfGroupOC\nolcMemberOfGroupOC: groupOfNames\n-\nreplace: olcMemberOfMemberAD\nolcMemberOfMemberAD: member\n' "$overlay" | modify
     echo "ldap-schema: memberOf now follows groupOfNames"
 fi
@@ -60,11 +63,11 @@ done
 
 # --- branches ---------------------------------------------------------------
 for ou in people groups domains mail-addresses; do
-    search -b "ou=$ou,$BASE" -s base dn | grep -q '^dn:' && continue
+    search -b "ou=$ou,$BASE" -s base dn | grep '^dn:' >/dev/null && continue
     printf 'dn: ou=%s,%s\nobjectClass: organizationalUnit\nou: %s\n' "$ou" "$BASE" "$ou" |
         "${EXEC[@]}" ldapadd "${ROOT[@]}" >/dev/null
 done
-if search -b "ou=mailgroups,$BASE" -s base dn | grep -q '^dn:' &&
+if search -b "ou=mailgroups,$BASE" -s base dn | grep '^dn:' >/dev/null &&
     [ "$(search -b "ou=mailgroups,$BASE" -s one dn | grep -c '^dn:')" = 0 ]; then
     "${EXEC[@]}" ldapdelete "${ROOT[@]}" "ou=mailgroups,$BASE"
     echo "ldap-schema: removed the empty ou=mailgroups"
