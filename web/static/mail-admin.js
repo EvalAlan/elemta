@@ -40,6 +40,8 @@
         [['ma-account-dialog', 'ma-dialog-message'], ['ma-list-dialog', 'ma-list-message'], ['ma-class-dialog', 'ma-class-message']].forEach(([dialog, line]) => {
             if (el(dialog).open) { el(line).textContent = text; el(line).hidden = !text; }
         });
+        // Also beside the Save button, which stays in view at the bottom.
+        if (el('ma-account-dialog').open) { el('ma-save-status').textContent = text; el('ma-save-status').classList.toggle('ma-save-error', error); }
     }
     async function perform(fn) {
         if (busy) return;
@@ -267,7 +269,13 @@
         if (key.endsWith('_days')) return v ? v + ' days' : 'Never';
         return v ? String(v) : 'Unlimited';
     }
+    // Whether the class or overrides were edited since they were loaded:
+    // the one Save sends them only then.
+    // policyLoaded guards against saving a section that never loaded,
+    // which would replace the account's class with an empty one.
+    let policyDirty = false, policyLoaded = false;
     function fillPolicy(view) {
+        policyDirty = false; policyLoaded = true;
         const own = view.policy.class || '';
         const select = el('ma-policy-class'); select.replaceChildren();
         select.appendChild(option('', 'Domain default', own));
@@ -282,6 +290,7 @@
         if (view.held || e.legal_hold) { const held = node('tr'); cell(held, 'Messages on hold'); cell(held, view.held || 0); cell(held, 'export with provision export-held'); body.appendChild(held); }
     }
     async function openAccount(account) {
+        policyLoaded = false; policyDirty = false;
         fillAccount(account); el('ma-account-dialog').showModal();
         if (account && mailboxAdmin) {
             try { fillPolicy(await request(accountPath() + '/policy')); } catch (error) { message(error.message, true); }
@@ -319,22 +328,35 @@
         tab = b.dataset.maTab; limit = 250;
         if (tab === 'audit') perform(() => loadAudit(true)); else renderTable();
     }));
-    el('ma-account-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+    ['input', 'change'].forEach(type => el('ma-policy-form').addEventListener(type, () => { policyDirty = true; }));
+    const sameList = (a, b) => (a || []).join(',') === (b || []).join(',');
+    // saveAccount saves everything in the dialog that changed: the account,
+    // its forwarding and send-as rights, and its class and overrides.
+    async function saveAccount() {
         const payload = { name: el('ma-name').value, quota_bytes: parseQuota(el('ma-quota').value) };
-        if (selected) { payload.status = el('ma-account-status').value; payload.hidden_from_address_book = el('ma-hidden').checked; }
-        else { payload.address = el('ma-address').value; payload.password = el('ma-initial-password').value; }
+        const saved = ['account'];
+        if (selected) {
+            payload.status = el('ma-account-status').value;
+            payload.hidden_from_address_book = el('ma-hidden').checked;
+            // Sent only when changed: a domain administrator saving a name
+            // mustn't have to hold rights to send-as grants made by others.
+            const forward = addressList(el('ma-forward').value), sendAs = addressList(el('ma-send-as').value), keep = el('ma-keep-copy').checked;
+            if (!sameList(forward, selected.forward) || keep !== !!selected.forward_keep_copy) { payload.forward = forward; payload.forward_keep_copy = keep; saved.push('forwarding'); }
+            if (!sameList(sendAs, selected.send_as)) { payload.send_as = sendAs; saved.push('sending'); }
+        } else { payload.address = el('ma-address').value; payload.password = el('ma-initial-password').value; }
         const updated = await request(selected ? accountPath() : '/accounts', selected ? 'PATCH' : 'POST', payload);
-        fillAccount(updated); message('Account saved.'); await refresh();
-        if (mailboxAdmin) fillPolicy(await request(accountPath() + '/policy'));
-    }); });
-    el('ma-policy-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
-        const view = await request(accountPath() + '/policy', 'PUT', { class: el('ma-policy-class').value, settings: accountEditor.read() });
-        fillPolicy(view); message('Class of service saved. Mail apps pick it up when they next sign in.'); await refresh();
-    }); });
-    el('ma-mail-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
-        const updated = await request(accountPath(), 'PATCH', { forward: addressList(el('ma-forward').value), forward_keep_copy: el('ma-keep-copy').checked, send_as: addressList(el('ma-send-as').value) });
-        fillAccount(updated); message('Forwarding and sending saved.'); await refresh();
-    }); });
+        fillAccount(updated);
+        if (mailboxAdmin && policyLoaded && policyDirty && !el('ma-account-policy').hidden) {
+            fillPolicy(await request(accountPath() + '/policy', 'PUT', { class: el('ma-policy-class').value, settings: accountEditor.read() }));
+            saved.push('class of service');
+        } else if (mailboxAdmin) {
+            fillPolicy(await request(accountPath() + '/policy'));
+        }
+        message('Saved: ' + saved.join(', ') + '.'); await refresh();
+    }
+    el('ma-account-form').addEventListener('submit', event => { event.preventDefault(); perform(saveAccount); });
+    el('ma-policy-form').addEventListener('submit', event => { event.preventDefault(); perform(saveAccount); });
+    el('ma-mail-form').addEventListener('submit', event => { event.preventDefault(); perform(saveAccount); });
     el('ma-alias-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => { const updated = await request(accountPath() + '/aliases', 'POST', { alias: el('ma-alias').value }); fillAccount(updated); el('ma-account-policy').hidden = !mailboxAdmin; message('Delivery alias added.'); await refresh(); }); });
     el('ma-password-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
         if (el('ma-password').value !== el('ma-confirm-password').value) throw new Error('The new passwords do not match.');

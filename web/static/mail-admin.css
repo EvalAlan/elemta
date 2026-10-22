@@ -54,3 +54,6 @@
 .mail-admin td select { padding: .35rem .5rem; font-size: .8rem; }
 #ma-list-message, #ma-class-message { padding: .75rem; margin-bottom: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-sm); }
 @media (max-width: 600px) { .ma-settings { grid-template-columns: 1fr; } }
+.ma-dialog-footer { position: sticky; bottom: -1.5rem; margin: 1.5rem -1.5rem -1.5rem; padding: .875rem 1.5rem; display: flex; align-items: center; gap: .75rem; background: var(--bg-secondary); border-top: 1px solid var(--border-color); }
+.ma-dialog-footer #ma-delete { margin-left: auto; }
+.ma-save-error { color: var(--danger, #dc2626); }
