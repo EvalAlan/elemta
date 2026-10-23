@@ -8,12 +8,12 @@ kind: Service
 metadata:
   name: elemta-host
   labels:
-    app.kubernetes.io/name: elemta
+    app.kubernetes.io/name: elemta-mta
 spec:
   type: LoadBalancer
   externalTrafficPolicy: Local
   selector:
-    app.kubernetes.io/name: elemta
+    app.kubernetes.io/name: elemta-mta
   ports:
     - { name: smtp, port: 2525, targetPort: smtp }
     - { name: submission, port: 2587, targetPort: submission }

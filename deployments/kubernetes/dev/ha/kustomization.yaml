@@ -126,14 +126,14 @@ patches:
   # new one.
   - target:
       kind: Deployment
-      name: elemta|elemta-web|elemta-webmail|elemta-mailbox
+      name: elemta-web|elemta-webmail|elemta-mailbox
     patch: |-
       - op: add
         path: /spec/template/spec/containers/0/imagePullPolicy
         value: Always
   - target:
       kind: StatefulSet
-      name: elemta-ldap
+      name: elemta-mta|elemta-ldap
     patch: |-
       - op: add
         path: /spec/template/spec/containers/0/imagePullPolicy
@@ -142,8 +142,29 @@ patches:
   # scripts/prepare-config.sh takes a host pair from. By index, so check it
   # is the right volume first.
   - target:
+      kind: StatefulSet
+      name: elemta-mta
+    patch: |-
+      - op: test
+        path: /spec/template/spec/volumes/0/name
+        value: config
+      - op: replace
+        path: /spec/template/spec/volumes/0
+        value:
+          name: config
+          projected:
+            defaultMode: 0440
+            sources:
+              - configMap:
+                  name: elemta-config
+              - secret:
+                  name: elemta-dev-tls
+                  items:
+                    - { key: tls.crt, path: test.crt }
+                    - { key: tls.key, path: test.key }
+  - target:
       kind: Deployment
-      name: elemta|elemta-web|elemta-webmail
+      name: elemta-web|elemta-webmail
     patch: |-
       - op: test
         path: /spec/template/spec/volumes/0/name

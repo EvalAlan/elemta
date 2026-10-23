@@ -1,9 +1,9 @@
 # The MTA uses the caching DNSSEC resolver (../minimal/dns.yaml), as in the
 # other dev overlays, and shows the dev stack's demo data.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: elemta
+  name: elemta-mta
 spec:
   template:
     spec:

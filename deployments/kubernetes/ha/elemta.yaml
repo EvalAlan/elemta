@@ -1,4 +1,4 @@
-# The MTA, the dashboard and the webmail, each its own Deployment with as
+# The MTA, the dashboard and the webmail, each its own workload with as
 # many replicas as the load needs.
 #
 # What they share:
@@ -12,21 +12,29 @@
 #
 # The image's entrypoint seeds the runtime configuration from the
 # elemta-config ConfigMap the first time (scripts/prepare-config.sh).
+#
+# The MTA is a StatefulSet only for its pod names, elemta-mta-1, -2...,
+# which say which MTA a log line or a queue lease came from. It keeps no
+# volume of its own; pods start and stop in parallel like a Deployment's.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: elemta
+  name: elemta-mta
   labels:
-    app.kubernetes.io/name: elemta
+    app.kubernetes.io/name: elemta-mta
 spec:
+  serviceName: elemta-mta
   replicas: 2
+  ordinals:
+    start: 1
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
-      app.kubernetes.io/name: elemta
+      app.kubernetes.io/name: elemta-mta
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: elemta
+        app.kubernetes.io/name: elemta-mta
     spec:
       securityContext:
         runAsNonRoot: true
@@ -41,7 +49,7 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
-              app.kubernetes.io/name: elemta
+              app.kubernetes.io/name: elemta-mta
       # Time for SMTP sessions in progress to finish once the pod is taken
       # out of the Service.
       terminationGracePeriodSeconds: 60
@@ -315,15 +323,29 @@ kind: Service
 metadata:
   name: elemta
   labels:
-    app.kubernetes.io/name: elemta
+    app.kubernetes.io/name: elemta-mta
 spec:
   selector:
-    app.kubernetes.io/name: elemta
+    app.kubernetes.io/name: elemta-mta
   ports:
     - { name: smtp, port: 2525, targetPort: smtp }
     - { name: submission, port: 2587, targetPort: submission }
     - { name: webmail-submit, port: 2588, targetPort: webmail-submit }
     - { name: metrics, port: 8080, targetPort: metrics }
+---
+# The StatefulSet's governing Service: a DNS name per MTA pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-mta
+  labels:
+    app.kubernetes.io/name: elemta-mta
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: elemta-mta
+  ports:
+    - { name: smtp, port: 2525, targetPort: smtp }
 ---
 apiVersion: v1
 kind: Service

@@ -1202,7 +1202,8 @@ k8s-install-ha: check-tools k8s-check ensure-dev-certs
 	@$(KC) rollout status statefulset/elemta-valkey --timeout=5m >/dev/null
 	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) ./scripts/init-ldap-if-needed.sh || true
 	@# Images are pushed under the same tag; restart so every pod runs them.
-	@$(KC) rollout restart deploy/elemta deploy/elemta-web deploy/elemta-webmail deploy/elemta-mailbox >/dev/null
+	@$(KC) rollout restart statefulset/elemta-mta deploy/elemta-web deploy/elemta-webmail deploy/elemta-mailbox >/dev/null
+	@$(KC) rollout status statefulset/elemta-mta --timeout=10m >/dev/null
 	@$(MAKE) --no-print-directory k8s-wait
 	@$(MAKE) --no-print-directory k8s-bootstrap-admin K8S_WEB_TARGET=deploy/elemta-web
 	@$(MAKE) --no-print-directory k8s-ha-status
