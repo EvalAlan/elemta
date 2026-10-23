@@ -183,7 +183,8 @@ need the manual settings:
 
 ## Stress testing
 
-The [cloud stress runner](cloud-stress-testing.md) exercises verified SMTP,
+The cloud stress runner (`stress/cloud_stress.py` in the separate
+elemta-tests repository) exercises verified SMTP,
 IMAPS and webmail from a separate workstation, using isolated accounts and
 local recipients. Start with its smoke profile before increasing concurrency.
 Host settings, credentials and run reports stay outside tracked source.

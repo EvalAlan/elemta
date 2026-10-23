@@ -94,7 +94,7 @@ def main():
     total = es("/elemta-*/_count").get("count", 0)
     if total == 0:
         raise SystemExit("The elemta-* index is empty. Send some mail first:\n"
-                         "  python3 scripts/dev/stress_corpus.py --messages 200")
+                         "  elemta-tests: python3 stress/stress_corpus.py --messages 200")
     print(f"{total} events indexed\n")
 
     empty = []

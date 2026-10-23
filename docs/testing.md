@@ -37,12 +37,11 @@ go test ./tests/integration -race -run 'TestIntegration_PersistentConnection|Tes
 
 ---
 
-## Docker/integration checks
+## Against a running stack
 
-```bash
-make install-dev
-make test-docker
-```
+Load, stress and end-to-end checks against a running deployment live in the
+separate elemta-tests repository. Bring a stack up with `make install-dev`
+and point them at it.
 
 Optional broader local stack:
 
@@ -57,7 +56,7 @@ make install-dev-full
 - **Docs/small refactor:** `make test` + `make lint`
 - **Queue/backend changes:** baseline + queue backend checks
 - **SMTP/session/concurrency:** baseline + race smoke checks
-- **Runtime/deployment changes:** baseline + `make test-docker`
+- **Runtime/deployment changes:** baseline + elemta-tests against `make install-dev`
 
 ---
 

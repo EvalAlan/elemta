@@ -123,7 +123,6 @@ make k8s-reseed          # take config/elemta.toml again, discarding UI saves
 make k8s-sink-up | k8s-sink-down
 make k8s-down | k8s-up   # scale to zero and back; volumes kept
 make k8s-down-volumes    # delete the namespace and everything in it
-make k8s-bench-queue     # bench-queue against this stack
 ```
 
 ### Things that differ from Compose

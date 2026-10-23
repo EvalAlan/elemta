@@ -1,8 +1,8 @@
 .PHONY: mailbox-dev-up mailbox-dev-down mailbox-dev-status mailbox-dev-s3 test-mailbox test-webmail-browser all help gotchas ensure-dev-secrets ldap-service-accounts build clean clean-certs certs install install-dev install-dev-full install-dev-postgres install-dev-mailauth \
-	elk-up elk-down elk-status elk-dashboard elk-dashboard-check stress-corpus rspamd-train bench-queue sink-up sink-down configure-delivery-target \
+	elk-up elk-down elk-status elk-dashboard elk-dashboard-check rspamd-train sink-up sink-down configure-delivery-target \
 	mailauth-check mailauth-check-fail stop-mailauth-services \
 	configure-queue-backend configure-plugins bootstrap-admin reset-admin-password ensure-dev-certs ensure-dev-env refresh-dev-env print-dev-summary check-tools \
-	install-dev-bench setup run test test-load test-race-smoke test-docker up down down-volumes restart logs logs-elemta status \
+	install-dev-bench setup run test test-race-smoke up down down-volumes restart logs logs-elemta status \
 	rebuild rebuild-dev docker-build lint lint-fix fmt
 
 # Core paths/config
@@ -178,39 +178,10 @@ test-webmail-browser:
 test:
 	go test -short ./...
 
-test-centralized:
-	@echo "Running centralized test suite..."
-	./tests/run_centralized_tests.sh
-
-init-test-env:
-	@echo "🔧 Initializing test environment..."
-	@./scripts/init-ldap-users.sh
-	@echo "✅ Test environment ready"
-
-test-docker: init-test-env
-	@echo "Running Docker deployment tests..."
-	./tests/run_centralized_tests.sh --deployment docker-dev
-
-test-auth: ## Quick authentication test
-	@echo "Running authentication test..."
-	./scripts/dev/test-auth.sh
-
-test-security:
-	@echo "Running security tests..."
-	./tests/run_centralized_tests.sh --category security
-
-test-load:
-	@echo "Running SMTP load tests..."
-	@echo "⚠️  Note: Requires Docker services running (make install-dev)"
-	python3 tests/performance/smtp_load_test.py
-
 test-race-smoke:
 	@echo "Running targeted SMTP/session race smoke checks..."
 	go test ./internal/smtp -race -run 'TestHandleUnknown|TestCommandSequencing|TestConnectionDraining'
 	go test ./tests/integration -race -run 'TestIntegration_PersistentConnection|TestIntegration_TimeoutHandling'
-
-test-all: test test-centralized
-	@echo "All tests completed."
 
 # Code quality targets
 lint:
@@ -433,7 +404,6 @@ print-dev-summary:
 	@echo "📋 Next Steps:"
 	@echo "   make status      # Check service health"
 	@echo "   make logs        # View logs"
-	@echo "   make test-load   # Run load tests"
 	@echo "   make help        # Variables, plugin toggles, and the gotchas"
 
 # Help target
@@ -492,8 +462,6 @@ help:
 	@echo "  elk-up         - Elasticsearch + Kibana + Filebeat, reading the log volume"
 	@echo "  elk-dashboard  - Import the Elemta overview dashboard into Kibana"
 	@echo "  elk-dashboard-check - Verify every dashboard panel has data behind it"
-	@echo "  stress-corpus  - Send the message corpus at volume (MESSAGES=300 CONCURRENCY=10)"
-	@echo "  bench-queue    - Measure DELIVERY throughput: fill the queue, then time the drain"
 	@echo "  sink-up        - Discard delivered mail (~4500/s) so benchmarks measure Elemta"
 	@echo "  sink-down      - Delivery to the mailbox service again"
 	@echo "  rspamd-train   - Train Bayes from a labelled corpus and measure it on held-out mail"
@@ -505,9 +473,8 @@ help:
 	@echo ""
 	@echo "🔧 Build & Test:"
 	@echo "  build          - Build all binaries (server, queue, cli)   clean - Remove artifacts"
-	@echo "  test           - Go unit tests, as CI     test-docker    - Integration suite"
-	@echo "  test-load      - SMTP load tests          test-race-smoke - Session race checks"
-	@echo "  test-auth      - Authentication tests     test-security  - Security tests"
+	@echo "  test           - Go unit tests, as CI     test-race-smoke - Session race checks"
+	@echo "  Load, stress and queue benchmarks live in the separate elemta-tests repository."
 	@echo "  lint / lint-fix / fmt   - Code quality"
 	@echo "  On an install-dev-mailauth stack:"
 	@echo "    mailauth-check       - Send a message that should pass SPF, DKIM and DMARC"
@@ -574,7 +541,7 @@ install-dev-bench: check-tools ensure-dev-secrets docker-build ensure-dev-certs 
 	@# leaves the running server delivering to the old destination.
 	@$(MAKE) --no-print-directory sink-up
 	@$(MAKE) print-dev-summary
-	@echo "   Measure with: make bench-queue"
+	@echo "   Measure with: elemta-tests' stress/bench_queue.py"
 	@# The repo config stays as shipped: the sink lives in the seeded copy the
 	@# server reads, and a benchmarking run should not rewrite the default
 	@# everyone else gets.
@@ -768,7 +735,7 @@ sink-up:
 	@# of the config on a volume, seeded once. Same trap as install-dev.
 	@ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) up -d --force-recreate elemta >/dev/null
 	@echo "✅ Delivery goes to the sink (elemta-sink:2424). Mail is discarded."
-	@echo "   Benchmark:  make bench-queue"
+	@echo "   Benchmark:  elemta-tests' stress/bench_queue.py"
 	@echo "   Sink rate:  docker logs -f elemta-sink"
 
 # Real mailboxes: restore the development mailbox service and its reader.
@@ -785,16 +752,6 @@ DELIVERY_HOST ?= elemta-mailbox
 DELIVERY_PORT ?= 2424
 configure-delivery-target:
 	@python3 scripts/dev/set_delivery_target.py "$(DELIVERY_HOST)" "$(DELIVERY_PORT)"
-
-# Delivery throughput, which is a different number from acceptance throughput.
-# Fills the queue, stops sending, and times the drain.
-bench-queue:
-	@python3 scripts/dev/bench_queue.py --messages $(or $(MESSAGES),6000) --concurrency $(or $(CONCURRENCY),40)
-
-# Traffic worth looking at. The dashboard is mostly empty without it, because
-# a mail server with no mail has nothing to show.
-stress-corpus:
-	@python3 scripts/dev/stress_corpus.py --messages $(or $(MESSAGES),300) --concurrency $(or $(CONCURRENCY),10)
 
 elk-status:
 	@# Separates the three states this used to report as one. "No index yet" and
@@ -951,7 +908,7 @@ K8S_ADMIN_EXEC = $(KC) exec -i $(K8S_ADMIN_TARGET) -c admin -- /app/elemta --con
 	k8s-install-dev k8s-install-dev-full k8s-install-dev-bench k8s-install-dev-postgres \
 	k8s-up k8s-down k8s-down-volumes k8s-restart k8s-status k8s-logs k8s-logs-elemta \
 	k8s-rebuild k8s-rebuild-dev k8s-reseed k8s-sink-up k8s-sink-down \
-	k8s-bootstrap-admin k8s-reset-admin-password k8s-bench-queue k8s-print-dev-summary \
+	k8s-bootstrap-admin k8s-reset-admin-password k8s-print-dev-summary \
 	k8s-ha-operator k8s-ha-registry k8s-ha-images k8s-ha-mailbox-config k8s-ha-secrets \
 	k8s-ha-apply k8s-install-ha k8s-ha-status
 
@@ -968,7 +925,7 @@ k8s-help:
 	@echo "  k8s-rebuild-dev            Build, load into the cluster, restart (k8s-rebuild: no cache)"
 	@echo "  k8s-reseed                 Take config/elemta.toml again, discarding what the UI saved"
 	@echo "  k8s-sink-up / k8s-sink-down   Discard delivery, or deliver to the mailbox service again"
-	@echo "  k8s-bootstrap-admin / k8s-reset-admin-password / k8s-bench-queue"
+	@echo "  k8s-bootstrap-admin / k8s-reset-admin-password"
 	@echo "  Dashboard users: kubectl -n $(K8S_NAMESPACE) exec -it $(K8S_ADMIN_TARGET) -c admin -- \\"
 	@echo "    /app/elemta --config /app/runtime-config/elemta.toml \\"
 	@echo "    user list|add|passwd|remove --file /app/runtime-config/users.json"
@@ -1105,7 +1062,7 @@ k8s-install-dev-bench:
 	@$(MAKE) --no-print-directory k8s-install K8S_OVERLAY=bench
 	@$(MAKE) --no-print-directory k8s-sink-up
 	@$(MAKE) --no-print-directory k8s-print-dev-summary
-	@echo "   Measure with: make k8s-bench-queue"
+	@echo "   Measure with: elemta-tests' stress/bench_queue.py (ELEMTA_STACK=k8s)"
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-mailbox DELIVERY_PORT=2424 >/dev/null
 
 # Postgres comes up with the rest. If Elemta wins the race it exits on the
@@ -1356,6 +1313,3 @@ k8s-rebuild-dev:
 	@$(MAKE) --no-print-directory $(if $(K8S_HA),k8s-ha-images,k8s-images)
 	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
 	@$(MAKE) --no-print-directory k8s-wait
-
-k8s-bench-queue:
-	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) K8S_MTA=$(K8S_MTA) python3 scripts/dev/bench_queue.py --messages $(or $(MESSAGES),6000) --concurrency $(or $(CONCURRENCY),40)

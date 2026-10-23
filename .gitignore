@@ -83,7 +83,6 @@ tests/python/e2e/debug_auth.py
 htmlcov/
 
 # Email corpus files (large test datasets)
-tests/corpus/
 
 # IDE and editor files
 .idea/
@@ -119,7 +118,6 @@ test-*.sh
 *-docker.sh
 !tests/test-elemta-docker.sh
 !tests/test-elemta.sh
-!scripts/dev/test-auth.sh
 
 # Local configuration files
 elemta.toml
