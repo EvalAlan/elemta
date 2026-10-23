@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/valkeyaddr"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -25,9 +26,9 @@ type valkeySessions struct {
 
 // NewValkeySessionStore connects to Valkey at addr.
 func NewValkeySessionStore(addr string) (SessionStore, error) {
-	client, err := valkey.NewClient(valkey.ClientOption{InitAddress: []string{addr}, DisableCache: true})
+	client, err := valkeyaddr.NewClient(addr, func(o *valkey.ClientOption) { o.DisableCache = true })
 	if err != nil {
-		return nil, fmt.Errorf("webmail: connect to Valkey %s: %w", addr, err)
+		return nil, fmt.Errorf("webmail: connect to Valkey %s: %w", valkeyaddr.Display(addr), err)
 	}
 	return &valkeySessions{client: client, prefix: "elemta:webmail:session:"}, nil
 }

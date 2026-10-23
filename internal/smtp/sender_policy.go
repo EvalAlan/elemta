@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
+	"github.com/EvalAlan/elemta/internal/valkeyaddr"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -72,7 +73,7 @@ func newSenderPolicies(config *Config, log *slog.Logger) *senderPolicies {
 	}
 	p := &senderPolicies{client: client, log: log, ttl: time.Minute, now: time.Now, cache: map[string]cachedPolicy{}}
 	if addr := os.Getenv("VALKEY_ADDR"); addr != "" {
-		vc, err := valkey.NewClient(valkey.ClientOption{InitAddress: []string{addr}, DisableCache: true})
+		vc, err := valkeyaddr.NewClient(addr, func(o *valkey.ClientOption) { o.DisableCache = true })
 		if err == nil {
 			p.counters = &valkeyCounters{client: vc, prefix: "elemta:send:"}
 		} else {

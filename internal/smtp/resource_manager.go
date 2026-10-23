@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/valkeyaddr"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -457,19 +458,7 @@ func NewValkeyRateLimiter(valkeyURL, keyPrefix string, ttl time.Duration, logger
 		return &ValkeyRateLimiter{enabled: false, logger: logger}, nil
 	}
 
-	// Strip protocol prefix if present (valkey:// or redis://)
-	addr := valkeyURL
-	if len(addr) > 9 && (addr[:9] == "valkey://" || addr[:8] == "redis://") {
-		if addr[:9] == "valkey://" {
-			addr = addr[9:]
-		} else if addr[:8] == "redis://" {
-			addr = addr[8:]
-		}
-	}
-
-	client, err := valkey.NewClient(valkey.ClientOption{
-		InitAddress: []string{addr},
-	})
+	client, err := valkeyaddr.NewClient(valkeyURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Valkey client: %w", err)
 	}

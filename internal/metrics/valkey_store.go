@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/valkeyaddr"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -34,9 +35,7 @@ type ValkeyStore struct {
 
 // NewValkeyStore creates a new Valkey-backed metrics store
 func NewValkeyStore(addr string) (*ValkeyStore, error) {
-	client, err := valkey.NewClient(valkey.ClientOption{
-		InitAddress: []string{addr},
-	})
+	client, err := valkeyaddr.NewClient(addr, nil)
 	if err != nil {
 		return nil, err
 	}

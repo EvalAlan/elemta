@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/valkeyaddr"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -206,17 +207,16 @@ func (v *ValkeyState) conn() (valkey.Client, error) {
 	if time.Now().Before(v.nextDial) {
 		return nil, errors.New("valkey: waiting before reconnecting")
 	}
-	client, err := valkey.NewClient(valkey.ClientOption{
-		InitAddress: []string{v.addr},
-		Dialer:      net.Dialer{Timeout: sharedOpTimeout * 4},
+	client, err := valkeyaddr.NewClient(v.addr, func(o *valkey.ClientOption) {
+		o.Dialer = net.Dialer{Timeout: sharedOpTimeout * 4}
 		// Client-side caching would serve stale counts, which is exactly
 		// what an atomic shared counter exists to avoid.
-		DisableCache:     true,
-		ConnWriteTimeout: sharedOpTimeout * 4,
+		o.DisableCache = true
+		o.ConnWriteTimeout = sharedOpTimeout * 4
 	})
 	if err != nil {
 		v.nextDial = time.Now().Add(sharedCooldown)
-		return nil, fmt.Errorf("valkey %s: %w", v.addr, err)
+		return nil, fmt.Errorf("valkey %s: %w", valkeyaddr.Display(v.addr), err)
 	}
 	v.client = client
 	return client, nil

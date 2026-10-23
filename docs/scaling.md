@@ -73,6 +73,20 @@ ELEMTA_SCALE=1 scripts/rolling-update.sh
 For each service it starts as many new containers as are running, waits for
 them to be healthy, and removes the old ones one at a time.
 
+## Valkey addresses
+
+Every Valkey address setting (`VALKEY_ADDR`, `[api].valkey_addr`, the
+webmail session store, rate limiting) takes either a plain `host:port`, one
+server, or a URL. A URL with `master_set` names Sentinels instead, and the
+services follow the primary when Sentinel fails it over:
+
+```
+valkey://valkey-sentinel:26379?master_set=elemta
+valkey://:password@s1:26379?addr=s2:26379&addr=s3:26379&master_set=elemta
+```
+
+A password in the URL is the primary's. The Sentinels are reached without one.
+
 ## What one host can't do
 
 All of this runs on one host, so it survives containers failing and being

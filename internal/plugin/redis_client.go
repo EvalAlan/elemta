@@ -8,6 +8,7 @@ import (
 
 	"log/slog"
 
+	"github.com/EvalAlan/elemta/internal/valkeyaddr"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -28,9 +29,7 @@ func NewRedisClient(redisURL, keyPrefix string, logger *slog.Logger) (*RedisClie
 		}, nil
 	}
 
-	client, err := valkey.NewClient(valkey.ClientOption{
-		InitAddress: []string{redisURL},
-	})
+	client, err := valkeyaddr.NewClient(redisURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Valkey client: %w", err)
 	}
