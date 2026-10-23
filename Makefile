@@ -1107,10 +1107,13 @@ k8s-ha-registry:
 
 k8s-ha-images: k8s-ha-registry
 	@$(MAKE) --no-print-directory k8s-images K8S_IMAGE_LOAD=none
+	@docker build $(DOCKER_BUILD_FLAGS) -t elemta-valkey:8.0.11-errqueue.1 -f docker/valkey/Dockerfile docker/valkey
 	@for i in elemta elemta-mailbox elemta-ldap elemta-dns; do \
 		docker tag $$i:$(IMAGE_TAG) $(K8S_REGISTRY)/$$i:$(IMAGE_TAG) && \
 		docker push -q $(K8S_REGISTRY)/$$i:$(IMAGE_TAG) >/dev/null || exit 1; \
 	done
+	@docker tag elemta-valkey:8.0.11-errqueue.1 $(K8S_REGISTRY)/elemta-valkey:8.0.11-errqueue.1
+	@docker push -q $(K8S_REGISTRY)/elemta-valkey:8.0.11-errqueue.1 >/dev/null
 	@echo "✅ Images pushed to $(K8S_REGISTRY)"
 
 # config/mailbox-main.toml with what the replicated deployment changes:

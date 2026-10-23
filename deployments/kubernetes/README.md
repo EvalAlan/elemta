@@ -153,6 +153,12 @@ make k8s-down-volumes    # delete the namespace and everything in it
 | ClamAV, Rspamd | 2 each: ClamAV a StatefulSet (`elemta-clamav-1`, `-2`) keeping its signatures per pod; Rspamd a Deployment with its Bayes and module state in the main Valkey, database 5 | losing a scanner pod; mail is delivered unscanned (and logged) only with every replica down |
 | MTA (`elemta-mta-1`, `-2`...), dashboard, webmail, mailbox | a StatefulSet for the MTA (for its pod names), Deployments for the rest, 2 or more each, with PodDisruptionBudgets and CPU autoscaling | losing pods; mail claimed by a lost MTA is taken up when its lease runs out |
 
+The HA Valkey image is built from pinned 8.0.11 source with the Linux socket
+error queue fix in `docker/valkey/`. Without that fix, a transient ICMP error
+during connection setup can leave a Sentinel using a full CPU core. The dev
+overlay builds and pushes the image to its local registry; a multi-node
+overlay must publish the same image before applying `ha/`.
+
 It isn't applied on its own: an overlay adds the configuration, secrets,
 image tag and exposure. It needs:
 

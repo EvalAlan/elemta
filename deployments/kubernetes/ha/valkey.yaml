@@ -69,7 +69,10 @@ data:
     if [ -z "$primary" ] && [ "$me" != "$first" ]; then
       primary=$first
     fi
+    # The rebuilt server defaults to protected mode; the namespace policy
+    # already restricts access, and peers need to replicate across pods.
     set -- valkey-server \
+      --protected-mode no \
       --appendonly yes --appendfsync everysec \
       --maxmemory 768mb --maxmemory-policy noeviction \
       --replica-announce-ip "$me"
@@ -147,7 +150,7 @@ spec:
               app.kubernetes.io/name: elemta-valkey
       containers:
         - name: valkey
-          image: valkey/valkey:8.0-alpine
+          image: ghcr.io/evalalan/elemta-valkey:8.0.11-errqueue.1
           command: ["/bin/sh", "/scripts/valkey.sh"]
           env: &env
             - name: NAMESPACE
@@ -177,7 +180,7 @@ spec:
             - name: scripts
               mountPath: /scripts
         - name: sentinel
-          image: valkey/valkey:8.0-alpine
+          image: ghcr.io/evalalan/elemta-valkey:8.0.11-errqueue.1
           command: ["/bin/sh", "/scripts/sentinel.sh"]
           env: *env
           ports:

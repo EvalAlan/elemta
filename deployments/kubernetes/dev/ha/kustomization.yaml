@@ -125,6 +125,9 @@ images:
   - name: elemta-dns
     newName: localhost:5000/elemta-dns
     newTag: dev
+  - name: ghcr.io/evalalan/elemta-valkey
+    newName: localhost:5000/elemta-valkey
+    newTag: 8.0.11-errqueue.1
 
 patches:
   # local-path volumes are ReadWriteOnce, which every pod on this one node

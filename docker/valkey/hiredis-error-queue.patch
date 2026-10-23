@@ -1,0 +1,54 @@
+diff --git a/deps/hiredis/net.c b/deps/hiredis/net.c
+index 698fd5c..d0e0e4e 100644
+--- a/deps/hiredis/net.c
++++ b/deps/hiredis/net.c
+@@ -54,0 +55,20 @@ int redisContextUpdateCommandTimeout(redisContext *c, const struct timeval *time
++#ifdef __linux__
++static void redisDrainSocketErrorQueue(redisFD fd) {
++    int saved_errno = errno;
++
++    for (;;) {
++        char buf[1];
++        struct iovec iov = {.iov_base = buf, .iov_len = sizeof(buf)};
++        struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1};
++
++        if (recvmsg(fd, &msg, MSG_ERRQUEUE | MSG_DONTWAIT) >= 0)
++            continue;
++        if (errno == EINTR)
++            continue;
++        break;
++    }
++
++    errno = saved_errno;
++}
++#endif
++
+@@ -309,4 +329,2 @@ int redisCheckConnectDone(redisContext *c, int *completed) {
+-    if (rc == 0) {
+-        *completed = 1;
+-        return REDIS_OK;
+-    }
++    if (rc == 0)
++        goto connected;
+@@ -322,2 +340 @@ int redisCheckConnectDone(redisContext *c, int *completed) {
+-                *completed = 1;
+-                return REDIS_OK;
++                goto connected;
+@@ -332,2 +349 @@ int redisCheckConnectDone(redisContext *c, int *completed) {
+-        *completed = 1;
+-        return REDIS_OK;
++        goto connected;
+@@ -335,0 +352,4 @@ int redisCheckConnectDone(redisContext *c, int *completed) {
++#ifdef __linux__
++        if (c->connection_type == REDIS_CONN_TCP)
++            redisDrainSocketErrorQueue(c->fd);
++#endif
+@@ -340,0 +361,8 @@ int redisCheckConnectDone(redisContext *c, int *completed) {
++
++connected:
++    *completed = 1;
++#ifdef __linux__
++    if (c->connection_type == REDIS_CONN_TCP)
++        redisDrainSocketErrorQueue(c->fd);
++#endif
++    return REDIS_OK;
