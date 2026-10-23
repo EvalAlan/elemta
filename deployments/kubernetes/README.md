@@ -56,6 +56,11 @@ reach each other or DNS:
 ```bash
 sudo ufw allow from 10.42.0.0/16
 sudo ufw allow from 10.43.0.0/16
+# Pod-to-pod traffic is forwarded, and ufw drops forwarded traffic by
+# default (DEFAULT_FORWARD_POLICY="DROP"): without these, pods time out
+# looking up names, because they can't reach CoreDNS.
+sudo ufw route allow from 10.42.0.0/16
+sudo ufw route allow to 10.42.0.0/16
 ```
 
 ## The dev stack
