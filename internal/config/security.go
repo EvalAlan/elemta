@@ -194,9 +194,15 @@ func (sv *SecurityValidator) CheckPathTraversal(path string) error {
 	// Normalize the path
 	cleanPath := filepath.Clean(path)
 
-	// Check for parent directory references
-	if strings.Contains(cleanPath, "..") {
-		return fmt.Errorf("parent directory reference detected: %s", path)
+	// Only a whole ".." segment refers to a parent. Kubernetes mounts every
+	// Secret and ConfigMap file as a symlink into a "..data" directory, a
+	// name that merely starts with dots, so a substring match refused every
+	// certificate mounted from one. The raw path is split, not cleanPath,
+	// because cleaning resolves "/app/../etc" away.
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return fmt.Errorf("parent directory reference detected: %s", path)
+		}
 	}
 
 	// Check for absolute path escapes

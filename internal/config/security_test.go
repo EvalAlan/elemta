@@ -38,6 +38,20 @@ func TestSecurityValidator_PathValidation(t *testing.T) {
 			description: "Path traversal with ..\\ should be blocked",
 		},
 		{
+			name:        "dotted_name_not_parent",
+			path:        "/app/public-tls/..data/tls.crt",
+			fieldName:   "tls.cert_file",
+			expectError: false,
+			description: "A name that starts with dots, like Kubernetes' ..data, is not a parent reference",
+		},
+		{
+			name:        "path_traversal_trailing_dotdot",
+			path:        "/app/queue/..",
+			fieldName:   "queue.dir",
+			expectError: true,
+			description: "A trailing .. segment should be blocked",
+		},
+		{
 			name:        "blocked_pattern_passwd",
 			path:        "/etc/passwd",
 			fieldName:   "queue.dir",
@@ -598,5 +612,29 @@ func TestSecurityValidator_FileSizeValidation(t *testing.T) {
 	err = sv.ValidateFileSize(testFile, "test.file")
 	if err == nil {
 		t.Errorf("Expected error for oversized file, but got none")
+	}
+}
+
+// Kubernetes mounts a Secret's files as symlinks into "..data", itself a
+// symlink to a timestamped directory, and swaps "..data" on renewal. A
+// certificate mounted that way must validate, or the MTA refuses its config.
+func TestSecurityValidator_KubernetesSecretMount(t *testing.T) {
+	sv := NewSecurityValidator()
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "..2026_10_23_00_00_00.1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "..2026_10_23_00_00_00.1", "tls.crt"), []byte("cert"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..2026_10_23_00_00_00.1", filepath.Join(dir, "..data")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..data/tls.crt", filepath.Join(dir, "tls.crt")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sv.ValidatePath(filepath.Join(dir, "tls.crt"), "tls.cert_file"); err != nil {
+		t.Errorf("Secret-mounted certificate refused: %v", err)
 	}
 }
