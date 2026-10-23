@@ -18,9 +18,18 @@ resources:
   - ldap.yaml
   - elemta.yaml
   - mailbox.yaml
+  - scanners.yaml
   - pvc.yaml
   - availability.yaml
   - networkpolicy.yaml
+
+# Rspamd's Valkey and Bayes settings, which differ from Compose's
+# (rspamd/redis.conf says why).
+configMapGenerator:
+  - name: elemta-rspamd-valkey
+    files:
+      - rspamd/redis.conf
+      - rspamd/classifier-bayes.conf
 
 images:
   - name: elemta

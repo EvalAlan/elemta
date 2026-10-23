@@ -1,0 +1,211 @@
+# Virus and spam scanning, which config/elemta.toml points the MTA at
+# (elemta-clamav:3310, http://elemta-rspamd:11333). Two of each, so a scan
+# doesn't depend on one pod; the MTA delivers unscanned (and says so in its
+# log) only when every replica of a scanner is down.
+#
+# ClamAV: a StatefulSet for its per-pod volume, which holds the signature
+# database. Downloading it is the slow part of a start, so a restarted pod
+# keeps its copy and only freshclam's update is fetched. Each pod loads the
+# whole database into memory (about 1.5 GiB).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elemta-clamav
+  labels:
+    app.kubernetes.io/name: elemta-clamav
+spec:
+  serviceName: elemta-clamav-nodes
+  replicas: 2
+  ordinals:
+    start: 1
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-clamav
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-clamav
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: elemta-clamav
+      containers:
+        - name: clamav
+          image: clamav/clamav:latest
+          ports:
+            - name: clamd
+              containerPort: 3310
+          # A fresh volume downloads the database before clamd listens.
+          startupProbe:
+            tcpSocket:
+              port: clamd
+            periodSeconds: 15
+            failureThreshold: 40
+          readinessProbe:
+            tcpSocket:
+              port: clamd
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 1536Mi
+            limits:
+              memory: 3Gi
+          securityContext:
+            capabilities:
+              drop: ["NET_RAW"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clamav
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-clamav-nodes
+  labels:
+    app.kubernetes.io/name: elemta-clamav
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: elemta-clamav
+  ports:
+    - { name: clamd, port: 3310 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-clamav
+  labels:
+    app.kubernetes.io/name: elemta-clamav
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-clamav
+  ports:
+    - { name: clamd, port: 3310, targetPort: clamd }
+---
+# Rspamd keeps nothing on its own disk here: Bayes tokens and module state
+# are in the main Valkey (rspamd/redis.conf), so replicas are
+# interchangeable. Its module settings (elemta-rspamd-override,
+# elemta-rspamd-local) come from the overlay, from docker/rspamd as Compose
+# mounts them; the Valkey and Bayes files are this deployment's own.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-rspamd
+  labels:
+    app.kubernetes.io/name: elemta-rspamd
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-rspamd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-rspamd
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: elemta-rspamd
+      containers:
+        - name: rspamd
+          image: rspamd/rspamd:latest
+          ports:
+            - name: normal
+              containerPort: 11333
+            - name: controller
+              containerPort: 11334
+          startupProbe:
+            tcpSocket:
+              port: normal
+            periodSeconds: 10
+            failureThreshold: 18
+          readinessProbe:
+            tcpSocket:
+              port: normal
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            capabilities:
+              drop: ["NET_RAW"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rspamd
+            - { name: override, mountPath: /etc/rspamd/override.d/rbl.conf, subPath: rbl.conf, readOnly: true }
+            - { name: override, mountPath: /etc/rspamd/override.d/surbl.conf, subPath: surbl.conf, readOnly: true }
+            - { name: override, mountPath: /etc/rspamd/override.d/asn.conf, subPath: asn.conf, readOnly: true }
+            - { name: override, mountPath: /etc/rspamd/override.d/fuzzy_check.conf, subPath: fuzzy_check.conf, readOnly: true }
+            - { name: override, mountPath: /etc/rspamd/override.d/options.inc, subPath: options.inc, readOnly: true }
+            - { name: local, mountPath: /etc/rspamd/local.d/greylist.conf, subPath: greylist.conf, readOnly: true }
+            - { name: local, mountPath: /etc/rspamd/local.d/actions.conf, subPath: actions.conf, readOnly: true }
+            - { name: local, mountPath: /etc/rspamd/local.d/url_suspect_group.conf, subPath: url_suspect_group.conf, readOnly: true }
+            - { name: valkey, mountPath: /etc/rspamd/local.d/redis.conf, subPath: redis.conf, readOnly: true }
+            - { name: valkey, mountPath: /etc/rspamd/local.d/classifier-bayes.conf, subPath: classifier-bayes.conf, readOnly: true }
+      volumes:
+        # Caches and the process's own scratch files only.
+        - name: data
+          emptyDir: {}
+        - name: override
+          configMap:
+            name: elemta-rspamd-override
+        - name: local
+          configMap:
+            name: elemta-rspamd-local
+        - name: valkey
+          configMap:
+            name: elemta-rspamd-valkey
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-rspamd
+  labels:
+    app.kubernetes.io/name: elemta-rspamd
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-rspamd
+  ports:
+    - { name: normal, port: 11333, targetPort: normal }
+    - { name: controller, port: 11334, targetPort: controller }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elemta-clamav
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-clamav
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elemta-rspamd
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-rspamd

@@ -6,11 +6,15 @@
 # valkey://...?master_set=elemta URL, internal/valkeyaddr), so sessions,
 # locks and shared counters carry on through a pod or node being lost.
 #
-# Who is primary at start: whoever the running Sentinels say. With none
-# running (the first start, or every pod restarting at once) pod 0 is. In
+# Who is primary at start: whoever the running Sentinels say, if that
+# server agrees, else whichever server says it is (common.sh). With none
+# (the first start, or every pod restarting at once) pod 0 is. In
 # that second case a replica that had been promoted rejoins pod 0 and drops
 # what it had that pod 0 lacks; everything kept here is short-lived
 # (sessions, locks, counters), so that is the trade for a simple bootstrap.
+#
+# Rspamd keeps its Bayes tokens and module state here too, in database 5
+# (rspamd/redis.conf), with expiries so it can't fill the store.
 #
 # No password: Valkey and the Sentinels are reachable only from this
 # namespace (networkpolicy.yaml).
@@ -23,15 +27,36 @@ data:
     nodes=elemta-valkey-nodes.${NAMESPACE}.svc.cluster.local
     me="$(hostname).$nodes"
     first="elemta-valkey-0.$nodes"
-    # primary_from_sentinels prints the primary any reachable Sentinel
-    # other than this pod's knows of, or nothing.
-    primary_from_sentinels() {
+    others() {
       for i in 0 1 2; do
         host="elemta-valkey-$i.$nodes"
-        [ "$host" = "$me" ] && continue
+        [ "$host" = "$me" ] || echo "$host"
+      done
+    }
+    is_primary() {
+      [ "$(timeout 3 valkey-cli -h "$1" --raw role 2>/dev/null | head -n 1)" = master ]
+    }
+    # find_primary prints the current primary, or nothing if there is none.
+    #
+    # The Sentinels are asked first, but an answer counts only if that
+    # server says it is the primary: while the pods are restarted one after
+    # another a Sentinel can still name the old primary, now a replica, and
+    # starting on that splits the Sentinels between two "primaries". One
+    # exception: a Sentinel naming this pod means this pod was primary and
+    # is back before anyone failed it over, so it carries on as primary.
+    # Then any other server that says it is the primary.
+    find_primary() {
+      for host in $(others); do
         addr=$(timeout 3 valkey-cli -h "$host" -p 26379 --raw sentinel get-master-addr-by-name elemta 2>/dev/null | head -n 1) || true
-        if [ -n "$addr" ]; then
+        [ -n "$addr" ] || continue
+        if [ "$addr" = "$me" ] || is_primary "$addr"; then
           echo "$addr"
+          return
+        fi
+      done
+      for host in $(others); do
+        if is_primary "$host"; then
+          echo "$host"
           return
         fi
       done
@@ -40,13 +65,13 @@ data:
     #!/bin/sh
     set -eu
     . /scripts/common.sh
-    primary=$(primary_from_sentinels)
+    primary=$(find_primary)
     if [ -z "$primary" ] && [ "$me" != "$first" ]; then
       primary=$first
     fi
     set -- valkey-server \
       --appendonly yes --appendfsync everysec \
-      --maxmemory 256mb --maxmemory-policy noeviction \
+      --maxmemory 768mb --maxmemory-policy noeviction \
       --replica-announce-ip "$me"
     if [ -n "$primary" ] && [ "$primary" != "$me" ]; then
       echo "valkey: replica of $primary"
@@ -59,7 +84,20 @@ data:
     #!/bin/sh
     set -eu
     . /scripts/common.sh
-    primary=$(primary_from_sentinels)
+    # Watch what this pod's own Valkey settled on (valkey.sh): itself if it
+    # started as primary, else the primary it replicates. Deciding again
+    # here could disagree with it, and a Sentinel watching a server that
+    # is in fact a replica never rejoins the others.
+    primary=""
+    for _ in $(seq 60); do
+      role=$(valkey-cli --raw role 2>/dev/null) || role=""
+      case $(echo "$role" | head -n 1) in
+        master) primary=$me ;;
+        slave) primary=$(echo "$role" | sed -n 2p) ;;
+      esac
+      [ -n "$primary" ] && break
+      sleep 1
+    done
     primary=${primary:-$first}
     # Sentinel rewrites its file as it learns, so it lives on an emptyDir;
     # a restarted Sentinel relearns everything from the others.
@@ -128,7 +166,7 @@ spec:
               cpu: 20m
               memory: 64Mi
             limits:
-              memory: 384Mi
+              memory: 1Gi
           securityContext: &containerSecurity
             allowPrivilegeEscalation: false
             capabilities:

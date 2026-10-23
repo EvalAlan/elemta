@@ -151,6 +151,7 @@ make k8s-bench-queue     # bench-queue against this stack
 | Postgres (mailbox metadata, the queue) | CloudNativePG `Cluster`, 3 instances, synchronous replication | losing the primary: a replica is promoted and `elemta-db-rw` follows it |
 | Valkey (sessions, locks, counters) | StatefulSet of 3, each with a Sentinel | losing the primary: the Sentinels promote a replica and the services follow (`VALKEY_ADDR` is a Sentinel URL) |
 | Directory | StatefulSet of 2 replicating nodes | losing a node |
+| ClamAV, Rspamd | 2 each: ClamAV a StatefulSet (`elemta-clamav-1`, `-2`) keeping its signatures per pod; Rspamd a Deployment with its Bayes and module state in the main Valkey, database 5 | losing a scanner pod; mail is delivered unscanned (and logged) only with every replica down |
 | MTA (`elemta-mta-1`, `-2`...), dashboard, webmail, mailbox | a StatefulSet for the MTA (for its pod names), Deployments for the rest, 2 or more each, with PodDisruptionBudgets and CPU autoscaling | losing pods; mail claimed by a lost MTA is taken up when its lease runs out |
 
 It isn't applied on its own: an overlay adds the configuration, secrets,

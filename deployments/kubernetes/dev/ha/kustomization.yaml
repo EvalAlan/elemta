@@ -41,6 +41,20 @@ configMapGenerator:
   - name: elemta-mailbox-config
     files:
       - mailbox.toml
+  # Rspamd's module settings, as Compose mounts them. Its Valkey and Bayes
+  # files come from ../../ha.
+  - name: elemta-rspamd-override
+    files:
+      - ../../../../docker/rspamd/override.d/rbl.conf
+      - ../../../../docker/rspamd/override.d/surbl.conf
+      - ../../../../docker/rspamd/override.d/asn.conf
+      - ../../../../docker/rspamd/override.d/fuzzy_check.conf
+      - ../../../../docker/rspamd/override.d/options.inc
+  - name: elemta-rspamd-local
+    files:
+      - ../../../../docker/rspamd/local.d/greylist.conf
+      - ../../../../docker/rspamd/local.d/actions.conf
+      - ../../../../docker/rspamd/local.d/url_suspect_group.conf
   - name: elemta-ldap-init
     files:
       - ../../../../docker/ldap/99-stress-users.ldif

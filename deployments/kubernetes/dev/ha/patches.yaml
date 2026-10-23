@@ -36,3 +36,23 @@ spec:
           env:
             - { name: ELEMTA_DEMO_DATA, value: "true" }
             - { name: NODE_ID, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+---
+# Rspamd makes more DNS lookups per message than anything else (RBLs,
+# SURBLs, ASN); through the caching resolver, as the MTA does.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-rspamd
+spec:
+  template:
+    spec:
+      dnsPolicy: None
+      dnsConfig:
+        nameservers: ["10.43.53.53"]
+        searches:
+          - elemta.svc.cluster.local
+          - svc.cluster.local
+          - cluster.local
+        options:
+          - name: ndots
+            value: "5"
