@@ -1,0 +1,105 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+namespace: elemta
+
+resources:
+  - issuer.yaml
+  - certificate.yaml
+  - ingress.yaml
+  - mail-services.yaml
+  - web-networkpolicy.yaml
+
+configMapGenerator:
+  - name: elemta-edge-settings
+    envs:
+      - settings.env
+    options:
+      disableNameSuffixHash: true
+
+replacements:
+  - source:
+      kind: ConfigMap
+      name: elemta-edge-settings
+      fieldPath: data.ACME_EMAIL
+    targets:
+      - select:
+          kind: Issuer
+          name: elemta-public
+        fieldPaths: [spec.acme.email]
+  - source:
+      kind: ConfigMap
+      name: elemta-edge-settings
+      fieldPath: data.MAIL_HOST
+    targets:
+      - select:
+          kind: Certificate
+          name: elemta-mail-tls
+        fieldPaths: [spec.dnsNames.0]
+  - source:
+      kind: ConfigMap
+      name: elemta-edge-settings
+      fieldPath: data.ADMIN_HOST
+    targets:
+      - select:
+          kind: Certificate
+          name: elemta-web-tls
+        fieldPaths: [spec.dnsNames.0]
+      - select:
+          kind: Ingress
+          name: elemta-admin
+        fieldPaths: [spec.rules.0.host, spec.tls.0.hosts.0]
+  - source:
+      kind: ConfigMap
+      name: elemta-edge-settings
+      fieldPath: data.WEBMAIL_HOST
+    targets:
+      - select:
+          kind: Certificate
+          name: elemta-web-tls
+        fieldPaths: [spec.dnsNames.1]
+      - select:
+          kind: Ingress
+          name: elemta-webmail
+        fieldPaths: [spec.rules.0.host, spec.tls.0.hosts.0]
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: elemta-mta
+    patch: |-
+      - op: test
+        path: /spec/template/spec/containers/0/volumeMounts/5/name
+        value: mailbox-ca
+      - op: remove
+        path: /spec/template/spec/containers/0/volumeMounts/5
+      - op: test
+        path: /spec/template/spec/volumes/5/name
+        value: mailbox-ca
+      - op: remove
+        path: /spec/template/spec/volumes/5
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: { name: public-tls, mountPath: /app/public-tls, readOnly: true }
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: public-tls
+          secret:
+            secretName: elemta-mail-tls
+            defaultMode: 0440
+  - target:
+      kind: Deployment
+      name: elemta-mailbox
+    patch: |-
+      - op: test
+        path: /spec/template/spec/volumes/1/name
+        value: tls
+      - op: replace
+        path: /spec/template/spec/volumes/1/secret/secretName
+        value: elemta-mail-tls
+      - op: add
+        path: /spec/template/spec/volumes/1/secret/items
+        value:
+          - { key: tls.crt, path: cert.pem }
+          - { key: tls.key, path: key.pem }

@@ -1,0 +1,30 @@
+controller:
+  replicaCount: 2
+  ingressClass: haproxy
+  ingressClassResource:
+    name: haproxy
+    default: false
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: kubernetes-ingress
+          app.kubernetes.io/instance: haproxy-kubernetes-ingress
+  PodDisruptionBudget:
+    enable: true
+    minAvailable: 1
+  service:
+    type: LoadBalancer
+    externalTrafficPolicy: Local
+    enablePorts:
+      http: true
+      https: true
+      quic: false
+      stat: false
+      admin: false
+  prometheus:
+    enabled: true
+  pprof:
+    enabled: false

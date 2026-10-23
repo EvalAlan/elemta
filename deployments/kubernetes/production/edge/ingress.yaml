@@ -1,0 +1,49 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: elemta-admin
+  annotations:
+    haproxy.org/ssl-redirect: "true"
+    haproxy.org/ssl-redirect-port: "443"
+    haproxy.org/ssl-redirect-code: "301"
+spec:
+  ingressClassName: haproxy
+  tls:
+    - hosts: [admin.example.com]
+      secretName: elemta-web-tls
+  rules:
+    - host: admin.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: elemta-admin
+                port:
+                  number: 8025
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: elemta-webmail
+  annotations:
+    haproxy.org/ssl-redirect: "true"
+    haproxy.org/ssl-redirect-port: "443"
+    haproxy.org/ssl-redirect-code: "301"
+spec:
+  ingressClassName: haproxy
+  tls:
+    - hosts: [webmail.example.com]
+      secretName: elemta-web-tls
+  rules:
+    - host: webmail.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: elemta-webmail
+                port:
+                  number: 8027

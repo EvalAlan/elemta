@@ -1,0 +1,28 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: elemta-mail-tls
+spec:
+  secretName: elemta-mail-tls
+  privateKey:
+    rotationPolicy: Always
+  dnsNames:
+    - mail.example.com
+  issuerRef:
+    name: elemta-public
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: elemta-web-tls
+spec:
+  secretName: elemta-web-tls
+  privateKey:
+    rotationPolicy: Always
+  dnsNames:
+    - admin.example.com
+    - webmail.example.com
+  issuerRef:
+    name: elemta-public
+    kind: Issuer

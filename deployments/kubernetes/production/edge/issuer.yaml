@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: elemta-public
+spec:
+  acme:
+    email: postmaster@example.com
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: elemta-public-acme-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: haproxy

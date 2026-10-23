@@ -159,6 +159,12 @@ during connection setup can leave a Sentinel using a full CPU core. The dev
 overlay builds and pushes the image to its local registry; a multi-node
 overlay must publish the same image before applying `ha/`.
 
+The [production edge component](production/edge/README.md) adds cert-manager
+Certificates, HAProxy HTTPS ingress for admin and webmail, and direct mail
+LoadBalancer Services with source-address preservation. A production overlay
+must include it and provide real hostnames, app configuration, storage and
+secrets before deployment.
+
 It isn't applied on its own: an overlay adds the configuration, secrets,
 image tag and exposure. It needs:
 

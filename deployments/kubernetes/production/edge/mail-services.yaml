@@ -1,0 +1,29 @@
+# Keep TCP mail outside the HTTP ingress. A source-preserving LoadBalancer
+# lets SMTP apply its relay and rate limits to the actual client address.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-mail-public
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: elemta-mta
+  ports:
+    - { name: smtp, port: 25, targetPort: smtp }
+    - { name: submission, port: 587, targetPort: submission }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-mailbox-public
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: elemta-mailbox
+  ports:
+    - { name: imaps, port: 993, targetPort: imaps }
+    - { name: imap-starttls, port: 143, targetPort: imap-starttls }
+    - { name: pop3-starttls, port: 110, targetPort: pop3 }
+    - { name: sieve, port: 4190, targetPort: sieve }

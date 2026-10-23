@@ -1,0 +1,43 @@
+# Only the HTTPS ingress may reach the HTTP backends. This also makes
+# X-Forwarded-For useful when the app trusts the ingress pod network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elemta-admin-edge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-admin
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: haproxy-controller
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kubernetes-ingress
+              app.kubernetes.io/instance: haproxy-kubernetes-ingress
+      ports:
+        - { port: 8025, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elemta-webmail-edge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-webmail
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: haproxy-controller
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kubernetes-ingress
+              app.kubernetes.io/instance: haproxy-kubernetes-ingress
+      ports:
+        - { port: 8027, protocol: TCP }
