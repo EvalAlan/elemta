@@ -1017,6 +1017,10 @@ k8s-wait:
 # new one from the ConfigMap. Re-applies nothing: after editing the file, run
 # an install target (or k8s-sink-*, which re-apply).
 k8s-reseed:
+	@# A rollout still under way (an apply with a new ConfigMap) leaves old
+	@# pods that would re-create the file from the old config before the new
+	@# ones start, and the new ones then keep it.
+	@for w in $(K8S_CONFIG_READERS); do $(KC) rollout status $$w --timeout=5m >/dev/null; done
 	@$(KC) exec $(K8S_MTA) -c smtp -- rm -f /app/runtime-config/elemta.toml 2>/dev/null || true
 	@$(KC) rollout restart $(K8S_CONFIG_READERS) >/dev/null
 	@for w in $(K8S_CONFIG_READERS); do $(KC) rollout status $$w --timeout=5m >/dev/null; done
@@ -1163,6 +1167,7 @@ k8s-ha-config:
 		-e 's|^secure_cookies = .*|secure_cookies = true|' \
 		-e 's|^recovery_url = .*|recovery_url = "https://webmail.elemta.test"|' \
 		-e 's|^\[webmail\]$$|&\ntrusted_proxies = ["$(K8S_POD_CIDR)"]|' \
+		-e 's|^\[api.rate_limit\]$$|&\ntrusted_proxies = ["$(K8S_POD_CIDR)"]|' \
 		config/elemta.toml > $(K8S_DIR)/dev/ha/elemta.toml
 	@for want in '/app/public-tls/tls.crt' '/app/public-tls/tls.key' '/app/public-tls/ca.crt' \
 		'"https://admin.elemta.test"' 'secure_cookies = true' '"https://webmail.elemta.test"' \

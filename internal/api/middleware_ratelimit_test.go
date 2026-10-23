@@ -365,3 +365,27 @@ func BenchmarkRateLimitMiddleware(b *testing.B) {
 		middleware.ServeHTTP(rr, req)
 	}
 }
+
+// Behind a reverse proxy every request comes from the proxy, so the login
+// throttle must see the forwarded client, also when rate limiting is off.
+func TestLoginAddrUsesTrustedProxies(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("rate_limit_enabled=%t", enabled), func(t *testing.T) {
+			rl := NewRateLimitMiddleware(RateLimitConfig{Enabled: enabled, TrustedProxies: []string{"10.42.0.0/16"}})
+			defer rl.Stop()
+			s := &Server{rateLimiter: rl}
+
+			req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+			req.RemoteAddr = "10.42.0.5:41000"
+			req.Header.Set("X-Forwarded-For", "203.0.113.7")
+			if got := s.loginAddr(req); got != "203.0.113.7" {
+				t.Errorf("behind a trusted proxy: got %q, want the forwarded client", got)
+			}
+
+			req.RemoteAddr = "198.51.100.9:41000"
+			if got := s.loginAddr(req); got != "198.51.100.9" {
+				t.Errorf("from an untrusted peer: got %q, want the peer, not its header", got)
+			}
+		})
+	}
+}

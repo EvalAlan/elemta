@@ -317,6 +317,7 @@ func runWeb(cmd *cobra.Command, args []string) {
 			Enabled:           cfg.API.RateLimit.Enabled,
 			RequestsPerSecond: cfg.API.RateLimit.RequestsPerSecond,
 			Burst:             cfg.API.RateLimit.Burst,
+			TrustedProxies:    cfg.API.RateLimit.TrustedProxies,
 		},
 		CORS: api.CORSConfig{
 			Enabled:          cfg.API.CORS.Enabled,

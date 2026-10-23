@@ -429,23 +429,8 @@ type RateLimitMiddleware struct {
 
 // NewRateLimitMiddleware creates a new rate limit middleware
 func NewRateLimitMiddleware(config RateLimitConfig) *RateLimitMiddleware {
-	if !config.Enabled {
-		done := make(chan struct{})
-		close(done)
-		return &RateLimitMiddleware{enabled: false, cleanupDone: done}
-	}
-
-	requestsPerSecond := config.RequestsPerSecond
-	if requestsPerSecond <= 0 {
-		requestsPerSecond = 10.0
-	}
-
-	burst := config.Burst
-	if burst <= 0 {
-		burst = 20
-	}
-
-	// Parse trusted proxy CIDRs
+	// Parsed even when rate limiting is off: the login throttle reads the
+	// client's address through the same trusted proxies.
 	var trustedProxies []*net.IPNet
 	for _, proxy := range config.TrustedProxies {
 		if strings.Contains(proxy, "/") {
@@ -463,6 +448,22 @@ func NewRateLimitMiddleware(config RateLimitConfig) *RateLimitMiddleware {
 				trustedProxies = append(trustedProxies, &net.IPNet{IP: ip, Mask: mask})
 			}
 		}
+	}
+
+	if !config.Enabled {
+		done := make(chan struct{})
+		close(done)
+		return &RateLimitMiddleware{enabled: false, cleanupDone: done, trustedProxies: trustedProxies}
+	}
+
+	requestsPerSecond := config.RequestsPerSecond
+	if requestsPerSecond <= 0 {
+		requestsPerSecond = 10.0
+	}
+
+	burst := config.Burst
+	if burst <= 0 {
+		burst = 20
 	}
 
 	rl := &RateLimitMiddleware{

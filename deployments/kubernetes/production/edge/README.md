@@ -62,8 +62,10 @@ cert-manager creates two automatically renewed Secrets in `elemta`:
   configuration. Set the dashboard's allowed origin to the admin HTTPS URL.
 
 Admin and webmail stay HTTP inside the cluster, but NetworkPolicies admit
-only the HAProxy controller pods. If webmail uses `trusted_proxies`, trust
-only the controller pod addresses or the tightly scoped pod CIDR. Do not
+only the HAProxy controller pods. Set webmail's `trusted_proxies` and the
+dashboard's `[api.rate_limit].trusted_proxies` to the controller pod
+addresses or the tightly scoped pod CIDR. Without them every client
+appears as HAProxy, sharing one rate limit and one login throttle. Do not
 publish the backend HTTP Services as LoadBalancers.
 
 ## Mail TCP listeners

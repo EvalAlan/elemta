@@ -1435,7 +1435,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Create session
 	log.Printf("Creating session for user: %s", loginReq.Username)
-	session, err := s.sessionManager.CreateSession(loginReq.Username, r.UserAgent(), r.RemoteAddr)
+	// The client's address, not a proxy's: the one the throttle used.
+	session, err := s.sessionManager.CreateSession(loginReq.Username, r.UserAgent(), addr)
 	if err != nil {
 		log.Printf("Failed to create session: %v", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)

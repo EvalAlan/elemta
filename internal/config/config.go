@@ -264,6 +264,11 @@ type Config struct {
 			Enabled           bool    `toml:"enabled"`
 			RequestsPerSecond float64 `toml:"requests_per_second"`
 			Burst             int     `toml:"burst"`
+			// TrustedProxies are the reverse proxies (addresses or CIDRs)
+			// whose X-Forwarded-For is believed. Behind one, every request
+			// otherwise comes from the proxy, so all clients share one rate
+			// limit and one login throttle.
+			TrustedProxies []string `toml:"trusted_proxies"`
 		} `toml:"rate_limit"`
 		CORS struct {
 			Enabled          bool     `toml:"enabled"`
@@ -775,7 +780,23 @@ func (c *Config) Validate() *ValidationResult {
 	// Validate rate limiter configuration
 	c.validateRateLimiter(result, securityValidator)
 
+	c.validateAPI(result)
+
 	return result
+}
+
+// validateAPI refuses trusted proxy entries that don't parse. The rate
+// limiter would skip them silently, leaving a proxy untrusted and every
+// client behind it sharing its address.
+func (c *Config) validateAPI(result *ValidationResult) {
+	for _, p := range c.API.RateLimit.TrustedProxies {
+		if _, _, err := net.ParseCIDR(p); err == nil {
+			continue
+		}
+		if net.ParseIP(p) == nil {
+			result.AddError("api.rate_limit.trusted_proxies", p, "not an address or CIDR")
+		}
+	}
 }
 
 // validateServer validates server configuration
