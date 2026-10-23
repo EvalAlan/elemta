@@ -48,7 +48,8 @@ cert-manager creates two automatically renewed Secrets in `elemta`:
 - `elemta-mail-tls`, for the mail hostname, is mounted in the MTA at
   `/app/public-tls/tls.crt` and `/app/public-tls/tls.key`. The overlay's
   `elemta.toml` must point `[tls].cert_file` and `key_file` to those paths.
-  The MTA reloads the pair when the mounted files change.
+  The MTA reloads the pair when the mounted files change. The dashboard
+  gets only `tls.crt` at the same path, for its health tab.
 - The same mail Secret is mounted in the mailbox at
   `/etc/elemta/tls/cert.pem` and `key.pem`, matching the existing mailbox
   configuration. The mailbox reads the renewed files on new TLS handshakes.

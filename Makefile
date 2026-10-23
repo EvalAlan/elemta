@@ -267,7 +267,7 @@ bootstrap-admin:
 			user add $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1; then \
 			echo ""; \
 			echo "🔑 Dashboard login created"; \
-			echo "   URL:      http://localhost:8025/"; \
+			echo "   URL:      $(K8S_ADMIN_URL)"; \
 			echo "   Username: $(ADMIN_USER)"; \
 			echo "   Password: $$PW"; \
 			echo "   (shown once — make reset-admin-password if you lose it)"; \
@@ -303,7 +303,7 @@ reset-admin-password:
 	fi; \
 	echo ""; \
 	echo "🔑 Dashboard login"; \
-	echo "   URL:      http://localhost:8025/"; \
+	echo "   URL:      $(K8S_ADMIN_URL)"; \
 	echo "   Username: $(ADMIN_USER)"; \
 	echo "   Password: $$PW"; \
 	echo ""; \
@@ -897,6 +897,9 @@ K8S_HA = $(filter ha,$(shell $(KUBECTL) get namespace $(K8S_NAMESPACE) -o jsonpa
 K8S_MTA = $(if $(K8S_HA),statefulset/elemta-mta,deploy/elemta)
 K8S_MTA_PODS = app.kubernetes.io/name=$(if $(K8S_HA),elemta-mta,elemta)
 K8S_ADMIN_TARGET ?= $(if $(K8S_HA),deploy/elemta-admin,deploy/elemta)
+# dev/ha serves admin and webmail only through its HTTPS ingress.
+K8S_ADMIN_URL = $(if $(K8S_HA),https://admin.elemta.test/,http://localhost:8025/)
+K8S_WEBMAIL_URL = $(if $(K8S_HA),https://webmail.elemta.test/,http://localhost:8027)
 # What reads the runtime config at start, restarted to take a re-seeded one.
 K8S_CONFIG_READERS = $(if $(K8S_HA),statefulset/elemta-mta deploy/elemta-admin deploy/elemta-webmail,deploy/elemta)
 # Workloads that run the images built here, restarted after a rebuild
@@ -909,8 +912,8 @@ K8S_ADMIN_EXEC = $(KC) exec -i $(K8S_ADMIN_TARGET) -c admin -- /app/elemta --con
 	k8s-up k8s-down k8s-down-volumes k8s-restart k8s-status k8s-logs k8s-logs-elemta \
 	k8s-rebuild k8s-rebuild-dev k8s-reseed k8s-sink-up k8s-sink-down \
 	k8s-bootstrap-admin k8s-reset-admin-password k8s-print-dev-summary \
-	k8s-ha-operator k8s-ha-registry k8s-ha-images k8s-ha-mailbox-config k8s-ha-secrets \
-	k8s-ha-apply k8s-install-ha k8s-ha-status
+	k8s-ha-operator k8s-ha-edge k8s-ha-registry k8s-ha-images k8s-ha-mailbox-config \
+	k8s-ha-config k8s-ha-secrets k8s-ha-apply k8s-install-ha k8s-ha-status k8s-ha-ca
 
 k8s-help:
 	@echo "☸️  Kubernetes (k3s; see deployments/kubernetes/README.md):"
@@ -918,7 +921,9 @@ k8s-help:
 	@echo "  k8s-install-dev-full       + ClamAV, Rspamd"
 	@echo "  k8s-install-dev-bench      + ClamAV, Rspamd; delivery DISCARDED"
 	@echo "  k8s-install-dev-postgres   Postgres queue"
-	@echo "  k8s-install-ha             Lean local stack; replicated Postgres, Valkey, and LDAP"
+	@echo "  k8s-install-ha             Lean local stack; replicated Postgres, Valkey, and LDAP;"
+	@echo "                             HTTPS admin and webmail through HAProxy (*.elemta.test)"
+	@echo "  k8s-ha-ca                  Export that stack's development CA, to trust it"
 	@echo "  k8s-up / k8s-down          Scale to zero and back, volumes kept"
 	@echo "  k8s-down-volumes           Delete the namespace and everything in it"
 	@echo "  k8s-restart / k8s-status / k8s-logs / k8s-logs-elemta"
@@ -1095,6 +1100,19 @@ k8s-ha-operator:
 		$(KUBECTL) -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=5m; \
 	fi
 
+# cert-manager and the HAProxy ingress at the production edge's pinned
+# versions, once per cluster, in their own namespaces.
+HELM ?= helm
+k8s-ha-edge:
+	@if $(KUBECTL) get ingressclass haproxy >/dev/null 2>&1 && \
+		$(KUBECTL) get crd certificates.cert-manager.io >/dev/null 2>&1; then \
+		echo "ℹ️  cert-manager and the HAProxy ingress already installed"; \
+	else \
+		echo "📦 Installing cert-manager and the HAProxy ingress..."; \
+		EDGE_CONTEXT=$$($(KUBECTL) config current-context) HELM=$(HELM) \
+			$(K8S_DIR)/production/edge/install-controllers.sh; \
+	fi
+
 # A registry on localhost, which k3s's containerd pulls from over plain HTTP
 # without configuration, so images reach the cluster without root.
 k8s-ha-registry:
@@ -1131,6 +1149,28 @@ k8s-ha-mailbox-config:
 			{ echo "❌ config/mailbox-main.toml changed shape; could not set $$want"; exit 1; }; \
 	done
 
+# config/elemta.toml with what the HTTPS edge changes. The MTA serves the
+# certificate cert-manager renews (mounted by ../production/edge) and checks
+# LMTP against its CA. Admin and webmail are HTTPS origins behind HAProxy;
+# their NetworkPolicy admits only its pods, so the pod network can be
+# trusted to report the client's address. Generated and git-ignored, like
+# the mailbox's.
+k8s-ha-config:
+	@sed -e 's|^cert_file = .*|cert_file = "/app/public-tls/tls.crt"|' \
+		-e 's|^key_file = .*|key_file = "/app/public-tls/tls.key"|' \
+		-e 's|^lmtp_tls_ca_file = .*|lmtp_tls_ca_file = "/app/public-tls/ca.crt"|' \
+		-e 's|^allowed_origins = .*|allowed_origins = ["https://admin.elemta.test"]|' \
+		-e 's|^secure_cookies = .*|secure_cookies = true|' \
+		-e 's|^recovery_url = .*|recovery_url = "https://webmail.elemta.test"|' \
+		-e 's|^\[webmail\]$$|&\ntrusted_proxies = ["$(K8S_POD_CIDR)"]|' \
+		config/elemta.toml > $(K8S_DIR)/dev/ha/elemta.toml
+	@for want in '/app/public-tls/tls.crt' '/app/public-tls/tls.key' '/app/public-tls/ca.crt' \
+		'"https://admin.elemta.test"' 'secure_cookies = true' '"https://webmail.elemta.test"' \
+		'trusted_proxies = ["$(K8S_POD_CIDR)"]'; do \
+		grep -qF "$$want" $(K8S_DIR)/dev/ha/elemta.toml || \
+			{ echo "❌ config/elemta.toml changed shape; could not set $$want"; exit 1; }; \
+	done
+
 # Database passwords and the S3 key pair for dev/ha, made once. Letters and
 # digits only: the queue's password goes into a URL.
 k8s-ha-secrets: ensure-dev-secrets
@@ -1144,13 +1184,18 @@ k8s-ha-secrets: ensure-dev-secrets
 		printf 'ELEMTA_MAILBOX_S3_ACCESS_KEY=%s\nELEMTA_MAILBOX_S3_SECRET_KEY=%s\nAWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' \
 			"$$MAILBOX_S3_ACCESS_KEY" "$$MAILBOX_S3_SECRET_KEY" "$$MAILBOX_S3_ACCESS_KEY" "$$MAILBOX_S3_SECRET_KEY" > $$f; }
 
-k8s-ha-apply: k8s-ha-mailbox-config k8s-ha-secrets
+k8s-ha-apply: k8s-ha-mailbox-config k8s-ha-config k8s-ha-secrets
 	@echo "🚀 Applying deployments/kubernetes/dev/ha..."
 	@$(KUSTOMIZE) $(K8S_DIR)/dev/ha | $(KUBECTL) apply -f - | grep -v ' unchanged$$' || true
 	@$(KUBECTL) annotate namespace $(K8S_NAMESPACE) elemta.dev/overlay=ha --overwrite >/dev/null
 
 # Build, apply, wait for each tier in the order they depend on each other,
 # load the directory, then a dashboard login.
+#
+# K8S_HA comes from the namespace's annotation, but make expands the whole
+# recipe before its first line runs, when a fresh install has no namespace
+# yet; without this the restart below named the single-pod workloads.
+k8s-install-ha: K8S_HA = ha
 k8s-install-ha: check-tools k8s-check ensure-dev-certs
 	@if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx elemta-node0; then \
 		echo "❌ The Compose dev stack is running and holds the same ports. 'make down' first."; \
@@ -1161,6 +1206,7 @@ k8s-install-ha: check-tools k8s-check ensure-dev-certs
 		exit 1; \
 	fi
 	@$(MAKE) --no-print-directory k8s-ha-operator
+	@$(MAKE) --no-print-directory k8s-ha-edge
 	@$(MAKE) --no-print-directory k8s-ha-images
 	@$(MAKE) --no-print-directory k8s-ha-apply
 	@echo "⏳ Waiting for Postgres (three instances)..."
@@ -1175,6 +1221,18 @@ k8s-install-ha: check-tools k8s-check ensure-dev-certs
 	@$(MAKE) --no-print-directory k8s-wait
 	@$(MAKE) --no-print-directory k8s-bootstrap-admin
 	@$(MAKE) --no-print-directory k8s-ha-status
+	@$(MAKE) --no-print-directory k8s-ha-ca
+
+# The development CA that signs dev/ha's certificates, for the browser and
+# the system store to trust, and the names to point at this machine.
+k8s-ha-ca:
+	@$(KC) wait certificate/elemta-dev-ca --for=condition=Ready --timeout=2m >/dev/null
+	@mkdir -p $(K8S_HA_SECRETS) && chmod 700 $(K8S_HA_SECRETS)
+	@$(KC) get secret elemta-dev-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > $(K8S_HA_SECRETS)/ca.crt
+	@echo "🔐 Development CA: $(K8S_HA_SECRETS)/ca.crt"
+	@echo "   Trust it in the browser (or: sudo trust anchor $(K8S_HA_SECRETS)/ca.crt), and add"
+	@echo "   $$($(KUBECTL) -n haproxy-controller get svc haproxy-kubernetes-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}') admin.elemta.test webmail.elemta.test mail.elemta.test"
+	@echo "   to /etc/hosts."
 
 k8s-ha-status:
 	@$(KC) get cluster.postgresql.cnpg.io,statefulsets,deployments,hpa,pdb 2>/dev/null
@@ -1218,7 +1276,7 @@ k8s-bootstrap-admin:
 		if printf '%s\n' "$$PW" | $(K8S_ADMIN_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1; then \
 			echo ""; \
 			echo "🔑 Dashboard login created"; \
-			echo "   URL:      http://localhost:8025/"; \
+			echo "   URL:      $(K8S_ADMIN_URL)"; \
 			echo "   Username: $(ADMIN_USER)"; \
 			echo "   Password: $$PW"; \
 			echo "   (shown once — make k8s-reset-admin-password if you lose it)"; \
@@ -1243,7 +1301,7 @@ k8s-reset-admin-password:
 	fi; \
 	echo ""; \
 	echo "🔑 Dashboard login"; \
-	echo "   URL:      http://localhost:8025/"; \
+	echo "   URL:      $(K8S_ADMIN_URL)"; \
 	echo "   Username: $(ADMIN_USER)"; \
 	echo "   Password: $$PW"; \
 	echo ""
@@ -1253,8 +1311,8 @@ k8s-print-dev-summary:
 	@echo "✅ Development Environment Ready (Kubernetes, namespace $(K8S_NAMESPACE))"
 	@echo "   📧 SMTP:      localhost:2525"
 	@echo "   📊 Metrics:   http://localhost:9080/metrics"
-	@echo "   🌐 Web UI:    http://localhost:8025  (login required)"
-	@echo "   ✉️  Webmail:   http://localhost:8027  ·  IMAP: localhost:993 (TLS)"
+	@echo "   🌐 Web UI:    $(K8S_ADMIN_URL)  (login required)"
+	@echo "   ✉️  Webmail:   $(K8S_WEBMAIL_URL)  ·  IMAP: localhost:993 (TLS)"
 	@target=$$($(KC) exec $(K8S_MTA) -c smtp -- sh -c "sed -n '/^\[delivery\]/,/^\[/p' /app/runtime-config/elemta.toml | grep -m1 '^host'" 2>/dev/null | sed 's/.*= *//; s/"//g'); \
 	if [ "$$target" = "elemta-sink" ]; then \
 		echo "   📭 Delivery:  a DISCARDING SINK. make k8s-sink-down for real mailboxes."; \

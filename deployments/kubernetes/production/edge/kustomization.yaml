@@ -88,6 +88,24 @@ patches:
           secret:
             secretName: elemta-mail-tls
             defaultMode: 0440
+  # The dashboard's health tab reads [tls].cert_file from the config it
+  # shares with the MTA. Only the certificate: it never needs the key.
+  - target:
+      kind: Deployment
+      name: elemta-admin
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: { name: public-tls, mountPath: /app/public-tls, readOnly: true }
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: public-tls
+          secret:
+            secretName: elemta-mail-tls
+            defaultMode: 0444
+            items:
+              - { key: tls.crt, path: tls.crt }
   - target:
       kind: Deployment
       name: elemta-mailbox

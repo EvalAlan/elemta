@@ -10,6 +10,10 @@
 #
 # Images come from a registry on localhost:5000 (make k8s-ha-images), which
 # k3s pulls from without root, unlike an image import.
+#
+# Admin and webmail are reached as in production, over HTTPS through the
+# HAProxy ingress (../../production/edge), at https://admin.elemta.test and
+# https://webmail.elemta.test; mail keeps this machine's host ports.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -26,11 +30,18 @@ resources:
   - ../minimal/dns.yaml
   - objects.yaml
   - expose.yaml
+  - edge-ca.yaml
+
+components:
+  - ../../production/edge
 
 configMapGenerator:
+  # Generated from config/elemta.toml by `make k8s-ha-config`: HTTPS
+  # origins, the certificates cert-manager issues, and HAProxy trusted for
+  # client addresses.
   - name: elemta-config
     files:
-      - ../../../../config/elemta.toml
+      - elemta.toml
   - name: elemta-dns
     files:
       - ../../../dns/unbound.conf
@@ -98,15 +109,6 @@ secretGenerator:
       disableNameSuffixHash: true
     envs:
       - ../../../compose/.secrets/k8s-ha/db-queue.env
-  - name: elemta-mailbox-tls
-    files:
-      - cert.pem=../../../compose/.secrets/mailbox-tls/cert.pem
-      - key.pem=../../../compose/.secrets/mailbox-tls/key.pem
-  - name: elemta-dev-tls
-    type: kubernetes.io/tls
-    files:
-      - tls.crt=../../../../config/test.crt
-      - tls.key=../../../../config/test.key
 
 images:
   # ../../ha has already named it after the published image.
@@ -180,9 +182,11 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/imagePullPolicy
         value: Always
-  # The development certificate next to elemta.toml, where
-  # scripts/prepare-config.sh takes a host pair from. By index, so check it
-  # is the right volume first.
+  # The mail certificate next to elemta.toml too, where
+  # scripts/prepare-config.sh takes a host pair from; otherwise it makes a
+  # self-signed one. The MTA serves the renewable mount the edge adds
+  # (/app/public-tls), per the generated config. By index, so check it is the
+  # right volume first.
   - target:
       kind: StatefulSet
       name: elemta-mta
@@ -200,7 +204,7 @@ patches:
               - configMap:
                   name: elemta-config
               - secret:
-                  name: elemta-dev-tls
+                  name: elemta-mail-tls
                   items:
                     - { key: tls.crt, path: test.crt }
                     - { key: tls.key, path: test.key }
@@ -221,8 +225,81 @@ patches:
               - configMap:
                   name: elemta-config
               - secret:
-                  name: elemta-dev-tls
+                  name: elemta-mail-tls
                   items:
                     - { key: tls.crt, path: test.crt }
                     - { key: tls.key, path: test.key }
   - path: patches.yaml
+  # A CA this overlay makes (edge-ca.yaml) in place of Let's Encrypt.
+  - target:
+      kind: Issuer
+      name: elemta-public
+    patch: |-
+      - op: remove
+        path: /spec/acme
+      - op: add
+        path: /spec/ca
+        value: { secretName: elemta-dev-ca }
+  # The component has already put its example names in, before anything
+  # here runs, so its settings are corrected only so the cluster's copy
+  # tells the truth; the patches after this one change the names. The mail
+  # certificate also names the services the MTA and webmail reach the
+  # mailbox and MTA by, so LMTP verifies against it.
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: elemta-edge-settings
+      data:
+        MAIL_HOST: mail.elemta.test
+        ADMIN_HOST: admin.elemta.test
+        WEBMAIL_HOST: webmail.elemta.test
+        ACME_EMAIL: postmaster@elemta.test
+  - target:
+      kind: Certificate
+      name: elemta-mail-tls
+    patch: |-
+      - op: replace
+        path: /spec/dnsNames
+        value: [mail.elemta.test, elemta-mailbox, elemta]
+  - target:
+      kind: Certificate
+      name: elemta-web-tls
+    patch: |-
+      - op: replace
+        path: /spec/dnsNames
+        value: [admin.elemta.test, webmail.elemta.test]
+  - target:
+      kind: Ingress
+      name: elemta-admin
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: admin.elemta.test
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: admin.elemta.test
+  - target:
+      kind: Ingress
+      name: elemta-webmail
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: webmail.elemta.test
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: webmail.elemta.test
+  # Mail stays on this machine's dev ports (expose.yaml); the public ones
+  # would take 993 and 4190 from them and bind 25 on the workstation.
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: elemta-mail-public
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: elemta-mailbox-public

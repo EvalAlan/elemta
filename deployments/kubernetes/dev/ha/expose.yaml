@@ -3,6 +3,9 @@
 # Deployment. externalTrafficPolicy Local keeps the client's own address,
 # which the MTA's spam, relay and rate-limit checks need, without the PROXY
 # protocol the Compose balancers use.
+#
+# Admin and webmail have no host port: as in production they are reached
+# only through the HTTPS ingress, whose NetworkPolicy shuts out anything else.
 apiVersion: v1
 kind: Service
 metadata:
@@ -18,33 +21,6 @@ spec:
     - { name: smtp, port: 2525, targetPort: smtp }
     - { name: submission, port: 2587, targetPort: submission }
     - { name: metrics, port: 9080, targetPort: metrics }
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: elemta-admin-host
-  labels:
-    app.kubernetes.io/name: elemta-admin
-spec:
-  type: LoadBalancer
-  selector:
-    app.kubernetes.io/name: elemta-admin
-  ports:
-    - { name: http, port: 8025, targetPort: http }
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: elemta-webmail-host
-  labels:
-    app.kubernetes.io/name: elemta-webmail
-spec:
-  type: LoadBalancer
-  sessionAffinity: ClientIP
-  selector:
-    app.kubernetes.io/name: elemta-webmail
-  ports:
-    - { name: http, port: 8027, targetPort: http }
 ---
 apiVersion: v1
 kind: Service

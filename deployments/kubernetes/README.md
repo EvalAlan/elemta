@@ -107,9 +107,9 @@ Services that bind on the host:
 | Port | Service |
 |---|---|
 | 2525 / 2587 | SMTP / submission |
-| 8025 | Dashboard and API |
+| 8025 | Dashboard and API (not in `dev/ha`; see below) |
 | 9080 | Prometheus metrics (container port 8080) |
-| 8027 | Webmail |
+| 8027 | Webmail (not in `dev/ha`; see below) |
 | 993 | IMAPS |
 | 14143 / 4190 | IMAP / ManageSieve |
 | 1389 | LDAP |
@@ -201,6 +201,26 @@ make k8s-ha-status        # Postgres, StatefulSets, Deployments, the Valkey prim
 Images go through a registry on `localhost:5000` (`make k8s-ha-registry`),
 which k3s pulls from without root. It uses the same namespace and host
 ports as the other dev overlays, so `make k8s-down-volumes` before switching.
+
+It also includes the [production edge](production/edge/README.md), so
+TLS and routing are exercised as they will be in production. The
+differences are the issuer and the mail ports:
+
+- `make k8s-ha-edge` installs cert-manager and the HAProxy ingress at the
+  edge's pinned versions (set `HELM=` if helm isn't on the PATH).
+- A development CA (`dev/ha/edge-ca.yaml`) issues the certificates instead
+  of Let's Encrypt, so they renew as they would in production.
+  `make k8s-ha-ca` exports the CA to trust it, and prints the `/etc/hosts`
+  line for `admin.elemta.test`, `webmail.elemta.test` and
+  `mail.elemta.test`.
+- Admin and webmail are served only at `https://admin.elemta.test` and
+  `https://webmail.elemta.test`, with no 8025/8027 host ports. Mail keeps
+  the host ports in the table above, serving the cert-manager certificate.
+- `make k8s-ha-config` generates the overlay's `elemta.toml` from
+  `config/elemta.toml` with HTTPS origins, secure cookies, HAProxy trusted
+  for client addresses, and the MTA's certificate and LMTP CA read from
+  the renewable `/app/public-tls` mount. After it changes,
+  `make k8s-reseed` puts it in place.
 
 Failover to try:
 

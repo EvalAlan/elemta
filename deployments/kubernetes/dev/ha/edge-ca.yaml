@@ -1,0 +1,29 @@
+# The production edge (../../production/edge) gets its certificates from
+# Let's Encrypt, which can't reach this machine. Here a development CA signs
+# them instead, so the same Issuer name, Certificates, ingress and renewal
+# run as in production. Trust the CA once in the browser and the system
+# store; `make k8s-ha-ca` exports it.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: elemta-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: elemta-dev-ca
+spec:
+  isCA: true
+  commonName: Elemta development CA
+  secretName: elemta-dev-ca
+  # Long-lived, so the copy trusted in the browser stays valid; the leaf
+  # certificates it signs still renew on cert-manager's default schedule.
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: elemta-selfsigned
+    kind: Issuer

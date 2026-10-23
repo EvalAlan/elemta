@@ -21,7 +21,7 @@ spec:
         - name: smtp
           env:
             - { name: ELEMTA_DEMO_DATA, value: "true" }
-            - { name: ELEMTA_HOSTNAME, value: mail.dev.example.net }
+            - { name: ELEMTA_HOSTNAME, value: mail.elemta.test }
             - { name: NODE_ID, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
 ---
 apiVersion: apps/v1
@@ -35,6 +35,8 @@ spec:
         - name: admin
           env:
             - { name: ELEMTA_DEMO_DATA, value: "true" }
+            # Where Open mailbox sends the administrator.
+            - { name: ELEMTA_WEBMAIL_PUBLIC_URL, value: "https://webmail.elemta.test" }
             - { name: NODE_ID, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
 ---
 # Rspamd makes more DNS lookups per message than anything else (RBLs,
