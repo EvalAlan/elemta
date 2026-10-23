@@ -60,6 +60,14 @@ Run the script again after changing `cloud.env`; it is idempotent. It
 re-renders the configuration, which replaces settings saved in the
 dashboard; make lasting changes in the script's rendering instead.
 
+The Compose project is `elemta`, so containers are named `elemta-node0`,
+`elemta-mailbox-server-1` and so on, and volumes `elemta_<volume>`. A host
+first installed before the compose file named its project has `compose_*`
+volumes; add `ELEMTA_VOLUME_PREFIX=compose` to `cloud.env` there so the stack
+keeps using them, and take the old stack down once
+(`docker compose -p compose ... down`, which keeps volumes) before the next
+deploy, because its containers and network belong to the old project.
+
 ## Backups
 
 ```sh
@@ -121,9 +129,9 @@ previous image's OpenLDAP 2.4 database can't be opened by 2.6.
 the previous image exports the entries, the new one is created from them,
 and every entry is checked. If you roll service by service instead, run
 `scripts/ldap-migrate.sh` first; until then the new directory refuses to
-start rather than start empty. The old volumes (`compose_ldap_data`,
-`compose_ldap_config`) are left untouched for a rollback; remove them once
-you are satisfied.
+start rather than start empty. The old volumes (`<prefix>_ldap_data` and
+`<prefix>_ldap_config`; see the volume prefix below) are left untouched for a
+rollback; remove them once you are satisfied.
 
 To roll with less disruption than recreating everything at once, pull and
 replace one service at a time with `scripts/rolling-update.sh`: for a
@@ -138,12 +146,12 @@ C="docker compose --env-file deployments/compose/.secrets/cloud.env \
   -f deployments/compose/docker-compose.yml -f deployments/compose/docker-compose.cloud.yml \
   -f deployments/compose/docker-compose.release.yml"
 $C pull --ignore-buildable
-scripts/rolling-update.sh      # elemta-ldap, elemta-mailbox-server, elemta, elemta-webmail, elemta-web
+scripts/rolling-update.sh      # elemta-ldap, mailbox-server, elemta, elemta-webmail, elemta-web
 $C up -d
 ```
 
 **From v0.5.3 or earlier:** the two mailbox replicas, `elemta-mailbox-a`
-and `-b`, are now one service, `elemta-mailbox-server`, run twice by default
+and `-b`, are now one service, `mailbox-server`, run twice by default
 (`ELEMTA_MAILBOX_REPLICAS`). `$C up -d --remove-orphans` starts the new
 containers and removes the old pair; HAProxy follows within seconds. The
 webmail no longer has a fixed address: it sends on the MTA's own webmail

@@ -13,7 +13,7 @@
 # Mail that arrives while it runs isn't lost: the MTA is stopped first, so
 # sending servers queue it and retry.
 #
-# Settings: ELEMTA_COMPOSE_PROJECT (default compose), ELEMTA_TAG (as for
+# Settings: ELEMTA_COMPOSE_PROJECT (default elemta), ELEMTA_VOLUME_PREFIX (default from .secrets/cloud.env, else elemta), ELEMTA_TAG (as for
 # scripts/cloud-deploy.sh: set it to restore onto the release images).
 set -euo pipefail
 in=${1:?usage: $0 <backup directory> --confirm}
@@ -21,7 +21,7 @@ in=${1:?usage: $0 <backup directory> --confirm}
 root=$(cd "$(dirname "$0")/.." && pwd)
 compose_dir=$root/deployments/compose
 secrets=$compose_dir/.secrets
-project=${ELEMTA_COMPOSE_PROJECT:-compose}
+project=${ELEMTA_COMPOSE_PROJECT:-elemta}
 in=$(cd "$in" && pwd)
 [ -f "$in/complete" ] || { echo "restore: backup is incomplete" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$*"; }
@@ -42,16 +42,17 @@ files=(-f "$compose_dir/docker-compose.yml" -f "$compose_dir/docker-compose.clou
 dc() { docker compose -p "$project" --env-file "$env_file" "${files[@]}" "$@"; }
 
 step "Stopping mail services"
-dc stop elemta elemta-web elemta-webmail elemta-mailbox elemta-mailbox-server elemta-ldap
+dc stop elemta elemta-web elemta-webmail elemta-mailbox mailbox-server elemta-ldap
 dc up -d elemta-mailbox-db
 until docker exec elemta-mailbox-db sh -c 'pg_isready -q -U "$POSTGRES_USER"'; do sleep 1; done
 # shellcheck source=SCRIPTDIR/lib/compose.sh
 . "$root/scripts/lib/compose.sh"
-image=$(docker inspect -f '{{.Config.Image}}' "$(docker ps -a --filter label=com.docker.compose.service=elemta-mailbox-server --format '{{.Names}}' | sort | head -n 1)")
+volumes=$(volume_prefix "$secrets/cloud.env")
+image=$(docker inspect -f '{{.Config.Image}}' "$(docker ps -a --filter label=com.docker.compose.service=mailbox-server --format '{{.Names}}' | sort | head -n 1)")
 ldap_image=$(docker inspect -f '{{.Config.Image}}' elemta-ldap)
 # load <volume> <archive> [owner]: replace a volume's contents.
 load() {
-    docker run --rm -i --network none --user 0 --entrypoint sh -v "${project}_$1:/v" "$image" \
+    docker run --rm -i --network none --user 0 --entrypoint sh -v "${volumes}_$1:/v" "$image" \
         -c "find /v -mindepth 1 -delete && tar -C /v -xzf - ${3:+&& chown -R $3 /v}" <"$2"
 }
 
@@ -66,7 +67,7 @@ step "Directory"
 # scripts once it runs, so a backup taken under the previous directory image
 # restores the same way as a current one.
 docker run --rm --network none --user 0 --entrypoint sh --env-file "$secrets/ldap-admin.env" \
-    -v "${project}_ldap_slapd:/etc/ldap/slapd.d" -v "${project}_ldap_db:/var/lib/ldap" \
+    -v "${volumes}_ldap_slapd:/etc/ldap/slapd.d" -v "${volumes}_ldap_db:/var/lib/ldap" \
     -v "$in/ldap/data.ldif:/import/data.ldif:ro" "$ldap_image" \
     -c 'find /etc/ldap/slapd.d /var/lib/ldap -mindepth 1 -delete && elemta-ldap init'
 
@@ -78,7 +79,7 @@ step "Starting the stack"
 # The restored runtime configuration is kept, not reseeded from the host.
 ELEMTA_CONFIG_RESEED=false dc up -d
 # By service: a scaled service has several containers, with Compose's names.
-for svc in elemta-ldap elemta-mailbox-server elemta elemta-webmail elemta-web; do
+for svc in elemta-ldap mailbox-server elemta elemta-webmail elemta-web; do
     for c in $(svc_containers "$svc"); do
         for _ in $(seq 100); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null)" = healthy ] && break

@@ -8,7 +8,7 @@
 #     -f docker-compose.release.yml -f docker-compose.scale.yml up -d
 #
 #   ... up -d --no-deps --scale elemta=3 --scale elemta-webmail=3 \
-#             --scale elemta-web=2 --scale elemta-mailbox-server=3
+#             --scale elemta-web=2 --scale mailbox-server=3
 #   scripts/rolling-update.sh      # replace containers a few at a time
 #
 # What changes:
@@ -159,4 +159,6 @@ services:
 
 volumes:
   ldap_db_2:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_ldap_db_2
   ldap_slapd_2:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_ldap_slapd_2

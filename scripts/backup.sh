@@ -20,18 +20,18 @@
 # Run scripts/restore-drill.sh on every new backup, or at least regularly:
 # a backup nobody has restored is a guess.
 #
-# Settings: ELEMTA_COMPOSE_PROJECT (default compose, the Compose project
-# whose volumes these are), MAILBOX_IMAGE (an image with tar; default the
+# Settings: ELEMTA_VOLUME_PREFIX (default from .secrets/cloud.env, else
+# elemta: the stack's volumes are <prefix>_<volume>), MAILBOX_IMAGE (an image with tar; default the
 # running mailbox replica's).
 set -eu
 out=${1:?usage: $0 <directory>}
 root=$(cd "$(dirname "$0")/.." && pwd)
-project=${ELEMTA_COMPOSE_PROJECT:-compose}
 secrets=$root/deployments/compose/.secrets
 [ ! -e "$out" ] || { echo "Backup destination already exists: $out" >&2; exit 1; }
 # shellcheck source=SCRIPTDIR/lib/compose.sh
 . "$root/scripts/lib/compose.sh"
-mailbox=$(svc_container elemta-mailbox-server)
+volumes=$(volume_prefix "$secrets/cloud.env")
+mailbox=$(svc_container mailbox-server)
 image=${MAILBOX_IMAGE:-$(docker inspect -f '{{.Config.Image}}' "$mailbox")}
 parent=$(dirname "$out")
 mkdir -p "$parent"
@@ -40,7 +40,7 @@ trap 'rm -rf "$stage"' EXIT HUP INT TERM
 chmod 700 "$stage"
 
 echo "== Mailbox"
-MAILBOX_IMAGE=$image MAILBOX_BODIES_VOLUME=${project}_mailbox_bodies "$root/scripts/mailbox-backup.sh" "$stage/mailbox" >/dev/null
+MAILBOX_IMAGE=$image MAILBOX_BODIES_VOLUME=${volumes}_mailbox_bodies "$root/scripts/mailbox-backup.sh" "$stage/mailbox" >/dev/null
 
 echo "== Directory"
 mkdir "$stage/ldap"
@@ -58,7 +58,7 @@ mkdir "$stage/mta"
 for v in elemta_queue elemta_config; do
     # As for bodies (mailbox-backup.sh): a live queue changes while it's
     # read; tar's exit 1 for that is fine, 2 is an error.
-    docker run --rm --network none --entrypoint sh -v "${project}_$v:/v:ro" "$image" \
+    docker run --rm --network none --entrypoint sh -v "${volumes}_$v:/v:ro" "$image" \
         -c 'tar --warning=no-file-changed -C /v -czf - .; [ $? -le 1 ]' >"$stage/mta/$v.tar.gz"
 done
 

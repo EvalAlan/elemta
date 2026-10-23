@@ -1,3 +1,7 @@
+# The project is "elemta" wherever the stack is started from, so containers
+# are named elemta-<service>-N rather than after this directory.
+name: elemta
+
 # Mail is stored by Elemta's own mailbox service (IMAP, LMTP and
 # ManageSieve), with Postgres metadata and file or S3 message bodies.
 x-mailbox: &mailbox
@@ -431,9 +435,9 @@ services:
       retries: 20
 
   # The mailbox servers: as many as `deploy.replicas` (or `--scale
-  # elemta-mailbox-server=N`), all equal, behind elemta-mailbox. No
+  # mailbox-server=N`), all equal, behind elemta-mailbox. No
   # container_name, which would stop Compose from running more than one.
-  elemta-mailbox-server:
+  mailbox-server:
     <<: *mailbox
     deploy:
       replicas: ${ELEMTA_MAILBOX_REPLICAS:-2}
@@ -462,7 +466,7 @@ services:
         # address only.
         ipv4_address: ${ELEMTA_MAILBOX_LB_IP:-10.253.53.24}
     depends_on:
-      elemta-mailbox-server:
+      mailbox-server:
         condition: service_healthy
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -624,37 +628,57 @@ networks:
   monitoring_network:
     driver: bridge
 
+# Volume names are fixed rather than derived from the project, so a stack
+# first created under another project name keeps its data. A host
+# installed before this file named the project has compose_* volumes and
+# sets ELEMTA_VOLUME_PREFIX=compose.
 volumes:
   mailbox_metadata:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_mailbox_metadata
   mailbox_bodies:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_mailbox_bodies
   elemta_queue:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_elemta_queue
     driver: local
   # The configuration the services actually read. Shared so a change saved in
   # the web UI reaches the SMTP node, and durable so it survives a restart.
   elemta_config:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_elemta_config
     driver: local
   elemta_logs:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_elemta_logs
     driver: local
   elemta_plugins:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_elemta_plugins
     driver: local
   clamav_data:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_clamav_data
     driver: local
   rspamd_data:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_rspamd_data
     driver: local
   valkey_data:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_valkey_data
     driver: local
   rspamd_valkey_data:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_rspamd_valkey_data
     driver: local
   prometheus_data:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_prometheus_data
     driver: local
   grafana_data:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_grafana_data
     driver: local
   alertmanager_data:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_alertmanager_data
     driver: local
   ldap_db:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_ldap_db
     driver: local
   ldap_slapd:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_ldap_slapd
     driver: local
   # The previous directory image's database; see elemta-ldap.
   ldap_data:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_ldap_data
     driver: local

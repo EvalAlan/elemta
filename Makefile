@@ -39,7 +39,7 @@ MAILAUTH_LAB_DIR ?= /tmp/elemta-mailauth-lab
 DEV_ENV_FILE ?= .env
 # The normal dev stack keeps only services used by mail delivery and webmail.
 # The discarding sink is started explicitly by the benchmark targets.
-DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-webmail elemta-mailbox-db elemta-mailbox-server elemta-mailbox elemta-ldap valkey
+DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-webmail elemta-mailbox-db mailbox-server elemta-mailbox elemta-ldap valkey
 DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd
 # The benchmarking stack: everything that scans, nothing that stores.
 DEV_BENCH_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-sink
@@ -873,14 +873,14 @@ status:
 rebuild:
 	@echo "🔨 Rebuilding and restarting Elemta..."
 	@$(MAKE) down
-	docker compose -f $(COMPOSE_FILE) build --no-cache elemta elemta-mailbox-server
+	docker compose -f $(COMPOSE_FILE) build --no-cache elemta mailbox-server
 	@$(MAKE) up
 	@echo "✅ Rebuild complete"
 
 rebuild-dev:
 	@echo "🔨 Quick rebuild for development..."
 	@$(MAKE) down
-	docker compose -f $(COMPOSE_FILE) build elemta elemta-mailbox-server
+	docker compose -f $(COMPOSE_FILE) build elemta mailbox-server
 	@$(MAKE) up
 	@echo "✅ Development rebuild complete"
 

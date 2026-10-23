@@ -15,3 +15,17 @@ svc_container() {
     c=$(svc_containers "$1" | head -n 1)
     echo "${c:-$1}"
 }
+
+# The prefix of the stack's volume names (docker-compose.yml names them
+# <prefix>_<volume>): ELEMTA_VOLUME_PREFIX from the environment or the given
+# env file, else elemta. A stack created before the compose file named its
+# project keeps compose_* volumes and sets the prefix to compose.
+#
+#   volume_prefix [env-file]
+volume_prefix() {
+    p=${ELEMTA_VOLUME_PREFIX:-}
+    if [ -z "$p" ] && [ -n "${1:-}" ] && [ -f "$1" ]; then
+        p=$(sed -n 's/^ELEMTA_VOLUME_PREFIX=//p' "$1" | tail -n 1)
+    fi
+    echo "${p:-elemta}"
+}

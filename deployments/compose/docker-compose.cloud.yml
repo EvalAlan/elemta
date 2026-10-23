@@ -67,7 +67,7 @@ services:
     volumes:
       - ./.secrets/cloud/config:/app/config:ro
 
-  elemta-mailbox-server:
+  mailbox-server:
     volumes: !override
       - ./.secrets/cloud/mailbox.toml:/etc/elemta/mailbox.toml:ro
       - ./.secrets/mailbox-tls:/etc/elemta/tls:ro
@@ -123,4 +123,6 @@ services:
 
 volumes:
   caddy_data:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_caddy_data
   caddy_config:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_caddy_config

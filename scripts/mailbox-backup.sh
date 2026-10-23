@@ -15,7 +15,7 @@ out=${1:?usage: $0 <directory>}
 db=${MAILBOX_DB_CONTAINER:-elemta-mailbox-db}
 dbuser=${MAILBOX_DB_USER:-}
 dbname=${MAILBOX_DB_NAME:-}
-bodies=${MAILBOX_BODIES_VOLUME:-compose_mailbox_bodies}
+bodies=${MAILBOX_BODIES_VOLUME:-elemta_mailbox_bodies}
 image=${MAILBOX_IMAGE:-elemta-mailbox:dev}
 [ ! -e "$out" ] || { echo "Backup destination already exists: $out" >&2; exit 1; }
 parent=$(dirname "$out")

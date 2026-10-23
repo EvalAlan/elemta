@@ -14,7 +14,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 [ -f "$in/complete" ] || { echo "Backup is incomplete" >&2; exit 1; }
 # shellcheck source=SCRIPTDIR/lib/compose.sh
 . "$root/scripts/lib/compose.sh"
-image=${MAILBOX_IMAGE:-$(docker inspect -f '{{.Config.Image}}' "$(svc_container elemta-mailbox-server)")}
+image=${MAILBOX_IMAGE:-$(docker inspect -f '{{.Config.Image}}' "$(svc_container mailbox-server)")}
 ldap_image=${LDAP_IMAGE:-$(docker inspect -f '{{.Config.Image}}' elemta-ldap)}
 in=$(cd "$in" && pwd)
 

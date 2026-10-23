@@ -15,12 +15,12 @@
 # The compose files and project are the same as the deploy's: set
 # ELEMTA_TAG for the release images, as scripts/cloud-deploy.sh does.
 #
-# Settings: ELEMTA_COMPOSE_PROJECT (default compose), ELEMTA_TAG.
+# Settings: ELEMTA_COMPOSE_PROJECT (default elemta), ELEMTA_VOLUME_PREFIX (default from .secrets/cloud.env, else elemta), ELEMTA_TAG.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 compose_dir=$root/deployments/compose
 secrets=$compose_dir/.secrets
-project=${ELEMTA_COMPOSE_PROJECT:-compose}
+project=${ELEMTA_COMPOSE_PROJECT:-elemta}
 # shellcheck source=SCRIPTDIR/lib/compose.sh
 . "$root/scripts/lib/compose.sh"
 
@@ -51,7 +51,7 @@ healthy() {
 }
 
 services=("$@")
-[ ${#services[@]} -gt 0 ] || services=(elemta-ldap elemta-mailbox-server elemta elemta-webmail elemta-web)
+[ ${#services[@]} -gt 0 ] || services=(elemta-ldap mailbox-server elemta elemta-webmail elemta-web)
 
 for svc in "${services[@]}"; do
     mapfile -t old < <(svc_containers "$svc")
