@@ -149,6 +149,13 @@ serve)
     replicate
     mkdir -p /var/lib/openldap/run
     chown ldap:ldap /var/lib/openldap/run
+    # slapd sizes its connection table to the open-file limit. Docker gives
+    # containers about a million; containerd as k3s runs it gives ~a billion,
+    # and slapd is killed for memory before it starts. A directory needs a
+    # few thousand connections at most.
+    if [ "$(ulimit -n)" = unlimited ] || [ "$(ulimit -n)" -gt 65536 ]; then
+        ulimit -n 65536
+    fi
     # -d keeps slapd in the foreground for the container; 0 logs nothing
     # beyond start-up failures, as before. LDAP_DEBUG=256 logs every operation.
     exec slapd -d "${LDAP_DEBUG:-0}" -u ldap -g ldap -F "$conf" -h "ldap:/// ldapi:///"
