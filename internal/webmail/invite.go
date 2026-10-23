@@ -201,6 +201,7 @@ func (s *Server) submitDraft(ctx context.Context, sess *Session, d *Draft) error
 	if sess.AdminActor != "" {
 		return errors.New("sending is unavailable during administrator access")
 	}
+	s.stampOrigin(ctx, d)
 	raw, err := d.Build(s.now())
 	if err != nil {
 		return err
@@ -209,9 +210,13 @@ func (s *Server) submitDraft(ctx context.Context, sess *Session, d *Draft) error
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	sendCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	return s.submit.Submit(ctx, sess.User, pw, sess.Address, d.Recipients(), raw)
+	if err := s.submit.Submit(sendCtx, sess.User, pw, sess.Address, d.Recipients(), raw); err != nil {
+		return err
+	}
+	s.logSent(ctx, sess, d, "calendar")
+	return nil
 }
 
 // rsvpSubmit acts on the invitation card in the reading pane: answering an

@@ -355,7 +355,11 @@ func (s *Server) authed(next func(http.ResponseWriter, *http.Request, *Session))
 		// Settings shape every page (time zone, clock, page size); they
 		// are read once per session and cached after that.
 		s.prefs(r.Context(), sess)
-		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, sess)), sess)
+		ctx := context.WithValue(r.Context(), ctxKey{}, sess)
+		// Sends deep in the calendar code log and stamp the client's
+		// address without every function on the way passing it along.
+		ctx = context.WithValue(ctx, clientIPKey{}, s.clientIP(r))
+		next(w, r.WithContext(ctx), sess)
 	}
 }
 

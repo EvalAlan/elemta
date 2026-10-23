@@ -140,6 +140,12 @@ type Config struct {
 	// that clients can connect from directly.
 	TrustedProxies []string `toml:"trusted_proxies"`
 
+	// OriginatingIPHeader adds X-Originating-IP, the sender's address, to
+	// every message sent from the webmail. Off by default because it shows
+	// each recipient where the user was; the sender's address is always
+	// logged with the Message-ID instead, for abuse reports.
+	OriginatingIPHeader bool `toml:"originating_ip_header"`
+
 	// SessionKeyFile holds the key that seals passwords in shared sessions,
 	// base64 encoded. It is created if missing. Every pod must read the
 	// same file, and it must not be stored in Valkey.

@@ -41,6 +41,10 @@ type Draft struct {
 	// Calendar is an iCalendar part sent alongside the text, which is how
 	// invitations and replies to them travel (iMIP, RFC 6047).
 	Calendar *CalendarPart
+	// OriginatingIP, when set, goes in X-Originating-IP (see stampOrigin).
+	OriginatingIP string
+	// MessageID is set by Build to the Message-ID it gave the message.
+	MessageID string
 }
 
 // CalendarPart is an iMIP payload.
@@ -121,6 +125,7 @@ func (d *Draft) Build(now time.Time) ([]byte, error) {
 		return nil, fmt.Errorf("webmail: message id: %w", err)
 	}
 	h.SetMessageID(id)
+	d.MessageID = "<" + id + ">"
 	if d.InReplyTo != "" {
 		h.Set("In-Reply-To", d.InReplyTo)
 		refs := strings.TrimSpace(d.References + " " + d.InReplyTo)
@@ -134,6 +139,10 @@ func (d *Draft) Build(now time.Time) ([]byte, error) {
 		h.SetAddressList("Disposition-Notification-To", []*mail.Address{{Address: d.ReceiptTo}})
 	}
 	h.Set("User-Agent", "Elemta Webmail")
+	if d.OriginatingIP != "" {
+		// Bracketed, the form receivers have always parsed.
+		h.Set("X-Originating-IP", "["+d.OriginatingIP+"]")
+	}
 
 	root := d.bodyTree()
 	root.header.Header = mergeHeaders(h.Header.Header, root.header.Header)

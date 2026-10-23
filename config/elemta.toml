@@ -551,3 +551,8 @@ recovery_smtp_user = "sender@example.com"
 session_key_file = "/app/runtime-config/webmail-session.key"
 max_upload_mb = 25
 page_size = 50
+# Every send is logged as "webmail: sent" with the user, their address and
+# the Message-ID, so an abuse report can be traced without showing anyone
+# the sender's address. Turn this on to also put it in X-Originating-IP on
+# outgoing mail, where every recipient sees it.
+# originating_ip_header = false

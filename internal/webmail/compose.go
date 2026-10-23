@@ -428,6 +428,10 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 			d.Attachments = append(d.Attachments, Attachment{Filename: name, ContentType: part.ContentType, Data: body})
 		}
 	}
+	// A saved draft hasn't been sent from anywhere yet.
+	if !saveDraft {
+		s.stampOrigin(r.Context(), d)
+	}
 	raw, err := d.Build(s.now())
 	if err != nil {
 		s.log.Error("webmail: build message", "error", err)
@@ -468,6 +472,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		again(http.StatusBadGateway, "The message couldn't be sent. It hasn't been lost: try Send again.")
 		return
 	}
+	s.logSent(r.Context(), sess, d, "message")
 	notice := "sent"
 	if err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		if err := st.Append(r.Context(), RoleSent, raw, true, false); err != nil {
