@@ -927,16 +927,24 @@ DOCKER_BUILD_FLAGS ?=
 #   kind    kind load docker-image
 #   k3s     docker save | sudo k3s ctr images import  (asks for sudo)
 K8S_IMAGE_LOAD ?= auto
-# Deployments that run the images built here, restarted after a rebuild
-# because the tag does not change.
-K8S_OWN_IMAGES = deploy/elemta deploy/elemta-sink deploy/elemta-mailbox deploy/elemta-webmail deploy/elemta-dns
 # The overlay currently applied, recorded on the namespace by k8s-apply, so
 # targets that change config on a running stack re-apply that one rather than
 # the default, which would prune the rest.
 K8S_CURRENT_OVERLAY = $$($(KUBECTL) get namespace $(K8S_NAMESPACE) -o jsonpath='{.metadata.annotations.elemta\.dev/overlay}' 2>/dev/null || true)
-# Where the admin console runs: the elemta pod's admin container in the dev
-# overlays, its own Deployment in the replicated one.
-K8S_ADMIN_TARGET ?= deploy/elemta
+# The same, for make itself to choose between the two layouts below. Recursive
+# (=), so kubectl is only asked when a k8s target uses it.
+K8S_HA = $(filter ha,$(shell $(KUBECTL) get namespace $(K8S_NAMESPACE) -o jsonpath='{.metadata.annotations.elemta\.dev/overlay}' 2>/dev/null))
+# Where things run. The dev overlays put the MTA and the admin console in one
+# pod (deploy/elemta, containers smtp and admin); the replicated one (dev/ha)
+# runs them as their own workloads.
+K8S_MTA = $(if $(K8S_HA),statefulset/elemta-mta,deploy/elemta)
+K8S_MTA_PODS = app.kubernetes.io/name=$(if $(K8S_HA),elemta-mta,elemta)
+K8S_ADMIN_TARGET ?= $(if $(K8S_HA),deploy/elemta-admin,deploy/elemta)
+# What reads the runtime config at start, restarted to take a re-seeded one.
+K8S_CONFIG_READERS = $(if $(K8S_HA),statefulset/elemta-mta deploy/elemta-admin deploy/elemta-webmail,deploy/elemta)
+# Workloads that run the images built here, restarted after a rebuild
+# because the tag does not change.
+K8S_OWN_IMAGES = $(if $(K8S_HA),statefulset/elemta-mta statefulset/elemta-ldap deploy/elemta-admin deploy/elemta-webmail deploy/elemta-mailbox deploy/elemta-dns,deploy/elemta deploy/elemta-sink deploy/elemta-mailbox deploy/elemta-webmail deploy/elemta-dns)
 K8S_ADMIN_EXEC = $(KC) exec -i $(K8S_ADMIN_TARGET) -c admin -- /app/elemta --config /app/runtime-config/elemta.toml
 
 .PHONY: k8s-help k8s-check k8s-images k8s-load k8s-apply k8s-wait k8s-install \
@@ -961,7 +969,7 @@ k8s-help:
 	@echo "  k8s-reseed                 Take config/elemta.toml again, discarding what the UI saved"
 	@echo "  k8s-sink-up / k8s-sink-down   Discard delivery, or deliver to the mailbox service again"
 	@echo "  k8s-bootstrap-admin / k8s-reset-admin-password / k8s-bench-queue"
-	@echo "  Dashboard users: kubectl -n $(K8S_NAMESPACE) exec -it deploy/elemta -c admin -- \\"
+	@echo "  Dashboard users: kubectl -n $(K8S_NAMESPACE) exec -it $(K8S_ADMIN_TARGET) -c admin -- \\"
 	@echo "    /app/elemta --config /app/runtime-config/elemta.toml \\"
 	@echo "    user list|add|passwd|remove --file /app/runtime-config/users.json"
 	@echo "  See what is running: kubectl -n $(K8S_NAMESPACE) get pods,svc"
@@ -1031,11 +1039,11 @@ k8s-apply: k8s-mailbox-config
 	@$(KUSTOMIZE) $(K8S_DIR)/dev/$(K8S_OVERLAY) | $(KUBECTL) apply $(K8S_PRUNE) -f - | grep -v ' unchanged$$' || true
 	@$(KUBECTL) annotate namespace $(K8S_NAMESPACE) elemta.dev/overlay=$(K8S_OVERLAY) --overwrite >/dev/null
 
-# Wait for every Deployment to roll out. ClamAV downloads its signatures on a
+# Wait for every Deployment and StatefulSet to roll out. ClamAV downloads its signatures on a
 # fresh volume, which is why the timeout is long; nothing else needs it.
 k8s-wait:
 	@echo "⏳ Waiting for the stack to become ready..."
-	@for d in $$($(KC) get deployments -o name); do \
+	@for d in $$($(KC) get deployments,statefulsets -o name); do \
 		$(KC) rollout status $$d --timeout=10m >/dev/null || { echo "❌ $$d did not become ready:"; $(KC) describe $$d | tail -15; exit 1; }; \
 	done
 	@echo "✅ All deployments ready"
@@ -1047,9 +1055,9 @@ k8s-wait:
 # new one from the ConfigMap. Re-applies nothing: after editing the file, run
 # an install target (or k8s-sink-*, which re-apply).
 k8s-reseed:
-	@$(KC) exec deploy/elemta -c smtp -- rm -f /app/runtime-config/elemta.toml 2>/dev/null || true
-	@$(KC) rollout restart deploy/elemta >/dev/null
-	@$(KC) rollout status deploy/elemta --timeout=5m >/dev/null
+	@$(KC) exec $(K8S_MTA) -c smtp -- rm -f /app/runtime-config/elemta.toml 2>/dev/null || true
+	@$(KC) rollout restart $(K8S_CONFIG_READERS) >/dev/null
+	@for w in $(K8S_CONFIG_READERS); do $(KC) rollout status $$w --timeout=5m >/dev/null; done
 	@echo "✅ Runtime config re-seeded"
 
 # What every k8s-install-dev* target does, for one overlay: build, configure,
@@ -1202,10 +1210,10 @@ k8s-install-ha: check-tools k8s-check ensure-dev-certs
 	@$(KC) rollout status statefulset/elemta-valkey --timeout=5m >/dev/null
 	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) ./scripts/init-ldap-if-needed.sh || true
 	@# Images are pushed under the same tag; restart so every pod runs them.
-	@$(KC) rollout restart statefulset/elemta-mta deploy/elemta-admin deploy/elemta-webmail deploy/elemta-mailbox >/dev/null
+	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
 	@$(KC) rollout status statefulset/elemta-mta --timeout=10m >/dev/null
 	@$(MAKE) --no-print-directory k8s-wait
-	@$(MAKE) --no-print-directory k8s-bootstrap-admin K8S_ADMIN_TARGET=deploy/elemta-admin
+	@$(MAKE) --no-print-directory k8s-bootstrap-admin
 	@$(MAKE) --no-print-directory k8s-ha-status
 
 k8s-ha-status:
@@ -1213,6 +1221,10 @@ k8s-ha-status:
 	@echo "Valkey primary: $$($(KC) exec elemta-valkey-0 -c sentinel -- valkey-cli -p 26379 sentinel get-master-addr-by-name elemta 2>/dev/null | head -n 1)"
 
 k8s-sink-up:
+	@if [ -n "$(K8S_HA)" ]; then \
+		echo "❌ The replicated overlay has no sink; it always delivers to the mailbox service."; \
+		exit 1; \
+	fi
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
 	@ov=$(K8S_CURRENT_OVERLAY); $(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$${ov:-minimal} >/dev/null
 	@$(MAKE) --no-print-directory k8s-reseed >/dev/null
@@ -1220,6 +1232,10 @@ k8s-sink-up:
 	@echo "   Sink rate:  kubectl -n $(K8S_NAMESPACE) logs -f deploy/elemta-sink"
 
 k8s-sink-down:
+	@if [ -n "$(K8S_HA)" ]; then \
+		echo "❌ The replicated overlay has no sink; it always delivers to the mailbox service."; \
+		exit 1; \
+	fi
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-mailbox DELIVERY_PORT=2424
 	@ov=$(K8S_CURRENT_OVERLAY); $(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$${ov:-minimal} >/dev/null
 	@$(MAKE) --no-print-directory k8s-reseed >/dev/null
@@ -1279,7 +1295,7 @@ k8s-print-dev-summary:
 	@echo "   📊 Metrics:   http://localhost:9080/metrics"
 	@echo "   🌐 Web UI:    http://localhost:8025  (login required)"
 	@echo "   ✉️  Webmail:   http://localhost:8027  ·  IMAP: localhost:993 (TLS)"
-	@target=$$($(KC) exec deploy/elemta -c smtp -- sh -c "sed -n '/^\[delivery\]/,/^\[/p' /app/runtime-config/elemta.toml | grep -m1 '^host'" 2>/dev/null | sed 's/.*= *//; s/"//g'); \
+	@target=$$($(KC) exec $(K8S_MTA) -c smtp -- sh -c "sed -n '/^\[delivery\]/,/^\[/p' /app/runtime-config/elemta.toml | grep -m1 '^host'" 2>/dev/null | sed 's/.*= *//; s/"//g'); \
 	if [ "$$target" = "elemta-sink" ]; then \
 		echo "   📭 Delivery:  a DISCARDING SINK. make k8s-sink-down for real mailboxes."; \
 	elif [ -n "$$target" ]; then \
@@ -1290,14 +1306,26 @@ k8s-print-dev-summary:
 
 # 'down' keeps everything but the running pods, as 'docker compose down' keeps
 # the volumes; 'up' brings them back.
+# The replicated overlay is scaled back by applying it again, which restores
+# every replica count, and its Postgres is hibernated and woken through the
+# operator rather than scaled.
 k8s-up: k8s-check
-	@$(KC) scale deployment --all --replicas=1 >/dev/null
-	@# The mailbox service runs two replicas, like the Compose stack.
-	@$(KC) scale deployment elemta-mailbox --replicas=2 >/dev/null 2>&1 || true
+	@if [ -n "$(K8S_HA)" ]; then \
+		$(KC) annotate cluster elemta-db cnpg.io/hibernation=off --overwrite >/dev/null; \
+		$(MAKE) --no-print-directory k8s-ha-apply >/dev/null; \
+		$(KC) wait cluster/elemta-db --for=condition=Ready --timeout=10m >/dev/null; \
+	else \
+		$(KC) scale deployment --all --replicas=1 >/dev/null; \
+		$(KC) scale deployment elemta-mailbox --replicas=2 >/dev/null 2>&1 || true; \
+	fi
 	@$(MAKE) --no-print-directory k8s-wait
 
 k8s-down:
 	@$(KC) scale deployment --all --replicas=0 >/dev/null
+	@if [ -n "$(K8S_HA)" ]; then \
+		$(KC) scale statefulset --all --replicas=0 >/dev/null; \
+		$(KC) annotate cluster elemta-db cnpg.io/hibernation=on --overwrite >/dev/null; \
+	fi
 	@echo "✅ Stopped (volumes kept; make k8s-up to start again)"
 
 k8s-down-volumes:
@@ -1306,6 +1334,7 @@ k8s-down-volumes:
 
 k8s-restart:
 	@$(KC) rollout restart deployment >/dev/null
+	@$(KC) rollout restart statefulset >/dev/null 2>&1 || true
 	@$(MAKE) --no-print-directory k8s-wait
 
 k8s-status:
@@ -1315,18 +1344,18 @@ k8s-logs:
 	$(KC) logs -f --tail=50 --prefix --all-containers --max-log-requests=30 -l app.kubernetes.io/part-of=elemta
 
 k8s-logs-elemta:
-	$(KC) logs -f --tail=100 deploy/elemta -c smtp
+	$(KC) logs -f --tail=100 --prefix -l $(K8S_MTA_PODS) -c smtp
 
 # Rebuild the images and roll the pods that run them. Config is left alone.
 k8s-rebuild:
-	@$(MAKE) --no-print-directory k8s-images DOCKER_BUILD_FLAGS=--no-cache
+	@$(MAKE) --no-print-directory $(if $(K8S_HA),k8s-ha-images,k8s-images) DOCKER_BUILD_FLAGS=--no-cache
 	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
 	@$(MAKE) --no-print-directory k8s-wait
 
 k8s-rebuild-dev:
-	@$(MAKE) --no-print-directory k8s-images
+	@$(MAKE) --no-print-directory $(if $(K8S_HA),k8s-ha-images,k8s-images)
 	@$(KC) rollout restart $(K8S_OWN_IMAGES) >/dev/null
 	@$(MAKE) --no-print-directory k8s-wait
 
 k8s-bench-queue:
-	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) python3 scripts/dev/bench_queue.py --messages $(or $(MESSAGES),6000) --concurrency $(or $(CONCURRENCY),40)
+	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) K8S_MTA=$(K8S_MTA) python3 scripts/dev/bench_queue.py --messages $(or $(MESSAGES),6000) --concurrency $(or $(CONCURRENCY),40)

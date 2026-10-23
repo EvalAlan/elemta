@@ -36,8 +36,11 @@ CONTAINER = "elemta-node0"
 # reads the Kubernetes one instead.
 if os.environ.get("ELEMTA_STACK") == "k8s":
     NAMESPACE = os.environ.get("K8S_NAMESPACE", "elemta")
-    EXEC = ["kubectl", "-n", NAMESPACE, "exec", "deploy/elemta", "-c", "smtp", "--"]
-    LOGS_HINT = f"kubectl -n {NAMESPACE} logs deploy/elemta -c smtp"
+    # deploy/elemta in the dev overlays, statefulset/elemta-mta in the
+    # replicated one (the Makefile passes it).
+    MTA = os.environ.get("K8S_MTA", "deploy/elemta")
+    EXEC = ["kubectl", "-n", NAMESPACE, "exec", MTA, "-c", "smtp", "--"]
+    LOGS_HINT = f"kubectl -n {NAMESPACE} logs {MTA} -c smtp"
 else:
     EXEC = ["docker", "exec", CONTAINER]
     LOGS_HINT = f"docker logs {CONTAINER}"
