@@ -135,18 +135,18 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: elemta-web
+  name: elemta-admin
   labels:
-    app.kubernetes.io/name: elemta-web
+    app.kubernetes.io/name: elemta-admin
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app.kubernetes.io/name: elemta-web
+      app.kubernetes.io/name: elemta-admin
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: elemta-web
+        app.kubernetes.io/name: elemta-admin
     spec:
       securityContext:
         runAsNonRoot: true
@@ -161,9 +161,9 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
-              app.kubernetes.io/name: elemta-web
+              app.kubernetes.io/name: elemta-admin
       containers:
-        - name: web
+        - name: admin
           image: elemta
           command:
             - /bin/sh
@@ -350,12 +350,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: elemta-web
+  name: elemta-admin
   labels:
-    app.kubernetes.io/name: elemta-web
+    app.kubernetes.io/name: elemta-admin
 spec:
   selector:
-    app.kubernetes.io/name: elemta-web
+    app.kubernetes.io/name: elemta-admin
   ports:
     - { name: http, port: 8025, targetPort: http }
 ---

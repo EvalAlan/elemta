@@ -52,7 +52,7 @@ iifname "eth0" meta l4proto tcp ct status dnat ct original proto-dst 8025 ip sad
 Validate and load the file with `nft -c -f` and `nft -f`. Only after the guard
 is active, set `ELEMTA_ADMIN_BIND_IP=0.0.0.0` and
 `ELEMTA_ADMIN_ALLOWED_IP=203.0.113.10` in `.secrets/cloud.env`. Recreate
-`elemta-web` first, then `elemta-caddy`. Caddy serves
+`elemta-admin` first, then `elemta-caddy`. Caddy serves
 `https://<domain>:8025` with the domain's public certificate and independently
 checks the client IP. The admin backend has no published host port. Keep
 8025 out of `public_ports`: the final drop rule must block every other source.
@@ -160,7 +160,7 @@ The directory starts empty. Create the domain's accounts with the provision
 command, which prompts for the password:
 
 ```
-docker exec -it elemta-web /app/elemta -c /app/runtime-config/elemta.toml \
+docker exec -it elemta-admin /app/elemta -c /app/runtime-config/elemta.toml \
     provision create-account you@dev.example.net --name "Your Name"
 ```
 

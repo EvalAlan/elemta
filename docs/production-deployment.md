@@ -400,7 +400,7 @@ production.
 3. Run Deploy for `production` with the same tag.
 
 The deploy script treats an upgrade as healthy only when the `elemta` and
-`elemta-web` containers both report healthy and the MX port on the host
+`elemta-admin` containers both report healthy and the MX port on the host
 answers with a `220` banner, within 6 minutes (`HEALTH_TIMEOUT`).
 
 ### Rollback

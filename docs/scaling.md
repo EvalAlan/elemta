@@ -51,11 +51,11 @@ service-account scripts apply configuration to every node.
 
 ```sh
 $C up -d --no-deps --scale elemta=3 --scale elemta-webmail=3 \
-    --scale elemta-web=2 --scale mailbox-server=4
+    --scale elemta-admin=2 --scale mailbox-server=4
 ```
 
 Or set the defaults in `.secrets/cloud.env`: `ELEMTA_MTA_REPLICAS`,
-`ELEMTA_WEBMAIL_REPLICAS`, `ELEMTA_WEB_REPLICAS`, `ELEMTA_MAILBOX_REPLICAS`.
+`ELEMTA_WEBMAIL_REPLICAS`, `ELEMTA_ADMIN_REPLICAS`, `ELEMTA_MAILBOX_REPLICAS`.
 The load balancers find containers by name and follow scaling within a few
 seconds (up to 20 MTAs and 10 mailbox servers per balancer).
 

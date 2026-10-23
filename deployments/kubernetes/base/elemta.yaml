@@ -99,7 +99,7 @@ spec:
               memory: 1Gi
           securityContext: *containerSecurity
           volumeMounts: *mounts
-        - name: web
+        - name: admin
           image: elemta
           command:
             - /bin/sh
@@ -171,7 +171,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: elemta-web
+  name: elemta-admin
   labels:
     app.kubernetes.io/name: elemta
 spec:

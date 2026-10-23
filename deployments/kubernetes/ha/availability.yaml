@@ -15,12 +15,12 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: elemta-web
+  name: elemta-admin
 spec:
   minAvailable: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: elemta-web
+      app.kubernetes.io/name: elemta-admin
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

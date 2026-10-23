@@ -49,7 +49,7 @@ services:
     tmpfs: !override [/tmp:size=256m]
     mem_limit: 1g
     pids_limit: 512
-  elemta-web:
+  elemta-admin:
     <<: [*ours, *elemta-image]
     tmpfs: !override [/tmp:size=64m]
     mem_limit: 512m

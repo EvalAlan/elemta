@@ -146,7 +146,7 @@ C="docker compose --env-file deployments/compose/.secrets/cloud.env \
   -f deployments/compose/docker-compose.yml -f deployments/compose/docker-compose.cloud.yml \
   -f deployments/compose/docker-compose.release.yml"
 $C pull --ignore-buildable
-scripts/rolling-update.sh      # elemta-ldap, mailbox-server, elemta, elemta-webmail, elemta-web
+scripts/rolling-update.sh      # elemta-ldap, mailbox-server, elemta, elemta-webmail, elemta-admin
 $C up -d
 ```
 

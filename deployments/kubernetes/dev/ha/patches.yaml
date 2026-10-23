@@ -27,12 +27,12 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: elemta-web
+  name: elemta-admin
 spec:
   template:
     spec:
       containers:
-        - name: web
+        - name: admin
           env:
             - { name: ELEMTA_DEMO_DATA, value: "true" }
             - { name: NODE_ID, valueFrom: { fieldRef: { fieldPath: metadata.name } } }

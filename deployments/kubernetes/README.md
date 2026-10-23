@@ -219,7 +219,7 @@ every client can look like a cluster address.
 First login:
 
 ```bash
-kubectl -n elemta exec -it deploy/elemta -c web -- \
+kubectl -n elemta exec -it deploy/elemta -c admin -- \
   sh -c 'exec /app/elemta --config /app/runtime-config/elemta.toml user add admin --role admin'
 ```
 

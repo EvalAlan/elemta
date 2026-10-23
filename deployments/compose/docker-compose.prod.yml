@@ -84,9 +84,9 @@ services:
       elemta-valkey:
         condition: service_healthy
 
-  elemta-web:
+  elemta-admin:
     <<: *elemta-service
-    container_name: elemta-web
+    container_name: elemta-admin
     ports:
       - "${WEB_BIND:-127.0.0.1:8025}:8025"
     volumes:

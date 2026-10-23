@@ -350,7 +350,7 @@ first_accounts() {
         ask address "Mailbox address" "you@$domain"
         ask name "Display name" "${address%@*}"
         note "You'll be asked for its password."
-        docker exec -it elemta-web /app/elemta -c /app/runtime-config/elemta.toml \
+        docker exec -it elemta-admin /app/elemta -c /app/runtime-config/elemta.toml \
             provision create-account "$address" --name "$name" ||
             warn "the mailbox wasn't created; see docs/cloud-dev.md, Accounts"
     fi

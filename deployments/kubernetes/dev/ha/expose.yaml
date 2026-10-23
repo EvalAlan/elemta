@@ -22,13 +22,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: elemta-web-host
+  name: elemta-admin-host
   labels:
-    app.kubernetes.io/name: elemta-web
+    app.kubernetes.io/name: elemta-admin
 spec:
   type: LoadBalancer
   selector:
-    app.kubernetes.io/name: elemta-web
+    app.kubernetes.io/name: elemta-admin
   ports:
     - { name: http, port: 8025, targetPort: http }
 ---

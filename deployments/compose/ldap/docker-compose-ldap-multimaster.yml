@@ -1,0 +1,96 @@
+# Multi-master LDAP Deployment (2 nodes + HAProxy)
+#
+# This configuration provides 2-way multi-master OpenLDAP replication with:
+# - 2 LDAP master nodes (server IDs 1, 2) with MirrorMode + syncrepl
+# - HAProxy load balancer on port 389 (and optional 636 for LDAPS)
+# - Shared service account credentials from dev-secrets.sh
+# - Separate volumes per node for data isolation
+#
+# Usage:
+#   docker compose -f deployments/compose/docker-compose.yml -f deployments/compose/ldap/docker-compose-ldap-multimaster.yml up -d
+#
+# Requirements:
+#   - Run scripts/dev-secrets.sh first to generate .secrets/ldap-services.env
+#   - Run scripts/ldap-service-accounts.sh after all nodes are healthy to create service accounts
+
+x-ldap-common: &ldap-common
+  image: elemta-ldap-multimaster:dev
+  build:
+    context: ../../..
+    dockerfile: docker/ldap/Dockerfile.multimaster
+  restart: unless-stopped
+  mem_limit: 256m
+  env_file:
+    - path: ../.secrets/ldap-admin.env
+      required: true
+  networks: [elemta_network]
+  healthcheck:
+    test: ["CMD", "ldapsearch", "-Q", "-Y", "EXTERNAL", "-H", "ldapi:///", "-b", "dc=example,dc=com", "-s", "base", "-LLL", "dn"]
+    interval: 10s
+    timeout: 10s
+    retries: 30
+    start_period: 60s
+
+services:
+  elemta-ldap-1:
+    <<: *ldap-common
+    container_name: elemta-ldap-1
+    hostname: elemta-ldap-1
+    environment:
+      - LDAP_ORGANISATION=Example Corp
+      - LDAP_BASE_DN=dc=example,dc=com
+      - LDAP_SERVER_ID=1
+      - LDAP_PEER_URLS=ldap://elemta-ldap-1:389,ldap://elemta-ldap-2:389
+    volumes:
+      - ldap_1_db:/var/lib/ldap
+      - ldap_1_slapd:/etc/ldap/slapd.d
+
+  elemta-ldap-2:
+    <<: *ldap-common
+    container_name: elemta-ldap-2
+    hostname: elemta-ldap-2
+    environment:
+      - LDAP_ORGANISATION=Example Corp
+      - LDAP_BASE_DN=dc=example,dc=com
+      - LDAP_SERVER_ID=2
+      - LDAP_PEER_URLS=ldap://elemta-ldap-1:389,ldap://elemta-ldap-2:389
+    volumes:
+      - ldap_2_db:/var/lib/ldap
+      - ldap_2_slapd:/etc/ldap/slapd.d
+
+  # HAProxy load balancer for LDAP
+  elemta-ldap-lb:
+    image: haproxy:3.0-alpine
+    container_name: elemta-ldap-lb
+    restart: unless-stopped
+    mem_limit: 64m
+    ports:
+      - "389:389"    # LDAP (replaces single-node 1389)
+      # - "636:636"  # LDAPS (uncomment when certs available)
+      - "127.0.0.1:8404:8404"  # HAProxy stats
+    volumes:
+      - ./ldap/haproxy-ldap.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks: [elemta_network]
+    depends_on:
+      elemta-ldap-1:
+        condition: service_healthy
+      elemta-ldap-2:
+        condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8404/stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  ldap_1_db:
+  ldap_1_slapd:
+  ldap_2_db:
+  ldap_2_slapd:
+
+networks:
+  elemta_network:
+    external: true
+    name: ${ELEMTA_EXISTING_NETWORK:-compose_elemta_network}

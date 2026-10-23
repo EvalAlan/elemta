@@ -47,7 +47,7 @@ spec:
               value: "true"
             - name: NODE_ID
               value: "0"
-        - name: web
+        - name: admin
           imagePullPolicy: IfNotPresent
           env:
             - name: ELEMTA_DEMO_DATA

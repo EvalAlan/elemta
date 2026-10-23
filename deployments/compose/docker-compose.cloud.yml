@@ -50,7 +50,7 @@ services:
         # the public certificate instead of skipping verification.
         aliases: ["${MAIL_DOMAIN:?MAIL_DOMAIN must be set}"]
 
-  elemta-web:
+  elemta-admin:
     ports: !override []
     environment:
       - ELEMTA_DEV_CERT=false

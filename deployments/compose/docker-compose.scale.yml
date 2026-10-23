@@ -8,7 +8,7 @@
 #     -f docker-compose.release.yml -f docker-compose.scale.yml up -d
 #
 #   ... up -d --no-deps --scale elemta=3 --scale elemta-webmail=3 \
-#             --scale elemta-web=2 --scale mailbox-server=3
+#             --scale elemta-admin=2 --scale mailbox-server=3
 #   scripts/rolling-update.sh      # replace containers a few at a time
 #
 # What changes:
@@ -94,10 +94,10 @@ services:
     # Reached through Caddy; one host port can't go to several containers.
     ports: !reset []
 
-  elemta-web:
+  elemta-admin:
     container_name: !reset null
     deploy:
-      replicas: ${ELEMTA_WEB_REPLICAS:-2}
+      replicas: ${ELEMTA_ADMIN_REPLICAS:-2}
     ports: !reset []
     environment:
       - ELEMTA_API_SESSION_STORE=valkey

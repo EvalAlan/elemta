@@ -122,7 +122,7 @@ patches:
                 env:
                   - name: VALKEY_ADDR
                     value: elemta-valkey:6379
-              - name: web
+              - name: admin
                 envFrom:
                   - secretRef:
                       name: elemta-ldap-web

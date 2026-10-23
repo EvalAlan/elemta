@@ -67,7 +67,7 @@ https://{$MAIL_DOMAIN}:8025 {
 		# Every dashboard container; their sessions are shared in Valkey
 		# ([api] session_store) when there is more than one.
 		reverse_proxy {
-			dynamic a elemta-web 8025 {
+			dynamic a elemta-admin 8025 {
 				refresh 5s
 			}
 			lb_policy least_conn

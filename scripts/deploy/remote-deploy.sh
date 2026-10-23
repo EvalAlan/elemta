@@ -59,17 +59,17 @@ healthy() {
     while [ "$SECONDS" -lt "$deadline" ]; do
         local s1 s2
         s1="$(docker inspect -f '{{.State.Health.Status}}' elemta 2>/dev/null || echo missing)"
-        s2="$(docker inspect -f '{{.State.Health.Status}}' elemta-web 2>/dev/null || echo missing)"
+        s2="$(docker inspect -f '{{.State.Health.Status}}' elemta-admin 2>/dev/null || echo missing)"
         if [ "$s1" = healthy ] && [ "$s2" = healthy ]; then
             local banner
             banner="$(timeout 10 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && head -c 3 <&3" 2>/dev/null || true)"
             if [ "$banner" = "220" ]; then
-                echo "healthy: elemta=$s1 elemta-web=$s2, port $port greets with 220"
+                echo "healthy: elemta=$s1 elemta-admin=$s2, port $port greets with 220"
                 return 0
             fi
             echo "containers healthy, port $port not greeting yet"
         else
-            echo "waiting: elemta=$s1 elemta-web=$s2"
+            echo "waiting: elemta=$s1 elemta-admin=$s2"
         fi
         sleep 5
     done
@@ -84,7 +84,7 @@ echo "deploying $TAG (previous: ${previous:-none})"
 # later restart still runs the tag that was working. ELEMTA_SKIP_PULL=1 is
 # for hosts where the image was loaded by hand (docker load).
 if [ "${ELEMTA_SKIP_PULL:-}" != "1" ]; then
-    ELEMTA_TAG="$TAG" compose pull --quiet elemta elemta-web
+    ELEMTA_TAG="$TAG" compose pull --quiet elemta elemta-admin
 fi
 set_tag "$TAG"
 
@@ -98,7 +98,7 @@ fi
 
 echo "::error::$TAG did not start or did not become healthy within ${HEALTH_TIMEOUT}s" >&2
 compose ps >&2 || true
-compose logs --tail 80 elemta elemta-web >&2 || true
+compose logs --tail 80 elemta elemta-admin >&2 || true
 
 if [ -z "$previous" ] || [ "$previous" = "$TAG" ]; then
     echo "no earlier working tag to roll back to; leaving $TAG in place for inspection" >&2

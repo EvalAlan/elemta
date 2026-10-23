@@ -39,7 +39,7 @@ MAILAUTH_LAB_DIR ?= /tmp/elemta-mailauth-lab
 DEV_ENV_FILE ?= .env
 # The normal dev stack keeps only services used by mail delivery and webmail.
 # The discarding sink is started explicitly by the benchmark targets.
-DEV_MIN_SERVICES ?= elemta-dns elemta elemta-web elemta-webmail elemta-mailbox-db mailbox-server elemta-mailbox elemta-ldap valkey
+DEV_MIN_SERVICES ?= elemta-dns elemta elemta-admin elemta-webmail elemta-mailbox-db mailbox-server elemta-mailbox elemta-ldap valkey
 DEV_FULL_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd
 # The benchmarking stack: everything that scans, nothing that stores.
 DEV_BENCH_SERVICES ?= $(DEV_MIN_SERVICES) elemta-clamav elemta-rspamd elemta-sink
@@ -281,8 +281,8 @@ bootstrap-admin:
 	@# leaves an empty `{}` there so the service can start locked, and testing
 	@# for the file would read that as an account and skip the bootstrap.
 	@needs_account=1; \
-	if docker exec elemta-web test -e /app/runtime-config/users.json 2>/dev/null; then \
-		if ! docker exec elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+	if docker exec elemta-admin test -e /app/runtime-config/users.json 2>/dev/null; then \
+		if ! docker exec elemta-admin /app/elemta --config /app/runtime-config/elemta.toml \
 			user list --file /app/runtime-config/users.json 2>/dev/null | grep -q '^No users'; then \
 			needs_account=0; \
 		fi; \
@@ -292,7 +292,7 @@ bootstrap-admin:
 	else \
 		PW="$(ADMIN_PASSWORD)"; \
 		if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
-		if printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+		if printf '%s\n' "$$PW" | docker exec -i elemta-admin /app/elemta --config /app/runtime-config/elemta.toml \
 			user add $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1; then \
 			echo ""; \
 			echo "🔑 Dashboard login created"; \
@@ -302,7 +302,7 @@ bootstrap-admin:
 			echo "   (shown once — make reset-admin-password if you lose it)"; \
 			echo ""; \
 			echo "🔄 Restarting the web service so it picks up the new account..."; \
-			docker compose -f $(COMPOSE_FILE) restart elemta-web >/dev/null 2>&1 || true; \
+			docker compose -f $(COMPOSE_FILE) restart elemta-admin >/dev/null 2>&1 || true; \
 		else \
 			echo "❌ Could not create the dashboard account"; \
 		fi; \
@@ -313,15 +313,15 @@ bootstrap-admin:
 reset-admin-password:
 	@PW="$(ADMIN_PASSWORD)"; \
 	if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
-	if ! docker ps --format '{{.Names}}' | grep -q '^elemta-web$$'; then \
-		echo "❌ elemta-web is not running — start the stack first (make up)"; \
+	if ! docker ps --format '{{.Names}}' | grep -q '^elemta-admin$$'; then \
+		echo "❌ elemta-admin is not running — start the stack first (make up)"; \
 		echo "   On Kubernetes, use make k8s-reset-admin-password"; \
 		exit 1; \
 	fi; \
-	OUT=$$(printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+	OUT=$$(printf '%s\n' "$$PW" | docker exec -i elemta-admin /app/elemta --config /app/runtime-config/elemta.toml \
 		user passwd $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
 	if [ $$? -ne 0 ]; then \
-		OUT=$$(printf '%s\n' "$$PW" | docker exec -i elemta-web /app/elemta --config /app/runtime-config/elemta.toml \
+		OUT=$$(printf '%s\n' "$$PW" | docker exec -i elemta-admin /app/elemta --config /app/runtime-config/elemta.toml \
 			user add $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
 		if [ $$? -ne 0 ]; then \
 			echo "❌ Could not set the password:"; \
@@ -336,7 +336,7 @@ reset-admin-password:
 	echo "   Username: $(ADMIN_USER)"; \
 	echo "   Password: $$PW"; \
 	echo ""; \
-	docker compose -f $(COMPOSE_FILE) restart elemta-web >/dev/null 2>&1; \
+	docker compose -f $(COMPOSE_FILE) restart elemta-admin >/dev/null 2>&1; \
 	echo "🔄 Web service restarted so the change takes effect."
 
 
@@ -468,9 +468,9 @@ help:
 	@echo "                          ADMIN_USER=name ADMIN_PASSWORD=secret to choose your own"
 	@echo "  The dashboard login is NOT the mailbox login. Mailbox users live in LDAP;"
 	@echo "  the dashboard account lives in the users file and is managed with:"
-	@echo "    docker exec -it elemta-web /app/elemta --config /app/runtime-config/elemta.toml \\"
+	@echo "    docker exec -it elemta-admin /app/elemta --config /app/runtime-config/elemta.toml \\"
 	@echo "      user list|add|passwd|remove --file /app/runtime-config/users.json"
-	@echo "  A running server reads that file at startup, so restart elemta-web after changing it."
+	@echo "  A running server reads that file at startup, so restart elemta-admin after changing it."
 	@echo ""
 	@echo "🐳 Services:"
 	@echo "  up             - Start services (requires .env)"
@@ -584,9 +584,9 @@ install-dev-postgres:
 	@echo "🐘 Elemta Development Setup (Postgres Queue)"
 	@echo "============================================"
 	@$(MAKE) install-dev QUEUE_BACKEND=sqlite
-	@NET=$$(docker inspect -f '{{range $$k,$$v := .NetworkSettings.Networks}}{{println $$k}}{{end}}' elemta-web 2>/dev/null | head -n1); \
+	@NET=$$(docker inspect -f '{{range $$k,$$v := .NetworkSettings.Networks}}{{println $$k}}{{end}}' elemta-admin 2>/dev/null | head -n1); \
 	if [ -z "$$NET" ]; then \
-		echo "❌ Could not detect Docker network from elemta-web"; \
+		echo "❌ Could not detect Docker network from elemta-admin"; \
 		exit 1; \
 	fi; \
 	echo "🔎 Using network: $$NET"; \
@@ -617,7 +617,7 @@ install-dev-postgres:
 	@$(MAKE) refresh-dev-env QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
 	@$(MAKE) stop-mailauth-services
 	@$(MAKE) configure-queue-backend QUEUE_BACKEND=postgres QUEUE_POSTGRES_DSN="$(QUEUE_POSTGRES_DSN)"
-	@docker compose -f $(COMPOSE_FILE) restart elemta elemta-web
+	@docker compose -f $(COMPOSE_FILE) restart elemta elemta-admin
 	@echo "✅ Postgres queue dev setup complete"
 	@echo "   DSN: $(QUEUE_POSTGRES_DSN)"
 	@echo "   Verify: docker exec -it $(POSTGRES_CONTAINER_NAME) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
@@ -657,7 +657,7 @@ install-dev-mailauth: check-tools ensure-dev-secrets docker-build ensure-dev-cer
 	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) up -d elemta-mailauth-dns elemta-mailauth-sink
 	@# See install-dev: without the reseed the settings configured above are
 	@# ignored on every deploy after the first.
-	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) up -d --force-recreate elemta elemta-web
+	@MAILAUTH_LAB_DIR=$(MAILAUTH_LAB_DIR) ELEMTA_CONFIG_RESEED=true docker compose -f $(COMPOSE_FILE) -f $(MAILAUTH_COMPOSE_FILE) up -d --force-recreate elemta elemta-admin
 	@echo "⏳ Initializing LDAP..."
 	@./scripts/init-ldap-if-needed.sh || true
 	@$(MAKE) bootstrap-admin
@@ -934,10 +934,10 @@ K8S_OWN_IMAGES = deploy/elemta deploy/elemta-sink deploy/elemta-mailbox deploy/e
 # targets that change config on a running stack re-apply that one rather than
 # the default, which would prune the rest.
 K8S_CURRENT_OVERLAY = $$($(KUBECTL) get namespace $(K8S_NAMESPACE) -o jsonpath='{.metadata.annotations.elemta\.dev/overlay}' 2>/dev/null || true)
-# Where the dashboard runs: the elemta pod's web container in the dev
+# Where the admin console runs: the elemta pod's admin container in the dev
 # overlays, its own Deployment in the replicated one.
-K8S_WEB_TARGET ?= deploy/elemta
-K8S_WEB_EXEC = $(KC) exec -i $(K8S_WEB_TARGET) -c web -- /app/elemta --config /app/runtime-config/elemta.toml
+K8S_ADMIN_TARGET ?= deploy/elemta
+K8S_ADMIN_EXEC = $(KC) exec -i $(K8S_ADMIN_TARGET) -c admin -- /app/elemta --config /app/runtime-config/elemta.toml
 
 .PHONY: k8s-help k8s-check k8s-images k8s-load k8s-apply k8s-wait k8s-install \
 	k8s-install-dev k8s-install-dev-full k8s-install-dev-bench k8s-install-dev-postgres \
@@ -961,7 +961,7 @@ k8s-help:
 	@echo "  k8s-reseed                 Take config/elemta.toml again, discarding what the UI saved"
 	@echo "  k8s-sink-up / k8s-sink-down   Discard delivery, or deliver to the mailbox service again"
 	@echo "  k8s-bootstrap-admin / k8s-reset-admin-password / k8s-bench-queue"
-	@echo "  Dashboard users: kubectl -n $(K8S_NAMESPACE) exec -it deploy/elemta -c web -- \\"
+	@echo "  Dashboard users: kubectl -n $(K8S_NAMESPACE) exec -it deploy/elemta -c admin -- \\"
 	@echo "    /app/elemta --config /app/runtime-config/elemta.toml \\"
 	@echo "    user list|add|passwd|remove --file /app/runtime-config/users.json"
 	@echo "  See what is running: kubectl -n $(K8S_NAMESPACE) get pods,svc"
@@ -1202,10 +1202,10 @@ k8s-install-ha: check-tools k8s-check ensure-dev-certs
 	@$(KC) rollout status statefulset/elemta-valkey --timeout=5m >/dev/null
 	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) ./scripts/init-ldap-if-needed.sh || true
 	@# Images are pushed under the same tag; restart so every pod runs them.
-	@$(KC) rollout restart statefulset/elemta-mta deploy/elemta-web deploy/elemta-webmail deploy/elemta-mailbox >/dev/null
+	@$(KC) rollout restart statefulset/elemta-mta deploy/elemta-admin deploy/elemta-webmail deploy/elemta-mailbox >/dev/null
 	@$(KC) rollout status statefulset/elemta-mta --timeout=10m >/dev/null
 	@$(MAKE) --no-print-directory k8s-wait
-	@$(MAKE) --no-print-directory k8s-bootstrap-admin K8S_WEB_TARGET=deploy/elemta-web
+	@$(MAKE) --no-print-directory k8s-bootstrap-admin K8S_ADMIN_TARGET=deploy/elemta-admin
 	@$(MAKE) --no-print-directory k8s-ha-status
 
 k8s-ha-status:
@@ -1229,8 +1229,8 @@ k8s-sink-down:
 # server re-reads the file when it changes, so nothing needs restarting.
 k8s-bootstrap-admin:
 	@needs_account=1; \
-	if $(KC) exec $(K8S_WEB_TARGET) -c web -- test -e /app/runtime-config/users.json 2>/dev/null; then \
-		if ! $(K8S_WEB_EXEC) user list --file /app/runtime-config/users.json 2>/dev/null | grep -q '^No users'; then \
+	if $(KC) exec $(K8S_ADMIN_TARGET) -c admin -- test -e /app/runtime-config/users.json 2>/dev/null; then \
+		if ! $(K8S_ADMIN_EXEC) user list --file /app/runtime-config/users.json 2>/dev/null | grep -q '^No users'; then \
 			needs_account=0; \
 		fi; \
 	fi; \
@@ -1239,7 +1239,7 @@ k8s-bootstrap-admin:
 	else \
 		PW="$(ADMIN_PASSWORD)"; \
 		if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
-		if printf '%s\n' "$$PW" | $(K8S_WEB_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1; then \
+		if printf '%s\n' "$$PW" | $(K8S_ADMIN_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json >/dev/null 2>&1; then \
 			echo ""; \
 			echo "🔑 Dashboard login created"; \
 			echo "   URL:      http://localhost:8025/"; \
@@ -1255,9 +1255,9 @@ k8s-bootstrap-admin:
 k8s-reset-admin-password:
 	@PW="$(ADMIN_PASSWORD)"; \
 	if [ -z "$$PW" ]; then PW=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20); fi; \
-	OUT=$$(printf '%s\n' "$$PW" | $(K8S_WEB_EXEC) user passwd $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
+	OUT=$$(printf '%s\n' "$$PW" | $(K8S_ADMIN_EXEC) user passwd $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
 	if [ $$? -ne 0 ]; then \
-		OUT=$$(printf '%s\n' "$$PW" | $(K8S_WEB_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
+		OUT=$$(printf '%s\n' "$$PW" | $(K8S_ADMIN_EXEC) user add $(ADMIN_USER) --file /app/runtime-config/users.json 2>&1); \
 		if [ $$? -ne 0 ]; then \
 			echo "❌ Could not set the password (is the stack running? make k8s-status):"; \
 			echo "$$OUT" | sed 's/^/   /'; \

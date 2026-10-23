@@ -51,7 +51,7 @@ healthy() {
 }
 
 services=("$@")
-[ ${#services[@]} -gt 0 ] || services=(elemta-ldap mailbox-server elemta elemta-webmail elemta-web)
+[ ${#services[@]} -gt 0 ] || services=(elemta-ldap mailbox-server elemta elemta-webmail elemta-admin)
 
 for svc in "${services[@]}"; do
     mapfile -t old < <(svc_containers "$svc")

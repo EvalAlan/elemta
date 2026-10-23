@@ -97,7 +97,7 @@ class Runner:
         return result.stdout
 
     def provision(self, *args, data=None):
-        return self.remote(['docker', 'exec', '-i', 'elemta-web', '/app/elemta', '-c',
+        return self.remote(['docker', 'exec', '-i', 'elemta-admin', '/app/elemta', '-c',
                             '/app/runtime-config/elemta.toml', 'provision', *args], data)
 
     def sample(self):

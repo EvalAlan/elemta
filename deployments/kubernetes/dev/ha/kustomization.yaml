@@ -140,7 +140,7 @@ patches:
   # new one.
   - target:
       kind: Deployment
-      name: elemta-web|elemta-webmail|elemta-mailbox
+      name: elemta-admin|elemta-webmail|elemta-mailbox
     patch: |-
       - op: add
         path: /spec/template/spec/containers/0/imagePullPolicy
@@ -178,7 +178,7 @@ patches:
                     - { key: tls.key, path: test.key }
   - target:
       kind: Deployment
-      name: elemta-web|elemta-webmail
+      name: elemta-admin|elemta-webmail
     patch: |-
       - op: test
         path: /spec/template/spec/volumes/0/name

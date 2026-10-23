@@ -42,7 +42,7 @@ files=(-f "$compose_dir/docker-compose.yml" -f "$compose_dir/docker-compose.clou
 dc() { docker compose -p "$project" --env-file "$env_file" "${files[@]}" "$@"; }
 
 step "Stopping mail services"
-dc stop elemta elemta-web elemta-webmail elemta-mailbox mailbox-server elemta-ldap
+dc stop elemta elemta-admin elemta-webmail elemta-mailbox mailbox-server elemta-ldap
 dc up -d elemta-mailbox-db
 until docker exec elemta-mailbox-db sh -c 'pg_isready -q -U "$POSTGRES_USER"'; do sleep 1; done
 # shellcheck source=SCRIPTDIR/lib/compose.sh
@@ -79,7 +79,7 @@ step "Starting the stack"
 # The restored runtime configuration is kept, not reseeded from the host.
 ELEMTA_CONFIG_RESEED=false dc up -d
 # By service: a scaled service has several containers, with Compose's names.
-for svc in elemta-ldap mailbox-server elemta elemta-webmail elemta-web; do
+for svc in elemta-ldap mailbox-server elemta elemta-webmail elemta-admin; do
     for c in $(svc_containers "$svc"); do
         for _ in $(seq 100); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null)" = healthy ] && break

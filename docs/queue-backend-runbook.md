@@ -68,7 +68,7 @@ This target:
 2. starts `elemta-postgres` on the detected compose network
 3. waits for Postgres readiness
 4. configures `backend = "postgres"`
-5. restarts `elemta` + `elemta-web`
+5. restarts `elemta` + `elemta-admin`
 
 ---
 

@@ -21,7 +21,7 @@ spec:
     - name: submission
       port: 2587
       targetPort: submission
-    - name: web
+    - name: admin
       port: 8025
       targetPort: http
     # 9080 outside, 8080 inside, as before: 8080 is too popular on a dev box.

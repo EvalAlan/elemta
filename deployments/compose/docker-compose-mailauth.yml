@@ -12,7 +12,7 @@ services:
       elemta_network: {}
       mailauth_network: {}
 
-  elemta-web:
+  elemta-admin:
     volumes:
       - ${MAILAUTH_LAB_DIR:-/tmp/elemta-mailauth-lab}:/app/config:ro
     dns:

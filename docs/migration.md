@@ -9,8 +9,8 @@ destination passwords are needed. Run the commands where the dashboard
 runs (the web service has `ELEMTA_MAILBOX_ADMIN_TOKEN`), for example:
 
 ```sh
-docker exec -it elemta-web /app/elemta -c /app/runtime-config/elemta.toml migrate --help
-kubectl -n elemta exec -it deploy/elemta -c web -- /app/elemta -c /app/runtime-config/elemta.toml migrate --help
+docker exec -it elemta-admin /app/elemta -c /app/runtime-config/elemta.toml migrate --help
+kubectl -n elemta exec -it deploy/elemta -c admin -- /app/elemta -c /app/runtime-config/elemta.toml migrate --help
 ```
 
 Every command can be run again. What was already copied is recognised and
