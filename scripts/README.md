@@ -22,11 +22,9 @@ with care.
 |---|---|
 | `deploy/` | `remote-deploy.sh`, run on the target host by the Deploy workflow; see [Production Deployment](../docs/production-deployment.md) |
 | `dev/` | Dev-stack tooling: rebuilds, benchmarks, stress corpus, Rspamd training, ELK dashboards, mail-auth lab ([README](dev/README.md)) |
-| `ssl/` | Let's Encrypt setup, test, monitor and troubleshooting scripts |
-| `test/` | `run-all-tests.sh`, `run-datasource-tests.sh` |
+| `ssl/` | Let's Encrypt setup, monitor and troubleshooting scripts |
 | `monitoring/` | Monitoring stack setup and `verify-monitoring-stack.sh` |
 | `queue/` | Queue inspection and simulation helpers |
-| `load-testing/` | Load and security-event generators |
 | `debug/` | `debug-email.sh` |
 | `docker/` | `docker-deploy.sh` |
 
@@ -35,10 +33,13 @@ with care.
 - `elemta-api.sh`, `elemta-cli.sh` — API and CLI wrappers
 - `ldap-mail-admin.sh`, `user-manager.sh` — LDAP user administration for the dev stack
 - `setup-elk.sh`, `create-mta-index-patterns.sh`, `import-mta-dashboards.sh`,
-  `populate-dashboards.sh`, `dashboard-keepalive.py` — ELK/Kibana helpers
+  `dashboard-keepalive.py` — ELK/Kibana helpers
 - `build_plugins.sh` — build example plugins
-- `deploy-and-test.sh`, `run.sh` — older one-shot dev wrappers
-- `realistic-smtp-test.py`, `test-dashboard-population.py`, `mock-queue.py`, `api_server.py` — ad-hoc test helpers
+- `run.sh` — older one-shot dev wrapper
+- `mock-queue.py`, `api_server.py` — ad-hoc dev helpers
+
+Load, stress and end-to-end tests against a running stack are in the
+separate elemta-tests repository.
 
 ## Prerequisites
 

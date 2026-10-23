@@ -112,14 +112,6 @@ if [ -f "elk/kibana/dashboards/elemta-smtp-dashboard.json" ]; then
       -F "file=@elk/kibana/dashboards/elemta-smtp-dashboard.json" || echo "Dashboard import may have failed"
 fi
 
-# Generate some test logs to populate the system
-echo -e "${BLUE}📧 Generating test SMTP traffic for log analysis...${NC}"
-if [ -f "scripts/realistic-smtp-test.py" ]; then
-    python3 scripts/realistic-smtp-test.py --test-type normal --count 10 &
-    python3 scripts/realistic-smtp-test.py --test-type suspicious --count 5 &
-    wait
-fi
-
 # Show service status
 echo -e "${GREEN}🎉 ELK Stack setup complete!${NC}"
 echo -e "${BLUE}📊 Service URLs:${NC}"

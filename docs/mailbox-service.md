@@ -271,17 +271,10 @@ replace backups. Run the drill regularly.
 # Require a disposable database; core SQL tests skip when this is absent.
 ELEMTA_TEST_MAILBOX_DSN='host=127.0.0.1 port=15432 dbname=objects user=objects password=... sslmode=disable' \
   go test -race -count=1 ./internal/mailbox/
-
-# Exercise deployed endpoints and clean up only its own fixture folder/mail.
-ELEMTA_TEST_MAILBOX_PASSWORD=password python3 scripts/test-mailbox-dev.py --failover
-ELEMTA_TEST_MAILBOX_PASSWORD=password python3 scripts/test-mailbox-dev.py --ha --failover --quorum-loss
 ```
 
-The live script defaults to `user@example.com`; override with `--user`.
-It creates a unique folder and unique-subject mail and cleans them up. The
-failure modes deliberately stop/restart only the isolated project's replicas,
-database primary, edge and coordination members. Run against a quiet lab,
-not an unrelated deployment or concurrent failure-injection session.
+Checks against a deployed mailbox service (failover, quorum loss) belong
+with the other live tests in the separate elemta-tests repository.
 
 S3 contract tests additionally use `ELEMTA_TEST_MAILBOX_S3_ENDPOINT` and
 `MAILBOX_S3_ACCESS_KEY` / `MAILBOX_S3_SECRET_KEY` from the protected fixture
