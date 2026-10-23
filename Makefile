@@ -1005,7 +1005,8 @@ k8s-load:
 	fi; \
 	images="elemta:$(IMAGE_TAG) elemta-mailbox:$(IMAGE_TAG) elemta-ldap:$(IMAGE_TAG) elemta-dns:$(IMAGE_TAG)"; \
 	case "$$mode" in \
-		docker|none) echo "ℹ️  The cluster runs on Docker; images are already visible to it" ;; \
+		docker) echo "ℹ️  The cluster runs on Docker; images are already visible to it" ;; \
+		none) ;; \
 		kind) context=$$($(KUBECTL) config current-context); \
 			kind load docker-image --name "$${context#kind-}" $$images ;; \
 		k3s) echo "📦 Importing images into k3s (sudo k3s ctr images import)..."; \
