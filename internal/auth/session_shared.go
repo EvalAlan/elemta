@@ -52,9 +52,13 @@ type valkeySessions struct {
 	prefix string
 }
 
+// startupWait is how long starting up waits for Valkey to accept a
+// connection before giving up (valkeyaddr.Dial).
+const startupWait = 30 * time.Second
+
 // NewValkeySessionBackend connects to Valkey at addr.
 func NewValkeySessionBackend(addr string) (SessionBackend, error) {
-	client, err := valkeyaddr.NewClient(addr, func(o *valkey.ClientOption) { o.DisableCache = true })
+	client, err := valkeyaddr.Dial(addr, func(o *valkey.ClientOption) { o.DisableCache = true }, startupWait)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard sessions: connect to Valkey %s: %w", valkeyaddr.Display(addr), err)
 	}

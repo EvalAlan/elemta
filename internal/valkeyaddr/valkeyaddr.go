@@ -17,6 +17,7 @@ package valkeyaddr
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/valkey-io/valkey-go"
 )
@@ -53,6 +54,35 @@ func NewClient(addr string, tune func(*valkey.ClientOption)) (valkey.Client, err
 		tune(&opt)
 	}
 	return valkey.NewClient(opt)
+}
+
+// Dial is NewClient for a service that needs Valkey before it can start,
+// retrying for up to wait. In a cluster a new pod's first connections can
+// be refused for a moment (the network policy admits its address a little
+// after it starts, and a Sentinel may be restarting); without this the
+// service exits and is restarted once for nothing. An address that can't
+// be parsed fails at once.
+func Dial(addr string, tune func(*valkey.ClientOption), wait time.Duration) (valkey.Client, error) {
+	opt, err := Options(addr)
+	if err != nil {
+		return nil, err
+	}
+	if tune != nil {
+		tune(&opt)
+	}
+	deadline := time.Now().Add(wait)
+	delay := 250 * time.Millisecond
+	for {
+		client, err := valkey.NewClient(opt)
+		if err == nil {
+			return client, nil
+		}
+		if time.Now().Add(delay).After(deadline) {
+			return nil, err
+		}
+		time.Sleep(delay)
+		delay = min(delay*2, 2*time.Second)
+	}
 }
 
 // Display is addr with any password removed, for logs and error messages.
