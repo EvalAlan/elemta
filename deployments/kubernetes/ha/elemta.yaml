@@ -1,0 +1,353 @@
+# The MTA, the dashboard and the webmail, each its own Deployment with as
+# many replicas as the load needs.
+#
+# What they share:
+#   - the queue and the suppression list, in Postgres (elemta-db, database
+#     "queue"); messages are claimed with leases, so a lost MTA's mail is
+#     picked up by another when its lease runs out;
+#   - sessions, locks and shared counters, in Valkey through its Sentinels;
+#   - the runtime configuration, on the elemta-runtime-config volume: the
+#     dashboard saves settings there and the MTAs reload them. With replicas
+#     on more than one node that volume must be ReadWriteMany (pvc.yaml).
+#
+# The image's entrypoint seeds the runtime configuration from the
+# elemta-config ConfigMap the first time (scripts/prepare-config.sh).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta
+  labels:
+    app.kubernetes.io/name: elemta
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: elemta
+      # Time for SMTP sessions in progress to finish once the pod is taken
+      # out of the Service.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: smtp
+          image: elemta
+          args: ["server"]
+          envFrom:
+            - secretRef:
+                name: elemta-ldap-smtp
+          env:
+            - { name: TZ, value: UTC }
+            - { name: VALKEY_ADDR, value: "valkey://elemta-valkey-sentinel:26379?master_set=elemta" }
+            - { name: ELEMTA_AUTH_MAILBOX_SECURITY_URL, value: "http://elemta-mailbox:8080" }
+            - { name: ELEMTA_QUEUE_BACKEND, value: postgres }
+            - name: QUEUE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elemta-db-queue
+                  key: password
+            # The password is generated as letters and digits, so it needs
+            # no escaping in the URL.
+            - name: ELEMTA_QUEUE_POSTGRES_DSN
+              value: "postgres://queue:$(QUEUE_DB_PASSWORD)@elemta-db-rw:5432/queue?sslmode=require"
+          ports:
+            - { name: smtp, containerPort: 2525 }
+            - { name: submission, containerPort: 2587 }
+            - { name: webmail-submit, containerPort: 2588 }
+            - { name: metrics, containerPort: 8080 }
+          readinessProbe:
+            tcpSocket:
+              port: smtp
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: smtp
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 192Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: config, mountPath: /app/config, readOnly: true }
+            - { name: runtime-config, mountPath: /app/runtime-config }
+            # Per pod: the spool for messages being received, and small state
+            # files (TLS-report aggregation, IP-pool warmup). The queue itself
+            # is in Postgres.
+            - { name: queue, mountPath: /app/queue }
+            - { name: logs, mountPath: /app/logs }
+            - { name: tmp, mountPath: /tmp }
+            - name: mailbox-ca
+              mountPath: /app/mailbox-ca.pem
+              subPath: cert.pem
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: elemta-config
+        - name: runtime-config
+          persistentVolumeClaim:
+            claimName: elemta-runtime-config
+        - { name: queue, emptyDir: {} }
+        - { name: logs, emptyDir: {} }
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: mailbox-ca
+          secret:
+            secretName: elemta-mailbox-tls
+            items:
+              - key: cert.pem
+                path: cert.pem
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-web
+  labels:
+    app.kubernetes.io/name: elemta-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-web
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: elemta-web
+      containers:
+        - name: web
+          image: elemta
+          command:
+            - /bin/sh
+            - -c
+            - exec /app/elemta --config "$(/app/prepare-config.sh)" web --listen 0.0.0.0:8025 --web-root /app/web/static
+          envFrom:
+            - secretRef:
+                name: elemta-ldap-web
+          env:
+            - { name: TZ, value: UTC }
+            - { name: VALKEY_ADDR, value: "valkey://elemta-valkey-sentinel:26379?master_set=elemta" }
+            # Signing in on one replica holds on the others.
+            - { name: ELEMTA_API_SESSION_STORE, value: valkey }
+            - { name: ELEMTA_API_VALKEY_ADDR, value: "valkey://elemta-valkey-sentinel:26379?master_set=elemta" }
+            - { name: ELEMTA_QUEUE_BACKEND, value: postgres }
+            - name: QUEUE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elemta-db-queue
+                  key: password
+            - name: ELEMTA_QUEUE_POSTGRES_DSN
+              value: "postgres://queue:$(QUEUE_DB_PASSWORD)@elemta-db-rw:5432/queue?sslmode=require"
+          ports:
+            - { name: http, containerPort: 8025 }
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: config, mountPath: /app/config, readOnly: true }
+            - { name: runtime-config, mountPath: /app/runtime-config }
+            - { name: queue, mountPath: /app/queue }
+            - { name: logs, mountPath: /app/logs }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap:
+            name: elemta-config
+        - name: runtime-config
+          persistentVolumeClaim:
+            claimName: elemta-runtime-config
+        - { name: queue, emptyDir: {} }
+        - { name: logs, emptyDir: {} }
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-webmail
+  labels:
+    app.kubernetes.io/name: elemta-webmail
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-webmail
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-webmail
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: elemta-webmail
+      containers:
+        - name: webmail
+          image: elemta
+          command:
+            - /bin/sh
+            - -c
+            - exec /app/elemta --config "$(/app/prepare-config.sh)" webmail
+          envFrom:
+            - secretRef:
+                name: elemta-webmail
+          env:
+            - { name: TZ, value: UTC }
+            - { name: NODE_ID, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            # Sessions in Valkey, sealed with the key on the shared runtime
+            # volume (created once, O_EXCL, by whichever replica is first).
+            - { name: VALKEY_ADDR, value: "valkey://elemta-valkey-sentinel:26379?master_set=elemta" }
+            - { name: ELEMTA_WEBMAIL_SECURITY_URL, value: "http://elemta-mailbox:8080" }
+          ports:
+            - { name: http, containerPort: 8027 }
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: config, mountPath: /app/config, readOnly: true }
+            - { name: runtime-config, mountPath: /app/runtime-config }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap:
+            name: elemta-config
+        - name: runtime-config
+          persistentVolumeClaim:
+            claimName: elemta-runtime-config
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+---
+# Inside the cluster: SMTP for other services, the webmail's submission
+# port, and metrics. Named as in the Compose stack, so config/elemta.toml's
+# addresses (elemta:2588 and so on) work unchanged.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta
+  labels:
+    app.kubernetes.io/name: elemta
+spec:
+  selector:
+    app.kubernetes.io/name: elemta
+  ports:
+    - { name: smtp, port: 2525, targetPort: smtp }
+    - { name: submission, port: 2587, targetPort: submission }
+    - { name: webmail-submit, port: 2588, targetPort: webmail-submit }
+    - { name: metrics, port: 8080, targetPort: metrics }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-web
+  labels:
+    app.kubernetes.io/name: elemta-web
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-web
+  ports:
+    - { name: http, port: 8025, targetPort: http }
+---
+# Webmail keeps a browser on one replica (live updates hold a connection to
+# it); sessions themselves would survive a switch.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-webmail
+  labels:
+    app.kubernetes.io/name: elemta-webmail
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-webmail
+  sessionAffinity: ClientIP
+  ports:
+    - { name: http, port: 8027, targetPort: http }

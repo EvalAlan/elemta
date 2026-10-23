@@ -1,0 +1,136 @@
+# The directory as replicating nodes (docker/ldap/entrypoint.sh): every node
+# takes writes and passes them to the others, so logins and lookups carry on
+# with a node gone.
+#
+# Each pod is node <ordinal + 1> of LDAP_REPLICATION_PEERS. Node 1 creates
+# the directory on its first start; the others start empty and fetch it.
+# Configuration (schema, access rules, service accounts) is per node, and
+# the scripts that change it (scripts/lib/ldap.sh) apply it to every pod
+# labelled app.kubernetes.io/name=elemta-ldap.
+#
+# Scaling past two means adding the new pod's URL to the peers here too,
+# then restarting every node so each replicates from it.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elemta-ldap
+  labels:
+    app.kubernetes.io/name: elemta-ldap
+spec:
+  serviceName: elemta-ldap-nodes
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-ldap
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-ldap
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: elemta-ldap
+      containers:
+        - name: openldap
+          image: elemta-ldap
+          env:
+            - name: LDAP_ORGANISATION
+              value: Example Corp
+            - name: LDAP_BASE_DN
+              value: dc=example,dc=com
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LDAP_REPLICATION_PEERS
+              value: >-
+                ldap://elemta-ldap-0.elemta-ldap-nodes.$(NAMESPACE).svc.cluster.local:389
+                ldap://elemta-ldap-1.elemta-ldap-nodes.$(NAMESPACE).svc.cluster.local:389
+          envFrom:
+            # LDAP_ADMIN_PASSWORD: creates the directory, and replication
+            # binds with it, so every node needs the same one.
+            - secretRef:
+                name: elemta-ldap-admin
+          ports:
+            - name: ldap
+              containerPort: 389
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - ldapsearch -Q -Y EXTERNAL -H ldapi:/// -b 'dc=example,dc=com' -s base -LLL dn >/dev/null
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/ldap
+            - name: config
+              mountPath: /etc/ldap/slapd.d
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        # Fixture LDIF for scripts/init-ldap-if-needed.sh; an overlay
+        # without fixtures supplies an empty ConfigMap of this name.
+        - name: init
+          configMap:
+            name: elemta-ldap-init
+            optional: true
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+    - metadata:
+        name: config
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 64Mi
+---
+# Per-pod names for the replication agreements. Published unready, so a
+# starting node can reach the others before it is ready itself.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-ldap-nodes
+  labels:
+    app.kubernetes.io/name: elemta-ldap
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: elemta-ldap
+  ports:
+    - name: ldap
+      port: 389
+---
+# What everything else uses (ldap://elemta-ldap:389): any ready node.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-ldap
+  labels:
+    app.kubernetes.io/name: elemta-ldap
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-ldap
+  ports:
+    - name: ldap
+      port: 389
+      targetPort: ldap

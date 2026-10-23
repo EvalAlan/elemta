@@ -1,0 +1,18 @@
+# The runtime configuration the MTA, dashboard and webmail share: settings
+# saved in the dashboard, the dashboard's users file, the webmail's session
+# key. Small and rarely written.
+#
+# ReadWriteMany, because its pods run on several nodes: on a multi-node
+# cluster give it a storage class that provides that (Longhorn, NFS,
+# CephFS), with a patch setting storageClassName. A single-node cluster's
+# local-path volumes are ReadWriteOnce, which every pod on that node can
+# still mount; the dev overlay patches the mode for that.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elemta-runtime-config
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests:
+      storage: 256Mi

@@ -137,6 +137,62 @@ make k8s-bench-queue     # bench-queue against this stack
 - **Not on Kubernetes:** the mail-auth lab, ELK, the multinode and monitoring
   overlays, `rspamd-train` and `test-docker`. They stay Compose-only.
 
+## High availability
+
+`ha/` runs every tier replicated, for a cluster of several nodes:
+
+| Tier | How | Survives |
+|---|---|---|
+| Postgres (mailbox metadata, the queue) | CloudNativePG `Cluster`, 3 instances, synchronous replication | losing the primary: a replica is promoted and `elemta-db-rw` follows it |
+| Valkey (sessions, locks, counters) | StatefulSet of 3, each with a Sentinel | losing the primary: the Sentinels promote a replica and the services follow (`VALKEY_ADDR` is a Sentinel URL) |
+| Directory | StatefulSet of 2 replicating nodes | losing a node |
+| MTA, dashboard, webmail, mailbox | Deployments, 2 or more each, with PodDisruptionBudgets and CPU autoscaling | losing pods; mail claimed by a lost MTA is taken up when its lease runs out |
+
+It isn't applied on its own: an overlay adds the configuration, secrets,
+image tag and exposure. It needs:
+
+- **The CloudNativePG operator**, once per cluster: `make k8s-ha-operator`.
+- **A ReadWriteMany storage class** for `elemta-runtime-config` (Longhorn,
+  NFS, CephFS), which the MTA, dashboard and webmail on different nodes all
+  mount. Patch its `storageClassName` in the overlay.
+- **S3 for message bodies** (`[bodies] driver = "s3"` in mailbox.toml).
+- **A load balancer that keeps client addresses** for SMTP and IMAP
+  (`externalTrafficPolicy: Local`, as `dev/ha/expose.yaml` does), or one
+  that sends the PROXY protocol, with `ELEMTA_PROXY_PROTOCOL_FROM` set.
+
+Secrets the overlay supplies: `elemta-db-mailbox` and `elemta-db-queue`
+(basic-auth, letters and digits; the queue's goes into a URL),
+`elemta-ldap-admin`, `elemta-ldap-smtp`, `elemta-ldap-web`,
+`elemta-mailbox`, `elemta-mailbox-s3`, `elemta-mailbox-tls` and
+`elemta-webmail`. `dev/ha/kustomization.yaml` shows where each comes from.
+
+### On this machine
+
+`dev/ha` is the same deployment on the single-node k3s, with the dev
+stack's configuration and fixtures and S3 from one SeaweedFS:
+
+```bash
+make k8s-install-ha       # operator, images, apply, directory, dashboard login
+make k8s-ha-status        # Postgres, StatefulSets, Deployments, the Valkey primary
+```
+
+Images go through a registry on `localhost:5000` (`make k8s-ha-registry`),
+which k3s pulls from without root. It uses the same namespace and host
+ports as the other dev overlays, so `make k8s-down-volumes` before switching.
+
+Failover to try:
+
+```bash
+kubectl -n elemta delete pod $(kubectl -n elemta get cluster elemta-db -o jsonpath='{.status.currentPrimary}')
+kubectl -n elemta exec elemta-valkey-0 -c sentinel -- valkey-cli -p 26379 sentinel failover elemta
+kubectl -n elemta delete pod elemta-ldap-0
+kubectl -n elemta scale deploy/elemta --replicas=4
+```
+
+Everything shares one node, so losing a node is the one failure this can't
+show; the anti-affinity and spread rules are "preferred" so that it still
+schedules.
+
 ## Standalone
 
 ```bash

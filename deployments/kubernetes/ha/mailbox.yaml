@@ -1,0 +1,135 @@
+# The mailbox service (IMAP, POP3, LMTP, ManageSieve and the account
+# security API). Replicas share everything: metadata in Postgres
+# (elemta-db, database "mailbox") and message bodies in S3, so any replica
+# serves any user and a lost pod costs only its open connections.
+#
+# Bodies must be in S3 here (mailbox.toml: [bodies] driver = "s3"): a
+# ReadWriteOnce volume can't follow replicas onto other nodes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-mailbox
+  labels:
+    app.kubernetes.io/name: elemta-mailbox
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-mailbox
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-mailbox
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: elemta-mailbox
+      # IMAP clients reconnect on their own; this lets deliveries and
+      # appends in progress finish.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: mailbox
+          image: elemta-mailbox
+          envFrom:
+            # LDAP account, TOTP keys, admin token (ELEMTA_MAILBOX_*).
+            - secretRef:
+                name: elemta-mailbox
+            # The S3 access key pair named in mailbox.toml.
+            - secretRef:
+                name: elemta-mailbox-s3
+          env:
+            - { name: PGHOST, value: elemta-db-rw }
+            - { name: PGPORT, value: "5432" }
+            - { name: PGDATABASE, value: mailbox }
+            - { name: PGUSER, value: mailbox }
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elemta-db-mailbox
+                  key: password
+            # CloudNativePG serves TLS with its own CA.
+            - { name: PGSSLMODE, value: require }
+            - { name: PGCONNECT_TIMEOUT, value: "5" }
+          ports:
+            - { name: imap, containerPort: 1143 }
+            - { name: imaps, containerPort: 10993 }
+            - { name: imap-starttls, containerPort: 11143 }
+            - { name: pop3, containerPort: 1110 }
+            - { name: lmtp, containerPort: 2424 }
+            - { name: sieve, containerPort: 4190 }
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/elemta/mailbox.toml
+              subPath: mailbox.toml
+              readOnly: true
+            - name: tls
+              mountPath: /etc/elemta/tls
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: elemta-mailbox-config
+        - name: tls
+          secret:
+            secretName: elemta-mailbox-tls
+            # Group-readable, for uid 1001 through fsGroup.
+            defaultMode: 0440
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+---
+# Named like the Compose balancer, so config/elemta.toml's LMTP, IMAP and
+# ManageSieve addresses (elemta-mailbox:2424, :1143, :4190) work unchanged.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-mailbox
+  labels:
+    app.kubernetes.io/name: elemta-mailbox
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-mailbox
+  ports:
+    - { name: imap, port: 1143, targetPort: imap }
+    - { name: imaps, port: 10993, targetPort: imaps }
+    - { name: imap-starttls, port: 11143, targetPort: imap-starttls }
+    - { name: pop3, port: 1110, targetPort: pop3 }
+    - { name: lmtp, port: 2424, targetPort: lmtp }
+    - { name: sieve, port: 4190, targetPort: sieve }
+    - { name: http, port: 8080, targetPort: http }

@@ -1,0 +1,38 @@
+# The MTA uses the caching DNSSEC resolver (../minimal/dns.yaml), as in the
+# other dev overlays, and shows the dev stack's demo data.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta
+spec:
+  template:
+    spec:
+      dnsPolicy: None
+      dnsConfig:
+        nameservers: ["10.43.53.53"]
+        searches:
+          - elemta.svc.cluster.local
+          - svc.cluster.local
+          - cluster.local
+        options:
+          - name: ndots
+            value: "5"
+      containers:
+        - name: smtp
+          env:
+            - { name: ELEMTA_DEMO_DATA, value: "true" }
+            - { name: ELEMTA_HOSTNAME, value: mail.dev.example.net }
+            - { name: NODE_ID, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-web
+spec:
+  template:
+    spec:
+      containers:
+        - name: web
+          env:
+            - { name: ELEMTA_DEMO_DATA, value: "true" }
+            - { name: NODE_ID, valueFrom: { fieldRef: { fieldPath: metadata.name } } }

@@ -1,0 +1,31 @@
+# Elemta with every tier replicated, for a cluster of several nodes
+# (README.md, "High availability"). Not applied on its own: an overlay adds
+# the configuration, the secrets, the images and how the services are
+# exposed. dev/ha is that overlay for a single-node test cluster.
+#
+# Needs the CloudNativePG operator in the cluster (postgres.yaml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: elemta
+    includeSelectors: false
+
+resources:
+  - postgres.yaml
+  - valkey.yaml
+  - ldap.yaml
+  - elemta.yaml
+  - mailbox.yaml
+  - pvc.yaml
+  - availability.yaml
+  - networkpolicy.yaml
+
+images:
+  - name: elemta
+    newName: ghcr.io/evalalan/elemta
+  - name: elemta-mailbox
+    newName: ghcr.io/evalalan/elemta-mailbox
+  - name: elemta-ldap
+    newName: ghcr.io/evalalan/elemta-ldap

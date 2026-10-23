@@ -1,0 +1,76 @@
+# The same host ports as the other dev overlays (k3s binds LoadBalancer
+# ports on the node), one Service per tier now that each is its own
+# Deployment. externalTrafficPolicy Local keeps the client's own address,
+# which the MTA's spam, relay and rate-limit checks need, without the PROXY
+# protocol the Compose balancers use.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-host
+  labels:
+    app.kubernetes.io/name: elemta
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: elemta
+  ports:
+    - { name: smtp, port: 2525, targetPort: smtp }
+    - { name: submission, port: 2587, targetPort: submission }
+    - { name: metrics, port: 9080, targetPort: metrics }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-web-host
+  labels:
+    app.kubernetes.io/name: elemta-web
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: elemta-web
+  ports:
+    - { name: http, port: 8025, targetPort: http }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-webmail-host
+  labels:
+    app.kubernetes.io/name: elemta-webmail
+spec:
+  type: LoadBalancer
+  sessionAffinity: ClientIP
+  selector:
+    app.kubernetes.io/name: elemta-webmail
+  ports:
+    - { name: http, port: 8027, targetPort: http }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-mailbox-host
+  labels:
+    app.kubernetes.io/name: elemta-mailbox
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: elemta-mailbox
+  ports:
+    - { name: imaps, port: 993, targetPort: imaps }
+    - { name: imap, port: 14143, targetPort: imap }
+    - { name: sieve, port: 4190, targetPort: sieve }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-ldap-host
+  labels:
+    app.kubernetes.io/name: elemta-ldap
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: elemta-ldap
+  ports:
+    - { name: ldap, port: 1389, targetPort: ldap }

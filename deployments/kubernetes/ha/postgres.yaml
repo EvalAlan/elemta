@@ -1,0 +1,78 @@
+# Postgres for the mailbox metadata and the shared mail queue, run by the
+# CloudNativePG operator (installed once per cluster; see ../README.md).
+#
+# Three instances: a primary and two streaming replicas, one per node where
+# there are three nodes. The operator promotes a replica when the primary's
+# pod or node is lost and moves the elemta-db-rw Service to it, so clients
+# only ever address elemta-db-rw.
+#
+# Synchronous replication: a commit returns only once one replica has the
+# WAL. Accepted mail must survive losing the primary, and the mailbox
+# service checks for it (mailbox.toml: require_synchronous_replication).
+# dataDurability "required" stops writes rather than silently going
+# asynchronous when no replica is left; on a single-node test cluster both
+# replicas share the node, which tests the mechanics but not the durability.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: elemta-db
+spec:
+  instances: 3
+  # The major version the mailbox engine is tested on.
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+  primaryUpdateStrategy: unsupervised
+  storage:
+    size: 10Gi
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
+    parameters:
+      max_connections: "300"
+      shared_buffers: 256MB
+  # Spread instances over nodes. "preferred" so a single-node cluster still
+  # runs all three; a production overlay can make it "required".
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: preferred
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  bootstrap:
+    initdb:
+      database: mailbox
+      owner: mailbox
+      secret:
+        name: elemta-db-mailbox
+  managed:
+    roles:
+      # The mailbox service checks pg_stat_replication before acknowledging a
+      # delivery; pg_monitor lets a non-superuser read its LSN columns.
+      - name: mailbox
+        ensure: present
+        login: true
+        inRoles: [pg_monitor]
+        passwordSecret:
+          name: elemta-db-mailbox
+      - name: queue
+        ensure: present
+        login: true
+        passwordSecret:
+          name: elemta-db-queue
+---
+# The MTAs' shared queue (and suppression list), apart from the mailbox data.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: elemta-db-queue
+spec:
+  cluster:
+    name: elemta-db
+  name: queue
+  owner: queue
+  ensure: present

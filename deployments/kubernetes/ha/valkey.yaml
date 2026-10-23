@@ -1,0 +1,212 @@
+# Valkey with Sentinel: three pods, each running Valkey and a Sentinel.
+#
+# One Valkey is the primary and the other two replicate it. The Sentinels
+# watch it and, when two of them agree it is gone, promote a replica. The
+# services find the primary through the Sentinels (VALKEY_ADDR is a
+# valkey://...?master_set=elemta URL, internal/valkeyaddr), so sessions,
+# locks and shared counters carry on through a pod or node being lost.
+#
+# Who is primary at start: whoever the running Sentinels say. With none
+# running (the first start, or every pod restarting at once) pod 0 is. In
+# that second case a replica that had been promoted rejoins pod 0 and drops
+# what it had that pod 0 lacks; everything kept here is short-lived
+# (sessions, locks, counters), so that is the trade for a simple bootstrap.
+#
+# No password: Valkey and the Sentinels are reachable only from this
+# namespace (networkpolicy.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elemta-valkey-scripts
+data:
+  common.sh: |
+    nodes=elemta-valkey-nodes.${NAMESPACE}.svc.cluster.local
+    me="$(hostname).$nodes"
+    first="elemta-valkey-0.$nodes"
+    # primary_from_sentinels prints the primary any reachable Sentinel
+    # other than this pod's knows of, or nothing.
+    primary_from_sentinels() {
+      for i in 0 1 2; do
+        host="elemta-valkey-$i.$nodes"
+        [ "$host" = "$me" ] && continue
+        addr=$(timeout 3 valkey-cli -h "$host" -p 26379 --raw sentinel get-master-addr-by-name elemta 2>/dev/null | head -n 1) || true
+        if [ -n "$addr" ]; then
+          echo "$addr"
+          return
+        fi
+      done
+    }
+  valkey.sh: |
+    #!/bin/sh
+    set -eu
+    . /scripts/common.sh
+    primary=$(primary_from_sentinels)
+    if [ -z "$primary" ] && [ "$me" != "$first" ]; then
+      primary=$first
+    fi
+    set -- valkey-server \
+      --appendonly yes --appendfsync everysec \
+      --maxmemory 256mb --maxmemory-policy noeviction \
+      --replica-announce-ip "$me"
+    if [ -n "$primary" ] && [ "$primary" != "$me" ]; then
+      echo "valkey: replica of $primary"
+      set -- "$@" --replicaof "$primary" 6379
+    else
+      echo "valkey: primary"
+    fi
+    exec "$@"
+  sentinel.sh: |
+    #!/bin/sh
+    set -eu
+    . /scripts/common.sh
+    primary=$(primary_from_sentinels)
+    primary=${primary:-$first}
+    # Sentinel rewrites its file as it learns, so it lives on an emptyDir;
+    # a restarted Sentinel relearns everything from the others.
+    cat >/sentinel/sentinel.conf <<EOF
+    port 26379
+    sentinel resolve-hostnames yes
+    sentinel announce-hostnames yes
+    sentinel announce-ip $me
+    sentinel monitor elemta $primary 6379 2
+    sentinel down-after-milliseconds elemta 5000
+    sentinel failover-timeout elemta 30000
+    sentinel parallel-syncs elemta 1
+    EOF
+    echo "sentinel: watching $primary"
+    exec valkey-sentinel /sentinel/sentinel.conf
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elemta-valkey
+  labels:
+    app.kubernetes.io/name: elemta-valkey
+spec:
+  serviceName: elemta-valkey-nodes
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-valkey
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elemta-valkey
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: elemta-valkey
+      containers:
+        - name: valkey
+          image: valkey/valkey:8.0-alpine
+          command: ["/bin/sh", "/scripts/valkey.sh"]
+          env: &env
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: valkey
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 384Mi
+          securityContext: &containerSecurity
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: scripts
+              mountPath: /scripts
+        - name: sentinel
+          image: valkey/valkey:8.0-alpine
+          command: ["/bin/sh", "/scripts/sentinel.sh"]
+          env: *env
+          ports:
+            - name: sentinel
+              containerPort: 26379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "-p", "26379", "ping"]
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext: *containerSecurity
+          volumeMounts:
+            - name: sentinel
+              mountPath: /sentinel
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: elemta-valkey-scripts
+        - name: sentinel
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+# Stable names per pod (elemta-valkey-N.elemta-valkey-nodes), which the
+# Sentinels announce. Published before a pod is ready so a starting pod can
+# reach the others' Sentinels and they can reach it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-valkey-nodes
+  labels:
+    app.kubernetes.io/name: elemta-valkey
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: elemta-valkey
+  ports:
+    - name: valkey
+      port: 6379
+    - name: sentinel
+      port: 26379
+---
+# What the services are given: any Sentinel, which tells them the primary.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-valkey-sentinel
+  labels:
+    app.kubernetes.io/name: elemta-valkey
+spec:
+  selector:
+    app.kubernetes.io/name: elemta-valkey
+  ports:
+    - name: sentinel
+      port: 26379
+      targetPort: sentinel

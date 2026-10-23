@@ -1,0 +1,9 @@
+# Baseline, not restricted: the directory runs slapd's image as root (it
+# drops to the ldap user itself), and SeaweedFS runs as root. Elemta, the
+# mailbox service and Valkey run as unprivileged users with no capabilities.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: elemta
+  labels:
+    pod-security.kubernetes.io/enforce: baseline

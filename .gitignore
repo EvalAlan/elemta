@@ -187,3 +187,4 @@ CLAUDE.md
 
 # Generated dev service credentials (scripts/dev-secrets.sh)
 deployments/compose/.secrets/
+deployments/kubernetes/dev/ha/mailbox.toml

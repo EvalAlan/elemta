@@ -1,0 +1,38 @@
+# The webmail's submission port (2588) checks the account password but not
+# app passwords, because the webmail has already done two-step sign-in. So
+# only the webmail may reach it; everything else on the MTA stays open.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elemta-mta
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: elemta
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { port: 2525 }
+        - { port: 2587 }
+        - { port: 8080 }
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: elemta-webmail
+      ports:
+        - { port: 2588 }
+---
+# Valkey and its Sentinels have no password; only this namespace reaches
+# them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elemta-valkey
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-valkey
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}

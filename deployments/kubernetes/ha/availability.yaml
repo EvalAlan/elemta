@@ -1,0 +1,129 @@
+# What keeps the tiers available while nodes are drained and pods replaced
+# (PodDisruptionBudgets), and what scales them with load
+# (HorizontalPodAutoscalers, on CPU, which needs metrics-server; k3s ships
+# it). Postgres has its own budgets, from the operator.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elemta
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elemta-web
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-web
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elemta-webmail
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-webmail
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elemta-mailbox
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-mailbox
+---
+# Two of three Valkeys keep the Sentinels' quorum and a replica.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elemta-valkey
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-valkey
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elemta-ldap
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elemta-ldap
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: elemta
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: elemta
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    # Scaling an MTA down ends its SMTP sessions; don't flap.
+    scaleDown:
+      stabilizationWindowSeconds: 600
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: elemta-webmail
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: elemta-webmail
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: elemta-mailbox
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: elemta-mailbox
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    # Scaling down drops IMAP connections (clients reconnect); don't flap.
+    scaleDown:
+      stabilizationWindowSeconds: 600

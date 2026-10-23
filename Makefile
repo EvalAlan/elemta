@@ -934,13 +934,18 @@ K8S_OWN_IMAGES = deploy/elemta deploy/elemta-sink deploy/elemta-mailbox deploy/e
 # targets that change config on a running stack re-apply that one rather than
 # the default, which would prune the rest.
 K8S_CURRENT_OVERLAY = $$($(KUBECTL) get namespace $(K8S_NAMESPACE) -o jsonpath='{.metadata.annotations.elemta\.dev/overlay}' 2>/dev/null || true)
-K8S_WEB_EXEC = $(KC) exec -i deploy/elemta -c web -- /app/elemta --config /app/runtime-config/elemta.toml
+# Where the dashboard runs: the elemta pod's web container in the dev
+# overlays, its own Deployment in the replicated one.
+K8S_WEB_TARGET ?= deploy/elemta
+K8S_WEB_EXEC = $(KC) exec -i $(K8S_WEB_TARGET) -c web -- /app/elemta --config /app/runtime-config/elemta.toml
 
 .PHONY: k8s-help k8s-check k8s-images k8s-load k8s-apply k8s-wait k8s-install \
 	k8s-install-dev k8s-install-dev-full k8s-install-dev-bench k8s-install-dev-postgres \
 	k8s-up k8s-down k8s-down-volumes k8s-restart k8s-status k8s-logs k8s-logs-elemta \
 	k8s-rebuild k8s-rebuild-dev k8s-reseed k8s-sink-up k8s-sink-down \
-	k8s-bootstrap-admin k8s-reset-admin-password k8s-bench-queue k8s-print-dev-summary
+	k8s-bootstrap-admin k8s-reset-admin-password k8s-bench-queue k8s-print-dev-summary \
+	k8s-ha-operator k8s-ha-registry k8s-ha-images k8s-ha-mailbox-config k8s-ha-secrets \
+	k8s-ha-apply k8s-install-ha k8s-ha-status
 
 k8s-help:
 	@echo "☸️  Kubernetes (k3s; see deployments/kubernetes/README.md):"
@@ -948,6 +953,7 @@ k8s-help:
 	@echo "  k8s-install-dev-full       + ClamAV, Rspamd"
 	@echo "  k8s-install-dev-bench      + ClamAV, Rspamd; delivery DISCARDED"
 	@echo "  k8s-install-dev-postgres   Postgres queue"
+	@echo "  k8s-install-ha             Every tier replicated (Postgres operator, Sentinel, 2 LDAP nodes)"
 	@echo "  k8s-up / k8s-down          Scale to zero and back, volumes kept"
 	@echo "  k8s-down-volumes           Delete the namespace and everything in it"
 	@echo "  k8s-restart / k8s-status / k8s-logs / k8s-logs-elemta"
@@ -1102,6 +1108,108 @@ k8s-install-dev-postgres:
 	@$(MAKE) --no-print-directory k8s-print-dev-summary
 	@echo "   Verify: kubectl -n $(K8S_NAMESPACE) exec deploy/elemta-postgres -- psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c 'select count(*) from queue_messages;'"
 
+# ---------------------------------------------------------------------------
+# The replicated deployment (deployments/kubernetes/ha) on this machine's
+# k3s, through dev/ha. Separate targets because its pieces differ from the
+# dev overlays': an operator runs Postgres, images go through a local
+# registry instead of an import (no sudo), and the dashboard is its own
+# Deployment.
+CNPG_VERSION ?= 1.30.1
+CNPG_MANIFEST = https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-$(basename $(CNPG_VERSION))/releases/cnpg-$(CNPG_VERSION).yaml
+K8S_REGISTRY ?= localhost:5000
+K8S_HA_SECRETS = deployments/compose/.secrets/k8s-ha
+
+# The CloudNativePG operator, once per cluster, in its own namespace.
+k8s-ha-operator:
+	@if $(KUBECTL) get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then \
+		echo "ℹ️  CloudNativePG already installed"; \
+	else \
+		echo "📦 Installing the CloudNativePG operator $(CNPG_VERSION)..."; \
+		$(KUBECTL) apply --server-side -f $(CNPG_MANIFEST) >/dev/null && \
+		$(KUBECTL) -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=5m; \
+	fi
+
+# A registry on localhost, which k3s's containerd pulls from over plain HTTP
+# without configuration, so images reach the cluster without root.
+k8s-ha-registry:
+	@if ! docker ps --format '{{.Names}}' | grep -qx elemta-registry; then \
+		docker rm -f elemta-registry >/dev/null 2>&1 || true; \
+		docker run -d --restart unless-stopped --name elemta-registry \
+			-p 127.0.0.1:5000:5000 -v elemta_registry:/var/lib/registry registry:2 >/dev/null; \
+		echo "✅ Registry on $(K8S_REGISTRY)"; \
+	fi
+
+k8s-ha-images: k8s-ha-registry
+	@$(MAKE) --no-print-directory k8s-images K8S_IMAGE_LOAD=none
+	@for i in elemta elemta-mailbox elemta-ldap elemta-dns; do \
+		docker tag $$i:$(IMAGE_TAG) $(K8S_REGISTRY)/$$i:$(IMAGE_TAG) && \
+		docker push -q $(K8S_REGISTRY)/$$i:$(IMAGE_TAG) >/dev/null || exit 1; \
+	done
+	@echo "✅ Images pushed to $(K8S_REGISTRY)"
+
+# config/mailbox-main.toml with what the replicated deployment changes:
+# bodies in S3 (elemta-objects), synchronous replication required, and the
+# pod network allowed to deliver. Generated, like dev/minimal's, so the
+# two can't drift; the copy is git-ignored.
+k8s-ha-mailbox-config:
+	@sed -e 's|^lmtp_allowed_networks = .*|lmtp_allowed_networks = ["$(K8S_POD_CIDR)", "127.0.0.0/8"]|' \
+		-e 's|^require_synchronous_replication = .*|require_synchronous_replication = true|' \
+		-e 's|^driver = "file"|driver = "s3"|' \
+		-e 's|^endpoint = .*|endpoint = "elemta-objects:8333"|' \
+		config/mailbox-main.toml > $(K8S_DIR)/dev/ha/mailbox.toml
+	@for want in '"$(K8S_POD_CIDR)"' 'require_synchronous_replication = true' 'driver = "s3"' 'elemta-objects:8333'; do \
+		grep -qF "$$want" $(K8S_DIR)/dev/ha/mailbox.toml || \
+			{ echo "❌ config/mailbox-main.toml changed shape; could not set $$want"; exit 1; }; \
+	done
+
+# Database passwords and the S3 key pair for dev/ha, made once. Letters and
+# digits only: the queue's password goes into a URL.
+k8s-ha-secrets: ensure-dev-secrets
+	@mkdir -p $(K8S_HA_SECRETS) && chmod 700 $(K8S_HA_SECRETS)
+	@for u in mailbox queue; do \
+		f=$(K8S_HA_SECRETS)/db-$$u.env; \
+		[ -f $$f ] || { umask 077; printf 'username=%s\npassword=%s\n' $$u "$$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)" > $$f; }; \
+	done
+	@f=$(K8S_HA_SECRETS)/s3.env; [ -f $$f ] || { \
+		umask 077; . deployments/compose/.secrets/mailbox-storage.env; \
+		printf 'ELEMTA_MAILBOX_S3_ACCESS_KEY=%s\nELEMTA_MAILBOX_S3_SECRET_KEY=%s\nAWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' \
+			"$$MAILBOX_S3_ACCESS_KEY" "$$MAILBOX_S3_SECRET_KEY" "$$MAILBOX_S3_ACCESS_KEY" "$$MAILBOX_S3_SECRET_KEY" > $$f; }
+
+k8s-ha-apply: k8s-ha-mailbox-config k8s-ha-secrets
+	@echo "🚀 Applying deployments/kubernetes/dev/ha..."
+	@$(KUSTOMIZE) $(K8S_DIR)/dev/ha | $(KUBECTL) apply -f - | grep -v ' unchanged$$' || true
+	@$(KUBECTL) annotate namespace $(K8S_NAMESPACE) elemta.dev/overlay=ha --overwrite >/dev/null
+
+# Build, apply, wait for each tier in the order they depend on each other,
+# load the directory, then a dashboard login.
+k8s-install-ha: check-tools k8s-check ensure-dev-certs
+	@if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx elemta-node0; then \
+		echo "❌ The Compose dev stack is running and holds the same ports. 'make down' first."; \
+		exit 1; \
+	fi
+	@cur=$(K8S_CURRENT_OVERLAY); if [ -n "$$cur" ] && [ "$$cur" != ha ]; then \
+		echo "❌ The '$$cur' dev overlay is installed in $(K8S_NAMESPACE). 'make k8s-down-volumes' first."; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory k8s-ha-operator
+	@$(MAKE) --no-print-directory k8s-ha-images
+	@$(MAKE) --no-print-directory k8s-ha-apply
+	@echo "⏳ Waiting for Postgres (three instances)..."
+	@$(KC) wait cluster/elemta-db --for=condition=Ready --timeout=10m >/dev/null
+	@echo "⏳ Waiting for the directory and Valkey..."
+	@$(KC) rollout status statefulset/elemta-ldap --timeout=5m >/dev/null
+	@$(KC) rollout status statefulset/elemta-valkey --timeout=5m >/dev/null
+	@ELEMTA_STACK=k8s K8S_NAMESPACE=$(K8S_NAMESPACE) ./scripts/init-ldap-if-needed.sh || true
+	@# Images are pushed under the same tag; restart so every pod runs them.
+	@$(KC) rollout restart deploy/elemta deploy/elemta-web deploy/elemta-webmail deploy/elemta-mailbox >/dev/null
+	@$(MAKE) --no-print-directory k8s-wait
+	@$(MAKE) --no-print-directory k8s-bootstrap-admin K8S_WEB_TARGET=deploy/elemta-web
+	@$(MAKE) --no-print-directory k8s-ha-status
+
+k8s-ha-status:
+	@$(KC) get cluster.postgresql.cnpg.io,statefulsets,deployments,hpa,pdb 2>/dev/null
+	@echo "Valkey primary: $$($(KC) exec elemta-valkey-0 -c sentinel -- valkey-cli -p 26379 sentinel get-master-addr-by-name elemta 2>/dev/null | head -n 1)"
+
 k8s-sink-up:
 	@$(MAKE) --no-print-directory configure-delivery-target DELIVERY_HOST=elemta-sink DELIVERY_PORT=2424
 	@ov=$(K8S_CURRENT_OVERLAY); $(MAKE) --no-print-directory k8s-apply K8S_OVERLAY=$${ov:-minimal} >/dev/null
@@ -1119,7 +1227,7 @@ k8s-sink-down:
 # server re-reads the file when it changes, so nothing needs restarting.
 k8s-bootstrap-admin:
 	@needs_account=1; \
-	if $(KC) exec deploy/elemta -c web -- test -e /app/runtime-config/users.json 2>/dev/null; then \
+	if $(KC) exec $(K8S_WEB_TARGET) -c web -- test -e /app/runtime-config/users.json 2>/dev/null; then \
 		if ! $(K8S_WEB_EXEC) user list --file /app/runtime-config/users.json 2>/dev/null | grep -q '^No users'; then \
 			needs_account=0; \
 		fi; \
