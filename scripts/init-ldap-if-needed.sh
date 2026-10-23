@@ -63,7 +63,9 @@ echo "📝 LDAP users not found, adding them now..."
 
 # Adding entries that already exist is not a failure for an idempotent
 # initialiser, so this must not take `set -e` with it.
-"${LDAP_EXEC[@]}" ldapadd -Q -Y EXTERNAL -H ldapi:/// \
+# -c: entries the steps above already made (branches) are skipped, not
+# the end of the file.
+"${LDAP_EXEC[@]}" ldapadd -c -Q -Y EXTERNAL -H ldapi:/// \
     -f /docker-entrypoint-initdb.d/99-stress-users.ldif 2>&1 | grep -v "Already exists" || true
 
 sleep 2
