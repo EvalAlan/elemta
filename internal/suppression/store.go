@@ -16,9 +16,13 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	_ "github.com/lib/pq"  // the Postgres queue's driver
 	_ "modernc.org/sqlite" // same driver the queue uses, so no new dependency
 )
 
@@ -47,12 +51,27 @@ type Entry struct {
 
 // Store is the durable list.
 //
-// SQLite because it has to be shared: the SMTP node records the bounce and the
-// web process reads it when a campaign runs, and in the shipped deployment
-// those are different containers on one volume. WAL lets both hold it open.
+// It has to be shared: the SMTP node records the bounce and the web process
+// reads it when a campaign runs. With a file queue those are containers on one
+// volume and SQLite in WAL mode lets both hold it open. With the Postgres
+// queue there are several MTAs, each with its own disk, so the list lives in
+// the queue's database instead; otherwise a complaint taken by one MTA would
+// not stop the others mailing the address.
 type Store struct {
-	db *sql.DB
+	db       *sql.DB
+	postgres bool
 }
+
+// schema is valid in both SQLite and Postgres.
+const schema = `
+	CREATE TABLE IF NOT EXISTS suppressed (
+		address    TEXT PRIMARY KEY,
+		source     TEXT NOT NULL,
+		reason     TEXT,
+		code       TEXT,
+		created_at BIGINT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS suppressed_created_at ON suppressed(created_at);`
 
 // Open creates or opens the store at path.
 func Open(path string) (*Store, error) {
@@ -63,21 +82,124 @@ func Open(path string) (*Store, error) {
 
 	// Addresses are the primary key, so recording the same bounce twice is not
 	// an error and does not need a read first.
-	const schema = `
-		CREATE TABLE IF NOT EXISTS suppressed (
-			address    TEXT PRIMARY KEY,
-			source     TEXT NOT NULL,
-			reason     TEXT,
-			code       TEXT,
-			created_at INTEGER NOT NULL
-		);
-		CREATE INDEX IF NOT EXISTS suppressed_created_at ON suppressed(created_at);`
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("create suppression schema: %w", err)
 	}
 
 	return &Store{db: db}, nil
+}
+
+// OpenPostgres opens the list in the Postgres database at dsn, the one the
+// queue uses, creating its table if needed.
+func OpenPostgres(dsn string) (*Store, error) {
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open suppression store: %w", err)
+	}
+	// Lookups are one row by key; a few connections per process is plenty
+	// beside the queue's own pool.
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	if _, err := db.Exec(schema); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("create suppression schema: %w", err)
+	}
+	return &Store{db: db, postgres: true}, nil
+}
+
+// OpenForQueue opens the list where the queue keeps its state: the queue's
+// Postgres database for the postgres backend, otherwise suppression.db in the
+// queue directory. Where returns a description for the log.
+//
+// Moving to Postgres takes the entries a local suppression.db already holds
+// with it, once: the file is renamed afterwards so the next start does not
+// import it again, and kept rather than deleted in case it is needed.
+func OpenForQueue(ctx context.Context, backend, dsn, queueDir string) (store *Store, where string, err error) {
+	local := ""
+	if queueDir != "" {
+		local = filepath.Join(queueDir, "suppression.db")
+	}
+	if strings.EqualFold(strings.TrimSpace(backend), "postgres") && strings.TrimSpace(dsn) != "" {
+		store, err = OpenPostgres(dsn)
+		if err != nil {
+			return nil, "the queue database", err
+		}
+		if local != "" {
+			if _, statErr := os.Stat(local); statErr == nil {
+				n, importErr := store.importFile(ctx, local)
+				if importErr != nil {
+					slog.Default().Warn("Could not move the local suppression list into the queue database; it stays where it is and the import is retried at the next start",
+						"component", "suppression", "path", local, "error", importErr)
+				} else {
+					slog.Default().Info("Moved the local suppression list into the queue database",
+						"component", "suppression", "path", local, "entries", n)
+				}
+			}
+		}
+		return store, "the queue database", nil
+	}
+	if local == "" {
+		return nil, "", fmt.Errorf("no queue directory for the suppression list")
+	}
+	store, err = Open(local)
+	return store, local, err
+}
+
+// importFile copies a SQLite list into s and renames the file once done.
+func (s *Store) importFile(ctx context.Context, path string) (int, error) {
+	old, err := Open(path)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for offset := 0; ; {
+		entries, _, err := old.List(ctx, "", 500, offset)
+		if err != nil {
+			_ = old.Close()
+			return n, err
+		}
+		for _, entry := range entries {
+			if err := s.Add(ctx, entry); err != nil {
+				_ = old.Close()
+				return n, err
+			}
+			n++
+		}
+		if len(entries) < 500 {
+			break
+		}
+		offset += len(entries)
+	}
+	if err := old.Close(); err != nil {
+		return n, err
+	}
+	// WAL side files go with it, so the renamed copy opens complete.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(path + suffix); err == nil {
+			_ = os.Rename(path+suffix, path+".imported"+suffix)
+		}
+	}
+	return n, os.Rename(path, path+".imported")
+}
+
+// q writes a statement's ? placeholders as $1, $2... for Postgres.
+func (s *Store) q(query string) string {
+	if !s.postgres {
+		return query
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range query {
+		if r == '?' {
+			n++
+			b.WriteString("$" + strconv.Itoa(n))
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func (s *Store) Close() error {
@@ -116,10 +238,10 @@ func (s *Store) Add(ctx context.Context, entry Entry) error {
 		entry.CreatedAt = time.Now().UTC()
 	}
 
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.db.ExecContext(ctx, s.q(
 		`INSERT INTO suppressed (address, source, reason, code, created_at)
 		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(address) DO NOTHING`,
+		 ON CONFLICT(address) DO NOTHING`),
 		address, string(entry.Source), truncate(entry.Reason, 500), entry.Code, entry.CreatedAt.Unix())
 	if err != nil {
 		return fmt.Errorf("suppress %s: %w", address, err)
@@ -143,7 +265,7 @@ func (s *Store) IsSuppressed(ctx context.Context, address string) (Entry, bool, 
 	var created int64
 	var source, reason, code sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT address, source, reason, code, created_at FROM suppressed WHERE address = ?`,
+		s.q(`SELECT address, source, reason, code, created_at FROM suppressed WHERE address = ?`),
 		Normalize(address)).Scan(&entry.Address, &source, &reason, &code, &created)
 	if err == sql.ErrNoRows {
 		return Entry{}, false, nil
@@ -191,15 +313,15 @@ func (s *Store) List(ctx context.Context, query string, limit, offset int) ([]En
 	)
 	if filter := strings.TrimSpace(query); filter != "" {
 		pattern := "%" + strings.ToLower(filter) + "%"
-		if err = s.db.QueryRowContext(ctx, countFiltered, pattern).Scan(&total); err != nil {
+		if err = s.db.QueryRowContext(ctx, s.q(countFiltered), pattern).Scan(&total); err != nil {
 			return nil, 0, err
 		}
-		rows, err = s.db.QueryContext(ctx, selectFiltered, pattern, limit, offset)
+		rows, err = s.db.QueryContext(ctx, s.q(selectFiltered), pattern, limit, offset)
 	} else {
 		if err = s.db.QueryRowContext(ctx, countAll).Scan(&total); err != nil {
 			return nil, 0, err
 		}
-		rows, err = s.db.QueryContext(ctx, selectAll, limit, offset)
+		rows, err = s.db.QueryContext(ctx, s.q(selectAll), limit, offset)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -233,7 +355,7 @@ func (s *Store) Remove(ctx context.Context, address string) (bool, error) {
 	if s == nil || s.db == nil {
 		return false, nil
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM suppressed WHERE address = ?`, Normalize(address))
+	result, err := s.db.ExecContext(ctx, s.q(`DELETE FROM suppressed WHERE address = ?`), Normalize(address))
 	if err != nil {
 		return false, err
 	}

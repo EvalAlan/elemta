@@ -2,6 +2,7 @@ package suppression
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,9 +13,20 @@ import (
 // the two ways that goes wrong: removing someone who should still be mailed,
 // and failing to remove someone who should not be.
 
+// testStore is SQLite, or the Postgres store when ELEMTA_TEST_QUEUE_POSTGRES_DSN
+// names a disposable database, so both run the same tests.
 func testStore(t *testing.T) *Store {
 	t.Helper()
-	store, err := Open(filepath.Join(t.TempDir(), "suppression.db"))
+	var store *Store
+	var err error
+	if dsn := os.Getenv("ELEMTA_TEST_QUEUE_POSTGRES_DSN"); dsn != "" {
+		store, err = OpenPostgres(dsn)
+		if err == nil {
+			_, err = store.db.Exec("DELETE FROM suppressed")
+		}
+	} else {
+		store, err = Open(filepath.Join(t.TempDir(), "suppression.db"))
+	}
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -172,5 +184,40 @@ func TestMissingStoreIsNotAnError(t *testing.T) {
 	}
 	if err := store.Add(ctx, Entry{Address: "a@example.com"}); err != nil {
 		t.Errorf("nil store Add should be a no-op, got %v", err)
+	}
+}
+
+func TestOpenForQueueMovesTheLocalListToPostgres(t *testing.T) {
+	dsn := os.Getenv("ELEMTA_TEST_QUEUE_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("ELEMTA_TEST_QUEUE_POSTGRES_DSN not set")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	local, err := Open(filepath.Join(dir, "suppression.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = local.Add(ctx, Entry{Address: "Moved@Example.com", Source: SourceComplaint, Reason: "reported as spam"})
+	_ = local.Close()
+
+	shared, _ := OpenPostgres(dsn)
+	_, _ = shared.db.Exec("DELETE FROM suppressed")
+	_ = shared.Close()
+
+	store, where, err := OpenForQueue(ctx, "postgres", dsn, dir)
+	if err != nil || where != "the queue database" {
+		t.Fatalf("OpenForQueue = %q, %v", where, err)
+	}
+	defer func() { _ = store.Close() }()
+	entry, suppressed, err := store.IsSuppressed(ctx, "moved@example.com")
+	if err != nil || !suppressed || entry.Source != SourceComplaint {
+		t.Fatalf("moved entry = %+v, %v, %v", entry, suppressed, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "suppression.db")); !os.IsNotExist(err) {
+		t.Errorf("local list still in place after the move: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "suppression.db.imported")); err != nil {
+		t.Errorf("local list not kept as .imported: %v", err)
 	}
 }

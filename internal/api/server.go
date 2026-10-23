@@ -318,13 +318,17 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 		webRoot:    webRoot,
 	}
 
-	// The suppression list, in the queue directory where the SMTP node writes
-	// it. Nil on failure: an unavailable list is reported by the endpoints,
-	// which is better than an empty one that silently claims nobody is
-	// suppressed and lets a campaign mail addresses that bounced.
+	// The suppression list, where the SMTP node writes it: the queue's
+	// Postgres database or the queue directory. Nil on failure: an
+	// unavailable list is reported by the endpoints, which is better than an
+	// empty one that silently claims nobody is suppressed and lets a campaign
+	// mail addresses that bounced.
 	if queueDir != "" {
-		suppressionPath := filepath.Join(queueDir, "suppression.db")
-		if store, err := suppression.Open(suppressionPath); err != nil {
+		backend, dsn := "", ""
+		if mainConfig != nil {
+			backend, dsn = mainConfig.QueueBackend, mainConfig.QueuePostgresDSN
+		}
+		if store, suppressionPath, err := suppression.OpenForQueue(context.Background(), backend, dsn, queueDir); err != nil {
 			log.Printf("Warning: suppression list unavailable at %s: %v", suppressionPath, err)
 		} else {
 			server.suppressed = store

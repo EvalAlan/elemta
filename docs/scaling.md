@@ -10,7 +10,7 @@ design.
 
 | Tier | Instances | In front | Shared state |
 |---|---|---|---|
-| MTA (`elemta`) | any number | `elemta-edge` (HAProxy), ports 25 and 587, PROXY protocol | the queue, in Postgres |
+| MTA (`elemta`) | any number | `elemta-edge` (HAProxy), ports 25 and 587, PROXY protocol | the queue and suppression list, in Postgres |
 | Mailbox servers (`elemta-mailbox-server`) | any number (2 by default, also without the overlay) | `elemta-mailbox` (HAProxy), PROXY protocol on the public ports | Postgres, message bodies |
 | Webmail | any number | Caddy, a browser kept on one | sessions in Valkey |
 | Dashboard | any number | Caddy | sessions in Valkey (`[api] session_store`) |

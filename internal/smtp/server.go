@@ -577,16 +577,15 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 	}
 
 	// The suppression list: addresses that permanently failed and must not be
-	// mailed again. It lives beside the queue because both processes reach it
+	// mailed again. It lives with the queue because both processes reach it
 	// there — the SMTP node writes bounces, the web process reads them when a
-	// campaign runs.
+	// campaign runs — and with a Postgres queue every MTA shares it.
 	//
 	// A store that cannot be opened is a warning, not a failure. Delivery must
 	// not depend on it; the cost is that bounces are not recorded until it is
 	// fixed, which the log says plainly.
 	if queueProcessor != nil && config.QueueDir != "" {
-		suppressionPath := filepath.Join(config.QueueDir, "suppression.db")
-		if store, err := suppression.Open(suppressionPath); err != nil {
+		if store, suppressionPath, err := suppression.OpenForQueue(context.Background(), config.QueueBackend, config.QueuePostgres.DSN, config.QueueDir); err != nil {
 			slogger.Warn("Suppression list unavailable; permanent failures will not be recorded",
 				"path", suppressionPath, "error", err)
 		} else {
