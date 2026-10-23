@@ -918,7 +918,7 @@ k8s-help:
 	@echo "  k8s-install-dev-full       + ClamAV, Rspamd"
 	@echo "  k8s-install-dev-bench      + ClamAV, Rspamd; delivery DISCARDED"
 	@echo "  k8s-install-dev-postgres   Postgres queue"
-	@echo "  k8s-install-ha             Every tier replicated (Postgres operator, Sentinel, 2 LDAP nodes)"
+	@echo "  k8s-install-ha             Lean local stack; replicated Postgres, Valkey, and LDAP"
 	@echo "  k8s-up / k8s-down          Scale to zero and back, volumes kept"
 	@echo "  k8s-down-volumes           Delete the namespace and everything in it"
 	@echo "  k8s-restart / k8s-status / k8s-logs / k8s-logs-elemta"

@@ -3,11 +3,10 @@
 #
 #   make k8s-install-ha
 #
-# Everything is replicated as it would be across nodes (three Postgres
-# instances with synchronous replication, three Valkeys with Sentinels, two
-# directory nodes, two of each Elemta service), so failover, scaling and
-# rolling updates can be exercised here. They share one node, so losing the
-# node is the one failure this can't show.
+# Postgres, Valkey and the directory keep their replicated topology for
+# failover drills. The services and scanners run one pod each to fit this
+# single node; raise their replica counts for scaling and rolling-update
+# drills.
 #
 # Images come from a registry on localhost:5000 (make k8s-ha-images), which
 # k3s pulls from without root, unlike an image import.
@@ -130,6 +129,32 @@ images:
     newTag: 8.0.11-errqueue.1
 
 patches:
+  # CPU autoscaling can leave a quiet development stack at ten MTA and
+  # mailbox pods during load tests. Keep the local footprint predictable.
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: elemta-mta|elemta-mailbox|elemta-webmail
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 1
+  - target:
+      kind: Deployment
+      name: elemta-admin|elemta-mailbox|elemta-rspamd|elemta-webmail
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      kind: StatefulSet
+      name: elemta-mta|elemta-clamav
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
   # local-path volumes are ReadWriteOnce, which every pod on this one node
   # can mount; a multi-node cluster needs ReadWriteMany here instead.
   - target:

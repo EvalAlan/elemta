@@ -180,7 +180,12 @@ Secrets the overlay supplies: `elemta-db-mailbox` and `elemta-db-queue`
 ### On this machine
 
 `dev/ha` is the same deployment on the single-node k3s, with the dev
-stack's configuration and fixtures and S3 from one SeaweedFS:
+stack's configuration and fixtures and S3 from one SeaweedFS. It runs one
+pod per service and scanner, two directory nodes, and three each of Postgres
+and Valkey (16 application pods total). The local HPA limits MTA, mailbox,
+and webmail to one pod so a load drill cannot leave the machine at ten pods
+per service. Raise both the replica counts and HPA limits in
+`dev/ha/kustomization.yaml` for a scaling drill:
 
 ```bash
 make k8s-install-ha       # operator, images, apply, directory, dashboard login
@@ -197,6 +202,7 @@ Failover to try:
 kubectl -n elemta delete pod $(kubectl -n elemta get cluster elemta-db -o jsonpath='{.status.currentPrimary}')
 kubectl -n elemta exec elemta-valkey-0 -c sentinel -- valkey-cli -p 26379 sentinel failover elemta
 kubectl -n elemta delete pod elemta-ldap-0
+# Raise the MTA HPA maxReplicas in dev/ha/kustomization.yaml before scaling it.
 kubectl -n elemta scale statefulset/elemta-mta --replicas=4   # elemta-mta-1..4
 ```
 
