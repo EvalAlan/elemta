@@ -67,18 +67,23 @@ func (s *Server) tlsCertificateStatus() TLSCertificateStatus {
 		return status
 	}
 
-	status.Enabled = s.mainConfig.TLSEnabled
 	path := strings.TrimSpace(s.mainConfig.TLSCertFile)
 	if path == "" {
 		// Not an error. A server that only accepts plaintext on a private
 		// network has nothing to report, and inventing a warning for it would
 		// train operators to ignore this panel.
+		status.Enabled = s.mainConfig.TLSEnabled
 		status.Message = "No certificate is configured."
 		return status
 	}
+	status = certificateStatus(path)
+	status.Enabled = s.mainConfig.TLSEnabled
+	return status
+}
 
-	status.Configured = true
-	status.Path = path
+// certificateStatus reports on the certificate in one file.
+func certificateStatus(path string) TLSCertificateStatus {
+	status := TLSCertificateStatus{Status: "unknown", Configured: true, Path: path}
 
 	cert, err := readLeafCertificate(path)
 	if err != nil {

@@ -208,6 +208,12 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 			}
 			return ""
 		}(),
+		TLSSNIDir: func() string {
+			if cfg.TLS != nil {
+				return cfg.TLS.SNICertDir
+			}
+			return ""
+		}(),
 		API:               nil, // API config not available in main config
 		MassMailer:        massMailer,
 		Antivirus:         antivirus,

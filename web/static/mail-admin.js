@@ -125,14 +125,13 @@
         return parts.join(' · ') || 'Inherits everything';
     }
 
+    // The domain filter narrows accounts, aliases and lists; a domain that
+    // was removed since it was chosen falls back to all of them.
     function renderDomains() {
-        const tree = el('ma-domain-tree'); tree.replaceChildren();
-        const all = button('All domains', () => { domain = ''; limit = 250; renderDomains(); renderTable(); }, 'ma-domain-item');
-        all.setAttribute('aria-current', String(!domain)); tree.appendChild(all);
-        domains.forEach(d => {
-            const b = button('', () => { domain = d.name; tab = 'accounts'; limit = 250; renderDomains(); renderTable(); }, 'ma-domain-item');
-            b.appendChild(node('span', d.name)); b.appendChild(node('span', d.alias_of ? '→ ' + d.alias_of : d.accounts)); b.setAttribute('aria-current', String(domain === d.name)); tree.appendChild(b);
-        });
+        const select = el('ma-domain-filter');
+        if (domain && !domains.some(d => d.name === domain)) domain = '';
+        select.replaceChildren(option('', 'All domains', domain));
+        domains.forEach(d => select.appendChild(option(d.name, d.name + (d.alias_of ? ' → ' + d.alias_of : ' (' + d.accounts + ')'), domain)));
     }
     function domainClassSelect(d) {
         const select = node('select');
@@ -144,7 +143,7 @@
     }
     function renderTable() {
         root.querySelectorAll('[data-ma-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.maTab === tab)));
-        el('ma-domain-form').hidden = tab !== 'domains' || !scope.all; el('ma-alias-domain-form').hidden = tab !== 'domains' || !mailboxAdmin || !scope.all; el('ma-status').hidden = tab !== 'accounts';
+        el('ma-domain-form').hidden = tab !== 'domains' || !scope.all; el('ma-alias-domain-form').hidden = tab !== 'domains' || !mailboxAdmin || !scope.all; el('ma-status').hidden = tab !== 'accounts'; el('ma-domain-filter').hidden = !['accounts', 'aliases', 'lists'].includes(tab);
         el('ma-create').hidden = tab === 'lists' || tab === 'classes' || tab === 'audit'; el('ma-create-list').hidden = tab !== 'lists'; el('ma-create-class').hidden = tab !== 'classes';
         if (tab === 'audit') { renderAudit(); return; }
         const head = el('ma-table-head'), body = el('ma-table-body'); head.replaceChildren(); body.replaceChildren();
@@ -323,6 +322,7 @@
         });
     });
     ['ma-search', 'ma-status'].forEach(id => el(id).addEventListener('input', () => { limit = 250; renderTable(); }));
+    el('ma-domain-filter').addEventListener('change', event => { domain = event.target.value; limit = 250; renderTable(); });
     el('ma-more').addEventListener('click', () => { if (tab === 'audit') { perform(() => loadAudit(false)); return; } limit += 250; renderTable(); });
     root.querySelectorAll('[data-ma-tab]').forEach(b => b.addEventListener('click', () => {
         tab = b.dataset.maTab; limit = 250;

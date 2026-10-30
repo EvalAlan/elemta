@@ -72,9 +72,12 @@ type MainConfig struct {
 	// The certificate path is mirrored explicitly rather than dug out of the
 	// TLS blob above: expiry reporting should not depend on a type assertion
 	// that quietly yields nothing.
-	TLSEnabled  bool        `json:"tls_enabled"`
-	TLSCertFile string      `json:"tls_cert_file,omitempty"`
-	API         interface{} `json:"api"`
+	TLSEnabled  bool   `json:"tls_enabled"`
+	TLSCertFile string `json:"tls_cert_file,omitempty"`
+	// TLSSNIDir holds the per-host certificates served by name
+	// ([tls] sni_cert_dir), listed on the Certificates page.
+	TLSSNIDir string      `json:"tls_sni_dir,omitempty"`
+	API       interface{} `json:"api"`
 
 	// Scanner configuration, mirrored here because internal/api cannot import
 	// internal/smtp (smtp already imports api for the throughput counters).
@@ -763,6 +766,20 @@ func (s *Server) Start() error {
 	// Certificate expiry. Read-only, and it is the panel an operator wants when
 	// TLS has started failing, so it follows dashboard auth like the rest.
 	api.Handle("/tls/certificate", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTLSCertificate))).Methods("GET")
+	api.Handle("/tls/certificates", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTLSCertificates))).Methods("GET")
+	// Requesting, uploading and removing certificates change what the mail
+	// services present, and a sync runs a host job, so they take the same
+	// permission as a restart.
+	certAdmin := func(h http.HandlerFunc) http.Handler { return h }
+	if s.authMiddleware != nil {
+		certAdmin = func(h http.HandlerFunc) http.Handler {
+			return s.authMiddleware.RequirePermission(auth.PermissionSystemAdmin)(h)
+		}
+	}
+	api.Handle("/tls/certificates/sync", certAdmin(s.handleTLSCertificateSync)).Methods("POST")
+	api.Handle("/tls/certificates/upload", certAdmin(s.handleTLSCertificateUpload)).Methods("POST")
+	api.Handle("/tls/certificates", certAdmin(s.handleTLSCertificateRequest)).Methods("POST")
+	api.Handle("/tls/certificates/{host}", certAdmin(s.handleTLSCertificateDelete)).Methods("DELETE")
 
 	// The suppression list. Adding and removing change who receives mail, so
 	// they take the same permission as queue management rather than read-only

@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261021-campaigns">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261022-stickyclose">
+    <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261030-certificates">
 </head>
 
 <body>
@@ -92,6 +92,10 @@
                         <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
                     </svg>
                     <span>Health</span>
+                </a>
+                <a href="#" class="nav-item" data-view="certificates">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                    <span>Certificates</span>
                 </a>
                 <a href="#" class="nav-item" data-view="queues">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -511,6 +515,71 @@
                     </div>
                     <div class="card-body" id="tls-cert-body">
                         <div class="loading-placeholder">Checking the certificate...</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Certificates View -->
+            <section class="view" id="view-certificates">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Certificates</h3>
+                        <div>
+                            <button class="btn btn-secondary btn-sm" id="cert-sync" hidden onclick="syncCertificates()">Sync now</button>
+                            <button class="btn btn-secondary btn-sm" onclick="refreshCertificates()">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="field-hint">
+                            Every certificate SMTP, IMAP and POP3 serve. A client that asks for a name one of
+                            them covers gets that one; everyone else gets the primary. Let's Encrypt certificates
+                            renew by themselves; Sync now applies requests and copies renewals right away.
+                        </div>
+                        <div id="cert-list"><div class="loading-placeholder">Loading...</div></div>
+                        <div id="cert-requests" class="cert-requests"></div>
+                    </div>
+                </div>
+                <div class="card" id="cert-manage" style="margin-top: 1.5rem;" hidden>
+                    <div class="card-header"><h3>Add a certificate</h3></div>
+                    <div class="card-body cert-manage">
+                        <form id="cert-request-form" class="cert-form">
+                            <h4>Let's Encrypt</h4>
+                            <p class="field-hint">
+                                For a host name that already points at this server, such as mail.example.org.
+                                It's issued within a minute and renewed automatically. Each failed attempt counts
+                                toward Let's Encrypt's limit of 5 an hour, so set the DNS record first.
+                            </p>
+                            <div class="cert-inline">
+                                <label class="sr-only" for="cert-request-host">Host name</label>
+                                <input id="cert-request-host" type="text" placeholder="mail.example.org" autocomplete="off" spellcheck="false" required>
+                                <button class="btn btn-primary" type="submit">Request certificate</button>
+                            </div>
+                        </form>
+                        <form id="cert-upload-form" class="cert-form">
+                            <h4>Upload your own</h4>
+                            <p class="field-hint">
+                                A certificate chain and its unencrypted private key, in PEM. It's filed under the
+                                certificate's first name and served to clients asking for any name it covers.
+                                Uploaded certificates aren't renewed: upload a new one before it expires.
+                            </p>
+                            <label for="cert-upload-cert">Certificate chain</label>
+                            <textarea id="cert-upload-cert" rows="5" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----" required></textarea>
+                            <input type="file" id="cert-upload-cert-file" accept=".pem,.crt,.cer" data-target="cert-upload-cert">
+                            <label for="cert-upload-key">Private key</label>
+                            <textarea id="cert-upload-key" rows="5" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----" autocomplete="off" required></textarea>
+                            <input type="file" id="cert-upload-key-file" accept=".pem,.key" data-target="cert-upload-key">
+                            <div><button class="btn btn-primary" type="submit">Upload certificate</button></div>
+                        </form>
+                    </div>
+                </div>
+                <div class="card" style="margin-top: 1.5rem;">
+                    <div class="card-header"><h3>Local domains</h3></div>
+                    <div class="card-body">
+                        <div class="field-hint">
+                            The certificate each domain's mail apps get, for mail.&lt;domain&gt; or the domain itself.
+                            A domain with none hands its users the primary certificate, which their apps refuse.
+                        </div>
+                        <div id="cert-domains"><div class="loading-placeholder">Loading...</div></div>
                     </div>
                 </div>
             </section>
@@ -1036,7 +1105,6 @@
                 <p id="ma-notice" class="ma-notice" role="status" hidden></p>
                 <p id="ma-error" class="error-message" role="alert" hidden></p>
                 <div class="ma-workspace">
-                    <aside class="card ma-domains"><div class="card-header"><h3>Domains</h3></div><div id="ma-domain-tree"></div></aside>
                     <div class="card ma-directory">
                         <div class="ma-tabs" role="tablist" aria-label="Directory objects">
                             <button type="button" role="tab" aria-selected="true" data-ma-tab="accounts">Accounts</button>
@@ -1046,7 +1114,7 @@
                             <button type="button" role="tab" aria-selected="false" data-ma-tab="domains">Domains</button>
                             <button type="button" role="tab" aria-selected="false" data-ma-tab="audit" data-ma-needs-mailbox hidden>Audit log</button>
                         </div>
-                        <div class="ma-toolbar"><label class="sr-only" for="ma-search">Search directory</label><input id="ma-search" type="search" placeholder="Search by address or display name"><label class="sr-only" for="ma-status">Account status</label><select id="ma-status"><option value="">All statuses</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="disabled">Disabled</option></select><button class="btn btn-secondary" id="ma-refresh">Refresh</button></div>
+                        <div class="ma-toolbar"><label class="sr-only" for="ma-search">Search directory</label><input id="ma-search" type="search" placeholder="Search by address or display name"><label class="sr-only" for="ma-domain-filter">Domain</label><select id="ma-domain-filter"><option value="">All domains</option></select><label class="sr-only" for="ma-status">Account status</label><select id="ma-status"><option value="">All statuses</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="disabled">Disabled</option></select><button class="btn btn-secondary" id="ma-refresh">Refresh</button></div>
                         <form id="ma-domain-form" class="ma-domain-form" hidden><label for="ma-new-domain">New local domain</label><input id="ma-new-domain" type="text" placeholder="example.com" required><button class="btn btn-primary" type="submit">Add domain</button><p class="field-hint">Domain routing changes require an SMTP service restart. Configure DNS separately.</p></form>
                         <form id="ma-alias-domain-form" class="ma-domain-form" hidden><label for="ma-alias-domain">New alias domain</label><input id="ma-alias-domain" type="text" placeholder="example.net" required><label for="ma-alias-target">delivers as</label><select id="ma-alias-target" required></select><button class="btn btn-secondary" type="submit">Add alias domain</button><p class="field-hint">Every name at the alias domain delivers as the same name at the target. It becomes a local domain, so restart the SMTP service.</p></form>
                         <div class="ma-table-wrap"><table class="messages-table"><thead id="ma-table-head"></thead><tbody id="ma-table-body"></tbody></table></div>
@@ -1511,10 +1579,10 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261020-reports"></script>
+    <script src="/static/app.js?v=20261030-certmanage"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
-    <script src="/static/mail-admin.js?v=20261022-onesave"></script>
+    <script src="/static/mail-admin.js?v=20261030-certificates"></script>
 </body>
 
 </html>

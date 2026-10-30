@@ -3205,6 +3205,29 @@ input:checked + .plugin-slider:before {
     .cert-row { grid-template-columns: 1fr; gap: 0.1rem; }
 }
 
+/* Certificates page: the request and upload forms side by side, stacked on
+   narrow screens. */
+.cert-manage { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; }
+.cert-form { display: flex; flex-direction: column; gap: 0.5rem; }
+.cert-form h4, .cert-requests h4 { margin: 0; font-size: 0.95rem; }
+.cert-form input[type=text], .cert-form textarea {
+    padding: 0.6rem 0.8rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+.cert-form input[type=text]:focus, .cert-form textarea:focus { outline: none; border-color: var(--accent-primary); }
+.cert-form label { font-size: 0.85rem; color: var(--text-secondary); }
+.cert-form input[type=file] { font-size: 0.8rem; color: var(--text-secondary); }
+.cert-form textarea { font-family: 'SF Mono', Monaco, monospace; font-size: 0.78rem; resize: vertical; }
+.cert-inline { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.cert-inline input { flex: 1; min-width: 180px; }
+.cert-requests { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.cert-pending { list-style: none; margin: 0; padding: 0; }
+.cert-pending li { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border-color); overflow-wrap: anywhere; }
+
 /* Skipped is not failed: an address passed over because it is suppressed is
    not a delivery problem to investigate. */
 .campaign-skipped { color: var(--text-muted); margin-left: 0.4rem; }

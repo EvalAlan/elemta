@@ -192,6 +192,9 @@ function switchView(viewName) {
             refreshHealth();
             refreshCertificate();
             break;
+        case 'certificates':
+            refreshCertificates();
+            break;
         case 'queues':
             refreshQueue();
             break;
@@ -3401,6 +3404,128 @@ async function refreshCertificate() {
         body.innerHTML = `<div class="error-message">Could not check the certificate: ${escapeHtml(error.message)}</div>`;
     }
 }
+
+// refreshCertificates fills the Certificates page: every certificate the mail
+// services serve, which one each local domain's clients get, and the
+// requests still waiting on the host. Statuses come from the API, as on the
+// Health page's card.
+const certSources = { primary: 'Primary', configured: 'Deployment settings', requested: "Let's Encrypt (requested here)", uploaded: 'Uploaded', unknown: '—' };
+
+async function refreshCertificates() {
+    const list = document.getElementById('cert-list');
+    const domains = document.getElementById('cert-domains');
+    const requests = document.getElementById('cert-requests');
+    if (!list || !domains) return;
+    const status = (s, text) => `<span class="cert-status ${escapeHtml(s)}">${escapeHtml(text)}</span>`;
+
+    try {
+        const response = await fetch(`${API_BASE}/tls/certificates`);
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        const report = await response.json();
+        document.getElementById('cert-sync').hidden = !report.manage_available;
+        document.getElementById('cert-manage').hidden = !report.manage_available;
+
+        const certs = report.certificates || [];
+        list.innerHTML = (report.message ? `<div class="field-hint">${escapeHtml(report.message)}</div>` : '') + (certs.length ? `
+            <table class="messages-table domain-stats-table">
+                <thead><tr><th>Certificate</th><th>Names</th><th>Source</th><th>Status</th><th>Expires</th><th>Issuer</th><th></th></tr></thead>
+                <tbody>${certs.map(c => `
+                    <tr>
+                        <td>${c.primary ? 'Primary' : escapeHtml(c.label)}<br><span class="cert-path">${escapeHtml(c.path || '')}</span></td>
+                        <td>${escapeHtml((c.dns_names || []).join(', ') || '—')}</td>
+                        <td>${escapeHtml(certSources[c.source] || c.source || '—')}</td>
+                        <td>${status(c.status, c.message)}</td>
+                        <td>${c.not_after ? `${escapeHtml(formatDate(c.not_after))} (${c.days_remaining} days)` : '—'}</td>
+                        <td>${escapeHtml(c.issuer || '—')}${c.self_signed ? ' <span class="plugin-note">self-signed</span>' : ''}</td>
+                        <td>${c.removable ? `<button class="btn btn-secondary btn-sm" data-cert-remove="${escapeHtml(c.label)}">Remove</button>` : ''}</td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>` : '');
+
+        // Requests the host hasn't turned into a certificate yet, and the
+        // ones it refused, so a request never just disappears.
+        const pending = report.pending || [], rejected = report.rejected || [];
+        requests.innerHTML = (pending.length ? `
+            <h4>Waiting for a certificate</h4>
+            <p class="field-hint">Let's Encrypt issues one once the name points at this server. Remove a request you no longer want.</p>
+            <ul class="cert-pending">${pending.map(h => `
+                <li><span>${escapeHtml(h)}</span><button class="btn btn-secondary btn-sm" data-cert-remove="${escapeHtml(h)}">Remove</button></li>`).join('')}
+            </ul>` : '') + (rejected.length ? `
+            <h4>Not applied</h4>
+            <ul class="cert-pending">${rejected.map(r => `
+                <li><span>${escapeHtml(r.name)}: ${escapeHtml(r.reason)}</span>${r.name ? `<button class="btn btn-secondary btn-sm" data-cert-remove="${escapeHtml(r.name)}">Remove</button>` : ''}</li>`).join('')}
+            </ul>` : '') + (report.applied_at ? `<p class="field-hint">Last applied ${escapeHtml(formatDate(report.applied_at))}.</p>` : '');
+
+        const rows = report.domains || [];
+        domains.innerHTML = rows.length ? `
+            <table class="messages-table domain-stats-table">
+                <thead><tr><th>Domain</th><th>Mail host</th><th>Certificate</th><th>Status</th></tr></thead>
+                <tbody>${rows.map(d => `
+                    <tr>
+                        <td>${escapeHtml(d.domain)}</td>
+                        <td>${escapeHtml(d.host || '—')}</td>
+                        <td>${d.label ? (d.label === 'primary' ? 'Primary' : escapeHtml(d.label)) : '—'}</td>
+                        <td>${d.status === 'missing' ? status('critical', 'No certificate names mail.' + d.domain + ' or ' + d.domain) : status(d.status, d.status)}</td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>` : '<div class="loading-placeholder">No local domains</div>';
+    } catch (error) {
+        console.error('Certificate list failed:', error);
+        list.innerHTML = `<div class="error-message">Could not list the certificates: ${escapeHtml(error.message)}</div>`;
+        domains.innerHTML = '';
+        if (requests) requests.innerHTML = '';
+    }
+}
+
+// certCall sends one certificate change and shows the server's answer. The
+// host applies it within a minute, so the page looks again after a while.
+async function certCall(path, method, body) {
+    const options = { method, headers: {} };
+    if (body !== undefined) {
+        options.headers['Content-Type'] = 'application/json';
+        options.body = JSON.stringify(body);
+    }
+    const response = await fetch(`${API_BASE}/tls/certificates${path}`, options);
+    const text = await response.text();
+    if (!response.ok) throw new Error(text.trim() || `HTTP ${response.status}`);
+    const data = JSON.parse(text);
+    showToast(data.status, 'success');
+    refreshCertificates();
+    setTimeout(refreshCertificates, 8000);
+    return data;
+}
+
+async function syncCertificates() {
+    try { await certCall('/sync', 'POST'); } catch (error) { showToast('Sync request failed: ' + error.message, 'error'); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const requestForm = document.getElementById('cert-request-form');
+    if (!requestForm) return;
+    requestForm.addEventListener('submit', async event => {
+        event.preventDefault();
+        const input = document.getElementById('cert-request-host');
+        try { await certCall('', 'POST', { host: input.value }); input.value = ''; } catch (error) { showToast(error.message, 'error'); }
+    });
+    document.getElementById('cert-upload-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const cert = document.getElementById('cert-upload-cert'), key = document.getElementById('cert-upload-key');
+        try {
+            await certCall('/upload', 'POST', { certificate: cert.value, key: key.value });
+            cert.value = ''; key.value = '';
+            event.target.querySelectorAll('input[type=file]').forEach(f => { f.value = ''; });
+        } catch (error) { showToast(error.message, 'error'); }
+    });
+    // A chosen file fills its text box, so pasting and picking end the same way.
+    document.querySelectorAll('#cert-upload-form input[type=file]').forEach(f => f.addEventListener('change', async () => {
+        if (f.files[0]) document.getElementById(f.dataset.target).value = await f.files[0].text();
+    }));
+    document.getElementById('view-certificates').addEventListener('click', async event => {
+        const host = event.target.dataset && event.target.dataset.certRemove;
+        if (!host || !confirm(`Remove the certificate for ${host}? The mail services stop serving it, and its clients get the primary certificate instead.`)) return;
+        try { await certCall('/' + encodeURIComponent(host), 'DELETE'); } catch (error) { showToast(error.message, 'error'); }
+    });
+});
 
 // refreshDomainStats fills the per-destination table on the Reports page.
 //
