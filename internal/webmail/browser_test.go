@@ -15,8 +15,10 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -214,6 +216,50 @@ func TestBrowserContextMenu(t *testing.T) {
 	b.run(chromedp.KeyEvent("\x1b"), chromedp.Sleep(100*time.Millisecond))
 	if evalAs[bool](b, `!!document.querySelector(".ctx-menu")`) {
 		t.Error("Escape left the context menu open")
+	}
+}
+
+// A conversation row's data-uid lists every message in it, which bulk actions
+// want. Actions on one message must use one UID: the list isn't a UID, and the
+// server answers it as a message that no longer exists.
+func TestBrowserConversationMenuActsOnLatestMessage(t *testing.T) {
+	b := newBrowser(t)
+	now := time.Now()
+	b.h.store.messages["INBOX"] = []Summary{
+		{UID: 21, Subject: "Quarterly plan", From: []Address{{Email: "dana@example.com"}}, Date: now.Add(-time.Hour)},
+		{UID: 22, Subject: "Re: Quarterly plan", From: []Address{{Email: "lee@example.com"}}, Date: now},
+	}
+	b.h.store.raw[21] = []byte("From: dana@example.com\r\nSubject: Quarterly plan\r\n\r\nfirst\r\n")
+	b.h.store.raw[22] = []byte("From: lee@example.com\r\nSubject: Re: Quarterly plan\r\n\r\nsecond\r\n")
+	b.login()
+	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+	defer cancel()
+	// Popups and navigation are recorded rather than followed.
+	evalAs[bool](b, `window.__opened = []; window.open = u => { window.__opened.push(u); }; true`)
+	for _, label := range []string{"View original", "Print"} {
+		nodes, err := chromedp.Run(ctx, chromedp.Nodes(chromedp.CSS(`[data-ctx="message"]`), chromedp.NodeVisible))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := evalAs[string](b, `document.querySelector('[data-ctx="message"]').getAttribute("data-uid")`); got != "21,22" {
+			t.Fatalf("row data-uid = %q, want the conversation's UIDs", got)
+		}
+		b.run(chromedp.MouseClickNode(nodes[0], chromedp.ButtonRight), chromedp.WaitVisible(chromedp.CSS(".ctx-menu")))
+		evalAs[bool](b, `[...document.querySelectorAll(".ctx-menu .ctx-item")].find(e => e.textContent.trim() === `+strconv.Quote(label)+`).click(); true`)
+	}
+	opened := evalAs[[]string](b, `window.__opened`)
+	if len(opened) != 2 {
+		t.Fatalf("opened = %q", opened)
+	}
+	for _, u := range opened {
+		if !strings.Contains(u, "uid=22") {
+			t.Errorf("menu opened %q, want the conversation's latest message", u)
+		}
+	}
+	b.h.login()
+	resp, _ := b.h.get(opened[0])
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("%s = %d", opened[0], resp.StatusCode)
 	}
 }
 

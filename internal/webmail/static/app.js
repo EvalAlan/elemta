@@ -1126,7 +1126,9 @@
     if (box && box.checked) {
       uids = $$('ol.messages input[name="uid"]:checked').map(function (b) { return b.value; });
     }
-    var one = uids.length === 1, uid = uids[0];
+    // A conversation's row holds all its UIDs, which the bulk actions want.
+    // Reply, print and the like work on one message: its latest.
+    var one = uids.length === 1, uid = row.getAttribute("data-latest") || uids[0];
     var act = function (op, extra) {
       var f = { f: folder, uid: uids, op: op, back: back };
       Object.keys(extra || {}).forEach(function (k) { f[k] = extra[k]; });
