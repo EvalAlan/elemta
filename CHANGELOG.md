@@ -15,6 +15,12 @@
   database may have been exposed.
 - The SQL security layer no longer logs submitted values, in debug mode or when
   it refuses an input.
+- **`scripts/cloud-deploy.sh` no longer replaces the running configuration.**
+  The first run seeds it; later runs keep what was saved in the admin console,
+  including local domains, so the script is safe as an upgrade. To take the
+  rendered configuration again, pass `--reseed`, which saves a copy first.
+  `EXTRA_MAIL_DOMAINS` added after the first deploy needs `--reseed`, or add the
+  domain in the console.
 - **Domain settings** ([mail-administration.md](docs/mail-administration.md)).
   Selecting a domain in Mail Administration opens its status (active, suspended
   or disabled, enforced at sign-in and delivery) and its DKIM keys: generate,

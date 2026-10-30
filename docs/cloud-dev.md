@@ -131,8 +131,11 @@ MAIL_DOMAIN=dev.example.net
    mail services twice a day. They re-read the files without a restart.
 8. Prints the DNS records to publish.
 
-Re-running the script replaces settings saved in the admin console with the
-rendered configuration. Make lasting changes in the script.
+Run it again to upgrade: domains, plugin settings and everything else saved in
+the admin console stay. `scripts/cloud-deploy.sh --reseed` replaces them with
+the rendered configuration, after saving a copy as
+`.secrets/cloud/elemta.toml.before-reseed-<time>`. Use that only to take a
+change to the rendering, such as a new default in the script.
 
 ## DNS
 
@@ -163,7 +166,7 @@ The server can also host mail for other domains, each with its own mail host
 EXTRA_MAIL_DOMAINS="example.org"
 ```
 
-and re-run `scripts/cloud-deploy.sh`. For each one it:
+before the first deploy. For each one it:
 
 - adds the domain to `local_domains`, so it accepts mail and accounts for it;
 - creates a DKIM key, signing as the domain itself (`d=example.org`);
@@ -176,13 +179,18 @@ and re-run `scripts/cloud-deploy.sh`. For each one it:
 
 The host name the server announces in SMTP stays `MAIL_DOMAIN`.
 
+On a server that is already running, add a domain in the admin console
+instead: **Mail Administration → Domains** for the domain and its DKIM key, and
+the **Certificates** page for `mail.<domain>`. Adding it to `cloud.env` later
+has no effect without `--reseed`, and the deploy warns about it.
+
 Move a domain that already has mail elsewhere in this order:
 
 1. Publish the DKIM record and add this server to the SPF record (the printed
    `v=spf1 mx -all` is enough once the MX points here). Under a strict DMARC
    policy (`p=reject; adkim=s`) a message that fails both is rejected outright.
-2. Point `mail.<domain>` at the server and re-run the deploy, or wait for the
-   twice-daily certificate sync, until `mail.<domain>` has its certificate.
+2. Point `mail.<domain>` at the server and request its certificate, or wait
+   for the twice-daily sync, until `mail.<domain>` has its certificate.
    Until then its clients get the primary certificate and refuse it.
 3. Create the accounts.
 4. Move the MX last.
