@@ -36,7 +36,7 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	github.com/valkey-io/valkey-go v1.0.79
 	golang.org/x/crypto v0.58.0
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
