@@ -118,6 +118,11 @@ func TestSecondFactor(t *testing.T) {
 		t.Fatal("bad confirmation code accepted")
 	}
 	codes, err := e.ConfirmTOTP(ctx, a.ID, totpCode(raw, step), now)
+	// secretHash relies on 16 random letters: fewer could be recovered from
+	// the stored hashes.
+	if err == nil && len(codes) > 0 && len(normalizeCode(codes[0])) != 16 {
+		t.Fatalf("recovery code %q is too short", codes[0])
+	}
 	if err != nil || len(codes) != recoveryCodes {
 		t.Fatalf("confirm = %v %v", codes, err)
 	}

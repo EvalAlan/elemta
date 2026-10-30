@@ -508,7 +508,7 @@ func localBack(back, fallback string) string {
 // "back" field). Anything that isn't a plain local path goes to the inbox.
 func redirectLocal(w http.ResponseWriter, r *http.Request, target string) {
 	u, err := url.Parse(target)
-	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") {
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") || strings.HasPrefix(u.Path, "/\\") {
 		target = "/mail"
 	} else {
 		target = (&url.URL{Path: u.Path, RawQuery: u.RawQuery}).String()

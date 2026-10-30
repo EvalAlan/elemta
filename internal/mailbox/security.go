@@ -118,8 +118,9 @@ func normalizeCode(s string) string {
 }
 
 // secretHash stores app passwords and recovery codes. They are random with
-// 75+ bits of entropy, so a fast hash is enough; a slow one is what protects
-// passwords people choose.
+// 75 bits of entropy (16 letters), so a fast hash is enough; a slow one is
+// what protects passwords people choose. Don't shorten them: fewer letters
+// could be recovered from the hashes alone.
 func secretHash(s string) string {
 	sum := sha256.Sum256([]byte(normalizeCode(s)))
 	return hex.EncodeToString(sum[:])
@@ -294,11 +295,11 @@ func (e *Engine) ConfirmTOTP(ctx context.Context, account, code string, now time
 	plain := make([]string, recoveryCodes)
 	hashed := make([]string, recoveryCodes)
 	for i := range plain {
-		letters, err := randomLetters(10)
+		letters, err := randomLetters(16)
 		if err != nil {
 			return nil, err
 		}
-		plain[i] = letters[:5] + "-" + letters[5:]
+		plain[i] = groupBy4(letters)
 		hashed[i] = secretHash(plain[i])
 	}
 	err := e.tx(ctx, account, func(tx *sql.Tx) error {

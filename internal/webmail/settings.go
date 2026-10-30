@@ -131,9 +131,10 @@ func (s *Server) themeSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 		return
 	}
 	back := "/mail"
-	if ref, err := url.Parse(r.Referer()); err == nil && ref.Host == r.Host && strings.HasPrefix(ref.Path, "/") {
+	if ref, err := url.Parse(r.Referer()); err == nil && ref.Host == r.Host {
 		back = (&url.URL{Path: ref.Path, RawQuery: ref.RawQuery}).String()
 	}
+	// redirectLocal is the check: anything but a plain local path goes to /mail.
 	redirectLocal(w, r, back)
 }
 
