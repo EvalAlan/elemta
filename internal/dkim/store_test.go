@@ -152,6 +152,15 @@ func TestSelectorCannotEscapeTheStore(t *testing.T) {
 	}
 }
 
+func TestKeyPathStaysInsideTheStore(t *testing.T) {
+	s := tempStore(t)
+	for _, tc := range [][2]string{{"../../etc", "a"}, {"example.org", "../../../passwd"}, {"..", ".."}, {"/etc", "/shadow"}} {
+		if got := s.keyPath(tc[0], tc[1]); !strings.HasPrefix(got, s.Dir+string(filepath.Separator)) {
+			t.Errorf("keyPath(%q, %q) = %q, outside %q", tc[0], tc[1], got, s.Dir)
+		}
+	}
+}
+
 func TestImportReproducesPublicRecord(t *testing.T) {
 	s := tempStore(t)
 	key, err := s.Generate("example.org", "a", AlgorithmRSA)

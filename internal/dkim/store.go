@@ -97,8 +97,11 @@ func StoreFor(configPath string) Store { return Store{Dir: configPath + ".dkim"}
 // ManifestPath is the file whose change means signing should be rebuilt.
 func (s Store) ManifestPath() string { return filepath.Join(s.Dir, "keys.json") }
 
+// keyPath stays inside the store whatever it is given. Callers validate
+// selectors and domains too, but private keys shouldn't depend on all of them
+// remembering: cleaning from a leading slash leaves no ".." to climb out with.
 func (s Store) keyPath(domain, selector string) string {
-	return filepath.Join(s.Dir, domain, selector+".key")
+	return filepath.Join(s.Dir, filepath.Clean("/"+domain), filepath.Clean("/"+selector+".key"))
 }
 
 func (s Store) load() (map[string]DomainKeys, error) {
