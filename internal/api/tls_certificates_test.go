@@ -134,18 +134,22 @@ func TestCertificateManagementUnavailableWithoutDirectory(t *testing.T) {
 
 func TestCertificateRequestAndRemove(t *testing.T) {
 	s, m := managedServer(t)
-	for body, want := range map[string]int{
-		`{"host": "Mail.Example.org."}`: http.StatusOK,
-		`{"host": "mail.example.org"}`:  http.StatusConflict, // already requested
-		`{"host": "dev.example.com"}`:   http.StatusConflict, // the primary
-		`{"host": "mail.example.net"}`:  http.StatusConflict, // set by the deployment
-		`{"host": "bad_host"}`:          http.StatusBadRequest,
-		`{"host": "nodot"}`:             http.StatusBadRequest,
+	// In order: the second request depends on the first.
+	for _, c := range []struct {
+		body string
+		want int
+	}{
+		{`{"host": "Mail.Example.org."}`, http.StatusOK},
+		{`{"host": "mail.example.org"}`, http.StatusConflict}, // already requested
+		{`{"host": "dev.example.com"}`, http.StatusConflict},  // the primary
+		{`{"host": "mail.example.net"}`, http.StatusConflict}, // set by the deployment
+		{`{"host": "bad_host"}`, http.StatusBadRequest},
+		{`{"host": "nodot"}`, http.StatusBadRequest},
 	} {
 		rec := httptest.NewRecorder()
-		s.handleTLSCertificateRequest(rec, jsonRequest(http.MethodPost, "/api/tls/certificates", body))
-		if rec.Code != want {
-			t.Errorf("request %s = %d %s, want %d", body, rec.Code, rec.Body.String(), want)
+		s.handleTLSCertificateRequest(rec, jsonRequest(http.MethodPost, "/api/tls/certificates", c.body))
+		if rec.Code != c.want {
+			t.Errorf("request %s = %d %s, want %d", c.body, rec.Code, rec.Body.String(), c.want)
 		}
 	}
 	hosts, err := m.hosts()

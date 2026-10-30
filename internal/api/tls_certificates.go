@@ -172,9 +172,33 @@ func (m *certManager) setHosts(hosts []string) error {
 
 func (m *certManager) uploads() string { return filepath.Join(m.requests(), "uploads") }
 
+// uploadsRoot opens the uploads directory as an os.Root, so the host names
+// used inside it, which arrive in requests, can't reach outside it even if
+// one slipped past certHost.
+func (m *certManager) uploadsRoot() (*os.Root, error) {
+	if err := os.MkdirAll(m.uploads(), 0o755); err != nil { // #nosec G301 -- read by the host's sync, another user
+		return nil, err
+	}
+	return os.OpenRoot(m.uploads())
+}
+
 func (m *certManager) uploaded(host string) bool {
-	_, err := os.Stat(filepath.Join(m.uploads(), host))
+	root, err := m.uploadsRoot()
+	if err != nil {
+		return false
+	}
+	defer func() { _ = root.Close() }()
+	_, err = root.Stat(host)
 	return err == nil
+}
+
+func (m *certManager) removeUpload(host string) error {
+	root, err := m.uploadsRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.RemoveAll(host)
 }
 
 // writeFileAtomic replaces path, so the host never reads half a file.
@@ -482,9 +506,11 @@ func (s *Server) handleTLSCertificateUpload(w http.ResponseWriter, r *http.Reque
 // storeUpload writes the pair under a temporary name and renames it into
 // place, so the host sees the whole upload or none of it.
 func (m *certManager) storeUpload(host string, cert, key []byte) error {
-	if err := os.MkdirAll(m.uploads(), 0o755); err != nil { // #nosec G301 -- read by the host's sync, another user
+	root, err := m.uploadsRoot()
+	if err != nil {
 		return err
 	}
+	defer func() { _ = root.Close() }()
 	tmp, err := os.MkdirTemp(m.uploads(), ".upload-*")
 	if err != nil {
 		return err
@@ -503,11 +529,10 @@ func (m *certManager) storeUpload(host string, cert, key []byte) error {
 	if err = os.WriteFile(filepath.Join(tmp, "key.pem"), key, 0o644); err != nil {
 		return err
 	}
-	dest := filepath.Join(m.uploads(), host)
-	if err = os.RemoveAll(dest); err != nil {
+	if err = root.RemoveAll(host); err != nil {
 		return err
 	}
-	return os.Rename(tmp, dest)
+	return root.Rename(filepath.Base(tmp), host)
 }
 
 // handleTLSCertificateDelete removes a requested or uploaded certificate;
@@ -540,7 +565,7 @@ func (s *Server) handleTLSCertificateDelete(w http.ResponseWriter, r *http.Reque
 		removed = true
 	}
 	if m.uploaded(host) {
-		if err = os.RemoveAll(filepath.Join(m.uploads(), host)); err != nil {
+		if err = m.removeUpload(host); err != nil {
 			http.Error(w, "The uploaded certificate could not be removed", http.StatusInternalServerError)
 			return
 		}
