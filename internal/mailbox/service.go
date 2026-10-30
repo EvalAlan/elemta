@@ -80,7 +80,7 @@ func Open(ctx context.Context, c Config, log *slog.Logger) (*Service, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("mailbox initialization: %w", err)
 	}
-	srv, err := newService(c, engine, LDAPAuth{Config: c.Auth}, log)
+	srv, err := newService(c, engine, domainStatusAuth{LDAPAuth{Config: c.Auth}, engine}, log)
 	if err != nil {
 		_ = bodies.Close()
 		_ = db.Close()

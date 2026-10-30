@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261030-certificates">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261030-domainsettings">
 </head>
 
 <body>
@@ -1165,6 +1165,28 @@
                          password reset act at once and keep their buttons. -->
                     <div class="ma-dialog-footer"><button class="btn btn-primary" type="submit" form="ma-account-form" id="ma-save">Save</button><span id="ma-save-status" class="field-hint" role="status"></span><button class="btn btn-secondary" type="button" id="ma-open-mailbox" hidden>Open mailbox</button><button class="btn btn-danger" type="button" id="ma-delete">Delete account</button></div>
                 </dialog>
+                <dialog id="ma-domain-dialog" class="ma-dialog">
+                    <div class="ma-dialog-heading"><div><p class="ma-eyebrow">DOMAIN SETTINGS</p><h3 id="ma-domain-title">Domain</h3></div><button type="button" class="btn btn-secondary" id="ma-domain-close">Close</button></div>
+                    <p id="ma-domain-message" role="status" hidden></p>
+                    <section id="ma-domain-status-section" class="ma-form">
+                        <label for="ma-domain-status">Domain status</label><select id="ma-domain-status"><option value="active">Active</option><option value="suspended">Suspended</option><option value="disabled">Disabled</option></select>
+                        <p class="field-hint">Suspended keeps receiving mail but nobody can sign in. Disabled also refuses its mail.</p>
+                    </section>
+                    <h4>DKIM signing</h4>
+                    <p id="ma-domain-signing"></p>
+                    <div id="ma-domain-keys" class="ma-keys"></div>
+                    <div class="ma-form-actions"><button type="button" class="btn btn-secondary" id="ma-domain-signing-off" hidden>Stop signing</button></div>
+                    <form id="ma-domain-key-form" class="ma-form">
+                        <section id="ma-domain-new-key" class="ma-form">
+                            <h4>Add a key</h4>
+                            <label for="ma-domain-key-selector">Selector</label><input id="ma-domain-key-selector" type="text" required autocomplete="off" spellcheck="false" maxlength="63" placeholder="mail2026">
+                            <label for="ma-domain-key-algorithm">Algorithm</label><select id="ma-domain-key-algorithm"><option value="rsa-2048">RSA 2048 (works everywhere)</option><option value="ed25519">Ed25519 (shorter, not checked by every receiver)</option></select>
+                            <label for="ma-domain-key-pem">Existing private key (optional)</label><textarea id="ma-domain-key-pem" rows="4" spellcheck="false" autocomplete="off" placeholder="Leave empty to generate a new key"></textarea>
+                            <p class="field-hint">A new key signs nothing until you publish its TXT record and choose it. Private keys can't be read back from here.</p>
+                            <div class="ma-form-actions"><button class="btn btn-primary" type="submit">Add key</button></div>
+                        </section>
+                    </form>
+                </dialog>
                 <dialog id="ma-list-dialog" class="ma-dialog">
                     <div class="ma-dialog-heading"><div><p class="ma-eyebrow">DISTRIBUTION LIST</p><h3 id="ma-list-title">Create list</h3></div><button type="button" class="btn btn-secondary" id="ma-list-close">Close</button></div>
                     <p id="ma-list-message" role="status" hidden></p>
@@ -1582,7 +1604,7 @@
     <script src="/static/app.js?v=20261030-certmanage"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
-    <script src="/static/mail-admin.js?v=20261030-certificates"></script>
+    <script src="/static/mail-admin.js?v=20261030-domainsettings"></script>
 </body>
 
 </html>

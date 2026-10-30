@@ -139,6 +139,11 @@ CREATE TABLE IF NOT EXISTS mailbox_domain_routes (
  domain text PRIMARY KEY, alias_of text, catch_all text,
  updated timestamptz NOT NULL DEFAULT now()
 );
+-- A domain that isn't active; no row means active (domain_status.go).
+CREATE TABLE IF NOT EXISTS mailbox_domain_status (
+ domain text PRIMARY KEY, status text NOT NULL CHECK (status IN ('suspended','disabled')),
+ updated timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS mailbox_lists (
  address text PRIMARY KEY, name text NOT NULL DEFAULT '', description text NOT NULL DEFAULT '',
  owner text NOT NULL DEFAULT '', posting text NOT NULL DEFAULT 'anyone',

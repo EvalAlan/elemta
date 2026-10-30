@@ -124,6 +124,8 @@ type Domain struct {
 	// its admin API is configured.
 	AliasOf  string `json:"alias_of,omitempty"`
 	CatchAll string `json:"catch_all,omitempty"`
+	// Status is active, suspended or disabled (internal/mailpolicy).
+	Status string `json:"status"`
 }
 type Domains interface {
 	List(context.Context) ([]string, error)
@@ -422,7 +424,7 @@ func (s *Service) Domains(ctx context.Context) ([]Domain, error) {
 	}
 	values := map[string]*Domain{}
 	for _, name := range names {
-		values[name] = &Domain{Name: name, Configured: true}
+		values[name] = &Domain{Name: name, Configured: true, Status: mailpolicy.DomainActive}
 	}
 	get := func(address string) *Domain {
 		name := strings.SplitN(address, "@", 2)
@@ -430,7 +432,7 @@ func (s *Service) Domains(ctx context.Context) ([]Domain, error) {
 			return nil
 		}
 		if values[name[1]] == nil {
-			values[name[1]] = &Domain{Name: name[1]}
+			values[name[1]] = &Domain{Name: name[1], Status: mailpolicy.DomainActive}
 		}
 		return values[name[1]]
 	}
@@ -450,6 +452,13 @@ func (s *Service) Domains(ctx context.Context) ([]Domain, error) {
 			for _, r := range routes {
 				if d := values[r.Domain]; d != nil {
 					d.AliasOf, d.CatchAll = r.AliasOf, r.CatchAll
+				}
+			}
+		}
+		if statuses, err := s.Mailbox.DomainStatuses(ctx); err == nil {
+			for _, st := range statuses {
+				if d := values[st.Domain]; d != nil {
+					d.Status = st.Status
 				}
 			}
 		}

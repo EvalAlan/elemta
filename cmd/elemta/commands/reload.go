@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/smtp"
 )
 
@@ -95,16 +96,25 @@ func applyReload(ctx context.Context, server *smtp.Server, configPath string) {
 		return
 	}
 
+	cfg.ApplyManagedDKIM(smtpConfig, configPath)
+
 	if err := server.Reload(ctx, smtpConfig); err != nil {
 		slog.Error("Reload failed; keeping the running configuration", "error", err)
 		return
 	}
 }
 
+// hashFile covers the configuration and the manifest of DKIM keys managed
+// from the console, whose changes must apply the same way. A manifest that
+// doesn't exist yet is the normal state of a server with no such keys.
 func hashFile(path string) (string, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- operator-configured startup path
 	if err != nil {
 		return "", err
+	}
+	// #nosec G304 -- beside the operator-configured startup path
+	if keys, err := os.ReadFile(dkim.StoreFor(path).ManifestPath()); err == nil {
+		data = append(data, keys...)
 	}
 	sum := sha256.Sum256(data)
 	return string(sum[:]), nil

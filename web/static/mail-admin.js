@@ -6,7 +6,7 @@
     if (!root) return;
     const el = id => document.getElementById(id);
     let accounts = [], domains = [], lists = [], classes = [], domainClasses = {}, tab = 'accounts', domain = '', selected = null;
-    let busy = false, limit = 250, sequence = 0, mailboxAdmin = false, selectedList = null, selectedClass = null;
+    let busy = false, limit = 250, sequence = 0, mailboxAdmin = false, selectedList = null, selectedClass = null, selectedDomain = null;
     // A domain administrator (scope.all false) sees only their domains, and
     // none of the system-wide controls; the server enforces the same.
     let scope = { all: true }, audit = [], auditDone = false;
@@ -37,7 +37,7 @@
         const target = el(error ? 'ma-error' : 'ma-notice');
         el('ma-error').hidden = true; el('ma-notice').hidden = true;
         target.textContent = text; target.hidden = !text;
-        [['ma-account-dialog', 'ma-dialog-message'], ['ma-list-dialog', 'ma-list-message'], ['ma-class-dialog', 'ma-class-message']].forEach(([dialog, line]) => {
+        [['ma-account-dialog', 'ma-dialog-message'], ['ma-list-dialog', 'ma-list-message'], ['ma-class-dialog', 'ma-class-message'], ['ma-domain-dialog', 'ma-domain-message']].forEach(([dialog, line]) => {
             if (el(dialog).open) { el(line).textContent = text; el(line).hidden = !text; }
         });
         // Also beside the Save button, which stays in view at the bottom.
@@ -152,7 +152,7 @@
             aliases: ['Delivery alias', 'Mailbox account'],
             lists: ['List', 'Name', 'Members', 'Who may post', 'Owner'],
             classes: ['Class', 'Description', 'Accounts', 'Domains', 'Settings'],
-            domains: mailboxAdmin ? ['Domain', 'Routing', 'Accounts', 'Aliases', 'Default class', 'Catch-all', ''] : ['Domain', 'Routing', 'Accounts', 'Aliases', ''],
+            domains: mailboxAdmin ? ['Domain', 'Routing', 'Status', 'Accounts', 'Aliases', 'Default class', 'Catch-all', ''] : ['Domain', 'Routing', 'Accounts', 'Aliases', ''],
         }[tab];
         const heading = node('tr'); headers.forEach(label => heading.appendChild(node('th', label))); head.appendChild(heading);
         const query = el('ma-search').value.trim().toLowerCase();
@@ -176,7 +176,10 @@
             } else if (tab === 'classes') {
                 cell(row, button(item.name, () => openClass(item), 'ma-account-link')); cell(row, item.description); cell(row, item.accounts); cell(row, item.domains); cell(row, summary(item.settings || {}));
             } else {
-                cell(row, item.name); cell(row, item.alias_of ? 'Alias of ' + item.alias_of : item.configured ? 'Configured' : 'Not configured'); cell(row, item.accounts); cell(row, item.aliases);
+                cell(row, item.configured ? button(item.name, () => perform(() => openDomain(item.name)), 'ma-account-link') : item.name);
+                cell(row, item.alias_of ? 'Alias of ' + item.alias_of : item.configured ? 'Configured' : 'Not configured');
+                if (mailboxAdmin) cell(row, node('span', item.status, 'ma-status ' + item.status));
+                cell(row, item.accounts); cell(row, item.aliases);
                 if (mailboxAdmin) {
                     cell(row, item.configured && !item.alias_of ? (scope.all ? domainClassSelect(item) : (domainClasses[item.name] || 'default')) : '—');
                     const catchAll = button(item.catch_all || 'Set…', () => perform(async () => {
@@ -439,6 +442,110 @@
         if (!window.confirm('Delete the list ' + selectedList.address + '? Mail to it will be refused.')) return;
         const result = await request('/lists/' + encodeURIComponent(selectedList.address), 'DELETE'); el('ma-list-dialog').close(); message(result.status); await refresh();
     }));
+
+    // ---- domain settings -----------------------------------------------------
+
+    const SIGNING_SUMMARY = {
+        on: 'Outbound mail from this domain is being DKIM signed.',
+        'no-key': 'Outbound mail from this domain is not being signed. Generate a key, publish it in DNS, then sign with it.',
+        off: 'Signing is turned off for this domain. Choose a key below to turn it back on.',
+        'plugin-off': 'The DKIM plugin is off, so nothing is being signed. Turn it on under Plugins.',
+    };
+    const DNS_STATE = {
+        match: 'Published: DNS has this key.',
+        missing: 'Not published: DNS has no DKIM record at this name yet.',
+        mismatch: 'Wrong key: DNS has a different key at this name.',
+    };
+    function domainPath(suffix) { return '/domains/' + encodeURIComponent(selectedDomain.domain) + suffix; }
+    async function openDomain(name) {
+        fillDomain(await request('/domains/' + encodeURIComponent(name) + '/settings'));
+        el('ma-domain-message').hidden = true;
+        if (!el('ma-domain-dialog').open) el('ma-domain-dialog').showModal();
+    }
+    function fillDomain(settings) {
+        selectedDomain = settings;
+        el('ma-domain-title').textContent = settings.domain;
+        el('ma-domain-status').value = settings.status;
+        el('ma-domain-status-section').hidden = !mailboxAdmin;
+        el('ma-domain-status').disabled = !scope.all;
+        el('ma-domain-signing').textContent = SIGNING_SUMMARY[settings.signing] || '';
+        el('ma-domain-signing-off').hidden = !scope.all || settings.signing !== 'on';
+        el('ma-domain-new-key').hidden = !scope.all;
+        const list = el('ma-domain-keys'); list.replaceChildren();
+        if (!settings.keys.length) list.appendChild(node('p', 'No keys yet.', 'field-hint'));
+        settings.keys.forEach(key => list.appendChild(domainKey(key)));
+    }
+    function copyField(label, value) {
+        const row = node('div', undefined, 'ma-key-field');
+        row.appendChild(node('span', label, 'ma-key-label'));
+        row.appendChild(node('code', value));
+        row.appendChild(button('Copy', () => perform(async () => { await navigator.clipboard.writeText(value); message(label + ' copied.'); })));
+        return row;
+    }
+    function domainKey(key) {
+        const card = node('article', undefined, 'ma-key');
+        const heading = node('div', undefined, 'ma-key-heading');
+        heading.appendChild(node('strong', key.selector));
+        if (key.algorithm) heading.appendChild(node('span', key.algorithm, 'field-hint'));
+        if (key.active) heading.appendChild(node('span', 'Signing', 'ma-status active'));
+        if (key.source === 'configuration') heading.appendChild(node('span', 'From configuration', 'ma-status'));
+        if (key.imported) heading.appendChild(node('span', 'Imported', 'ma-status'));
+        card.appendChild(heading);
+        if (key.error) card.appendChild(node('p', key.error, 'ma-save-error'));
+        if (key.record) { card.appendChild(copyField('TXT name', key.dns_name)); card.appendChild(copyField('TXT value', key.record)); }
+        const dns = node('p', undefined, 'field-hint'); dns.hidden = true; card.appendChild(dns);
+        const check = async () => {
+            const result = await request(domainPath('/dkim/keys/' + encodeURIComponent(key.selector) + '/dns'));
+            dns.textContent = DNS_STATE[result.state] || result.state; dns.hidden = false;
+            return result.state;
+        };
+        const actions = node('div', undefined, 'ma-cell-actions');
+        if (key.record) actions.appendChild(button('Check DNS', () => perform(check)));
+        if (scope.all && !key.active && key.record) actions.appendChild(button('Sign with this key', () => perform(async () => {
+            const state = await check();
+            // Signing with a key receivers can't find fails DKIM on every message.
+            if (state !== 'match' && !window.confirm(DNS_STATE[state] + ' Sign with this key anyway? Receivers will fail DKIM on every message until DNS has it.')) return;
+            fillDomain(await request(domainPath('/dkim/signing'), 'PUT', { enabled: true, selector: key.source === 'console' ? key.selector : '' }));
+            message('Mail from ' + selectedDomain.domain + ' will be signed with ' + key.selector + ' within a few seconds.'); await refresh();
+        })));
+        if (scope.all && !key.active && key.source === 'console') {
+            actions.appendChild(button('Rename', () => perform(async () => {
+                const next = window.prompt('New selector. The TXT name changes with it, so publish it again.', key.selector);
+                if (next === null || next.trim() === '' || next.trim() === key.selector) return;
+                fillDomain(await request(domainPath('/dkim/keys/' + encodeURIComponent(key.selector)), 'PUT', { selector: next.trim() }));
+                message('Selector renamed.');
+            })));
+            actions.appendChild(button('Delete', () => perform(async () => {
+                if (!window.confirm('Delete the key ' + key.selector + '? Its private key is destroyed. Mail already sent with it can still be verified only while its DNS record stays published.')) return;
+                fillDomain(await request(domainPath('/dkim/keys/' + encodeURIComponent(key.selector)), 'DELETE'));
+                message('Key deleted.');
+            })));
+        }
+        card.appendChild(actions);
+        return card;
+    }
+    el('ma-domain-close').addEventListener('click', () => { if (!busy) el('ma-domain-dialog').close(); });
+    el('ma-domain-status').addEventListener('change', event => perform(async () => {
+        const status = event.target.value;
+        const warning = {
+            suspended: 'Suspend ' + selectedDomain.domain + '? Nobody in it can sign in, and open sessions end. Its mail keeps arriving.',
+            disabled: 'Disable ' + selectedDomain.domain + '? Nobody in it can sign in, and mail to it is refused.',
+        }[status];
+        if (warning && !window.confirm(warning)) { event.target.value = selectedDomain.status; return; }
+        try { fillDomain(await request(domainPath('/status'), 'PUT', { status })); } catch (error) { event.target.value = selectedDomain.status; throw error; }
+        message(selectedDomain.domain + ' is now ' + status + '.'); await refresh();
+    }));
+    el('ma-domain-signing-off').addEventListener('click', () => perform(async () => {
+        if (!window.confirm('Stop signing mail from ' + selectedDomain.domain + '? Its keys are kept. Under a strict DMARC policy, unsigned mail depends on SPF alone.')) return;
+        fillDomain(await request(domainPath('/dkim/signing'), 'PUT', { enabled: false }));
+        message('Signing stopped for ' + selectedDomain.domain + '.');
+    }));
+    el('ma-domain-key-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+        const privateKey = el('ma-domain-key-pem').value;
+        fillDomain(await request(domainPath('/dkim/keys'), 'POST', { selector: el('ma-domain-key-selector').value.trim(), algorithm: el('ma-domain-key-algorithm').value, private_key: privateKey }));
+        el('ma-domain-key-selector').value = ''; el('ma-domain-key-pem').value = '';
+        message((privateKey ? 'Key imported.' : 'Key generated.') + ' Publish its TXT record, then choose Sign with this key.');
+    }); });
 
     // ---- classes of service --------------------------------------------------
     function openClass(c) {

@@ -15,6 +15,12 @@
   database may have been exposed.
 - The SQL security layer no longer logs submitted values, in debug mode or when
   it refuses an input.
+- **Domain settings** ([mail-administration.md](docs/mail-administration.md)).
+  Selecting a domain in Mail Administration opens its status (active, suspended
+  or disabled, enforced at sign-in and delivery) and its DKIM keys: generate,
+  import, rename, check against DNS, sign with and delete, with no restart.
+  Nothing changes for existing domains; keys in `[plugins.dkim]` keep signing
+  until another is chosen. The mailbox service adds one table on start.
 - **Every tier can run several times** ([scaling.md](docs/scaling.md)). The
   scaling overlay (`docker-compose.scale.yml`) runs the MTA, webmail and
   dashboard as several containers behind load balancers, the MTAs sharing a

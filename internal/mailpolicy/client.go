@@ -231,6 +231,18 @@ func (c *Client) SetRoute(ctx context.Context, r DomainRoute) (DomainRoute, erro
 	return out, c.do(ctx, http.MethodPut, "/v1/admin/routes/"+seg(r.Domain), r, &out)
 }
 
+// DomainStatuses lists the domains that aren't active.
+func (c *Client) DomainStatuses(ctx context.Context) ([]DomainStatus, error) {
+	var out []DomainStatus
+	return out, c.do(ctx, http.MethodGet, "/v1/admin/domain-status", nil, &out)
+}
+
+// SetDomainStatus sets a domain's status.
+func (c *Client) SetDomainStatus(ctx context.Context, d DomainStatus) (DomainStatus, error) {
+	var out DomainStatus
+	return out, c.do(ctx, http.MethodPut, "/v1/admin/domain-status/"+seg(d.Domain), d, &out)
+}
+
 // Lists lists the distribution lists, without their members.
 func (c *Client) Lists(ctx context.Context) ([]List, error) {
 	var out []List

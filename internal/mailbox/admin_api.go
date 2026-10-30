@@ -141,6 +141,17 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		route.Domain = r.PathValue("domain")
 		return s.engine.SetRoute(r.Context(), route)
 	})
+	handle("GET /v1/admin/domain-status", func(r *http.Request) (any, error) {
+		return s.engine.DomainStatuses(r.Context())
+	})
+	handle("PUT /v1/admin/domain-status/{domain}", func(r *http.Request) (any, error) {
+		var d mailpolicy.DomainStatus
+		if err := decode(r, &d); err != nil {
+			return nil, err
+		}
+		d.Domain = r.PathValue("domain")
+		return s.engine.SetDomainStatus(r.Context(), d)
+	})
 	handle("GET /v1/admin/lists", func(r *http.Request) (any, error) {
 		return s.engine.Lists(r.Context())
 	})

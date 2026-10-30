@@ -238,6 +238,12 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 			return map[string]string{"status": "domain configuration saved; SMTP restart required"}, nil
 		})
 	}
+	add("set-domain-status <domain> <active|suspended|disabled>", []string{"sds"}, "Set what happens to everyone in a domain", 2, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
+		if _, err := s.SetDomainStatus(ctx, args[0], args[1]); err != nil {
+			return nil, err
+		}
+		return map[string]string{"status": "domain status saved"}, nil
+	})
 	addPolicyCommands(add)
 	addAddressingCommands(add)
 	return root
