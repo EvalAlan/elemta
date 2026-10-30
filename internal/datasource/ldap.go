@@ -2,11 +2,9 @@ package datasource
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -172,17 +170,13 @@ func (l *LDAP) Type() string {
 	return "ldap"
 }
 
-// The supported directory accepts SSHA512 userPassword values. Salt each
-// write locally so direct attribute updates cannot persist a cleartext secret.
-func encodeLDAPPassword(password string) (string, error) {
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return "", err
-	}
-	h := sha512.New()
-	_, _ = h.Write([]byte(password))
-	_, _ = h.Write(salt)
-	return "{SSHA512}" + base64.StdEncoding.EncodeToString(append(h.Sum(nil), salt...)), nil
+// setPassword goes through the Password Modify operation (RFC 3062), so the
+// directory hashes it under its own policy. Writing userPassword directly
+// would either store the password in the clear or need a hash chosen here,
+// and passwords people choose need a slow hash the directory is configured for.
+func (l *LDAP) setPassword(dn, password string) error {
+	_, err := l.conn.PasswordModify(ldap.NewPasswordModifyRequest(dn, "", password))
+	return err
 }
 
 // getUserDN returns the full DN for a user
@@ -548,14 +542,6 @@ func (l *LDAP) CreateUser(ctx context.Context, user User) error {
 		addRequest.Attribute("mail", []string{user.Email})
 	}
 
-	if user.Password != "" {
-		encoded, err := encodeLDAPPassword(user.Password)
-		if err != nil {
-			return err
-		}
-		addRequest.Attribute("userPassword", []string{encoded})
-	}
-
 	// Add other attributes
 	for key, value := range user.Attributes {
 		if key == "objectClass" || key == "uid" || key == "cn" || key == "mail" || key == "userPassword" || key == "entryUUID" {
@@ -586,6 +572,13 @@ func (l *LDAP) CreateUser(ctx context.Context, user User) error {
 	// Execute the add request
 	if err := l.conn.Add(addRequest); err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
+	}
+	if user.Password != "" {
+		userDN := l.getUserDN(user.Username)
+		if err := l.setPassword(userDN, user.Password); err != nil {
+			// Not left behind without the password the caller asked for.
+			return errors.Join(fmt.Errorf("failed to set password: %w", err), l.conn.Del(ldap.NewDelRequest(userDN, nil)))
+		}
 	}
 
 	// Add user to groups
@@ -668,14 +661,6 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 		modifyRequest.Replace("mail", []string{user.Email})
 	}
 
-	if user.Password != "" {
-		encoded, err := encodeLDAPPassword(user.Password)
-		if err != nil {
-			return err
-		}
-		modifyRequest.Replace("userPassword", []string{encoded})
-	}
-
 	// Update other attributes
 	for key, value := range user.Attributes {
 		if key == "objectClass" || key == "uid" || key == "userPassword" || key == "entryUUID" {
@@ -704,8 +689,15 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 	}
 
 	// Execute the modify request
-	if err := l.conn.Modify(modifyRequest); err != nil {
-		return fmt.Errorf("failed to update user: %w", err)
+	if len(modifyRequest.Changes) > 0 {
+		if err := l.conn.Modify(modifyRequest); err != nil {
+			return fmt.Errorf("failed to update user: %w", err)
+		}
+	}
+	if user.Password != "" {
+		if err := l.setPassword(userDN, user.Password); err != nil {
+			return fmt.Errorf("failed to set password: %w", err)
+		}
 	}
 
 	// Update group memberships
