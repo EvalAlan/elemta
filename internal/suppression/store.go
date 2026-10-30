@@ -328,7 +328,7 @@ func (s *Store) List(ctx context.Context, query string, limit, offset int) ([]En
 	}
 	defer func() { _ = rows.Close() }()
 
-	entries := make([]Entry, 0, limit)
+	entries := []Entry{}
 	for rows.Next() {
 		var entry Entry
 		var created int64

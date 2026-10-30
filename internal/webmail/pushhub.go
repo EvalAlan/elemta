@@ -2,10 +2,12 @@ package webmail
 
 import (
 	"context"
-	"crypto/sha256"
 	"sync"
 	"time"
 )
+
+// pushKey identifies a shared watch.
+type pushKey struct{ user, password, folder string }
 
 // pushHub shares one IDLE connection per user and folder between the live
 // update streams of that user's pages.
@@ -24,7 +26,7 @@ import (
 // pushMaxShare plus a stream's own lifetime.
 type pushHub struct {
 	mu      sync.Mutex
-	watches map[[32]byte]*pushWatch
+	watches map[pushKey]*pushWatch
 	linger  time.Duration
 	share   time.Duration
 }
@@ -61,8 +63,9 @@ func signalOnce(c chan<- struct{}) {
 func (h *pushHub) wrap(underlying MailWatcher) MailWatcher {
 	return func(ctx context.Context, user, password, folder string, changed, ready chan<- struct{}) error {
 		// The password is in the key so that a session holding a different
-		// one never rides on another's authentication.
-		key := sha256.Sum256([]byte(user + "\x00" + password + "\x00" + folder))
+		// one never rides on another's authentication. It is held here
+		// anyway, by the watch that has to log in with it.
+		key := pushKey{user, password, folder}
 		sub := &pushSub{changed: changed, ready: ready}
 		w := h.join(key, sub, func(wctx context.Context, wchanged, wready chan<- struct{}) error {
 			return underlying(wctx, user, password, folder, wchanged, wready)
@@ -77,11 +80,11 @@ func (h *pushHub) wrap(underlying MailWatcher) MailWatcher {
 	}
 }
 
-func (h *pushHub) join(key [32]byte, sub *pushSub, start func(context.Context, chan<- struct{}, chan<- struct{}) error) *pushWatch {
+func (h *pushHub) join(key pushKey, sub *pushSub, start func(context.Context, chan<- struct{}, chan<- struct{}) error) *pushWatch {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.watches == nil {
-		h.watches = map[[32]byte]*pushWatch{}
+		h.watches = map[pushKey]*pushWatch{}
 	}
 	share := h.share
 	if share == 0 {
@@ -152,7 +155,7 @@ func (h *pushHub) join(key [32]byte, sub *pushSub, start func(context.Context, c
 	return w
 }
 
-func (h *pushHub) leave(key [32]byte, w *pushWatch, sub *pushSub) {
+func (h *pushHub) leave(key pushKey, w *pushWatch, sub *pushSub) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(w.subs, sub)

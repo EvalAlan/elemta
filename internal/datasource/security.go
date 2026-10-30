@@ -151,7 +151,8 @@ func (sm *SQLSecurityManager) SanitizeInput(input string) (string, error) {
 
 		if matched {
 			sm.logger.Warn("SQL injection attempt detected",
-				"input", input[:min(100, len(input))], // Limit log size
+				// Never the input itself: these values are often passwords.
+				"input_length", len(input),
 				"threat", pattern.threat,
 				"pattern_matched", pattern.pattern,
 			)
@@ -414,7 +415,6 @@ func (sdb *SecureDBConnection) ExecuteSecureQuery(ctx context.Context, operation
 			"table", tableName,
 			"query", query,
 			"args_count", len(args),
-			"sanitized_args", sanitizedArgs,
 		)
 	} else {
 		sdb.logger.Debug("Secure query executed successfully",
@@ -476,7 +476,6 @@ func (sdb *SecureDBConnection) ExecuteSecureExec(ctx context.Context, operation,
 			"table", tableName,
 			"query", query,
 			"args_count", len(args),
-			"sanitized_args", sanitizedArgs,
 		)
 	} else {
 		sdb.logger.Debug("Secure exec executed successfully",

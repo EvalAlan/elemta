@@ -789,3 +789,32 @@ func TestCopyrightNotice(t *testing.T) {
 		t.Error("settings About card lacks the version")
 	}
 }
+
+// The no-script theme form returns to the page it came from, which the
+// Referer names. A crafted one must not turn that into a redirect elsewhere.
+func TestThemeRedirectStaysLocal(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	for referer, want := range map[string]string{
+		h.srv.URL + "/mail?f=Sent":     "/mail?f=Sent",
+		h.srv.URL + "//evil.example/x": "/mail",
+		h.srv.URL + `/\evil.example/x`: "/mail",
+		"http://evil.example/mail":     "/mail",
+	} {
+		form := url.Values{"csrf": {csrf}, "theme": {"dark"}}
+		req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/settings/theme", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Referer", referer)
+		resp, err := h.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if got := resp.Header.Get("Location"); got != want {
+			t.Errorf("referer %q redirected to %q, want %q", referer, got, want)
+		}
+	}
+}
