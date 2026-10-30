@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/proxyproto"
+	"github.com/EvalAlan/elemta/internal/tlssni"
 
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
@@ -738,6 +739,9 @@ func (m *TLSManager) useCertificateFiles(tlsConfig *tls.Config) (tls.Certificate
 	m.certReloader = reloader
 	tlsConfig.Certificates = nil
 	tlsConfig.GetCertificate = reloader.GetCertificate
+	if m.config.TLS.SNICertDir != "" {
+		tlsConfig.GetCertificate = tlssni.New(m.config.TLS.SNICertDir, m.logger.Printf).Wrap(reloader.GetCertificate)
+	}
 	return reloader.Current(), nil
 }
 

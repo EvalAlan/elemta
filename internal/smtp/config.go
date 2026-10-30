@@ -388,6 +388,10 @@ type TLSConfig struct {
 	ClientAuth     string             `yaml:"client_auth" toml:"client_auth"`
 	RenewalConfig  *CertRenewalConfig `yaml:"renewal" toml:"renewal"`
 	EnableStartTLS bool               `yaml:"enable_starttls" toml:"enable_starttls"` // Enable STARTTLS on standard ports
+	// SNICertDir holds a certificate per extra mail host name, one
+	// subdirectory each with cert.pem and key.pem, served when a client asks
+	// for a name they cover (internal/tlssni). Empty serves only cert_file.
+	SNICertDir string `yaml:"sni_cert_dir" toml:"sni_cert_dir"`
 }
 
 // LetsEncryptConfig represents Let's Encrypt configuration

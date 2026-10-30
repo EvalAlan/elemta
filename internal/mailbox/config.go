@@ -89,12 +89,16 @@ type ServerConfig struct {
 	POP3Listen         string `toml:"pop3_listen"`
 	// IMAPSListen is an implicit-TLS IMAP listener (usually :993). It
 	// needs tls_cert and tls_key.
-	IMAPSListen         string   `toml:"imaps_listen"`
-	LMTPListen          string   `toml:"lmtp_listen"`
-	HTTPListen          string   `toml:"http_listen"`
-	AllowPlaintextAuth  bool     `toml:"allow_plaintext_auth"`
-	TLSCert             string   `toml:"tls_cert"`
-	TLSKey              string   `toml:"tls_key"`
+	IMAPSListen        string `toml:"imaps_listen"`
+	LMTPListen         string `toml:"lmtp_listen"`
+	HTTPListen         string `toml:"http_listen"`
+	AllowPlaintextAuth bool   `toml:"allow_plaintext_auth"`
+	TLSCert            string `toml:"tls_cert"`
+	TLSKey             string `toml:"tls_key"`
+	// TLSSNIDir holds a certificate per extra mail host name, one
+	// subdirectory each with cert.pem and key.pem, served when a client asks
+	// for a name they cover (internal/tlssni). Empty serves only tls_cert.
+	TLSSNIDir           string   `toml:"tls_sni_dir"`
 	LMTPAllowedNetworks []string `toml:"lmtp_allowed_networks"`
 	// ProxyProtocolFrom lists the load balancers (addresses or networks)
 	// in front of the public listeners (IMAP, IMAPS, POP3, ManageSieve)

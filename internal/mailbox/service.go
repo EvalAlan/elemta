@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/proxyproto"
+	"github.com/EvalAlan/elemta/internal/tlssni"
 
 	"github.com/EvalAlan/elemta/internal/imapfork/imapserver"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
@@ -102,7 +103,11 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 			cancel()
 			return nil, err
 		}
-		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.GetCertificate, CipherSuites: tls12Suites}
+		getCert := certs.GetCertificate
+		if c.Server.TLSSNIDir != "" {
+			getCert = tlssni.New(c.Server.TLSSNIDir, func(format string, args ...any) { log.Info(fmt.Sprintf(format, args...)) }).Wrap(getCert)
+		}
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: getCert, CipherSuites: tls12Suites}
 	}
 	s.tlsConfig = tlsConfig
 	for _, cidr := range c.Server.LMTPAllowedNetworks {
