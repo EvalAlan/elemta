@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -558,6 +559,95 @@ func TestPaletteChoice(t *testing.T) {
 	if _, page = h.get("/mail"); strings.Contains(page, "data-palette=") {
 		t.Fatal("an unknown palette was stored")
 	}
+}
+
+// Each scheme is offered in Settings, survives the save and has a light, a
+// forced dark and a system dark block; a missing one would quietly fall back
+// to the default's colours.
+func TestPalettesOfferedAndStyled(t *testing.T) {
+	css, err := staticFS.ReadFile("static/tidewater.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t)
+	csrf := h.login()
+	for _, name := range []string{"tidewater", "forest", "plum", "sand", "graphite"} {
+		h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "palette": {name}})
+		if _, page := h.get("/mail"); !strings.Contains(page, `data-palette="`+name+`"`) {
+			t.Errorf("%s not applied", name)
+		}
+		if _, settings := h.get("/settings"); !strings.Contains(settings, `<option value="`+name+`" selected>`) {
+			t.Errorf("settings page doesn't offer %s", name)
+		}
+		root := `:root[data-palette="` + name + `"]`
+		for _, selector := range []string{root + " {", root + `[data-theme="dark"] {`, root + `:not([data-theme="light"]) {`} {
+			if !bytes.Contains(css, []byte(selector)) {
+				t.Errorf("stylesheet lacks %s", selector)
+			}
+		}
+	}
+}
+
+// The top bar's envelope is drawn on --chrome and the sign-in artwork on
+// --surface, so a scheme that tints either can wash out the fire and water.
+// Each scheme must keep the logo's colours about as distinct as the default
+// does on its own ground.
+func TestPalettesKeepLogoColours(t *testing.T) {
+	css, err := staticFS.ReadFile("static/tidewater.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	logo := []string{"#dc2626", "#f97316", "#fbbf24", "#0369a1", "#0ea5e9", "#38bdf8"}
+	block := regexp.MustCompile(`(?s):root\[data-palette="\w+"\]([^{]*)\{(.*?)\}`)
+	token := func(body, name string) string {
+		m := regexp.MustCompile(`--` + name + `: (#[0-9A-Fa-f]{6});`).FindStringSubmatch(body)
+		if m == nil {
+			t.Fatalf("no --%s in\n%s", name, body)
+		}
+		return m[1]
+	}
+	blocks := block.FindAllSubmatch(css, -1)
+	if len(blocks) == 0 {
+		t.Fatal("no palette blocks found")
+	}
+	for _, m := range blocks {
+		ground := "#FFFFFF"
+		if strings.Contains(string(m[1]), "dark") || strings.Contains(string(m[1]), "light") {
+			ground = "#111827"
+		}
+		for _, name := range []string{"chrome", "surface"} {
+			bg := token(string(m[2]), name)
+			for _, c := range logo {
+				if got, floor := contrast(c, bg), contrast(c, ground)*0.95; got < floor {
+					t.Errorf("%s: logo %s on --%s %s is %.2f:1, want at least %.2f:1", m[0][:40], c, name, bg, got, floor)
+				}
+			}
+		}
+	}
+}
+
+// contrast is the WCAG contrast ratio of two #RRGGBB colours.
+func contrast(a, b string) float64 {
+	la, lb := luminance(a), luminance(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+func luminance(hex string) float64 {
+	n, err := strconv.ParseUint(hex[1:], 16, 32)
+	if err != nil {
+		panic(err)
+	}
+	linear := func(shift uint) float64 {
+		c := float64(n>>shift&0xFF) / 255
+		if c <= 0.03928 {
+			return c / 12.92
+		}
+		return math.Pow((c+0.055)/1.055, 2.4)
+	}
+	return 0.2126*linear(16) + 0.7152*linear(8) + 0.0722*linear(0)
 }
 
 func TestViewOriginal(t *testing.T) {

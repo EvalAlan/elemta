@@ -39,7 +39,7 @@ type Settings struct {
 	// Theme is "light" or "dark", or empty to follow the device's setting.
 	Theme string `json:"theme,omitempty"`
 	// Palette is the colour scheme: empty for the default, which matches
-	// the administration console, or "tidewater".
+	// the administration console, or one of the names validPalette accepts.
 	Palette string `json:"palette,omitempty"`
 	// Conversations groups the message list by thread; nil means on.
 	Conversations *bool `json:"conversations,omitempty"`
@@ -90,7 +90,8 @@ func paletteFromCookie(r *http.Request) string {
 }
 
 func validPalette(p string) string {
-	if p == "tidewater" {
+	switch p {
+	case "tidewater", "forest", "plum", "sand", "graphite":
 		return p
 	}
 	return ""

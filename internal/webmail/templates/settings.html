@@ -35,8 +35,12 @@
       </select>
       <label for="palette">Colour scheme</label>
       <select id="palette" name="palette">
-        <option value=""{{if eq .Prefs.Palette ""}} selected{{end}}>Elemta (matches the admin console)</option>
+        <option value=""{{if eq .Prefs.Palette ""}} selected{{end}}>Slate (blue)</option>
         <option value="tidewater"{{if eq .Prefs.Palette "tidewater"}} selected{{end}}>Tidewater (teal)</option>
+        <option value="forest"{{if eq .Prefs.Palette "forest"}} selected{{end}}>Forest (green)</option>
+        <option value="plum"{{if eq .Prefs.Palette "plum"}} selected{{end}}>Plum (violet)</option>
+        <option value="sand"{{if eq .Prefs.Palette "sand"}} selected{{end}}>Sand (bronze)</option>
+        <option value="graphite"{{if eq .Prefs.Palette "graphite"}} selected{{end}}>Graphite (grey)</option>
       </select>
     </div>
     <div class="card form-grid">
