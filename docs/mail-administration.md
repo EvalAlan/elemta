@@ -355,6 +355,44 @@ The SMTP verifier discards both positive and negative recipient lookup caches
 when its generation changes. This prevents stale unknown-recipient refusals
 for newly added addresses, and stale acceptance of deleted recipients.
 
+### Domain settings
+
+Selecting a domain in the console's **Domains** tab opens its settings.
+
+**Status** applies to everyone in the domain, and works like an account's:
+
+| Status | Sign-in | Mail to the domain |
+|---|---|---|
+| Active | Allowed | Delivered |
+| Suspended | Refused on every protocol; open sessions end | Delivered |
+| Disabled | Refused on every protocol; open sessions end | Refused |
+
+```sh
+provision set-domain-status example.net suspended
+```
+
+**DKIM keys** can be generated (RSA 2048 or Ed25519) or imported as a PEM
+private key, then renamed, activated and deleted, by a system administrator; a
+domain administrator can read them and check DNS. Private keys are never shown
+again once stored.
+
+A new key signs nothing until you choose it, because receivers must find its
+public half first. To add or rotate a key:
+
+1. Add the key and publish its TXT name and value in DNS.
+2. Choose **Check DNS** until it reports the key as published.
+3. Choose **Sign with this key**. Signing changes within a few seconds, with no
+   restart.
+4. Leave an old key's TXT record published for a few days, so mail already sent
+   can still be verified, then delete the key.
+
+Keys live beside the runtime configuration, in `<config>.dkim/`, so they
+survive a deploy that reseeds the configuration. Back that directory up with
+it. A chosen key takes over from a `[[plugins.dkim.domains]]` entry for the same
+domain, and signs even with `sign = false`, since choosing it is the decision to
+sign that domain. Turning the DKIM plugin off outranks both. A domain's keys
+and status stay when the domain is removed, so adding it again restores them.
+
 ## Directory and mailbox configuration
 
 Administration uses `[webmail] ldap_url`, `ldap_base`, `ldap_provision_dn` and

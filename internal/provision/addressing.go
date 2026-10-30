@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
@@ -105,6 +106,31 @@ func (s *Service) DeleteList(ctx context.Context, raw string) error {
 		return err
 	}
 	return errors.Join(mailbox.DeleteList(ctx, address), s.notify())
+}
+
+// SetDomainStatus changes what happens to everyone in a configured domain.
+func (s *Service) SetDomainStatus(ctx context.Context, raw, status string) (mailpolicy.DomainStatus, error) {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return mailpolicy.DomainStatus{}, err
+	}
+	name, err := DomainName(raw)
+	if err != nil {
+		return mailpolicy.DomainStatus{}, err
+	}
+	configured, err := s.Routing.List(ctx)
+	if err != nil {
+		return mailpolicy.DomainStatus{}, err
+	}
+	if !slices.Contains(configured, name) {
+		return mailpolicy.DomainStatus{}, fmt.Errorf("%w: %s isn't a local domain", ErrNotFound, name)
+	}
+	out, err := mailbox.SetDomainStatus(ctx, mailpolicy.DomainStatus{Domain: name, Status: status})
+	if err != nil {
+		return out, err
+	}
+	// A cached "this recipient exists" must not outlive disabling the domain.
+	return out, s.notify()
 }
 
 // Routes lists domain aliases and catch-alls.

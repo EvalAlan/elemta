@@ -146,6 +146,10 @@ func startServer() {
 		os.Exit(1)
 	}
 
+	if resolved, err := config.FindConfigFile(configPath); err == nil {
+		cfg.ApplyManagedDKIM(smtpConfig, resolved)
+	}
+
 	slog.Info("SMTP Config",
 		"hostname", smtpConfig.Hostname,
 		"listen_addr", smtpConfig.ListenAddr,

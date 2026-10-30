@@ -361,6 +361,19 @@ type DomainRoute struct {
 	CatchAll string `json:"catch_all,omitempty"`
 }
 
+// A domain's status: what happens to everyone in it (internal/mailbox/domain_status.go).
+const (
+	DomainActive    = "active"
+	DomainSuspended = "suspended" // receives mail; nobody may sign in
+	DomainDisabled  = "disabled"  // no sign-in, and its mail is refused
+)
+
+// DomainStatus is a domain's status.
+type DomainStatus struct {
+	Domain string `json:"domain"`
+	Status string `json:"status"`
+}
+
 // Who may post to a distribution list, by envelope sender.
 const (
 	PostAnyone  = "anyone"

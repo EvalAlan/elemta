@@ -46,6 +46,17 @@ type recipient struct {
 // ErrCredentials means nothing claims it.
 func (s *Service) resolveRecipient(ctx context.Context, address string) (recipient, error) {
 	address = strings.ToLower(strings.TrimSpace(address))
+	// Here as well as in the Authenticator: lists and catch-alls in a
+	// disabled domain never reach an account lookup.
+	if at := strings.LastIndex(address, "@"); at >= 0 {
+		status, err := s.engine.DomainStatus(ctx, address[at+1:])
+		if err != nil {
+			return recipient{}, err
+		}
+		if status == mailpolicy.DomainDisabled {
+			return recipient{}, ErrCredentials
+		}
+	}
 	r, ok, err := s.resolvePlus(ctx, address)
 	if ok || err != nil {
 		return r, err

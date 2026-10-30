@@ -6,8 +6,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/smtp"
 )
+
+// ApplyManagedDKIM adds the keys managed from the admin console, which live
+// beside the configuration file, to the signing configuration. It is separate
+// from ToSMTPConfig because the path is the caller's to know, and it runs at
+// start-up and on every reload so a key change never needs a restart.
+func (c *Config) ApplyManagedDKIM(out *smtp.Config, configPath string) {
+	enabled := c.Plugins.DKIM == nil || c.Plugins.DKIM.Enabled
+	out.DKIM = dkim.StoreFor(configPath).Apply(out.DKIM, enabled, nil)
+}
 
 // ToSMTPConfig converts the top-level elemta configuration into the SMTP
 // server's configuration.

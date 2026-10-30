@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/gorilla/mux"
@@ -231,6 +232,7 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		writeJSON(w, account)
 		return nil
 	})).Methods("POST", "DELETE")
+	s.domainSettingsRoutes(protected)
 	protected.HandleFunc("/domains", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		sc := scopeOf(r)
 		if r.Method == "GET" {
@@ -288,6 +290,12 @@ func (s *Server) provisionCall(fn func(context.Context, http.ResponseWriter, *ht
 			http.Error(w, apiErr.Message, apiErr.Status)
 		case errors.Is(err, errOutOfScope):
 			http.Error(w, err.Error(), http.StatusForbidden)
+		case errors.Is(err, dkim.ErrInvalid):
+			http.Error(w, strings.TrimPrefix(err.Error(), dkim.ErrInvalid.Error()+": "), http.StatusBadRequest)
+		case errors.Is(err, dkim.ErrExists):
+			http.Error(w, err.Error(), http.StatusConflict)
+		case errors.Is(err, dkim.ErrNotFound):
+			http.Error(w, err.Error(), http.StatusNotFound)
 		case errors.Is(err, provision.ErrInvalid):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		case errors.Is(err, provision.ErrExists):
