@@ -16,10 +16,22 @@
 #                                   building this checkout. Production uses
 #                                   this; see docs/production-compose.md.
 #
-# Re-running takes the rendered configuration again (ELEMTA_CONFIG_RESEED), so
-# settings saved in the admin console are replaced; make lasting changes in
-# this script's rendering instead.
+# The first run seeds the services from the rendered configuration. After
+# that the configuration belongs to the running system: domains, plugin
+# settings and anything else saved in the admin console stay when this runs
+# again, so it is safe as an upgrade. --reseed takes the rendered configuration
+# again, replacing all of that, after saving a copy in .secrets/cloud/.
 set -euo pipefail
+
+reseed=false
+case ${1:-} in
+"") ;;
+--reseed) reseed=true ;;
+*)
+    echo "usage: cloud-deploy.sh [--reseed]" >&2
+    exit 2
+    ;;
+esac
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 compose_dir=$root/deployments/compose
@@ -248,13 +260,29 @@ for x in $extra_domains; do
 done
 
 step "Starting the stack"
-ELEMTA_CONFIG_RESEED=true dc up -d --remove-orphans
-# The services copy the rendered configuration only when their container is
-# new (scripts/prepare-config.sh), and the mailbox servers read theirs only
-# at start; Compose recreates a container only when its definition changes.
-# Without this, a re-run that only changed the rendering (a new domain)
-# deployed nothing.
-ELEMTA_CONFIG_RESEED=true dc up -d --no-deps --force-recreate elemta elemta-admin elemta-webmail mailbox-server
+runtime_config=/app/runtime-config/elemta.toml
+if [ "$reseed" = true ] && docker exec elemta-node0 test -f "$runtime_config" 2>/dev/null; then
+    saved=$secrets/cloud/elemta.toml.before-reseed-$(date -u +%Y%m%dT%H%M%SZ)
+    (umask 077 && docker exec elemta-node0 cat "$runtime_config" >"$saved")
+    echo "Saved the running configuration as $saved"
+fi
+ELEMTA_CONFIG_RESEED=$reseed dc up -d --remove-orphans
+# The mailbox servers read their configuration only at start, and with
+# --reseed the services copy the rendered one only when their container is new
+# (scripts/prepare-config.sh); Compose recreates a container only when its
+# definition changes.
+ELEMTA_CONFIG_RESEED=$reseed dc up -d --no-deps --force-recreate elemta elemta-admin elemta-webmail mailbox-server
+# EXTRA_MAIL_DOMAINS reaches a running system only with --reseed. Say so
+# rather than let a domain listed later look configured when it isn't.
+for _ in $(seq 30); do
+    docker exec elemta-node0 test -f "$runtime_config" 2>/dev/null && break
+    sleep 1
+done
+for x in $extra_domains; do
+    if ! docker exec elemta-node0 grep -q "^local_domains = .*\"$x\"" "$runtime_config"; then
+        echo "cloud-deploy: $x is in EXTRA_MAIL_DOMAINS but not in the running configuration; add it under Mail Administration, or re-run with --reseed" >&2
+    fi
+done
 
 step "Certificate renewals"
 unit=/etc/systemd/system/elemta-cert-sync
