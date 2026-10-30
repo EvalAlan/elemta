@@ -98,8 +98,14 @@ func TestProtocolAbuseDoesNotExecutePayloadAsCommands(t *testing.T) {
 				t.Fatalf("RCPT TO: %q", reply)
 			}
 
+			// A server that refuses (an oversized BDAT gets 552 and the
+			// connection closed) can hang up while the forged commands are
+			// still being written. That is the refusal these cases want,
+			// so stop sending and judge what it said before closing.
 			for _, chunk := range tc.send {
-				p.send(chunk)
+				if !p.trySend(chunk) {
+					break
+				}
 			}
 
 			got := p.drainFor(3 * time.Second)
