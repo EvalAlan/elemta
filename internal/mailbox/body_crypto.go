@@ -99,6 +99,7 @@ func bodyAAD(header []byte, key string) []byte {
 }
 
 func sealBody(k bodySecret, key string, plain []byte) ([]byte, error) {
+	// #nosec G115 -- parseBodyKeys limits a version to maxBodyVersion bytes
 	header := append(append([]byte{}, bodyMagic...), byte(len(k.version)))
 	header = append(header, k.version...)
 	salt := make([]byte, bodySaltSize)
@@ -111,6 +112,8 @@ func sealBody(k bodySecret, key string, plain []byte) ([]byte, error) {
 		return nil, err
 	}
 	nonce := make([]byte, aead.NonceSize())
+	// #nosec G407 -- the key is derived from a fresh random salt for this one
+	// seal, so a key and nonce pair is never reused
 	return aead.Seal(header, nonce, plain, bodyAAD(header, key)), nil
 }
 
