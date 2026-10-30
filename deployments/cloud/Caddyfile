@@ -1,6 +1,8 @@
 # Public HTTPS for the cloud dev server (docs/cloud-dev.md). Caddy obtains and
-# renews the Let's Encrypt certificate for MAIL_DOMAIN; the mail services use
-# the same certificate, copied out by scripts/cloud-sync-certs.sh. No ACME
+# renews the Let's Encrypt certificate for MAIL_DOMAIN, and for mail.<domain>
+# of each of EXTRA_MAIL_DOMAINS, which scripts/cloud-deploy.sh adds to the
+# first site's names when it renders this file. The mail services use the
+# same certificates, copied out by scripts/cloud-sync-certs.sh. No ACME
 # contact address: Let's Encrypt no longer sends expiry mail; the admin
 # console's Health page shows the certificate's expiry.
 
@@ -15,6 +17,8 @@
 
 	# Thunderbird's autoconfig. The mail domain is this host, so the
 	# well-known path on it is found without an autoconfig.<domain> record.
+	# Servers are named by {host}, so a domain's own mail host is the one
+	# its users' apps are told to use and the certificate they check.
 	@autoconfig path /.well-known/autoconfig/mail/config-v1.1.xml /mail/config-v1.1.xml
 	handle @autoconfig {
 		header Content-Type "application/xml; charset=utf-8"
@@ -26,14 +30,14 @@
 			    <displayName>Elemta ({$MAIL_DOMAIN})</displayName>
 			    <displayShortName>Elemta</displayShortName>
 			    <incomingServer type="imap">
-			      <hostname>{$MAIL_DOMAIN}</hostname>
+			      <hostname>{host}</hostname>
 			      <port>993</port>
 			      <socketType>SSL</socketType>
 			      <authentication>password-cleartext</authentication>
 			      <username>%EMAILADDRESS%</username>
 			    </incomingServer>
 			    <outgoingServer type="smtp">
-			      <hostname>{$MAIL_DOMAIN}</hostname>
+			      <hostname>{host}</hostname>
 			      <port>587</port>
 			      <socketType>STARTTLS</socketType>
 			      <authentication>password-cleartext</authentication>

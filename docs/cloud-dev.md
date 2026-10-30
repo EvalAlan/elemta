@@ -154,6 +154,68 @@ The parent domain's DMARC policy (`sp=`, or `p=` without one) covers the
 subdomain. Outbound mail passes it through DKIM, signed with `d=` exactly the
 subdomain, and through SPF on the envelope sender.
 
+## More mail domains
+
+The server can also host mail for other domains, each with its own mail host
+`mail.<domain>`. List them in `.secrets/cloud.env`, separated by spaces:
+
+```
+EXTRA_MAIL_DOMAINS="example.org"
+```
+
+and re-run `scripts/cloud-deploy.sh`. For each one it:
+
+- adds the domain to `local_domains`, so it accepts mail and accounts for it;
+- creates a DKIM key, signing as the domain itself (`d=example.org`);
+- adds `mail.<domain>` to the webmail's Caddy site, so Caddy obtains and
+  renews its certificate;
+- copies that certificate into `.secrets/mailbox-tls/sni/mail.<domain>/`.
+  SMTP, IMAP and POP3 serve it to clients that ask for `mail.<domain>`
+  (TLS SNI), and the primary certificate to everyone else;
+- prints the domain's DNS records.
+
+The host name the server announces in SMTP stays `MAIL_DOMAIN`.
+
+Move a domain that already has mail elsewhere in this order:
+
+1. Publish the DKIM record and add this server to the SPF record (the printed
+   `v=spf1 mx -all` is enough once the MX points here). Under a strict DMARC
+   policy (`p=reject; adkim=s`) a message that fails both is rejected outright.
+2. Point `mail.<domain>` at the server and re-run the deploy, or wait for the
+   twice-daily certificate sync, until `mail.<domain>` has its certificate.
+   Until then its clients get the primary certificate and refuse it.
+3. Create the accounts.
+4. Move the MX last.
+
+Removing a domain from the list stops serving its certificate and accepting
+its mail. Its accounts and mailboxes stay until deleted.
+
+### Certificates page
+
+The admin console's **Certificates** page lists every certificate the mail
+services serve (names, source, expiry), the one each local domain's clients
+get (a domain without one is flagged), and requests still waiting. An
+administrator can:
+
+- **request a Let's Encrypt certificate** for a host name that already points
+  at the server; Caddy obtains and renews it;
+- **upload a certificate** chain and unencrypted key in PEM, filed under the
+  certificate's first name (a wildcard `*.example.org` as
+  `wildcard.example.org`); it isn't renewed;
+- **remove** either kind, and **sync now**.
+
+Certificates for `MAIL_DOMAIN` and `EXTRA_MAIL_DOMAINS` come from
+`cloud.env` and can't be removed there.
+
+The console runs unprivileged and never talks to Caddy or writes the served
+certificates. It writes requests into `.secrets/cert-sync/requests/` (`hosts`,
+`uploads/<host>/`, and `request` to ask for a run). `elemta-cert-sync.path`
+then runs `scripts/cloud-sync-certs.sh`, which checks every request again
+(host name syntax, key matches certificate, unexpired, names its host),
+updates Caddy's site names, installs the certificates, removes ones no longer
+wanted, and reports in `.secrets/cert-sync/status.json`. The twice-daily
+timer runs the same script, so renewals are copied without anyone asking.
+
 ## Accounts
 
 The directory starts empty. Create the domain's accounts with the provision

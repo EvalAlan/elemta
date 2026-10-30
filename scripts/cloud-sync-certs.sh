@@ -1,36 +1,214 @@
 #!/usr/bin/env bash
-# Copies Caddy's Let's Encrypt certificate for MAIL_DOMAIN into
-# deployments/compose/.secrets/mailbox-tls/, where the mailbox service and
-# Elemta read it (docs/cloud-dev.md). Both re-read the files when they change,
-# so a renewal needs no restart. Exits non-zero while Caddy has no certificate
-# yet; prints "updated" when it replaced the files.
+# Keeps the mail services' certificates in step with what is wanted, on the
+# cloud dev server (docs/cloud-dev.md). Run by scripts/cloud-deploy.sh, a
+# twice-daily timer, and a path unit when the admin console asks.
+#
+# Certificates come from two places:
+#   - Caddy's Let's Encrypt certificates, for MAIL_DOMAIN, for mail.<domain>
+#     of each of EXTRA_MAIL_DOMAINS ("configured"), and for the host names
+#     the admin console requested ("requested");
+#   - certificates uploaded in the admin console ("uploaded").
+# MAIL_DOMAIN's goes to deployments/compose/.secrets/mailbox-tls/, every other
+# one to mailbox-tls/sni/<host>/, which the mail services serve to clients
+# asking for that host. Both re-read the files when they change, so nothing
+# restarts. A host no longer wanted is removed from both Caddy and sni/.
+#
+# The admin console runs unprivileged and can only write into
+# .secrets/cert-sync/requests/; everything it wrote is checked again here
+# before use. The outcome goes to .secrets/cert-sync/status.json for the
+# console to show.
+#
+# Exits non-zero while Caddy has no certificate for MAIL_DOMAIN yet. A host
+# without one yet (its DNS hasn't moved here) is only reported, so it doesn't
+# hold up the others. Prints "updated" when it replaced any files.
+#
+# --render-only writes Caddy's site names and stops: the deploy needs the
+# Caddyfile before Caddy can start.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 secrets=$root/deployments/compose/.secrets
 dir=$secrets/mailbox-tls
+manage=$secrets/cert-sync
+requests=$manage/requests
+caddyfile=$secrets/cloud/caddy/Caddyfile
 # shellcheck disable=SC1091
 . "$secrets/cloud.env"
 : "${MAIL_DOMAIN:?}"
-src=/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/$MAIL_DOMAIN
+issued=/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-docker exec elemta-caddy cat "$src/$MAIL_DOMAIN.crt" >"$tmp/cert.pem"
-docker exec elemta-caddy cat "$src/$MAIL_DOMAIN.key" >"$tmp/key.pem"
-if [ "$(openssl x509 -noout -pubkey -in "$tmp/cert.pem")" != "$(openssl pkey -pubout -in "$tmp/key.pem")" ]; then
-    echo "cloud-sync-certs: certificate and key from Caddy do not match" >&2
+changed=0
+rejected=()
+
+# A host name the scripts, sed and the Caddyfile can use unescaped: lowercase
+# labels of letters, digits and inner hyphens, at least two of them.
+valid_host() {
+    [ ${#1} -le 253 ] && [[ $1 =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]
+}
+reject() { rejected+=("$1|$2"); }
+
+configured=()
+for d in ${EXTRA_MAIL_DOMAINS:-}; do
+    configured+=("mail.$d")
+done
+
+requested=()
+if [ -f "$requests/hosts" ]; then
+    while IFS= read -r h || [ -n "$h" ]; do
+        h=${h%%#*}
+        h=${h//[[:space:]]/}
+        [ -n "$h" ] || continue
+        if ! valid_host "$h"; then
+            reject "$h" "not a valid host name"
+        elif [ "$h" = "$MAIL_DOMAIN" ] || [[ " ${configured[*]} ${requested[*]} " == *" $h "* ]]; then
+            continue
+        else
+            requested+=("$h")
+        fi
+    done <"$requests/hosts"
+fi
+
+# Caddy obtains a certificate for every name on the webmail's site.
+names=$MAIL_DOMAIN
+for h in "${configured[@]}" "${requested[@]}"; do
+    names="$names, $h"
+done
+sed -e "s|^{\$MAIL_DOMAIN} {|{\$MAIL_DOMAIN}${names#"$MAIL_DOMAIN"} {|" "$root/deployments/cloud/Caddyfile" >"$tmp/Caddyfile"
+if ! grep -q "^{\$MAIL_DOMAIN}" "$tmp/Caddyfile"; then
+    echo "cloud-sync-certs: the Caddyfile template no longer has the {\$MAIL_DOMAIN} site" >&2
     exit 1
 fi
-if cmp -s "$tmp/cert.pem" "$dir/cert.pem" && cmp -s "$tmp/key.pem" "$dir/key.pem"; then
-    exit 0
+if ! cmp -s "$tmp/Caddyfile" "$caddyfile"; then
+    mkdir -p "$(dirname "$caddyfile")"
+    # In place: Caddy's directory mount must see the same file.
+    cat "$tmp/Caddyfile" >"$caddyfile"
+    chmod 644 "$caddyfile"
+    if [ "${1:-}" != --render-only ]; then
+        # Retried, since a container just started may not be taking reloads.
+        for i in $(seq 15); do
+            docker exec elemta-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 && break
+            [ "$i" = 15 ] && { echo "cloud-sync-certs: Caddy didn't take the new Caddyfile; see docker logs elemta-caddy" >&2; exit 1; }
+            sleep 2
+        done
+    fi
 fi
-# The services run as uid 1001, not the host user; the directory above this
-# one is private to the host user, so the files themselves can be readable.
-chmod 644 "$tmp/cert.pem" "$tmp/key.pem"
-# Renames, so a reader never sees a half-written file. The key goes first: a
-# reader that catches the new key with the old certificate rejects the pair
-# and keeps serving, then takes both when the certificate changes too.
-mv "$tmp/key.pem" "$dir/.key.pem.new" && mv -f "$dir/.key.pem.new" "$dir/key.pem"
-mv "$tmp/cert.pem" "$dir/.cert.pem.new" && mv -f "$dir/.cert.pem.new" "$dir/cert.pem"
-echo updated
+[ "${1:-}" = --render-only ] && exit 0
+
+# install source-cert source-key destination: puts a checked pair in place.
+install_pair() {
+    local cert=$1 key=$2 dest=$3
+    if [ "$(openssl x509 -noout -pubkey -in "$cert" 2>/dev/null)" != "$(openssl pkey -pubout -in "$key" 2>/dev/null)" ]; then
+        return 1
+    fi
+    mkdir -p "$dest"
+    chmod 755 "$dest"
+    if cmp -s "$cert" "$dest/cert.pem" && cmp -s "$key" "$dest/key.pem"; then
+        return 0
+    fi
+    # The services run as uid 1001, not the host user; the directory above
+    # this one is private to the host user, so the files themselves can be
+    # readable.
+    cp "$cert" "$tmp/cert.pem" && cp "$key" "$tmp/key.pem"
+    chmod 644 "$tmp/cert.pem" "$tmp/key.pem"
+    # Renames, so a reader never sees a half-written file. The key goes first:
+    # a reader that catches the new key with the old certificate rejects the
+    # pair and keeps serving, then takes both when the certificate changes too.
+    mv "$tmp/key.pem" "$dest/.key.pem.new" && mv -f "$dest/.key.pem.new" "$dest/key.pem"
+    mv "$tmp/cert.pem" "$dest/.cert.pem.new" && mv -f "$dest/.cert.pem.new" "$dest/cert.pem"
+    changed=1
+}
+
+# from_caddy host destination: installs Caddy's certificate for host.
+from_caddy() {
+    docker exec elemta-caddy cat "$issued/$1/$1.crt" >"$tmp/caddy.crt" 2>/dev/null || return 1
+    docker exec elemta-caddy cat "$issued/$1/$1.key" >"$tmp/caddy.key" 2>/dev/null || return 1
+    install_pair "$tmp/caddy.crt" "$tmp/caddy.key" "$2" || {
+        echo "cloud-sync-certs: certificate and key from Caddy for $1 do not match" >&2
+        return 1
+    }
+}
+
+from_caddy "$MAIL_DOMAIN" "$dir" || { echo "cloud-sync-certs: no certificate for $MAIL_DOMAIN from Caddy yet" >&2; exit 1; }
+
+keep=() pending=()
+for h in "${configured[@]}" "${requested[@]}"; do
+    keep+=("$h")
+    from_caddy "$h" "$dir/sni/$h" || pending+=("$h")
+done
+
+uploaded=()
+if [ -d "$requests/uploads" ]; then
+    for up in "$requests/uploads"/*/; do
+        [ -d "$up" ] || continue
+        h=$(basename "$up")
+        c=$up/cert.pem k=$up/key.pem
+        if ! valid_host "$h"; then
+            reject "$h" "not a valid host name"
+        elif [ "$h" = "$MAIL_DOMAIN" ] || [[ " ${keep[*]} " == *" $h "* ]]; then
+            reject "$h" "already has a Let's Encrypt certificate"
+        elif [ ! -f "$c" ] || [ ! -f "$k" ]; then
+            reject "$h" "the upload is incomplete"
+        elif ! openssl x509 -noout -checkend 0 -in "$c" >/dev/null 2>&1; then
+            reject "$h" "the certificate has expired or can't be read"
+        elif ! openssl x509 -noout -checkhost "$h" -in "$c" 2>/dev/null | grep -q "does match"; then
+            reject "$h" "the certificate doesn't name the host"
+        elif ! install_pair "$c" "$k" "$dir/sni/$h"; then
+            reject "$h" "the key doesn't match the certificate"
+        else
+            keep+=("$h")
+            uploaded+=("$h")
+        fi
+    done
+fi
+
+# A host no longer configured, requested or uploaded stops being served.
+if [ -d "$dir/sni" ]; then
+    for old in "$dir/sni"/*/; do
+        [ -d "$old" ] || continue
+        name=$(basename "$old")
+        case " ${keep[*]} " in *" $name "*) ;; *) rm -rf "$old"; changed=1 ;; esac
+    done
+fi
+
+# Every value in it has been validated as a host name, and the reasons are
+# fixed strings, so plain quoting is enough.
+json_list() {
+    local out="" x
+    for x in "$@"; do out="$out${out:+, }\"$x\""; done
+    printf '[%s]' "$out"
+}
+if [ -d "$manage" ]; then
+    {
+        printf '{\n  "applied_at": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf '  "primary": "%s",\n' "$MAIL_DOMAIN"
+        printf '  "configured": %s,\n' "$(json_list "${configured[@]}")"
+        printf '  "requested": %s,\n' "$(json_list "${requested[@]}")"
+        printf '  "uploaded": %s,\n' "$(json_list "${uploaded[@]}")"
+        printf '  "pending": %s,\n' "$(json_list "${pending[@]}")"
+        printf '  "rejected": ['
+        sep=""
+        for r in "${rejected[@]}"; do
+            n=${r%%|*}
+            # A rejected name may be anything the console wrote; keep only
+            # characters that are safe in JSON.
+            n=${n//[^a-zA-Z0-9.*_-]/?}
+            printf '%s{"name": "%s", "reason": "%s"}' "$sep" "$n" "${r#*|}"
+            sep=", "
+        done
+        printf ']\n}\n'
+    } >"$tmp/status.json"
+    chmod 644 "$tmp/status.json"
+    mv -f "$tmp/status.json" "$manage/status.json"
+fi
+
+for h in "${pending[@]}"; do
+    echo "cloud-sync-certs: no certificate for $h from Caddy yet" >&2
+done
+for r in "${rejected[@]}"; do
+    echo "cloud-sync-certs: ignored ${r%%|*}: ${r#*|}" >&2
+done
+if [ "$changed" = 1 ]; then
+    echo updated
+fi

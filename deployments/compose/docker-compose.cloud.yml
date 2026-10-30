@@ -19,7 +19,9 @@
 #     let a client send a password before STARTTLS.
 #   - One Let's Encrypt certificate for MAIL_DOMAIN, obtained by Caddy and
 #     copied by scripts/cloud-sync-certs.sh into .secrets/mailbox-tls/, serves
-#     IMAPS, SMTP STARTTLS and the internal LMTP hop alike. Directories are
+#     IMAPS, SMTP STARTTLS and the internal LMTP hop alike. Each extra mail
+#     host (EXTRA_MAIL_DOMAINS) has its own, in .secrets/mailbox-tls/sni/,
+#     served to clients that ask for that name. Directories are
 #     mounted rather than files: a renewal replaces the files, and a file bind
 #     mount keeps showing the replaced inode forever.
 #   - Configuration is rendered for MAIL_DOMAIN into .secrets/cloud/ instead
@@ -56,10 +58,16 @@ services:
       - ELEMTA_DEV_CERT=false
       - ELEMTA_DEMO_DATA=false
       - ELEMTA_WEBMAIL_PUBLIC_URL=https://${MAIL_DOMAIN:?MAIL_DOMAIN must be set}
+      # The Certificates page writes certificate requests and uploads into
+      # requests/ here; a systemd path unit on the host runs
+      # scripts/cloud-sync-certs.sh, which checks them again before acting.
+      # The console never talks to Caddy or writes the served certificates.
+      - ELEMTA_CERT_MANAGE_DIR=/app/cert-sync
     volumes:
       - ./.secrets/cloud/config:/app/config:ro
       - ./.secrets/mailbox-tls:/app/tls:ro
       - ./.secrets/cloud/dkim:/app/dkim:ro
+      - ./.secrets/cert-sync:/app/cert-sync
 
   elemta-webmail:
     ports: !override
@@ -68,6 +76,11 @@ services:
       - ./.secrets/cloud/config:/app/config:ro
 
   mailbox-server:
+    # The bucket's keys, written by scripts/cloud-deploy.sh only when
+    # message bodies are stored in S3.
+    env_file:
+      - path: .secrets/mailbox-s3.env
+        required: false
     volumes: !override
       - ./.secrets/cloud/mailbox.toml:/etc/elemta/mailbox.toml:ro
       - ./.secrets/mailbox-tls:/etc/elemta/tls:ro
@@ -109,7 +122,8 @@ services:
       - MAIL_DOMAIN=${MAIL_DOMAIN}
       - ELEMTA_ADMIN_ALLOWED_IP=${ELEMTA_ADMIN_ALLOWED_IP:-127.0.0.1}
     volumes:
-      - ../cloud/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Rendered from ../cloud/Caddyfile with the extra mail hosts.
+      - ./.secrets/cloud/caddy:/etc/caddy:ro
       - caddy_data:/data
       - caddy_config:/config
     cap_drop: [ALL]
