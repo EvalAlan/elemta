@@ -12,8 +12,9 @@ olcPidFile: /var/lib/openldap/run/slapd.pid
 olcLogLevel: none
 olcToolThreads: 1
 
-# pw-sha2 makes {SSHA512} usable: Elemta writes users' passwords that way
-# (internal/datasource/ldap.go), and the previous image could not check them.
+# argon2 is how new passwords are stored (olcPasswordHash below): a slow hash
+# is what protects passwords people choose. pw-sha2 stays so the {SSHA512}
+# passwords set before that keep working until they are next changed.
 dn: cn=module{0},cn=config
 objectClass: olcModuleList
 cn: module{0}
@@ -22,6 +23,7 @@ olcModuleLoad: back_mdb
 olcModuleLoad: memberof
 olcModuleLoad: refint
 olcModuleLoad: pw-sha2
+olcModuleLoad: argon2
 
 dn: cn=schema,cn=config
 objectClass: olcSchemaConfig
@@ -40,7 +42,7 @@ olcDatabase: {-1}frontend
 olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break
 olcAccess: {1}to dn.exact="" by * read
 olcAccess: {2}to dn.base="cn=Subschema" by * read
-olcPasswordHash: {SSHA512}
+olcPasswordHash: {ARGON2}
 olcSizeLimit: 500
 
 dn: olcDatabase={0}config,cn=config

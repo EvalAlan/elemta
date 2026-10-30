@@ -28,6 +28,33 @@ modify() { "${EXEC[@]}" ldapmodify "${ROOT[@]}" >/dev/null; }
 # Schema, overlays and indexes are each node's configuration: every node
 # gets them. Branches and accounts are data: written once, replicated.
 configure() {
+# --- password hashing -----------------------------------------------------
+# A directory created before Argon2 moves to it here. Hashes already stored
+# stay valid: each names its own scheme, and pw-sha2 stays loaded. An image
+# without the module keeps its hash rather than failing the deploy.
+if ! "${EXEC[@]}" test -e /usr/lib/openldap/argon2.so; then
+    echo "ldap-schema: this directory image has no argon2 module; passwords keep the current hash" >&2
+else
+    if ! search -b 'cn=module{0},cn=config' -s base olcModuleLoad | grep -c argon2 >/dev/null; then
+        modify <<'LDIF'
+dn: cn=module{0},cn=config
+changetype: modify
+add: olcModuleLoad
+olcModuleLoad: argon2
+LDIF
+        echo "ldap-schema: loaded the argon2 module"
+    fi
+    if ! search -b 'olcDatabase={-1}frontend,cn=config' -s base olcPasswordHash | grep -c ARGON2 >/dev/null; then
+        modify <<'LDIF'
+dn: olcDatabase={-1}frontend,cn=config
+changetype: modify
+replace: olcPasswordHash
+olcPasswordHash: {ARGON2}
+LDIF
+        echo "ldap-schema: new passwords are stored with Argon2"
+    fi
+fi
+
 # --- schema ---------------------------------------------------------------
 dn=$(search -b cn=schema,cn=config '(cn=*elemta-mail)' dn | sed -n 's/^dn: //p')
 if [ -z "$dn" ]; then

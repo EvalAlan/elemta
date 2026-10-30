@@ -4,6 +4,17 @@
 
 ### Upgrade notes
 
+- **New directory passwords are stored with Argon2.** `scripts/ldap-schema.sh`,
+  which every deploy runs, switches an existing directory over. Passwords
+  already stored keep working and move to Argon2 when next changed. Dashboard
+  user passwords now go through the directory's Password Modify operation
+  instead of being hashed by Elemta. A directory that isn't on the current
+  `docker/ldap` image keeps its current hash, and the deploy says so.
+- **Two-step recovery codes are longer** (16 letters). Codes already issued keep
+  working; only 10 letters of them are random, so regenerate them if the mailbox
+  database may have been exposed.
+- The SQL security layer no longer logs submitted values, in debug mode or when
+  it refuses an input.
 - **Every tier can run several times** ([scaling.md](docs/scaling.md)). The
   scaling overlay (`docker-compose.scale.yml`) runs the MTA, webmail and
   dashboard as several containers behind load balancers, the MTAs sharing a
