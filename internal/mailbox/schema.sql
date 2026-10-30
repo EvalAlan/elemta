@@ -139,6 +139,12 @@ CREATE TABLE IF NOT EXISTS mailbox_domain_routes (
  domain text PRIMARY KEY, alias_of text, catch_all text,
  updated timestamptz NOT NULL DEFAULT now()
 );
+-- One row per message body key version ever used; a key is checked against its
+-- fingerprint at start (body_crypto.go).
+CREATE TABLE IF NOT EXISTS mailbox_body_keys (
+ version text PRIMARY KEY, fingerprint text NOT NULL,
+ added timestamptz NOT NULL DEFAULT now()
+);
 -- A domain that isn't active; no row means active (domain_status.go).
 CREATE TABLE IF NOT EXISTS mailbox_domain_status (
  domain text PRIMARY KEY, status text NOT NULL CHECK (status IN ('suspended','disabled')),

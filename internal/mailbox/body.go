@@ -87,6 +87,46 @@ func (f *FileBodies) Put(ctx context.Context, key string, data []byte) (err erro
 	defer dir.Close()
 	return dir.Sync()
 }
+
+// Replace swaps a body by renaming over it, so a reader sees one version or
+// the other and a crash leaves the original.
+func (f *FileBodies) Replace(ctx context.Context, key string, data []byte) (err error) {
+	if !bodyKey.MatchString(key) {
+		return errors.New("invalid body key")
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	tmp := key + ".new"
+	file, err := f.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = file.Close()
+		if err != nil {
+			_ = f.root.Remove(tmp)
+		}
+	}()
+	if _, err = file.Write(data); err != nil {
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	if err = f.root.Rename(tmp, key); err != nil {
+		return err
+	}
+	dir, err := f.root.Open(".")
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
 func (f *FileBodies) Get(ctx context.Context, key string, max int64) ([]byte, error) {
 	if !bodyKey.MatchString(key) {
 		return nil, errors.New("invalid body key")
@@ -140,6 +180,17 @@ func (s *S3Bodies) Put(ctx context.Context, key string, data []byte) error {
 	options := minio.PutObjectOptions{ContentType: "message/rfc822", DisableMultipart: true}
 	options.SetMatchETagExcept("*")
 	_, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), options)
+	return err
+}
+
+// Replace overwrites a body. S3 replaces an object whole, so a reader sees one
+// version or the other. On a versioned bucket the old version stays until the
+// bucket's lifecycle removes it.
+func (s *S3Bodies) Replace(ctx context.Context, key string, data []byte) error {
+	if !bodyKey.MatchString(key) {
+		return errors.New("invalid body key")
+	}
+	_, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{ContentType: "application/octet-stream", DisableMultipart: true})
 	return err
 }
 func (s *S3Bodies) Get(ctx context.Context, key string, max int64) ([]byte, error) {

@@ -252,9 +252,9 @@ scripts/mailbox-backup.sh /path/to/backup        # pg_dump, then the bodies
 scripts/mailbox-restore-drill.sh /path/to/backup # restore beside the stack and verify
 ```
 
-Bodies are written before the metadata that refers to them and never
-change, so a dump taken first refers only to bodies the copy that follows
-will include. On S3, bucket versioning or replication can stand in for the
+Bodies are written before the metadata that refers to them and their
+contents never change, so a dump taken first refers only to bodies the copy
+that follows will include. On S3, bucket versioning or replication can stand in for the
 body copy.
 
 `elemta mailbox verify` checks that every body a message refers to exists
@@ -264,6 +264,55 @@ and periodically in production; `--sample N` checks a random N bodies on
 large stores. Keep TLS and directory credentials with the backups. A copy
 of either half alone doesn't preserve mailboxes, and replication doesn't
 replace backups. Run the drill regularly.
+
+### Encrypting message bodies
+
+With `ELEMTA_MAILBOX_BODY_KEYS` set, message bodies are encrypted with
+AES-256-GCM before they reach the file or S3 store. Each body gets its own
+derived key and is bound to its object, so a moved or altered object fails to
+open. Anyone with only the bucket or the bodies volume gets ciphertext.
+
+**This protects the body store, nothing else.** PostgreSQL still holds message
+summaries (subject, sender, recipients, preview) and the search index, which
+contains the words of each message; use disk encryption and protected database
+backups for those. Mail is readable by the server while it is handled, and an
+administrator with the key can read everything. It is not end-to-end encryption.
+
+**Losing the key loses the mail.** There is no recovery. Keep a copy somewhere
+that doesn't share a failure with the server, and away from the bucket:
+encryption protects nothing if the key sits beside the data. `scripts/backup.sh`
+includes it in `secrets.tar.gz`, so set `BACKUP_AGE_RECIPIENT`.
+
+To turn it on with the cloud deploy:
+
+1. Set `MAILBOX_BODY_ENCRYPTION=true` in `.secrets/cloud.env` and run
+   `scripts/cloud-deploy.sh`. It creates `.secrets/mailbox-body-keys.env` once
+   and never replaces it.
+2. Copy that file off the server, and run a backup.
+3. Encrypt what is already stored. New mail is encrypted from step 1, and old
+   mail stays readable until this reaches it. It can run while the service does,
+   and can be stopped and run again:
+
+   ```sh
+   docker exec elemta-mailbox-server-1 /app/elemta mailbox encrypt-bodies --config /etc/elemta/mailbox.toml
+   docker exec elemta-mailbox-server-1 /app/elemta mailbox verify --config /etc/elemta/mailbox.toml
+   ```
+
+Every body is checked against its recorded checksum first and read back after.
+One that doesn't match is reported and left alone. Encrypted copies don't erase
+earlier ones: remove old versions if the bucket is versioned, and remember that
+existing backups still hold plaintext.
+
+For any other deployment, generate 32 random bytes, base64 encode them, and set
+`ELEMTA_MAILBOX_BODY_KEYS=v1:<base64 key>` the same way on every replica.
+
+Every key's fingerprint is recorded in the database. A replica with a different
+key under the same version refuses to start, because it would write mail the
+others can't read, and so does a service with no keys on a store that has used
+them, so a lost environment file can't silently turn encryption off.
+
+To rotate, set `v2:<new>,v1:<old>` on every replica, restart them, and run
+`encrypt-bodies` again. Keep v1 until no backup you might restore needs it.
 
 ## Verification
 

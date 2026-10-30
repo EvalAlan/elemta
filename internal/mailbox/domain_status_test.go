@@ -63,3 +63,39 @@ func TestDomainStatusCoversAliasAddressElsewhere(t *testing.T) {
 		t.Fatalf("the healthy address was refused: %v", err)
 	}
 }
+
+func TestDomainStatusIsStored(t *testing.T) {
+	ctx := context.Background()
+	e, _ := testEngine(t)
+	const domain = "status-test.example"
+	t.Cleanup(func() { _, _ = e.DB.Exec(`DELETE FROM mailbox_domain_status WHERE domain=$1`, domain) })
+	check := func(want string) {
+		t.Helper()
+		if got, err := e.DomainStatus(ctx, domain); err != nil || got != want {
+			t.Fatalf("status = %q, %v, want %q", got, err, want)
+		}
+	}
+	check(mailpolicy.DomainActive)
+	for _, status := range []string{mailpolicy.DomainSuspended, mailpolicy.DomainDisabled} {
+		if _, err := e.SetDomainStatus(ctx, mailpolicy.DomainStatus{Domain: domain, Status: status}); err != nil {
+			t.Fatal(err)
+		}
+		check(status)
+	}
+	if _, err := e.SetDomainStatus(ctx, mailpolicy.DomainStatus{Domain: domain, Status: "closed"}); !errors.Is(err, mailpolicy.ErrInvalid) {
+		t.Fatalf("bad status = %v", err)
+	}
+	if _, err := e.SetDomainStatus(ctx, mailpolicy.DomainStatus{Domain: domain, Status: mailpolicy.DomainActive}); err != nil {
+		t.Fatal(err)
+	}
+	check(mailpolicy.DomainActive)
+	if listed, err := e.DomainStatuses(ctx); err != nil {
+		t.Fatal(err)
+	} else {
+		for _, d := range listed {
+			if d.Domain == domain {
+				t.Fatal("an active domain is still listed")
+			}
+		}
+	}
+}

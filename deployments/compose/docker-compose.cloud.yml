@@ -81,6 +81,10 @@ services:
     env_file:
       - path: .secrets/mailbox-s3.env
         required: false
+      # The message body key, created by scripts/cloud-deploy.sh when
+      # MAILBOX_BODY_ENCRYPTION=true.
+      - path: .secrets/mailbox-body-keys.env
+        required: false
     volumes: !override
       - ./.secrets/cloud/mailbox.toml:/etc/elemta/mailbox.toml:ro
       - ./.secrets/mailbox-tls:/etc/elemta/tls:ro

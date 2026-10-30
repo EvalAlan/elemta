@@ -74,8 +74,22 @@ func Open(ctx context.Context, c Config, log *slog.Logger) (*Service, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	bodyKeys, err := parseBodyKeys(os.Getenv(c.Bodies.KeysEnv))
+	if err != nil {
+		_ = bodies.Close()
+		_ = db.Close()
+		return nil, err
+	}
+	if len(bodyKeys) > 0 {
+		bodies = &encryptedBodies{BodyStore: bodies, keys: bodyKeys}
+	}
 	engine, err := NewEngine(ctx, db, bodies, c)
 	if err != nil {
+		_ = bodies.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("mailbox initialization: %w", err)
+	}
+	if err := engine.checkBodyKeys(ctx, bodyKeys); err != nil {
 		_ = bodies.Close()
 		_ = db.Close()
 		return nil, fmt.Errorf("mailbox initialization: %w", err)

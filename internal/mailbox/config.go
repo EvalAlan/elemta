@@ -120,6 +120,8 @@ type BodyConfig struct {
 	Secure       bool   `toml:"secure"`
 	AccessKeyEnv string `toml:"access_key_env"`
 	SecretKeyEnv string `toml:"secret_key_env"`
+	// KeysEnv names the variable holding the encryption keys (body_crypto.go).
+	KeysEnv string `toml:"keys_env"`
 }
 type AuthConfig struct {
 	LDAPURL    string `toml:"ldap_url"`
@@ -219,6 +221,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.Bodies.AccessKeyEnv == "" {
 		c.Bodies.AccessKeyEnv = "ELEMTA_MAILBOX_S3_ACCESS_KEY"
+	}
+	if c.Bodies.KeysEnv == "" {
+		c.Bodies.KeysEnv = "ELEMTA_MAILBOX_BODY_KEYS"
 	}
 	if c.Bodies.SecretKeyEnv == "" {
 		c.Bodies.SecretKeyEnv = "ELEMTA_MAILBOX_S3_SECRET_KEY"

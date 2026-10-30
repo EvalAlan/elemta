@@ -46,7 +46,11 @@ docker run --rm -i --network none --user 0 --entrypoint sh -v "$vol:/bodies" "$i
     -c 'tar -C /bodies -xzf - && chown -R 1001:1001 /bodies' <"$in/bodies.tar.gz"
 
 echo "Verifying"
-docker run --rm --network "$net" --env-file "$secrets/mailbox.env" \
+# An encrypted store refuses to open without its key, so a drill proves the
+# key restores too.
+body_keys=()
+[ ! -f "$secrets/mailbox-body-keys.env" ] || body_keys=(--env-file "$secrets/mailbox-body-keys.env")
+docker run --rm --network "$net" --env-file "$secrets/mailbox.env" "${body_keys[@]}" \
     -e PGHOST="$dbc" -e PGUSER=mailbox -e PGPASSWORD="$pw" -e PGDATABASE=mailbox -e PGSSLMODE=disable \
     -v "$root/config/mailbox-main.toml:/etc/elemta/mailbox.toml:ro" \
     -v "$secrets/mailbox-tls/cert.pem:/etc/elemta/tls/cert.pem:ro" \

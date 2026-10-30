@@ -10,6 +10,10 @@
 #                                   mail.<domain>, certificate and DKIM key
 #   MAILBOX_BODY_GRACE_HOURS=168    optional: how long a deleted message's
 #                                   body is kept before cleanup removes it
+#   MAILBOX_BODY_ENCRYPTION=true    optional: encrypt message bodies with a key
+#                                   created in .secrets/mailbox-body-keys.env.
+#                                   Keep a copy off the server; see
+#                                   docs/mailbox-service.md
 #   ELEMTA_TAG=v0.5.0               optional: run that release's images from
 #                                   ghcr.io, pinned and hardened
 #                                   (docker-compose.release.yml), instead of
@@ -175,6 +179,17 @@ if [ -f "$s3_env" ]; then
     )
 else
     rm -f "$s3_keys"
+fi
+# Encrypts message bodies when MAILBOX_BODY_ENCRYPTION=true. Created once and
+# never replaced: without this key the encrypted mail is gone, which is why
+# turning it on is a decision and not something an upgrade does on its own.
+body_keys=$secrets/mailbox-body-keys.env
+if [ "${MAILBOX_BODY_ENCRYPTION:-}" = true ] && [ ! -f "$body_keys" ]; then
+    (
+        umask 077
+        printf 'ELEMTA_MAILBOX_BODY_KEYS=v1:%s\n' "$(openssl rand -base64 32)" >"$body_keys"
+    )
+    echo "cloud-deploy: created $body_keys. Copy it somewhere off this server NOW: without it encrypted mail can't be read." >&2
 fi
 render "$root/config/mailbox-main.toml" "$secrets/cloud/mailbox.toml" "${mailbox_edits[@]}"
 # Without collection a deleted message's body stays in storage forever. The

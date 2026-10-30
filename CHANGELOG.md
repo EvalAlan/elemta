@@ -4,6 +4,12 @@
 
 ### Upgrade notes
 
+- **Message bodies can be encrypted at rest**
+  ([mailbox-service.md](docs/mailbox-service.md)). Off unless
+  `ELEMTA_MAILBOX_BODY_KEYS` is set, or `MAILBOX_BODY_ENCRYPTION=true` with the
+  cloud deploy. `elemta mailbox encrypt-bodies` encrypts what is already stored.
+  It covers the body store only, not PostgreSQL's summaries and search index,
+  and losing the key loses the mail.
 - **New directory passwords are stored with Argon2.** `scripts/ldap-schema.sh`,
   which every deploy runs, switches an existing directory over. Passwords
   already stored keep working and move to Argon2 when next changed. Dashboard
