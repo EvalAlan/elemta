@@ -101,7 +101,7 @@ func (s Store) ManifestPath() string { return filepath.Join(s.Dir, "keys.json") 
 // selectors and domains too, but private keys shouldn't depend on all of them
 // remembering: cleaning from a leading slash leaves no ".." to climb out with.
 func (s Store) keyPath(domain, selector string) string {
-	return filepath.Join(s.Dir, filepath.Clean("/"+domain), filepath.Clean("/"+selector+".key"))
+	return filepath.Join(s.Dir, filepath.Clean("/"+domain), filepath.Clean("/"+selector)+".key")
 }
 
 func (s Store) load() (map[string]DomainKeys, error) {
