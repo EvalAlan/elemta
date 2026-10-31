@@ -101,10 +101,11 @@ runs only the checks.
 
 To deploy by hand, or to update a server from a checkout on your
 workstation, send the committed tree to the server and run the deploy script
-there:
+there. A dev server follows the `dev` branch, as described in
+[releasing.md](releasing.md):
 
 ```
-git archive HEAD | ssh you@dev.example.net 'mkdir -p ~/elemta && tar -x -C ~/elemta'
+git archive origin/dev | ssh you@dev.example.net 'mkdir -p ~/elemta && tar -x -C ~/elemta'
 ssh you@dev.example.net 'cd ~/elemta && scripts/cloud-deploy.sh'
 ```
 
