@@ -6,7 +6,7 @@ on:
     # A release tag publishes both images under the version as well.
     tags: [ 'v*.*.*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
   workflow_dispatch:
 
 concurrency:

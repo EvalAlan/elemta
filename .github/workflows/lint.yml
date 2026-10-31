@@ -3,7 +3,7 @@ name: Go Lint
 on:
   pull_request:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, dev ]
   workflow_dispatch:
 
 concurrency:

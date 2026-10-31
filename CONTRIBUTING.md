@@ -12,7 +12,9 @@ make install-dev
 
 ## Branching and commits
 
-- Create a focused branch per change.
+- Create a focused branch per change, from `dev`, and open the pull request
+  against `dev`. `main` only changes at a release; see
+  [docs/releasing.md](docs/releasing.md).
 - Use conventional commit style where practical (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
 - Keep commits atomic and reviewable.
 

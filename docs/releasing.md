@@ -4,6 +4,30 @@ This document describes how to cut a release of Elemta. The first tagged
 release is **v0.5.0**: v0.3.0 and v0.4.0 were described in the changelog but
 never tagged, so tags continue that numbering.
 
+## Branches
+
+```
+feat/x, fix/y --PR--> dev --release PR--> main --tag--> vX.Y.Z
+```
+
+- **`dev`** is where work lands and what the dev server runs. Pull requests
+  target it, and the full checks run on them.
+- **`main`** is what has been released. It changes only through a release pull
+  request from `dev`, or an urgent fix. It requires a pull request with passing
+  checks. Docker images are published from it and from tags, so `dev` publishes
+  none.
+
+Force pushes and deletion are blocked on both.
+
+Release when a set of work is complete and has run on the dev server for about
+a week, not on a calendar.
+
+### Urgent fixes
+
+Branch from `main`, open the pull request against `main`, and tag a patch
+release. Then merge `main` into `dev`. Without that, the next release brings
+the bug back.
+
 ## Tagging convention
 
 Releases use [semantic versioning](https://semver.org/) with a `v` prefix:
@@ -63,17 +87,20 @@ in `release.yml` if/when other platforms are needed.
 
 ## Cutting a release (manual steps)
 
-1. Make sure `main` is green (tests, lint, security gate all passing).
-2. Update [`CHANGELOG.md`](../CHANGELOG.md) with a dated entry summarizing
-   what's in the release. The existing changelog is narrative rather than
-   strictly "Keep a Changelog"-formatted — follow the existing style, but
-   include the version number in the heading going forward, e.g.
-   `## v0.5.0 (2026-10-20)`.
-3. Commit the changelog update on `main`.
+1. Make sure `dev` is green and has been tested on the dev server.
+2. On a branch from `dev`, update [`CHANGELOG.md`](../CHANGELOG.md) with a dated
+   entry summarizing what's in the release, and merge it into `dev`. The existing
+   changelog is narrative rather than strictly "Keep a Changelog"-formatted —
+   follow the existing style, but include the version number in the heading
+   going forward, e.g. `## v0.5.0 (2026-10-20)`.
+3. Open a pull request from `dev` to `main` and merge it with a merge commit, so
+   the release is one entry in `main`'s history. Then fast-forward `dev` to
+   `main`: `git push origin origin/main:dev`.
 4. Tag the commit and push the tag:
 
    ```bash
-   git tag -a v0.5.0 -m "v0.5.0"
+   git fetch origin
+   git tag -a v0.5.0 -m "v0.5.0" origin/main
    git push origin v0.5.0
    ```
 
