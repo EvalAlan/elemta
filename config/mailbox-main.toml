@@ -54,3 +54,13 @@ hostname = "mail.example.com"
 warn_percent = [80, 95]
 # Optional mailbox that also receives each warning; empty leaves copies off.
 copy_to = ""
+
+# Mail people move in or out of Junk teaches Rspamd's classifier. Learning goes
+# through Rspamd's controller and needs its password, which
+# scripts/dev-secrets.sh generates for both services.
+[spam_learning]
+rspamd_url = "http://elemta-rspamd:11334"
+password_env = "ELEMTA_RSPAMD_CONTROLLER_PASSWORD"
+# Bayes tokens are shared by every account, so one mailbox can only teach this
+# many messages a day. Corrections don't count.
+max_per_day = 500

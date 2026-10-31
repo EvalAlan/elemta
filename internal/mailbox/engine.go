@@ -86,6 +86,9 @@ type Engine struct {
 	// to an address's domain and account (Service.directoryClasses); nil
 	// when the directory carries none.
 	directoryClasses func(ctx context.Context, address string) (domainClass, accountClass string, err error)
+	// spamLearnPerDay is the per-account limit on moves queued for Rspamd
+	// to learn from (spam_learn.go); zero while learning is off.
+	spamLearnPerDay int
 }
 
 func NewEngine(ctx context.Context, db *sql.DB, bodies BodyStore, c Config) (*Engine, error) {
@@ -952,6 +955,11 @@ SELECT $1,v.uid,v.body,v.flags::text[],v.date::timestamptz,v.ms FROM unnest($2::
 				return err
 			}
 			if err = changes(ctx, tx, s.ID, "expunge", oldUIDs, srcSeqs); err != nil {
+				return err
+			}
+		}
+		if class := learnClass(src, dst); class != "" && e.spamLearnPerDay > 0 {
+			if err = queueSpamFeedback(ctx, tx, account, class, bodies, e.spamLearnPerDay); err != nil {
 				return err
 			}
 		}

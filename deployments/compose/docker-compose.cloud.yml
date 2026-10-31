@@ -102,6 +102,20 @@ services:
   elemta-rspamd:
     ports: !override
       - "127.0.0.1:11334:11334"
+    # Everything the base file mounts except the overrides that switch off
+    # blocklists, ASN and fuzzy checks. Those exist to keep the laptop stack
+    # offline and repeatable; on a real server they cost the filter most of
+    # its outside knowledge. Measured on the dev server, turning them on adds
+    # about 250 ms to a scan (docs/production-deployment.md).
+    volumes: !override
+      - rspamd_data:/var/lib/rspamd
+      - ../../docker/rspamd/override.d/options.inc:/etc/rspamd/override.d/options.inc:ro
+      - ../../docker/rspamd/local.d/classifier-bayes.conf:/etc/rspamd/local.d/classifier-bayes.conf:ro
+      - ../../docker/rspamd/local.d/redis.conf:/etc/rspamd/local.d/redis.conf:ro
+      - ../../docker/rspamd/local.d/greylist.conf:/etc/rspamd/local.d/greylist.conf:ro
+      - ../../docker/rspamd/local.d/actions.conf:/etc/rspamd/local.d/actions.conf:ro
+      - ../../docker/rspamd/local.d/url_suspect_group.conf:/etc/rspamd/local.d/url_suspect_group.conf:ro
+      - ../../docker/rspamd/local.d/worker-controller.inc:/etc/rspamd/local.d/worker-controller.inc:ro
 
   elemta-ldap:
     ports: !override

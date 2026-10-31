@@ -377,17 +377,29 @@ Scanning costs a network round trip per message per engine, and the two run
 concurrently. Rspamd's optional lookups can dominate that:
 
 - `fuzzy_check` queries rspamd.com over UDP for every message. Measured on a
-  development stack it added roughly 4.3 seconds to about 5% of messages, cut
-  throughput by more than half, and made it swing eightfold between runs.
-- DNS blocklists (`rbl`, `surbl`) behave badly against a resolver that answers
-  for names which should not exist — rspamd cannot then tell a working
-  blocklist from a broken one.
+  development stack it added roughly 4.3 seconds to about 5% of messages. That stall did not appear on a Linode server, where the two
+  overrides below together added about 250 ms to the average scan (285 to
+  530 ms) and 170 ms at p95, with nothing over 1.4 seconds in 150 messages.
+- DNS blocklists (`rbl`, `surbl`) need a resolver of your own. Rspamd can't
+  tell a working blocklist from a broken one behind a resolver that answers for
+  names which should not exist, and Spamhaus refuses queries that arrive through
+  shared public resolvers.
 
-Both are genuinely useful against bulk mail. Keep them if you want them, but
-size for the latency and make sure Rspamd has a resolver that returns NXDOMAIN
-properly. The development stack disables them for reproducibility, via
+The Compose production stack (`docker-compose.cloud.yml`) and the `ha` Kubernetes
+overlay turn both on. The laptop stack keeps them off for reproducibility, via
 `docker/rspamd/override.d/`; those overrides are **not** intended for
 production.
+
+Two things to check on your own deployment:
+
+- **The resolver.** Compose runs its own (`elemta-dns`), which works. The `ha`
+  overlay uses the cluster's DNS, which forwards to your provider's resolvers,
+  and Spamhaus may refuse those. Look for `SPAMHAUS_BLOCKED`, `DBL_BLOCKED`,
+  `URIBL_BLOCKED` or `SURBL_BLOCKED` in Rspamd's symbols. A refusal never scores
+  mail as spam, but that list then does nothing.
+- **The blocklists' terms.** Spamhaus, URIBL and SURBL are free for low volumes
+  and non-commercial use. Above that, or for a commercial service, you need
+  their paid feeds.
 
 ---
 

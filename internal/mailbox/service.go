@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/abuse"
+	"github.com/EvalAlan/elemta/internal/antispam"
 	"github.com/EvalAlan/elemta/internal/proxyproto"
 	"github.com/EvalAlan/elemta/internal/tlssni"
 
@@ -31,9 +32,11 @@ type Service struct {
 	receiveSlots chan struct{}
 	// abuse limits and blocks clients on the public listeners, with the rest
 	// of the platform (internal/abuse).
-	abuse        *abuse.Engine
-	cfg          Config
-	engine       *Engine
+	abuse  *abuse.Engine
+	cfg    Config
+	engine *Engine
+	// spamLearner teaches Rspamd from Junk moves; nil while that is off.
+	spamLearner  spamLearner
 	auth         Authenticator
 	log          *slog.Logger
 	imap         *imapserver.Server
@@ -113,6 +116,14 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel, adminToken: os.Getenv(c.Admin.TokenEnv), abuse: abuse.New("mailbox", os.Getenv("VALKEY_ADDR"), log)}
 	if s.mailDirectory() != nil {
 		e.directoryClasses = s.directoryClasses
+	}
+	if pw := os.Getenv(c.SpamLearning.PasswordEnv); c.SpamLearning.RspamdURL != "" && pw != "" {
+		s.spamLearner = antispam.NewLearner(c.SpamLearning.RspamdURL, pw)
+		e.spamLearnPerDay = c.SpamLearning.MaxPerDay
+	} else if c.SpamLearning.RspamdURL != "" {
+		// Said out loud: otherwise Junk moves just never teach anything,
+		// and nothing anywhere looks wrong.
+		log.Warn("spam learning is off: the variable named by spam_learning.password_env is empty")
 	}
 	var tlsConfig *tls.Config
 	if c.Server.TLSCert != "" {
@@ -275,6 +286,10 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 		listeners = append(listeners, ln)
 		start(func() error { return s.serveManageSieve(&limitedListener{Listener: ln, slots: slots}, s.tlsConfig) })
+	}
+	if s.spamLearner != nil {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.runSpamLearning() }()
 	}
 	wg.Add(1)
 	go func() {

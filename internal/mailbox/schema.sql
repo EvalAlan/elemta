@@ -235,3 +235,15 @@ CREATE TABLE IF NOT EXISTS mailbox_sender_rules (
     created timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (account, entry)
 );
+-- Mail people moved in or out of Junk, waiting for Rspamd to learn from it
+-- (spam_learn.go). Rows stay a day after learning, for the daily limit.
+CREATE TABLE IF NOT EXISTS mailbox_spam_feedback (
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    body text NOT NULL,
+    class text NOT NULL CHECK (class IN ('spam', 'ham')),
+    created timestamptz NOT NULL DEFAULT now(),
+    not_before timestamptz NOT NULL DEFAULT now(),
+    learned timestamptz,
+    PRIMARY KEY (account, body)
+);
+CREATE INDEX IF NOT EXISTS mailbox_spam_feedback_due ON mailbox_spam_feedback(not_before) WHERE learned IS NULL;

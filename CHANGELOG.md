@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Users' spam reports now train the filter.** Moving mail in or out of Junk,
+  from the webmail or any mail app, teaches Rspamd's classifier. Nothing did
+  before, and the classifier had nothing to learn from. See "Learning from
+  users" in [docs/mail-administration.md](docs/mail-administration.md).
+- **Production now uses Rspamd's blocklists and fuzzy checks.** The switches
+  meant to keep the laptop stack offline were also applied to production, in
+  Compose and on Kubernetes. Scans take about 250 ms longer. Check the
+  blocklists' terms and your resolver; see "Latency" in
+  [docs/production-deployment.md](docs/production-deployment.md).
+- **Upgrade note:** re-run `scripts/cloud-deploy.sh`, which creates Rspamd's
+  controller password. By hand, run `scripts/dev-secrets.sh` before starting
+  the new version: Compose needs `.secrets/rspamd.env`, and Kubernetes needs
+  `secrets/rspamd.env`.
+
 ## v0.6.0 (2026-10-31)
 
 The mail platform's first full release: webmail, mailboxes, calendars and an

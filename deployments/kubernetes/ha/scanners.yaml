@@ -127,6 +127,10 @@ spec:
       containers:
         - name: rspamd
           image: rspamd/rspamd:latest
+          # Its controller password, which the mailbox service learns with.
+          envFrom:
+            - secretRef:
+                name: elemta-rspamd
           ports:
             - name: normal
               containerPort: 11333
@@ -153,14 +157,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/rspamd
-            - { name: override, mountPath: /etc/rspamd/override.d/rbl.conf, subPath: rbl.conf, readOnly: true }
-            - { name: override, mountPath: /etc/rspamd/override.d/surbl.conf, subPath: surbl.conf, readOnly: true }
-            - { name: override, mountPath: /etc/rspamd/override.d/asn.conf, subPath: asn.conf, readOnly: true }
-            - { name: override, mountPath: /etc/rspamd/override.d/fuzzy_check.conf, subPath: fuzzy_check.conf, readOnly: true }
             - { name: override, mountPath: /etc/rspamd/override.d/options.inc, subPath: options.inc, readOnly: true }
             - { name: local, mountPath: /etc/rspamd/local.d/greylist.conf, subPath: greylist.conf, readOnly: true }
             - { name: local, mountPath: /etc/rspamd/local.d/actions.conf, subPath: actions.conf, readOnly: true }
             - { name: local, mountPath: /etc/rspamd/local.d/url_suspect_group.conf, subPath: url_suspect_group.conf, readOnly: true }
+            - { name: local, mountPath: /etc/rspamd/local.d/worker-controller.inc, subPath: worker-controller.inc, readOnly: true }
             - { name: valkey, mountPath: /etc/rspamd/local.d/redis.conf, subPath: redis.conf, readOnly: true }
             - { name: valkey, mountPath: /etc/rspamd/local.d/classifier-bayes.conf, subPath: classifier-bayes.conf, readOnly: true }
       volumes:
