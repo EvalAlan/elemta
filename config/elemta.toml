@@ -401,6 +401,15 @@ timeout = 30
 scan_limit = 26214400  # 25MB
 threshold = 6.0
 
+# Abuse protection, shared by the MTA, the mailbox service, the webmail and the
+# admin console (Abuse protection in the console, which edits this table).
+# Permissive here so load tests from one address work; a real deployment gets
+# 25, and scripts/cloud-deploy.sh renders that.
+[abuse]
+mode = "enforce"
+connections_per_address = 1000
+allowlist = []
+
 # Rate Limiting Configuration - More permissive for testing
 [rate_limiter]
 enabled = true

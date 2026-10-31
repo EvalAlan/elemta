@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261030-domainsettings">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261030-abuse">
 </head>
 
 <body>
@@ -96,6 +96,10 @@
                 <a href="#" class="nav-item" data-view="certificates">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
                     <span>Certificates</span>
+                </a>
+                <a href="#" class="nav-item" data-view="abuse">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>
+                    <span>Abuse</span>
                 </a>
                 <a href="#" class="nav-item" data-view="queues">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -520,6 +524,34 @@
             </section>
 
             <!-- Certificates View -->
+            <section class="view" id="view-abuse">
+                <p id="abuse-notice" class="abuse-notice" role="status" hidden></p>
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Abuse protection</h3>
+                        <button class="btn btn-secondary btn-sm" onclick="refreshAbuse()">Refresh</button>
+                    </div>
+                    <div class="card-body">
+                        <p id="abuse-shared" class="field-hint"></p>
+                        <form id="abuse-policy-form" class="abuse-form">
+                            <label for="abuse-mode">Mode</label>
+                            <select id="abuse-mode">
+                                <option value="enforce">Enforce</option>
+                                <option value="log">Log only: record what would happen and block nothing</option>
+                                <option value="off">Off</option>
+                            </select>
+                            <label for="abuse-connections">Connections per address</label>
+                            <input id="abuse-connections" type="number" min="1" max="100000" required>
+                            <p class="field-hint">Open connections one address may hold to each service: SMTP, IMAP and POP3. An IPv6 client counts as its /64.</p>
+                            <label for="abuse-allowlist">Allowlist, one address or network per line</label>
+                            <textarea id="abuse-allowlist" rows="5" spellcheck="false" autocomplete="off" placeholder="203.0.113.9&#10;198.51.100.0/24"></textarea>
+                            <p class="field-hint">Never limited or blocked. Add your own address and monitoring.</p>
+                            <button class="btn btn-primary" type="submit">Save</button>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
             <section class="view" id="view-certificates">
                 <div class="card">
                     <div class="card-header">
@@ -1348,6 +1380,7 @@
                         <div class="card-body">
                             <div id="rate-limiting-loading" class="loading-placeholder">Loading rate limiting configuration...</div>
                             <div id="rate-limiting-content" style="display: none;">
+                                <p class="field-hint" id="rate-limit-inert">These settings belong to the rate limiter plugin, which isn't loaded, so they change nothing. Connection limits are under <strong>Abuse</strong>.</p>
                                 <div class="config-section">
                                     <h4>Connection Limits</h4>
                                     <div class="config-grid">
@@ -1601,10 +1634,11 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261030-certmanage"></script>
+    <script src="/static/app.js?v=20261030-abuse"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
     <script src="/static/mail-admin.js?v=20261030-domainsettings"></script>
+    <script src="/static/abuse.js?v=20261030-abuse"></script>
 </body>
 
 </html>

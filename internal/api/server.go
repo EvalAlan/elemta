@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/campaign"
 	"github.com/EvalAlan/elemta/internal/config"
@@ -68,7 +69,9 @@ type MainConfig struct {
 	FailedQueueRetentionHours int         `json:"failed_queue_retention_hours"`
 	AuthAllowDeprecatedSHA1   *bool       `json:"auth_allow_deprecated_sha1,omitempty"`
 	RateLimiterPluginConfig   interface{} `json:"rate_limiter"`
-	TLS                       interface{} `json:"tls"`
+	// Abuse is the abuse policy; nil until one is saved (abuse.go).
+	Abuse *abuse.Policy `json:"-"`
+	TLS   interface{}   `json:"tls"`
 	// The certificate path is mirrored explicitly rather than dug out of the
 	// TLS blob above: expiry reporting should not depend on a type assertion
 	// that quietly yields nothing.
@@ -186,6 +189,7 @@ type Server struct {
 	config         *Config
 	mainConfig     *MainConfig // Main application configuration
 	configPath     string      // Path to config file for persistence
+	abuse          *abuse.Engine
 	httpServer     *http.Server
 	listener       net.Listener
 	restarting     atomic.Bool
@@ -797,6 +801,7 @@ func (s *Server) Start() error {
 	api.Handle("/messages/search", s.requireAuthIfConfigured(http.HandlerFunc(s.handleSearchMessages))).Methods("GET")
 	api.Handle("/messages/{id}/trace", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTraceMessage))).Methods("GET")
 
+	s.abuseRoutes(api)
 	api.Handle("/config/plugins", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetPlugins))).Methods("GET")
 
 	// Configuration management endpoints (write operations require auth)
@@ -2529,6 +2534,13 @@ func (s *Server) persistConfig() error {
 		if p.Timeout > 0 {
 			edits = append(edits, edit{"plugins.spf", "timeout", p.Timeout})
 		}
+	}
+	if p := s.mainConfig.Abuse; p != nil {
+		edits = append(edits,
+			edit{"abuse", "mode", p.Mode},
+			edit{"abuse", "connections_per_address", p.ConnectionsPerAddress},
+			edit{"abuse", "allowlist", p.Allowlist},
+		)
 	}
 	if p := s.mainConfig.DKIM; p != nil {
 		edits = append(edits,

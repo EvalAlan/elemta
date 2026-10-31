@@ -18,6 +18,7 @@ import (
 
 	"github.com/EvalAlan/elemta/internal/proxyproto"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	arcplugin "github.com/EvalAlan/elemta/internal/arc"
 	"github.com/EvalAlan/elemta/internal/authresult"
 	"github.com/EvalAlan/elemta/internal/dane"
@@ -35,6 +36,8 @@ import (
 
 // Server represents an SMTP server
 type Server struct {
+	// abuse is the shared abuse policy; nil without one (SetAbuse).
+	abuse      *abuse.Engine
 	config     *Config
 	listenerMu sync.RWMutex
 	listener   net.Listener
@@ -1041,6 +1044,27 @@ func (s *Server) Addr() net.Addr {
 		return listener.Addr()
 	}
 	return nil
+}
+
+// SetAbuse connects the shared abuse policy (internal/abuse). The per-address
+// connection limit then follows it, with no restart. Anything but enforcing
+// leaves the limit from the configuration file.
+func (s *Server) SetAbuse(e *abuse.Engine) {
+	s.abuse = e
+	if s.resourceManager == nil {
+		return
+	}
+	configured := s.resourceManager.limits.MaxConnectionsPerIP
+	tracker := s.resourceManager.ipTracker
+	tracker.SetExempt(e.Exempt)
+	e.OnPolicy(func(p abuse.Policy) {
+		limit := configured
+		if p.Mode == abuse.ModeEnforce {
+			limit = p.ConnectionsPerAddress
+		}
+		tracker.SetLimit(limit)
+		s.slogger.Info("Connection limit per address changed", "limit", limit)
+	})
 }
 
 // Start starts the SMTP server

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/EvalAlan/elemta/internal/runtimepaths"
@@ -245,6 +246,10 @@ type Config struct {
 
 	// Rate Limiter Plugin configuration
 	RateLimiter *RateLimiterPluginConfig `toml:"rate_limiter"`
+
+	// Abuse is the policy shared by every service (internal/abuse). The admin
+	// console edits it; nil means the default.
+	Abuse *abuse.Policy `toml:"abuse"`
 
 	// Modern SMTP authentication config for Go SMTP server
 	Auth *smtp.AuthConfig `toml:"auth"`

@@ -51,6 +51,13 @@
 .ma-dialog-footer { position: sticky; bottom: -1.5rem; margin: 1.5rem -1.5rem -1.5rem; padding: .875rem 1.5rem; display: flex; align-items: center; gap: .75rem; background: var(--bg-secondary); border-top: 1px solid var(--border-color); }
 .ma-dialog-footer #ma-delete { margin-left: auto; }
 .ma-save-error { color: var(--danger, #dc2626); }
+.abuse-form { display: grid; gap: .5rem; max-width: 34rem; }
+.abuse-form label { font-size: .8rem; color: var(--text-secondary); margin-top: .4rem; }
+.abuse-form input, .abuse-form select, .abuse-form textarea { color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-strong); padding: .65rem .8rem; border-radius: var(--radius-sm); font: inherit; }
+.abuse-form textarea { resize: vertical; font-family: var(--font-mono, monospace); }
+.abuse-form button { justify-self: start; margin-top: .75rem; }
+.abuse-notice { padding: .75rem; margin-bottom: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-sm); }
+.abuse-error { color: var(--danger, #dc2626); }
 .ma-keys { display: grid; gap: .75rem; margin: .75rem 0; }
 .ma-key { display: grid; gap: .5rem; padding: .875rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); }
 .ma-key-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }

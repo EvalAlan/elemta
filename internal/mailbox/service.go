@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/proxyproto"
 	"github.com/EvalAlan/elemta/internal/tlssni"
 
@@ -28,6 +29,9 @@ import (
 
 type Service struct {
 	receiveSlots chan struct{}
+	// abuse limits and blocks clients on the public listeners, with the rest
+	// of the platform (internal/abuse).
+	abuse        *abuse.Engine
 	cfg          Config
 	engine       *Engine
 	auth         Authenticator
@@ -106,7 +110,7 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 		log = slog.Default()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel, adminToken: os.Getenv(c.Admin.TokenEnv)}
+	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel, adminToken: os.Getenv(c.Admin.TokenEnv), abuse: abuse.New("mailbox", os.Getenv("VALKEY_ADDR"), log)}
 	if s.mailDirectory() != nil {
 		e.directoryClasses = s.directoryClasses
 	}
@@ -205,6 +209,7 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 		listeners = append(listeners, ln)
 	}
+	go s.abuse.Run(s.ctx)
 	slots := make(chan struct{}, s.cfg.Limits.MaxConnections)
 	errs := make(chan error, 7)
 	var wg sync.WaitGroup
@@ -645,5 +650,30 @@ func (s *Service) publicListen(addr string) (net.Listener, error) {
 		_ = ln.Close()
 		return nil, err
 	}
-	return wrapped, nil
+	return &abuseListener{Listener: wrapped, abuse: s.abuse}, nil
+}
+
+// abuseListener turns away clients over their limit before they cost a TLS
+// handshake. It takes the client's own address, so it sits inside the PROXY
+// protocol listener, which has already read the header by the time it delivers
+// a connection. The shared connection pool has no per-client limit, so without
+// this one address could hold every slot and lock out everyone.
+type abuseListener struct {
+	net.Listener
+	abuse *abuse.Engine
+}
+
+func (l *abuseListener) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		release, ok := l.abuse.Acquire(c.RemoteAddr().String())
+		if !ok {
+			_ = c.Close()
+			continue
+		}
+		return &limitedConn{Conn: c, release: release}, nil
+	}
 }

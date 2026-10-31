@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/api"
 	"github.com/EvalAlan/elemta/internal/config"
 	"github.com/EvalAlan/elemta/internal/datasource"
@@ -200,6 +202,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		FailedQueueRetentionHours: cfg.FailedQueueRetentionHours,
 		AuthAllowDeprecatedSHA1:   authAllowDeprecatedSHA1,
 		RateLimiterPluginConfig:   cfg.RateLimiter,
+		Abuse:                     cfg.Abuse,
 		TLS:                       cfg.TLS,
 		TLSEnabled:                cfg.TLS != nil && cfg.TLS.Enabled,
 		TLSCertFile: func() string {
@@ -369,6 +372,17 @@ func runWeb(cmd *cobra.Command, args []string) {
 	} else {
 		slog.Warn("Mail administration unavailable", "error", err)
 	}
+
+	// The console owns the abuse policy, because the file it lives in is the
+	// console's to edit; everything else follows through Valkey.
+	abusePolicy := abuse.DefaultPolicy()
+	if cfg.Abuse != nil {
+		abusePolicy = *cfg.Abuse
+	}
+	abuseEngine := abuse.New("admin", os.Getenv("VALKEY_ADDR"), nil)
+	abuseEngine.Own(abusePolicy)
+	go abuseEngine.Run(context.Background())
+	server.SetAbuse(abuseEngine)
 
 	if err := server.Start(); err != nil {
 		slog.Error("Failed to start API server; the web interface cannot start",

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/config"
 	"github.com/EvalAlan/elemta/internal/logging"
 	"github.com/EvalAlan/elemta/internal/runtimepaths"
@@ -185,6 +186,12 @@ func startServer() {
 	if resolved, err := config.FindConfigFile(configPath); err == nil {
 		server.SetDirectoryGenerationFile(resolved + ".provision-generation")
 	}
+
+	abuseCtx, stopAbuse := context.WithCancel(context.Background())
+	defer stopAbuse()
+	abuseEngine := abuse.New("mta", os.Getenv("VALKEY_ADDR"), nil)
+	server.SetAbuse(abuseEngine)
+	go abuseEngine.Run(abuseCtx)
 
 	// Start SMTP server
 	slog.Info("Starting SMTP server")

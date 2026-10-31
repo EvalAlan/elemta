@@ -4,6 +4,12 @@
 
 ### Upgrade notes
 
+- **Abuse protection in the admin console.** A new **Abuse** page sets how many
+  connections one address may hold, for SMTP, IMAP and POP3, with no restart.
+  The default is 25; `[resources] max_connections_per_ip` now applies only with
+  the policy off or logging. The mailbox service needs `VALKEY_ADDR`, which the
+  shipped Compose and Kubernetes files set. The old rate limiter panel changes
+  nothing, because its plugin isn't loaded, and now says so.
 - **Failed sign-ins no longer lock a user out.** Webmail, DAV, IMAP, POP3 and
   ManageSieve used to block an account after enough wrong passwords from
   anywhere, so anyone who knew an address could keep its owner out. They now

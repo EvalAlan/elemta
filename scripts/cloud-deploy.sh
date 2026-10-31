@@ -127,6 +127,7 @@ render "$root/config/elemta.toml" "$secrets/cloud/config/elemta.toml" \
     "s|^recovery_url = .*|recovery_url = \"https://$d\"|" \
     "s|^recovery_sender = .*|recovery_sender = \"noreply@$d\"|" \
     "s|^recovery_smtp_user = .*|recovery_smtp_user = \"noreply@$d\"|" \
+    "s|^connections_per_address = .*|connections_per_address = 25|" \
     '/^\[plugins\.dkim\]/,/^\[/{s|^sign = false|sign = true|;/^domains = \[\]/d}'
 # [webmail] is the template's last table, so these keys land in it; the DKIM
 # array of tables names its full path and may follow anywhere.

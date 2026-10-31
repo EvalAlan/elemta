@@ -445,6 +445,8 @@ services:
       # The public listeners take the PROXY protocol from the load balancer
       # in front, so mail apps keep their own addresses (sign-in throttling).
       - ELEMTA_MAILBOX_PROXY_PROTOCOL_FROM=${ELEMTA_MAILBOX_LB_IP:-10.253.53.24}
+      # The abuse policy and blocks shared with the other services.
+      - VALKEY_ADDR=elemta-valkey:6379
 
   elemta-mailbox:
     image: haproxy:3.0-alpine

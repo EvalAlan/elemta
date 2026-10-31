@@ -195,6 +195,9 @@ function switchView(viewName) {
         case 'certificates':
             refreshCertificates();
             break;
+        case 'abuse':
+            refreshAbuse();
+            break;
         case 'queues':
             refreshQueue();
             break;

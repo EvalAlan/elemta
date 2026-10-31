@@ -49,6 +49,7 @@ spec:
             - secretRef:
                 name: elemta-mailbox-s3
           env:
+            - { name: VALKEY_ADDR, value: "valkey://elemta-valkey-sentinel:26379?master_set=elemta" }
             - { name: PGHOST, value: elemta-db-rw }
             - { name: PGPORT, value: "5432" }
             - { name: PGDATABASE, value: mailbox }

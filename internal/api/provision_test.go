@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/stretchr/testify/require"
@@ -69,6 +70,7 @@ func startProvisionAPI(t *testing.T) (string, *provision.Service) {
 	require.NoError(t, err)
 	service := &provision.Service{Directory: &adminDirectory{}, Routing: provision.FileDomains{Path: path}, Revoke: func(context.Context, string) error { return nil }, Reset: func(context.Context, string, string) error { return nil }}
 	s.SetProvisioner(service)
+	s.SetAbuse(abuse.New("test", "", nil))
 	require.NoError(t, s.Start())
 	t.Cleanup(func() { _ = s.Stop() })
 	return "http://" + waitReady(t, s), service

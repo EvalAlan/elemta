@@ -65,16 +65,32 @@ type ConnectionInfo struct {
 type IPConnectionTracker struct {
 	connections map[string]int32
 	mutex       sync.RWMutex
-	maxPerIP    int32
+	maxPerIP    atomic.Int32
+	exempt      atomic.Pointer[func(string) bool]
 }
 
 // NewIPConnectionTracker creates a new IP connection tracker
 func NewIPConnectionTracker(maxPerIP int) *IPConnectionTracker {
-	maxPerIP32 := safeIntToInt32(maxPerIP)
-	return &IPConnectionTracker{
+	tracker := &IPConnectionTracker{
 		connections: make(map[string]int32),
-		maxPerIP:    maxPerIP32,
 	}
+	tracker.SetLimit(maxPerIP)
+	return tracker
+}
+
+// SetLimit changes the limit for new connections; open ones aren't touched.
+func (tracker *IPConnectionTracker) SetLimit(maxPerIP int) {
+	tracker.maxPerIP.Store(safeIntToInt32(maxPerIP))
+}
+
+// SetExempt names addresses the limit doesn't apply to.
+func (tracker *IPConnectionTracker) SetExempt(exempt func(string) bool) {
+	tracker.exempt.Store(&exempt)
+}
+
+func (tracker *IPConnectionTracker) isExempt(ip string) bool {
+	exempt := tracker.exempt.Load()
+	return exempt != nil && (*exempt)(ip)
 }
 
 // CanConnect checks if an IP can establish a new connection
@@ -83,7 +99,7 @@ func (tracker *IPConnectionTracker) CanConnect(ip string) bool {
 	count := tracker.connections[ip]
 	tracker.mutex.RUnlock()
 
-	return count < tracker.maxPerIP
+	return count < tracker.maxPerIP.Load() || tracker.isExempt(ip)
 }
 
 // AddConnection adds a connection for an IP
@@ -91,7 +107,7 @@ func (tracker *IPConnectionTracker) AddConnection(ip string) bool {
 	tracker.mutex.Lock()
 	defer tracker.mutex.Unlock()
 
-	if tracker.connections[ip] >= tracker.maxPerIP {
+	if tracker.connections[ip] >= tracker.maxPerIP.Load() && !tracker.isExempt(ip) {
 		return false
 	}
 
