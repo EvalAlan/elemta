@@ -45,6 +45,36 @@ func TestAbusePolicyIsSavedAndPublished(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, code)
 }
 
+func TestAbuseBlocksFromTheConsole(t *testing.T) {
+	base, _ := startProvisionAPI(t)
+	block := func(body map[string]any, want int) string {
+		t.Helper()
+		code, out := userRequest(t, "POST", base+"/api/abuse/blocks", "root", testAdminPassword, body)
+		require.Equal(t, want, code, out)
+		return out
+	}
+	code, _ := userRequest(t, "POST", base+"/api/abuse/blocks", "viewer", testUserPassword, map[string]any{"address": "203.0.113.9", "minutes": 5})
+	require.Equal(t, http.StatusForbidden, code)
+	block(map[string]any{"address": "203.0.113.9", "minutes": 60, "reason": "testing"}, http.StatusOK)
+	block(map[string]any{"address": "nonsense", "minutes": 60}, http.StatusBadRequest)
+	block(map[string]any{"address": "203.0.113.10", "minutes": 0}, http.StatusBadRequest)
+	// The tests sign in from loopback, which is exempt and is also "you".
+	block(map[string]any{"address": "127.0.0.1", "minutes": 5}, http.StatusBadRequest)
+
+	code, body := userRequest(t, "GET", base+"/api/abuse", "root", testAdminPassword, nil)
+	require.Equal(t, http.StatusOK, code, body)
+	require.Contains(t, body, `"network":"203.0.113.9"`)
+	require.Contains(t, body, `"you_exempt":true`)
+	require.Contains(t, body, `"action":"blocked"`)
+
+	code, body = userRequest(t, "DELETE", base+"/api/abuse/blocks?address=203.0.113.9", "root", testAdminPassword, nil)
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = userRequest(t, "GET", base+"/api/abuse", "root", testAdminPassword, nil)
+	require.Equal(t, http.StatusOK, code, body)
+	require.NotContains(t, body, `"network":"203.0.113.9","reason"`)
+	require.Contains(t, body, `"action":"unblocked"`)
+}
+
 // The file is what outlasts Valkey and a restart.
 func TestAbusePolicyPersists(t *testing.T) {
 	dir := t.TempDir()

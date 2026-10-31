@@ -56,6 +56,10 @@
 .abuse-form input, .abuse-form select, .abuse-form textarea { color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-strong); padding: .65rem .8rem; border-radius: var(--radius-sm); font: inherit; }
 .abuse-form textarea { resize: vertical; font-family: var(--font-mono, monospace); }
 .abuse-form button { justify-self: start; margin-top: .75rem; }
+.abuse-inline { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0 .5rem; }
+.abuse-inline input { color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-strong); padding: .55rem .7rem; border-radius: var(--radius-sm); font: inherit; }
+.abuse-inline input[type=number] { width: 6.5rem; }
+#view-abuse .card { margin-bottom: 1.25rem; }
 .abuse-notice { padding: .75rem; margin-bottom: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-sm); }
 .abuse-error { color: var(--danger, #dc2626); }
 .ma-keys { display: grid; gap: .75rem; margin: .75rem 0; }

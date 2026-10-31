@@ -15,7 +15,9 @@
   failures from an address in 15 minutes block it everywhere within seconds,
   for 15 minutes at first and up to 24 hours for repeat offenders. Blocks are
   refused at connect. Port 25 is never blocked, and neither are allowlisted
-  addresses. Add your own addresses to the allowlist.
+  addresses. Add your own addresses to the allowlist. The **Abuse** page shows
+  blocks, accounts under attack and history, and can block and unblock by hand
+  ([abuse-protection.md](docs/abuse-protection.md)).
 - **Failed sign-ins no longer lock a user out.** Webmail, DAV, IMAP, POP3 and
   ManageSieve used to block an account after enough wrong passwords from
   anywhere, so anyone who knew an address could keep its owner out. They now

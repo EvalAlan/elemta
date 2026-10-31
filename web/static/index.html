@@ -526,13 +526,43 @@
             <!-- Certificates View -->
             <section class="view" id="view-abuse">
                 <p id="abuse-notice" class="abuse-notice" role="status" hidden></p>
+                <p id="abuse-you" class="abuse-notice" hidden>
+                    You're working from <strong id="abuse-you-address"></strong>, which isn't on the allowlist, so too many mistyped passwords could block you too.
+                    <button class="btn btn-secondary btn-sm" type="button" id="abuse-you-add">Add it</button>
+                </p>
                 <div class="card">
                     <div class="card-header">
-                        <h3>Abuse protection</h3>
+                        <h3>Blocked addresses</h3>
                         <button class="btn btn-secondary btn-sm" onclick="refreshAbuse()">Refresh</button>
                     </div>
                     <div class="card-body">
                         <p id="abuse-shared" class="field-hint"></p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Address</th><th>Reason</th><th>Failures</th><th>Time left</th><th></th></tr></thead>
+                            <tbody id="abuse-blocks"></tbody>
+                        </table></div>
+                        <form id="abuse-block-form" class="abuse-inline">
+                            <input id="abuse-block-address" type="text" required placeholder="203.0.113.9" aria-label="Address to block" autocomplete="off" spellcheck="false">
+                            <input id="abuse-block-minutes" type="number" min="1" max="43200" value="60" required aria-label="Minutes">
+                            <input id="abuse-block-reason" type="text" maxlength="200" placeholder="Reason" aria-label="Reason">
+                            <button class="btn btn-secondary" type="submit">Block</button>
+                        </form>
+                        <p class="field-hint">Blocked addresses are refused on SMTP submission, IMAP, POP3, webmail and this console. Port 25 stays open, so mail from them still arrives.</p>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>Accounts under attack</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">Failed sign-ins per account in this window, from any address. Accounts are never blocked, so nobody can lock a user out by guessing wrong.</p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Account</th><th>Failures</th></tr></thead>
+                            <tbody id="abuse-accounts"></tbody>
+                        </table></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>Settings</h3></div>
+                    <div class="card-body">
                         <form id="abuse-policy-form" class="abuse-form">
                             <label for="abuse-mode">Mode</label>
                             <select id="abuse-mode">
@@ -542,12 +572,31 @@
                             </select>
                             <label for="abuse-connections">Connections per address</label>
                             <input id="abuse-connections" type="number" min="1" max="100000" required>
-                            <p class="field-hint">Open connections one address may hold to each service: SMTP, IMAP and POP3. An IPv6 client counts as its /64.</p>
+                            <p class="field-hint">Open connections one address may hold to each SMTP or mailbox server. An IPv6 client counts as its /64.</p>
+                            <label for="abuse-failures">Failed sign-ins before blocking</label>
+                            <input id="abuse-failures" type="number" min="1" max="100000" required>
+                            <label for="abuse-window">Counted over (minutes)</label>
+                            <input id="abuse-window" type="number" min="1" max="1440" required>
+                            <p class="field-hint">Failures add up across every service and account.</p>
+                            <label for="abuse-block">First block (minutes)</label>
+                            <input id="abuse-block" type="number" min="1" max="10080" required>
+                            <label for="abuse-max-block">Longest block (hours)</label>
+                            <input id="abuse-max-block" type="number" min="1" max="720" required>
+                            <p class="field-hint">Each repeat within a week lasts four times longer, up to the longest block.</p>
                             <label for="abuse-allowlist">Allowlist, one address or network per line</label>
                             <textarea id="abuse-allowlist" rows="5" spellcheck="false" autocomplete="off" placeholder="203.0.113.9&#10;198.51.100.0/24"></textarea>
                             <p class="field-hint">Never limited or blocked. Add your own address and monitoring.</p>
                             <button class="btn btn-primary" type="submit">Save</button>
                         </form>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>History</h3></div>
+                    <div class="card-body">
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>When</th><th>What</th><th>Address</th><th>Detail</th><th>By</th></tr></thead>
+                            <tbody id="abuse-events"></tbody>
+                        </table></div>
                     </div>
                 </div>
             </section>
