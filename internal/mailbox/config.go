@@ -28,6 +28,22 @@ type Config struct {
 	Sieve       SieveConfig       `toml:"sieve"`
 	Admin       AdminConfig       `toml:"admin"`
 	Quota       QuotaConfig       `toml:"quota"`
+	// SpamLearning is named apart from the MTA's [antispam] table: this
+	// service teaches Rspamd, it never asks it for a verdict.
+	SpamLearning SpamLearningConfig `toml:"spam_learning"`
+}
+
+// SpamLearningConfig sends mail people move in and out of Junk to Rspamd
+// (spam_learn.go). It stays off until both the URL and the password are set.
+type SpamLearningConfig struct {
+	// RspamdURL is the controller, not the scanner: http://elemta-rspamd:11334.
+	RspamdURL string `toml:"rspamd_url"`
+	// PasswordEnv names the environment variable holding the controller's
+	// enable_password.
+	PasswordEnv string `toml:"password_env"`
+	// MaxPerDay limits what one account can teach in a day. Zero means
+	// DefaultSpamLearnPerDay.
+	MaxPerDay int `toml:"max_per_day"`
 }
 
 // QuotaConfig controls the warnings users get as their mailbox fills.
@@ -252,10 +268,19 @@ func (c Config) WithDefaults() Config {
 	if c.Limits.MaxConcurrentBodies == 0 {
 		c.Limits.MaxConcurrentBodies = 4
 	}
+	if c.SpamLearning.PasswordEnv == "" {
+		c.SpamLearning.PasswordEnv = "ELEMTA_RSPAMD_CONTROLLER_PASSWORD"
+	}
+	if c.SpamLearning.MaxPerDay == 0 {
+		c.SpamLearning.MaxPerDay = DefaultSpamLearnPerDay
+	}
 	return c
 }
 func (c Config) Validate() error {
 	if _, err := proxyproto.ParseTrusted(c.Server.ProxyProtocolFrom); err != nil {
+		return err
+	}
+	if err := validateSpamLearningURL(c.SpamLearning.RspamdURL); err != nil {
 		return err
 	}
 	if c.Quota.CopyTo != "" {

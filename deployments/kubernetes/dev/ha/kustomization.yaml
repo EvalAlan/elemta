@@ -55,15 +55,12 @@ configMapGenerator:
   # files come from ../../ha.
   - name: elemta-rspamd-override
     files:
-      - ../../../../docker/rspamd/override.d/rbl.conf
-      - ../../../../docker/rspamd/override.d/surbl.conf
-      - ../../../../docker/rspamd/override.d/asn.conf
-      - ../../../../docker/rspamd/override.d/fuzzy_check.conf
       - ../../../../docker/rspamd/override.d/options.inc
   - name: elemta-rspamd-local
     files:
       - ../../../../docker/rspamd/local.d/greylist.conf
       - ../../../../docker/rspamd/local.d/actions.conf
+      - ../../../../docker/rspamd/local.d/worker-controller.inc
       - ../../../../docker/rspamd/local.d/url_suspect_group.conf
   - name: elemta-ldap-init
     files:
@@ -86,6 +83,9 @@ secretGenerator:
   - name: elemta-mailbox
     envs:
       - ../../../compose/.secrets/mailbox.env
+  - name: elemta-rspamd
+    envs:
+      - ../../../compose/.secrets/rspamd.env
   - name: elemta-webmail
     envs:
       - ../../../compose/.secrets/webmail.env

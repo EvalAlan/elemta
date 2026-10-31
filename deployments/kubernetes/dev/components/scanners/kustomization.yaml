@@ -9,6 +9,12 @@ resources:
   - rspamd.yaml
 
 # The same override files the compose stack mounted, one key per file.
+# Rspamd's controller password, from the file the compose stack uses.
+secretGenerator:
+  - name: elemta-rspamd
+    envs:
+      - ../../../../compose/.secrets/rspamd.env
+
 configMapGenerator:
   - name: elemta-rspamd-override
     files:
@@ -24,3 +30,4 @@ configMapGenerator:
       - ../../../../../docker/rspamd/local.d/greylist.conf
       - ../../../../../docker/rspamd/local.d/actions.conf
       - ../../../../../docker/rspamd/local.d/url_suspect_group.conf
+      - ../../../../../docker/rspamd/local.d/worker-controller.inc

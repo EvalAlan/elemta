@@ -323,6 +323,9 @@ services:
     image: rspamd/rspamd:latest
     container_name: elemta-rspamd
     restart: unless-stopped
+    env_file:
+      - path: .secrets/rspamd.env
+        required: true
     # Lookups go to elemta-dns, a caching resolver, not the host's. See
     # deployments/dns/unbound.conf for why.
     dns:
@@ -354,6 +357,7 @@ services:
       # The reject threshold is what decides how much spam Elemta refuses.
       - ../../docker/rspamd/local.d/actions.conf:/etc/rspamd/local.d/actions.conf:ro
       - ../../docker/rspamd/local.d/url_suspect_group.conf:/etc/rspamd/local.d/url_suspect_group.conf:ro
+      - ../../docker/rspamd/local.d/worker-controller.inc:/etc/rspamd/local.d/worker-controller.inc:ro
       # - ./docker/rspamd/override.d/modules.conf:/etc/rspamd/override.d/modules.conf
       # - ./docker/rspamd/override.d/logging.conf:/etc/rspamd/override.d/logging.conf
       # - ./docker/rspamd/override.d/actions.conf:/etc/rspamd/override.d/actions.conf

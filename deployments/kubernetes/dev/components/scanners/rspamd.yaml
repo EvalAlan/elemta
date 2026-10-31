@@ -32,6 +32,10 @@ spec:
       containers:
         - name: rspamd
           image: rspamd/rspamd:latest
+          # Its controller password, which the mailbox service learns with.
+          envFrom:
+            - secretRef:
+                name: elemta-rspamd
           ports:
             - name: normal
               containerPort: 11333
@@ -64,6 +68,7 @@ spec:
             - { name: override, mountPath: /etc/rspamd/override.d/fuzzy_check.conf, subPath: fuzzy_check.conf, readOnly: true }
             - { name: override, mountPath: /etc/rspamd/override.d/options.inc, subPath: options.inc, readOnly: true }
             - { name: local, mountPath: /etc/rspamd/local.d/classifier-bayes.conf, subPath: classifier-bayes.conf, readOnly: true }
+            - { name: local, mountPath: /etc/rspamd/local.d/worker-controller.inc, subPath: worker-controller.inc, readOnly: true }
             - { name: local, mountPath: /etc/rspamd/local.d/redis.conf, subPath: redis.conf, readOnly: true }
             - { name: local, mountPath: /etc/rspamd/local.d/greylist.conf, subPath: greylist.conf, readOnly: true }
             - { name: local, mountPath: /etc/rspamd/local.d/actions.conf, subPath: actions.conf, readOnly: true }

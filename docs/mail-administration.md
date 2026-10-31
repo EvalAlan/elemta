@@ -551,3 +551,31 @@ back; raise the reject threshold or allow the sender in Rspamd for that.
 
 How many entries a user may keep is the class of service's
 `max_sender_rules` (100 by default).
+
+### Learning from users
+
+Moving mail into Junk teaches Rspamd's classifier that it's spam, and moving it
+out teaches that it's good mail. This works from the webmail's buttons and from
+any mail app, and takes effect within about a minute. Moving a message back
+corrects what was learned. Some moves teach nothing:
+
+- Junk to Trash, because deleting spam doesn't make it good mail.
+- Anything into Junk from Sent or Drafts.
+- Mail that delivery filed in Junk, because only a person's decision counts.
+
+The classifier is shared by every account, so a user's reports affect everyone
+on the server. `[spam_learning]` in the mailbox configuration limits each
+account with `max_per_day` (500 by default); corrections don't count against
+it. Reports wait in the database while Rspamd is down, for up to a week.
+
+The classifier does nothing until it has learned 200 messages of **each** kind.
+A new server can get there faster with `make rspamd-train`. To see the real
+totals, ask its Valkey rather than `rspamc stat`, whose per-class figures can
+read 0 and whose "Messages learned" resets on restart:
+
+```
+docker exec elemta-rspamd-valkey valkey-cli hgetall RS
+```
+
+The mailbox logs `spam feedback learned` as it works and `spam learning failed`
+when it can't reach Rspamd or the password is wrong.
