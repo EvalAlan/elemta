@@ -69,7 +69,7 @@ else in CI creates GitHub Releases.
    stamps `internal/version.Version` (see
    [`internal/version/version.go`](../internal/version/version.go)) so both
    binaries report the correct release version at runtime instead of the
-   `-dev` placeholder baked into source (`0.5.0-dev`; bump it to the next
+   `-dev` placeholder baked into source (bump it to the next
    minor after tagging).
 
 2. **Package** — each arch's pair of binaries is packaged into
