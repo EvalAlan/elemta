@@ -66,10 +66,17 @@ func (e *Engine) RevokeCalendar(ctx context.Context, owner, member string) error
 	return err
 }
 
-func (e *Engine) calendarShares(ctx context.Context, where, id string) ([]mailpolicy.CalendarShare, error) {
-	rows, err := e.DB.QueryContext(ctx, `SELECT o.address, o.id, m.address, s.level FROM mailbox_calendar_shares s
+const (
+	calendarSharesByOwner = `SELECT o.address, o.id, m.address, s.level FROM mailbox_calendar_shares s
 JOIN mailbox_accounts o ON o.id=s.owner JOIN mailbox_accounts m ON m.id=s.member
-WHERE s.`+where+`=$1 ORDER BY o.address, m.address`, id)
+WHERE s.owner=$1 ORDER BY m.address`
+	calendarSharesByMember = `SELECT o.address, o.id, m.address, s.level FROM mailbox_calendar_shares s
+JOIN mailbox_accounts o ON o.id=s.owner JOIN mailbox_accounts m ON m.id=s.member
+WHERE s.member=$1 ORDER BY o.address`
+)
+
+func (e *Engine) calendarShares(ctx context.Context, query, id string) ([]mailpolicy.CalendarShare, error) {
+	rows, err := e.DB.QueryContext(ctx, query, id)
 	if err != nil {
 		return nil, err
 	}
@@ -87,12 +94,12 @@ WHERE s.`+where+`=$1 ORDER BY o.address, m.address`, id)
 
 // CalendarSharesOwned lists who can see owner's calendar.
 func (e *Engine) CalendarSharesOwned(ctx context.Context, owner string) ([]mailpolicy.CalendarShare, error) {
-	return e.calendarShares(ctx, "owner", owner)
+	return e.calendarShares(ctx, calendarSharesByOwner, owner)
 }
 
 // CalendarSharesFor lists the calendars member can see.
 func (e *Engine) CalendarSharesFor(ctx context.Context, member string) ([]mailpolicy.CalendarShare, error) {
-	return e.calendarShares(ctx, "member", member)
+	return e.calendarShares(ctx, calendarSharesByMember, member)
 }
 
 // CalendarLevel returns member's access to owner's calendar, or "" for none.

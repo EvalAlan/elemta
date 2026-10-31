@@ -296,9 +296,5 @@ func (s *Server) calendarOverlaySubmit(w http.ResponseWriter, r *http.Request, s
 		s.fail(w, r, sess, err)
 		return
 	}
-	back := r.PostFormValue("back")
-	if !strings.HasPrefix(back, "/calendar") {
-		back = "/calendar"
-	}
-	http.Redirect(w, r, back, http.StatusSeeOther)
+	http.Redirect(w, r, "/calendar", http.StatusSeeOther)
 }
