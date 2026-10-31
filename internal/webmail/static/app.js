@@ -1220,19 +1220,21 @@
 
   function eventMenu(a) {
     var uid = a.getAttribute("data-uid"), occ = a.getAttribute("data-occ");
-    var q = function (extra) { return "/calendar/event?" + new URLSearchParams(Object.assign({ uid: uid, occ: occ }, extra || {})); };
+    var owner = a.getAttribute("data-owner");
+    var sharedFields = owner ? { owner: owner } : {};
+    var q = function (extra) { return "/calendar/event?" + new URLSearchParams(Object.assign({ uid: uid, occ: occ }, sharedFields, extra || {})); };
     var items = [{ label: "Open", run: function () { location.href = a.href; } }];
     if (a.hasAttribute("data-readonly")) return items;
     items.push({ label: "Edit", run: function () { location.href = q({ edit: "1" }); } });
-    items.push({ label: "Download .ics", run: function () { location.href = "/calendar/export?" + new URLSearchParams({ uid: uid }); } });
+    if (!owner) items.push({ label: "Download .ics", run: function () { location.href = "/calendar/export?" + new URLSearchParams({ uid: uid }); } });
     items.push("-");
     if (a.hasAttribute("data-recurring")) {
       items.push({ label: "Delete this occurrence", danger: true, run: function () {
-        if (window.confirm("Delete only this occurrence?")) submitPost("/calendar/event", { op: "delete-occurrence", uid: uid, occ: occ });
+        if (window.confirm("Delete only this occurrence?")) submitPost("/calendar/event", { owner: owner || "", op: "delete-occurrence", uid: uid, occ: occ });
       } });
     }
     items.push({ label: a.hasAttribute("data-recurring") ? "Delete series" : "Delete", danger: true, run: function () {
-      if (window.confirm(a.hasAttribute("data-recurring") ? "Delete every occurrence of this event?" : "Delete this event?")) submitPost("/calendar/event", { op: "delete", uid: uid, notify: "1" });
+      if (window.confirm(a.hasAttribute("data-recurring") ? "Delete every occurrence of this event?" : "Delete this event?")) submitPost("/calendar/event", { owner: owner || "", op: "delete", uid: uid, notify: "1" });
     } });
     return items;
   }

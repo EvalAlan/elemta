@@ -210,6 +210,46 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		writeJSON(w, map[string]any{"status": "password reset; webmail sessions ended"})
 		return nil
 	})).Methods("POST")
+	// A domain administrator can set up an assistant on their own domain.
+	protected.HandleFunc("/accounts/{address}/calendar-shares", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+		address := mux.Vars(r)["address"]
+		if err := scopeOf(r).checkAddress(address); err != nil {
+			return err
+		}
+		shares, err := s.provisioner.CalendarShares(ctx, address)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, shares)
+		return nil
+	})).Methods("GET")
+	protected.HandleFunc("/accounts/{address}/calendar-shares/{member}", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+		address, member := mux.Vars(r)["address"], mux.Vars(r)["member"]
+		if err := scopeOf(r).checkAddress(address, member); err != nil {
+			return err
+		}
+		if r.Method == "DELETE" {
+			if err := s.provisioner.RevokeCalendar(ctx, address, member); err != nil {
+				return err
+			}
+			s.provisionAudit(r, "calendar-share-remove", address, member)
+			writeJSON(w, map[string]bool{"ok": true})
+			return nil
+		}
+		var in struct {
+			Level string `json:"level"`
+		}
+		if !decodeJSONBody(w, r, &in) {
+			return nil
+		}
+		share, err := s.provisioner.GrantCalendar(ctx, address, member, in.Level)
+		if err != nil {
+			return err
+		}
+		s.provisionAudit(r, "calendar-share", address, member+" "+in.Level)
+		writeJSON(w, share)
+		return nil
+	})).Methods("PUT", "DELETE")
 	protected.HandleFunc("/accounts/{address}/aliases", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		var in struct {
 			Alias string `json:"alias"`

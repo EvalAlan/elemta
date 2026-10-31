@@ -46,6 +46,16 @@ func postgresObjectDialer(db *sql.DB, security *securityClient, dial Dialer) Dia
 		if err != nil {
 			return nil, err
 		}
+		// Someone else's calendar is theirs to migrate at their own sign-in,
+		// and the IMAP side of this login can't reach their other folders.
+		if isCalendarLogin(user) {
+			owner, err := calendarOwnerID(ctx, security, user, password)
+			if err != nil {
+				_ = st.Close()
+				return nil, err
+			}
+			return postgresMailstore{Mailstore: st, objects: postgresObjects{db: db, user: owner}}, nil
+		}
 		owner, err := postgresObjectOwner(ctx, security, user, password)
 		if err != nil {
 			_ = st.Close()

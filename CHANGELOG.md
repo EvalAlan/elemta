@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Calendar sharing.** Users can share their calendar with people in their
+  domain, from Settings, Account, and administrators can set it up from the
+  account dialog or `provision grant-calendar`. View shows events, with private
+  ones as "Busy". Edit also lets them add and change events. Shared calendars
+  appear beside the user's own in the webmail, not yet in CalDAV apps. Events
+  can be marked private. Events with guests can't be changed by someone else
+  yet. See "Sharing calendars" in
+  [docs/mail-administration.md](docs/mail-administration.md).
+
 - **Spam quarantine.** Mail the spam check would refuse now waits in the user's
   Quarantine folder for 30 days, and they can release it from the webmail.
   Viruses are still refused, and so is spam for outside addresses. Existing

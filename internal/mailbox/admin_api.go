@@ -323,6 +323,42 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		}
 		return map[string]bool{"ok": true}, s.engine.RevokeShare(r.Context(), owner.ID, member.ID)
 	})
+	// Setting up an assistant is an administrator's job often enough.
+	handle("GET /v1/admin/accounts/{address}/calendar-shares", func(r *http.Request) (any, error) {
+		owner, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		return s.engine.CalendarSharesOwned(r.Context(), owner.ID)
+	})
+	handle("PUT /v1/admin/accounts/{address}/calendar-shares/{member}", func(r *http.Request) (any, error) {
+		owner, err := s.directoryAccount(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		member, err := s.directoryAccount(r.Context(), r.PathValue("member"))
+		if err != nil {
+			return nil, err
+		}
+		var request struct {
+			Level string `json:"level"`
+		}
+		if err := decode(r, &request); err != nil {
+			return nil, err
+		}
+		return s.engine.GrantCalendar(r.Context(), owner, member, request.Level)
+	})
+	handle("DELETE /v1/admin/accounts/{address}/calendar-shares/{member}", func(r *http.Request) (any, error) {
+		owner, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		member, err := s.directoryIdentity(r.Context(), r.PathValue("member"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.RevokeCalendar(r.Context(), owner.ID, member.ID)
+	})
 	handle("POST /v1/admin/accounts/{address}/reset-two-factor", func(r *http.Request) (any, error) {
 		a, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
 		if err != nil {

@@ -637,6 +637,53 @@ func (s *Service) RevokeShare(ctx context.Context, rawMailbox, rawMember string)
 	return mailbox.RevokeShare(ctx, address, member)
 }
 
+// CalendarShares lists who can see owner's calendar.
+func (s *Service) CalendarShares(ctx context.Context, raw string) ([]mailpolicy.CalendarShare, error) {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return nil, err
+	}
+	owner, err := Address(raw)
+	if err != nil {
+		return nil, err
+	}
+	return mailbox.CalendarShares(ctx, owner)
+}
+
+// GrantCalendar shares owner's calendar with member at level.
+func (s *Service) GrantCalendar(ctx context.Context, rawOwner, rawMember, level string) (mailpolicy.CalendarShare, error) {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return mailpolicy.CalendarShare{}, err
+	}
+	owner, err := Address(rawOwner)
+	if err != nil {
+		return mailpolicy.CalendarShare{}, err
+	}
+	member, err := Address(rawMember)
+	if err != nil {
+		return mailpolicy.CalendarShare{}, err
+	}
+	return mailbox.GrantCalendar(ctx, owner, member, level)
+}
+
+// RevokeCalendar ends member's access to owner's calendar.
+func (s *Service) RevokeCalendar(ctx context.Context, rawOwner, rawMember string) error {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return err
+	}
+	owner, err := Address(rawOwner)
+	if err != nil {
+		return err
+	}
+	member, err := Address(rawMember)
+	if err != nil {
+		return err
+	}
+	return mailbox.RevokeCalendar(ctx, owner, member)
+}
+
 // CheckPurgeable reports why an account's mailbox couldn't be purged now,
 // before anything is changed: delete-and-purge checks it first, so a held
 // account isn't deleted only for the purge to be refused.

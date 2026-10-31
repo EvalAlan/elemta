@@ -133,6 +133,30 @@
     <h1>Account</h1>
     <p class="muted">Your password, how to get back in if you forget it, and where your mail goes.</p>
   </header>
+  {{if .CanShareCalendar}}
+  <section class="card" id="calendar-sharing">
+    <h2 class="card-title">Calendar sharing</h2>
+    <p class="muted small">Colleagues can always see when you're busy. Share your calendar to show them the details. View shows your events, with private ones as "Busy". Edit lets them add and change events too, and see private ones.</p>
+    {{if .CalendarShares}}
+    <table class="data-table">
+      <thead><tr><th scope="col">Person</th><th scope="col">Access</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+      <tbody>
+      {{range .CalendarShares}}<tr>
+        <td class="mono">{{.Member}}</td>
+        <td>{{if eq .Level "view"}}View{{else if eq .Level "edit"}}Edit{{else}}Delegate{{end}}</td>
+        <td><form action="/settings/calendar-shares" method="post" class="inline"><input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="remove"><input type="hidden" name="member" value="{{.Member}}"><button class="button danger" type="submit" data-confirm="Stop sharing your calendar with {{.Member}}?">Remove</button></form></td>
+      </tr>{{end}}
+      </tbody>
+    </table>
+    {{end}}
+    <form class="form-grid" action="/settings/calendar-shares" method="post">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <label for="share-member">Share with</label><input id="share-member" name="member" type="email" placeholder="someone@{{domainOf $.Session.Address}}" required>
+      <label for="share-level">Access</label><select id="share-level" name="level"><option value="view">View</option><option value="edit">Edit</option></select>
+      <div class="form-actions"><button class="button primary" type="submit">Share calendar</button></div>
+    </form>
+  </section>
+  {{end}}
   {{if .Forwarding}}
   <form class="card form-grid" id="forwarding" action="/settings/forwarding#forwarding" method="post">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">

@@ -55,6 +55,9 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			case "/v1/security/retention":
 				limit = 1 << 16 // up to 100 folder names and their day limits
 			}
+			if strings.HasSuffix(r.URL.Path, "/freebusy") {
+				limit = 1 << 20 // an editor publishing the owner's busy times
+			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 			defer cancel()
@@ -163,6 +166,59 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 	})
 	handle("GET /v1/security/send-as", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		return s.sendAddresses(r.Context(), a.account)
+	})
+	// Calendar sharing. An app password can't change who sees the calendar:
+	// it's a credential a mail app holds, and these need the real sign-in.
+	handle("GET /v1/calendar-shares", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		granted, err := s.engine.CalendarSharesOwned(r.Context(), a.account.ID)
+		if err != nil {
+			return nil, err
+		}
+		received, err := s.engine.CalendarSharesFor(r.Context(), a.account.ID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string][]mailpolicy.CalendarShare{"granted": granted, "received": received}, nil
+	})
+	handle("PUT /v1/calendar-shares/{member}", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var request struct {
+			Level string `json:"level"`
+		}
+		if err := decode(r, &request); err != nil {
+			return nil, err
+		}
+		member, err := s.directoryAccount(r.Context(), r.PathValue("member"))
+		if err != nil {
+			return nil, err
+		}
+		return s.engine.GrantCalendar(r.Context(), a.account, member, request.Level)
+	})
+	handle("DELETE /v1/calendar-shares/{member}", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		member, err := s.directoryIdentity(r.Context(), r.PathValue("member"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.RevokeCalendar(r.Context(), a.account.ID, member.ID)
+	})
+	// An edit changes when the owner is busy, and only the webmail can work
+	// that out, so an editor publishes it for them.
+	handle("PUT /v1/calendar-shares/{owner}/freebusy", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		owner, err := s.directoryAccount(r.Context(), r.PathValue("owner"))
+		if err != nil {
+			return nil, err
+		}
+		level, err := s.engine.CalendarLevel(r.Context(), owner.ID, a.account.ID)
+		if err != nil {
+			return nil, err
+		}
+		if level != CalendarEdit && level != CalendarDelegate {
+			return nil, ErrCredentials
+		}
+		var fb FreeBusy
+		if err := decode(r, &fb); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.PublishFreeBusy(r.Context(), owner, fb)
 	})
 	// Free/busy: the webmail publishes the user's own busy times and reads
 	// colleagues'.

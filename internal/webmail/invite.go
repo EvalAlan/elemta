@@ -273,7 +273,7 @@ func (s *Server) rsvpSubmit(w http.ResponseWriter, r *http.Request, sess *Sessio
 		err = s.putEvent(ctx, sess, *stored)
 	case "apply-cancel", "remove":
 		if stored != nil {
-			err = s.deleteEvent(ctx, sess, stored.UID)
+			err = s.deleteEvent(ctx, sess, "", stored.UID)
 		}
 		notice = "event-deleted"
 	case "add":
@@ -314,7 +314,7 @@ func (s *Server) answerInvite(ctx context.Context, sess *Session, incoming Event
 	}
 	if status == "DECLINED" {
 		if stored != nil {
-			if err := s.deleteEvent(ctx, sess, e.UID); err != nil {
+			if err := s.deleteEvent(ctx, sess, "", e.UID); err != nil {
 				return "", err
 			}
 		}

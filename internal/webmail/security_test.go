@@ -36,6 +36,10 @@ type fakeSecurity struct {
 	maxSenders   int
 	maxForward   int
 	retention    map[string]int
+	// Calendar sharing: what the list returns, and what was changed.
+	calendars      calendarShares
+	calendarCalls  []string
+	calendarDenied bool
 }
 
 func (f *fakeSecurity) handler(t *testing.T) http.Handler {
@@ -84,6 +88,18 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		}
 		out := map[string]any{}
 		switch {
+		case r.URL.Path == "/v1/calendar-shares":
+			_ = json.NewEncoder(w).Encode(f.calendars)
+			return
+		case strings.HasPrefix(r.URL.Path, "/v1/calendar-shares/"):
+			level, _ := in["level"].(string)
+			f.calendarCalls = append(f.calendarCalls, strings.TrimSpace(r.Method+" "+r.URL.Path+" "+level))
+			if f.calendarDenied {
+				http.Error(w, "no such account", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+			return
 		case r.URL.Path == "/v1/security/shares":
 			_ = json.NewEncoder(w).Encode(f.shares)
 			return

@@ -533,6 +533,37 @@ Verification includes service validation and configuration-lock tests, admin
 API permissions and lifecycle tests, CLI output/alias tests, SMTP cache tests,
 and real LDAP/IMAP/SMTP checks against the development stack.
 
+## Sharing calendars
+
+Colleagues in a domain can always see when someone is busy, never why. To show
+the details, a user shares their calendar under Settings, Account. An
+administrator can do it for them in the account dialog, or with:
+
+```sh
+provision grant-calendar dana@example.com assistant@example.com --level edit
+provision list-calendar-shares dana@example.com
+provision revoke-calendar dana@example.com assistant@example.com
+```
+
+| Level | Can |
+|---|---|
+| View | See events. Private ones show as "Busy", with no details |
+| Edit | Also add, change and delete events, and see private ones |
+
+Sharing works within a domain and covers the person's whole calendar, because
+the calendar field on an event is only a label. Shared calendars appear in the
+webmail beside the user's own, where each can be hidden. They don't appear in
+CalDAV apps yet.
+
+Someone with Edit can't add guests, or change or delete an event that has guests,
+because guests would have to be told and that's mail in the owner's name. The
+Delegate level will cover that. `--level delegate` is accepted now but gives only
+Edit's access until then.
+
+A share gives the webmail one folder of the owner's account and nothing else.
+It can't be used from a mail app, and changing or removing it takes effect within
+30 seconds on connections already open.
+
 ## Checking a domain's DNS
 
 Open a domain under Mail Administration and choose **Check DNS**. Anyone who
