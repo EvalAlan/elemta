@@ -31,6 +31,7 @@ func (s *Server) abuseRoutes(api *mux.Router) {
 	}
 	configure := s.authMiddleware.RequirePermission(auth.PermissionSystemConfig)
 	api.Handle("/abuse", configure(http.HandlerFunc(s.handleAbuseStatus))).Methods("GET")
+	api.Handle("/abuse/metrics", configure(http.HandlerFunc(s.handleAbuseMetrics))).Methods("GET")
 	api.Handle("/abuse/policy", configure(http.HandlerFunc(s.handleAbusePolicy))).Methods("PUT")
 	api.Handle("/abuse/blocks", configure(http.HandlerFunc(s.handleAbuseBlock))).Methods("POST")
 	api.Handle("/abuse/blocks", configure(http.HandlerFunc(s.handleAbuseUnblock))).Methods("DELETE")
@@ -47,9 +48,20 @@ func (s *Server) handleAbuseStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"policy": s.abuse.Policy(), "shared": s.abuse.Shared(ctx),
 		"blocks": s.abuse.Blocks(), "events": s.abuse.Events(ctx), "accounts": s.abuse.Accounts(ctx),
+		"enforcers": s.abuse.Enforcers(ctx),
 		// So the page can warn an administrator who could block themselves.
 		"you": addr, "you_exempt": s.abuse.Exempt(addr),
 	})
+}
+
+func (s *Server) handleAbuseMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.abuse == nil {
+		http.Error(w, "Abuse protection is not available", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	writeJSON(w, s.abuse.Stats(ctx, r.URL.Query().Get("range")))
 }
 
 func abuseActor(r *http.Request) string {

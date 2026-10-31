@@ -670,7 +670,7 @@ func (l *abuseListener) Accept() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, blocked := l.abuse.Blocked(c.RemoteAddr().String()); blocked {
+		if l.abuse.Refuse(c.RemoteAddr().String()) {
 			_ = c.Close()
 			continue
 		}

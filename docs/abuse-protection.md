@@ -14,7 +14,10 @@ few seconds with no restart.
 - **Repeat offenders stay out longer.** The first block lasts 15 minutes, and
   each repeat within a week lasts four times longer, up to 24 hours.
 - **One address can't exhaust a service.** It may hold 25 connections to each
-  SMTP or mailbox server.
+  SMTP or mailbox server, and open 120 a minute, which catches clients that
+  connect and disconnect too fast to ever hold one. Port 25 isn't rate limited.
+- **A whole network adds up.** 200 failures across a /24 or /48 block all of it,
+  for attackers spread across a rented block.
 - **An IPv6 client counts as its /64,** since one network holds all of it.
 
 ## What it deliberately doesn't do
@@ -41,6 +44,47 @@ clients. `scripts/cloud-deploy.sh` starts the list with
 *History* and blocks nothing, which is the way to try stricter limits. **Off**
 stops counting, and connection limits fall back to
 `[resources] max_connections_per_ip`.
+
+## Graphs and metrics
+
+The page graphs failed sign-ins by service and refusals by reason over the last
+hour, day or week, with a table behind each graph, and lists the addresses with
+the most failures. Counts come from every service, kept in Valkey for a week.
+With Valkey away the page shows only the console's own counts.
+
+Each service also counts for Prometheus on its metrics endpoint:
+
+| Metric | Labels |
+|---|---|
+| `elemta_abuse_failed_logins_total` | `service`, `source` |
+| `elemta_abuse_refused_total` | `service`, `reason` (`blocked`, `limit`, `rate`) |
+| `elemta_abuse_blocks_total` | `service` |
+| `elemta_abuse_blocks_active` | `service` |
+
+## Firewall
+
+Services refuse blocked addresses themselves, which still means accepting each
+connection. The host firewall can drop them first. `scripts/cloud-deploy.sh`
+installs `elemta-abuse-firewall.timer`, which runs `scripts/abuse-firewall.sh` as
+root every 15 seconds, and the **Firewall** setting decides what it does:
+
+- **Log only**, the default, reports how many entries it would hold.
+- **Apply** drops blocked addresses, in the nftables table `inet elemta_abuse`.
+- **Off** removes that table.
+
+Try it in log mode first, and check the allowlist before applying. The firewall
+has its own copy of the allowlist and accepts those addresses first. It covers
+ports 80, 110, 143, 443, 587, 993 and 8025, never port 25, and only traffic
+arriving on the public interface. The page shows each agent's state, entries and
+packets dropped, and says when one stops reporting.
+
+The plan comes from a container and the script runs as root, so it checks every
+line itself and leaves the firewall alone if anything is wrong. Entries carry the
+block's own expiry, so they lapse even if the agent stops. To remove everything
+by hand: `nft delete table inet elemta_abuse`.
+
+On Kubernetes behind a load balancer nodes don't see client addresses, so this
+firewall doesn't apply there. Services still refuse blocked addresses.
 
 ## Where it runs
 

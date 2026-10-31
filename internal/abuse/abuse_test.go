@@ -359,3 +359,112 @@ func TestUnreachableValkeyFailsOpen(t *testing.T) {
 		t.Fatal("a connection was refused because Valkey was away")
 	}
 }
+
+func TestNetworkRollupBlocksTheWholeNetwork(t *testing.T) {
+	p := DefaultPolicy()
+	p.FailuresPerAddress = 100
+	p.FailuresPerNetwork = 5
+	e := testEngine(t, p)
+	for i := 1; i <= 5; i++ {
+		e.Failure(context.Background(), "203.0.113."+strconv.Itoa(i), "imap", "dana@example.com")
+	}
+	if _, blocked := e.Blocked("203.0.113.200"); !blocked {
+		t.Fatal("an address in the network wasn't blocked")
+	}
+	if _, blocked := e.Blocked("203.0.114.1"); blocked {
+		t.Fatal("the next network was blocked")
+	}
+}
+
+func TestConnectionRate(t *testing.T) {
+	p := DefaultPolicy()
+	p.ConnectionsPerMinute = 3
+	e := testEngine(t, p)
+	for i := 0; i < 3; i++ {
+		if !e.AllowRate("203.0.113.9") {
+			t.Fatalf("connection %d refused", i+1)
+		}
+	}
+	if e.AllowRate("203.0.113.9") {
+		t.Fatal("over the rate")
+	}
+	if !e.AllowRate("198.51.100.1") {
+		t.Fatal("another address was limited")
+	}
+	if !e.AllowRate("127.0.0.1") {
+		t.Fatal("loopback was limited")
+	}
+}
+
+func TestStatsCountWhatHappened(t *testing.T) {
+	e := testEngine(t, blockPolicy())
+	ctx := context.Background()
+	fail(e, "203.0.113.9", 3)
+	e.Refuse("203.0.113.9")
+	e.Refused(RefusedLimit)
+	e.flushStats(ctx)
+	for _, r := range []string{"1h", "24h", "7d"} {
+		s := e.Stats(ctx, r)
+		if s.Failures != 3 || s.Refused != 2 || s.Blocks != 1 || s.Services["imap"] != 3 {
+			t.Fatalf("%s: stats = %+v", r, s)
+		}
+		last := s.Buckets[len(s.Buckets)-1]
+		if last.Failures["imap"] != 3 || last.Refused[RefusedBlocked] != 1 {
+			t.Fatalf("%s: last bucket = %+v", r, last)
+		}
+		if len(s.Top) != 1 || s.Top[0].Network != "203.0.113.9" || s.Top[0].Failures != 3 {
+			t.Fatalf("%s: top = %+v", r, s.Top)
+		}
+	}
+	if got := e.Stats(ctx, "nonsense"); got.Range != "24h" || len(got.Buckets) != 24 {
+		t.Fatalf("an unknown range = %s, %d buckets", got.Range, len(got.Buckets))
+	}
+}
+
+func TestTargetLimitsHowWideAManualBlockGoes(t *testing.T) {
+	for in, want := range map[string]string{
+		"203.0.113.9":    "203.0.113.9",
+		"203.0.113.9/24": "203.0.113.0/24",
+		"203.0.0.0/16":   "203.0.0.0/16",
+		"203.0.0.0/8":    "",
+		"0.0.0.0/0":      "",
+		"2001:db8::/32":  "2001:db8::/32",
+		"2001:db8::/16":  "",
+		"not/an/address": "",
+	} {
+		if got := Target(in); got != want {
+			t.Errorf("Target(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestPlanNeverIncludesTheAllowlistOrOverlaps(t *testing.T) {
+	p := DefaultPolicy()
+	p.Allowlist = []string{"198.51.100.5"}
+	e := testEngine(t, p)
+	ctx := context.Background()
+	for _, target := range []string{"203.0.113.0/24", "203.0.113.9"} {
+		if _, err := e.BlockAddress(ctx, target, "", "root", time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.BlockAddress(ctx, "198.51.100.0/24", "", "root", time.Hour); err == nil {
+		t.Fatal("a network holding an allowlisted address was blocked")
+	}
+	// A block that arrived some other way must still not reach the firewall.
+	e.apply(ctx, Block{Network: "198.51.100.0/24", Until: time.Now().Add(time.Hour)})
+	plan := e.Plan()
+	if plan.Mode != FirewallLog || len(plan.Entries) != 1 || plan.Entries[0].Target != "203.0.113.0/24" {
+		t.Fatalf("plan = %+v", plan)
+	}
+	if len(plan.Allow) != 1 || plan.Allow[0] != "198.51.100.5/32" {
+		t.Fatalf("allow = %v", plan.Allow)
+	}
+	p.Mode = ModeOff
+	if err := e.Publish(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if e.Plan().Mode != FirewallOff {
+		t.Fatal("the firewall stayed on with protection off")
+	}
+}

@@ -530,6 +530,45 @@
                     You're working from <strong id="abuse-you-address"></strong>, which isn't on the allowlist, so too many mistyped passwords could block you too.
                     <button class="btn btn-secondary btn-sm" type="button" id="abuse-you-add">Add it</button>
                 </p>
+                <div class="abuse-range" role="group" aria-label="Time range">
+                    <button class="btn btn-secondary btn-sm" type="button" data-abuse-range="1h" aria-pressed="false">Hour</button>
+                    <button class="btn btn-secondary btn-sm" type="button" data-abuse-range="24h" aria-pressed="true">Day</button>
+                    <button class="btn btn-secondary btn-sm" type="button" data-abuse-range="7d" aria-pressed="false">Week</button>
+                </div>
+                <div class="abuse-tiles">
+                    <div class="abuse-tile"><span id="abuse-tile-failures">0</span><small>Failed sign-ins</small></div>
+                    <div class="abuse-tile"><span id="abuse-tile-refused">0</span><small>Refused</small></div>
+                    <div class="abuse-tile"><span id="abuse-tile-blocks">0</span><small>Blocks made</small></div>
+                    <div class="abuse-tile"><span id="abuse-tile-active">0</span><small>Blocked now</small></div>
+                </div>
+                <div class="abuse-graphs">
+                    <div class="card">
+                        <div class="card-header"><h3>Failed sign-ins</h3></div>
+                        <div class="card-body">
+                            <div class="abuse-legend" id="abuse-legend-failures"></div>
+                            <div class="abuse-chart" id="abuse-chart-failures"></div>
+                            <details class="abuse-data"><summary>Show as a table</summary>
+                                <div class="ma-table-wrap"><table class="messages-table">
+                                    <thead><tr><th>When</th><th>IMAP and POP3</th><th>SMTP</th><th>Webmail</th><th>Admin console</th></tr></thead>
+                                    <tbody id="abuse-table-failures"></tbody>
+                                </table></div>
+                            </details>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3>Refused</h3></div>
+                        <div class="card-body">
+                            <div class="abuse-legend" id="abuse-legend-refused"></div>
+                            <div class="abuse-chart" id="abuse-chart-refused"></div>
+                            <details class="abuse-data"><summary>Show as a table</summary>
+                                <div class="ma-table-wrap"><table class="messages-table">
+                                    <thead><tr><th>When</th><th>Blocked</th><th>Too many connections</th><th>Too fast</th></tr></thead>
+                                    <tbody id="abuse-table-refused"></tbody>
+                                </table></div>
+                            </details>
+                        </div>
+                    </div>
+                </div>
                 <div class="card">
                     <div class="card-header">
                         <h3>Blocked addresses</h3>
@@ -551,12 +590,32 @@
                     </div>
                 </div>
                 <div class="card">
+                    <div class="card-header"><h3>Top addresses</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">Most failed sign-ins in the last two hours.</p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Address</th><th>Failures</th><th></th></tr></thead>
+                            <tbody id="abuse-top"></tbody>
+                        </table></div>
+                    </div>
+                </div>
+                <div class="card">
                     <div class="card-header"><h3>Accounts under attack</h3></div>
                     <div class="card-body">
                         <p class="field-hint">Failed sign-ins per account in this window, from any address. Accounts are never blocked, so nobody can lock a user out by guessing wrong.</p>
                         <div class="ma-table-wrap"><table class="messages-table">
                             <thead><tr><th>Account</th><th>Failures</th></tr></thead>
                             <tbody id="abuse-accounts"></tbody>
+                        </table></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>Firewall</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint" id="abuse-firewall-note"></p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Agent</th><th>State</th><th>Entries</th><th>Packets dropped</th><th>Last report</th></tr></thead>
+                            <tbody id="abuse-enforcers"></tbody>
                         </table></div>
                     </div>
                 </div>
@@ -573,8 +632,14 @@
                             <label for="abuse-connections">Connections per address</label>
                             <input id="abuse-connections" type="number" min="1" max="100000" required>
                             <p class="field-hint">Open connections one address may hold to each SMTP or mailbox server. An IPv6 client counts as its /64.</p>
+                            <label for="abuse-rate">New connections per minute, per address</label>
+                            <input id="abuse-rate" type="number" min="0" max="1000000" required>
+                            <p class="field-hint">Catches clients that connect and disconnect as fast as they can. 0 turns it off. Port 25 isn't counted.</p>
                             <label for="abuse-failures">Failed sign-ins before blocking</label>
                             <input id="abuse-failures" type="number" min="1" max="100000" required>
+                            <label for="abuse-network">Failed sign-ins before blocking a whole /24 or /48</label>
+                            <input id="abuse-network" type="number" min="0" max="1000000" required>
+                            <p class="field-hint">Catches attackers spread across a rented block. 0 turns it off.</p>
                             <label for="abuse-window">Counted over (minutes)</label>
                             <input id="abuse-window" type="number" min="1" max="1440" required>
                             <p class="field-hint">Failures add up across every service and account.</p>
@@ -583,6 +648,13 @@
                             <label for="abuse-max-block">Longest block (hours)</label>
                             <input id="abuse-max-block" type="number" min="1" max="720" required>
                             <p class="field-hint">Each repeat within a week lasts four times longer, up to the longest block.</p>
+                            <label for="abuse-firewall">Firewall</label>
+                            <select id="abuse-firewall">
+                                <option value="log">Log only: report what would be dropped</option>
+                                <option value="apply">Apply: drop blocked addresses at the host firewall</option>
+                                <option value="off">Off</option>
+                            </select>
+                            <p class="field-hint">Covers client ports, never port 25. Check the allowlist before applying.</p>
                             <label for="abuse-allowlist">Allowlist, one address or network per line</label>
                             <textarea id="abuse-allowlist" rows="5" spellcheck="false" autocomplete="off" placeholder="203.0.113.9&#10;198.51.100.0/24"></textarea>
                             <p class="field-hint">Never limited or blocked. Add your own address and monitoring.</p>

@@ -17,7 +17,12 @@
   refused at connect. Port 25 is never blocked, and neither are allowlisted
   addresses. Add your own addresses to the allowlist. The **Abuse** page shows
   blocks, accounts under attack and history, and can block and unblock by hand
-  ([abuse-protection.md](docs/abuse-protection.md)).
+  ([abuse-protection.md](docs/abuse-protection.md)). It also graphs failures and
+  refusals over an hour, a day or a week, with `elemta_abuse_*` Prometheus metrics.
+- **New detection and a host firewall.** Connections are limited to 120 a minute
+  per address on submission, IMAP and POP3, 200 failures across a /24 or /48 block
+  all of it, and `scripts/cloud-deploy.sh` installs an nftables agent that starts
+  in log-only mode. Set it to apply on the Abuse page.
 - **Failed sign-ins no longer lock a user out.** Webmail, DAV, IMAP, POP3 and
   ManageSieve used to block an account after enough wrong passwords from
   anywhere, so anyone who knew an address could keep its owner out. They now

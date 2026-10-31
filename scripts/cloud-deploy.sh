@@ -341,8 +341,32 @@ Unit=elemta-cert-sync.service
 [Install]
 WantedBy=multi-user.target
 EOF
+# Abuse protection's firewall. Installed always, and it does nothing to traffic
+# until the console's firewall setting is "apply".
+fw=/etc/systemd/system/elemta-abuse-firewall
+sudo tee "$fw.service" >/dev/null <<EOF
+[Unit]
+Description=Apply Elemta abuse protection's blocks to nftables
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=$root/scripts/abuse-firewall.sh
+EOF
+sudo tee "$fw.timer" >/dev/null <<EOF
+[Unit]
+Description=Keep Elemta abuse protection's firewall current
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=15s
+AccuracySec=2s
+
+[Install]
+WantedBy=timers.target
+EOF
 sudo systemctl daemon-reload
-sudo systemctl enable --now elemta-cert-sync.timer elemta-cert-sync.path >/dev/null 2>&1
+sudo systemctl enable --now elemta-cert-sync.timer elemta-cert-sync.path elemta-abuse-firewall.timer >/dev/null 2>&1
 
 dkim_p=$(sudo openssl pkey -in "$dkim_key" -pubout -outform der 2>/dev/null | base64 -w0)
 ip4=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')

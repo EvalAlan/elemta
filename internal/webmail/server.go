@@ -839,7 +839,7 @@ const (
 
 // throttled reports whether a sign-in shouldn't even be tried.
 func (s *Server) throttled(ip, userKey string) bool {
-	if _, blocked := s.abuse.Blocked(ip); blocked {
+	if s.abuse.Refuse(ip) {
 		return true
 	}
 	return s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser)

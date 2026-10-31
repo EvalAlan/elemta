@@ -1056,8 +1056,13 @@ func (s *Server) refuseBlocked(conn net.Conn) bool {
 	if !ok || sc.webmail {
 		return false
 	}
-	if _, blocked := s.abuse.Blocked(conn.RemoteAddr().String()); !blocked {
-		return false
+	addr := conn.RemoteAddr().String()
+	if !s.abuse.Refuse(addr) {
+		if s.abuse.AllowRate(addr) {
+			return false
+		}
+		_ = conn.Close()
+		return true
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 	_, _ = conn.Write([]byte("421 4.7.1 Too many failed sign-ins from this address; try again later\r\n"))
@@ -1344,6 +1349,7 @@ func (s *Server) acceptLoop(current func() net.Listener, wrap func(net.Conn) net
 		clientAddr := conn.RemoteAddr().String()
 		s.slogger.Debug("Checking if connection can be accepted", "client_addr", clientAddr)
 		if !s.resourceManager.CanAcceptConnection(clientAddr) {
+			s.abuse.Refused(abuse.RefusedLimit)
 			s.slogger.Warn("Connection rejected due to resource limits", "client_ip", clientAddr)
 			_ = conn.Close() // Ignore error when rejecting connection
 			continue

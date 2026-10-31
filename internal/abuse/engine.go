@@ -3,6 +3,7 @@ package abuse
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"sync"
@@ -11,6 +12,8 @@ import (
 	"github.com/EvalAlan/elemta/internal/valkeyaddr"
 	"github.com/valkey-io/valkey-go"
 )
+
+var errNoValkey = errors.New("Valkey is unreachable")
 
 const (
 	keyPolicy = "elemta:abuse:policy"
@@ -45,7 +48,8 @@ func New(service, addr string, log *slog.Logger) *Engine {
 		log = slog.Default()
 	}
 	e := &Engine{service: service, addr: addr, log: log.With("component", "abuse"), conns: map[string]int{},
-		seen: local{blocks: map[string]Block{}, counts: map[string]*tally{}, accounts: map[string]*tally{}}}
+		seen: local{blocks: map[string]Block{}, counts: map[string]*tally{}, accounts: map[string]*tally{}, top: map[string]*tally{},
+			pending: map[string]int{}, series: map[int64]map[string]int{}}}
 	e.setPolicy(DefaultPolicy())
 	return e
 }
@@ -181,12 +185,14 @@ func (e *Engine) sync(ctx context.Context) {
 	client := e.connect()
 	if client == nil {
 		e.pruneLocal()
+		e.flushStats(ctx)
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, valkeyTimeout)
 	defer cancel()
 	e.syncPolicy(ctx, client)
 	e.syncBlocks(ctx, client)
+	e.flushStats(ctx)
 }
 
 func (e *Engine) syncPolicy(ctx context.Context, client valkey.Client) {
@@ -267,6 +273,29 @@ func (e *Engine) Publish(ctx context.Context, p Policy) error {
 	return nil
 }
 
+// AllowRate counts a new connection and reports whether the address is within
+// its rate. Held connections are capped by Acquire; this catches the client
+// that opens and closes as fast as it can, which never holds any. It counts per
+// instance, for the same reason.
+func (e *Engine) AllowRate(addr string) bool {
+	if e == nil {
+		return true
+	}
+	p := e.Policy()
+	network := Network(addr)
+	if p.Mode == ModeOff || network == "" || p.ConnectionsPerMinute < 1 || e.Exempt(addr) {
+		return true
+	}
+	e.seen.mu.Lock()
+	n := e.seen.add(e.seen.counts, "rate:"+network, time.Minute, time.Now())
+	e.seen.mu.Unlock()
+	if n <= p.ConnectionsPerMinute {
+		return true
+	}
+	e.Refused(RefusedRate)
+	return p.Mode != ModeEnforce
+}
+
 // Acquire takes a connection slot for an address. It returns false when the
 // address has its limit, and otherwise a function that gives the slot back.
 // Counted per instance: it stops one host exhausting a service, and asking
@@ -277,9 +306,13 @@ func (e *Engine) Acquire(addr string) (func(), bool) {
 	if p.Mode == ModeOff || network == "" || e.Exempt(addr) {
 		return func() {}, true
 	}
+	if !e.AllowRate(addr) {
+		return nil, false
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.conns[network] >= p.ConnectionsPerAddress {
+		e.Refused(RefusedLimit)
 		if p.Mode == ModeEnforce {
 			return nil, false
 		}

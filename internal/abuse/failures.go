@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,7 +65,11 @@ type local struct {
 	blocks   map[string]Block
 	counts   map[string]*tally
 	accounts map[string]*tally
+	top      map[string]*tally
 	events   []Event
+	// pending waits for the next flush; series holds what couldn't be sent.
+	pending map[string]int
+	series  map[int64]map[string]int
 }
 
 type tally struct {
@@ -99,13 +104,15 @@ func (e *Engine) Blocked(addr string) (Block, bool) {
 	if network == "" || e.Policy().Mode != ModeEnforce || e.Exempt(addr) {
 		return Block{}, false
 	}
+	now := time.Now()
 	e.seen.mu.Lock()
 	defer e.seen.mu.Unlock()
-	b, ok := e.seen.blocks[network]
-	if !ok || !time.Now().Before(b.Until) {
-		return Block{}, false
+	for _, key := range []string{network, Subnet(network)} {
+		if b, ok := e.seen.blocks[key]; ok && now.Before(b.Until) {
+			return b, true
+		}
 	}
-	return b, true
+	return Block{}, false
 }
 
 // Failure records a failed sign-in, and blocks the address once it has failed
@@ -125,8 +132,19 @@ func (e *Engine) Failure(ctx context.Context, addr, service, account string) {
 	window := time.Duration(p.WindowMinutes) * time.Minute
 	failures := e.count(ctx, keyFailures+network, network, window)
 	e.countAccount(ctx, account, window)
+	e.noteOffender(ctx, network)
+	e.note(fieldFailure+service, 1)
+	metricFailures.WithLabelValues(e.service, service).Inc()
 	if failures >= p.FailuresPerAddress {
 		e.trip(ctx, p, network, service, failures)
+	}
+	// Many addresses in one network add up to the network, which is how a
+	// rented block stays under the per-address limit.
+	if p.FailuresPerNetwork > 0 {
+		subnet := Subnet(network)
+		if n := e.count(ctx, keyFailures+subnet, subnet, window); n >= p.FailuresPerNetwork {
+			e.trip(ctx, p, subnet, service, n)
+		}
 	}
 }
 
@@ -169,7 +187,10 @@ func accountKey(now time.Time, window time.Duration) string {
 }
 
 func (e *Engine) trip(ctx context.Context, p Policy, network, service string, failures int) {
-	if _, blocked := e.Blocked(network); blocked {
+	e.seen.mu.Lock()
+	existing, blocked := e.seen.blocks[network]
+	e.seen.mu.Unlock()
+	if blocked && time.Now().Before(existing.Until) {
 		return
 	}
 	strikes := e.strike(ctx, network)
@@ -187,6 +208,8 @@ func (e *Engine) trip(ctx context.Context, p Policy, network, service string, fa
 		return
 	}
 	now := time.Now().UTC()
+	e.note(fieldBlocks, 1)
+	metricBlocks.WithLabelValues(e.service).Inc()
 	e.apply(ctx, Block{Network: network, Reason: "too many failed sign-ins", Service: service, Failures: failures, Strikes: strikes, Created: now, Until: now.Add(duration)})
 	e.record(ctx, Event{Action: "blocked", Network: network, Service: service, Detail: fmt.Sprintf("%d failures; blocked for %s", failures, duration)})
 	e.log.Warn("Address blocked", "address", network, "service", service, "failures", failures, "for", duration.String())
@@ -251,11 +274,11 @@ func (e *Engine) record(ctx context.Context, ev Event) {
 // BlockAddress blocks an address or /64 by hand. It refuses an exempt address:
 // the allowlist is what stands between an operator and locking themselves out.
 func (e *Engine) BlockAddress(ctx context.Context, addr, reason, by string, duration time.Duration) (Block, error) {
-	network := Network(addr)
+	network := Target(addr)
 	if network == "" {
-		return Block{}, fmt.Errorf("%q is not an address", addr)
+		return Block{}, fmt.Errorf("%q is not an address or a network of /16 or smaller", addr)
 	}
-	if e.Exempt(addr) {
+	if e.overlapsExempt(network) {
 		return Block{}, fmt.Errorf("%s is on the allowlist", network)
 	}
 	if duration <= 0 {
@@ -266,6 +289,8 @@ func (e *Engine) BlockAddress(ctx context.Context, addr, reason, by string, dura
 	}
 	now := time.Now().UTC()
 	b := Block{Network: network, Reason: reason, Service: "admin", Created: now, Until: now.Add(duration), Manual: true}
+	e.note(fieldBlocks, 1)
+	metricBlocks.WithLabelValues(e.service).Inc()
 	e.apply(ctx, b)
 	e.record(ctx, Event{Action: "blocked", Network: network, Service: "admin", Detail: fmt.Sprintf("%s; for %s", reason, duration), By: by})
 	return b, nil
@@ -274,7 +299,7 @@ func (e *Engine) BlockAddress(ctx context.Context, addr, reason, by string, dura
 // Unblock lifts a block and forgets the address's history, so its next
 // mistake doesn't land it straight back in a long one.
 func (e *Engine) Unblock(ctx context.Context, addr, by string) error {
-	network := Network(addr)
+	network := Target(addr)
 	if network == "" {
 		return fmt.Errorf("%q is not an address", addr)
 	}
@@ -377,6 +402,7 @@ func (e *Engine) syncBlocks(ctx context.Context, client valkey.Client) {
 	e.seen.mu.Lock()
 	e.seen.blocks = current
 	e.seen.mu.Unlock()
+	metricActive.WithLabelValues(e.service).Set(float64(len(current)))
 }
 
 func (e *Engine) pruneLocal() {
@@ -388,4 +414,26 @@ func (e *Engine) pruneLocal() {
 			delete(e.seen.blocks, network)
 		}
 	}
+}
+
+// overlapsExempt reports whether a block target touches the allowlist.
+func (e *Engine) overlapsExempt(target string) bool {
+	if !strings.Contains(target, "/") {
+		return e.Exempt(target)
+	}
+	_, network, err := net.ParseCIDR(target)
+	if err != nil {
+		return false
+	}
+	if network.Contains(net.IPv4(127, 0, 0, 1)) || network.Contains(net.IPv6loopback) {
+		return true
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, n := range e.exempt {
+		if network.Contains(n.IP) || n.Contains(network.IP) {
+			return true
+		}
+	}
+	return false
 }
