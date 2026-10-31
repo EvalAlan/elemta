@@ -91,9 +91,11 @@ done
 "$root/scripts/ldap-admin-password.sh"
 "$root/scripts/ldap-service-accounts.sh"
 
-# Every exported entry must be there. There can be more: the service
-# accounts above, on a directory that predates them.
+# Every exported entry must be there, but for ou=mailgroups, which
+# ldap-schema.sh above removes on purpose when it is empty. There can be more:
+# the service accounts above, on a directory that predates them.
 dns() { perl -0pe 's/\n //g' | sed -n 's/^dn: //p' | sort; }
-missing=$(comm -23 <(dns <"$tmp/data.ldif") <(docker exec elemta-ldap slapcat -n 1 | dns))
+exported() { dns <"$tmp/data.ldif" | { grep -vxF "ou=mailgroups,dc=example,dc=com" || true; }; }
+missing=$(comm -23 <(exported) <(docker exec elemta-ldap slapcat -n 1 | dns))
 [ -z "$missing" ] || { printf 'ldap-migrate: missing from the new directory:\n%s\n' "$missing" >&2; exit 1; }
 echo "ldap-migrate: done, all $want entries moved. The old volumes ${volumes}_ldap_data and ${volumes}_ldap_config are untouched."

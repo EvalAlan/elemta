@@ -11,6 +11,13 @@ refusing real senders, so anyone running an earlier release should upgrade.
 
 ### Upgrade notes
 
+- **From v0.5.3, take these steps first.** The Compose project was renamed, so
+  add `ELEMTA_VOLUME_PREFIX=compose` to `cloud.env` and run
+  `docker compose -p compose down --remove-orphans`, which keeps your volumes,
+  before `scripts/cloud-deploy.sh`. The deploy stops with a message if you don't.
+  See "Upgrades" in [docs/production-compose.md](docs/production-compose.md).
+- **`--reseed` works on release images.** It failed on their read-only filesystem,
+  leaving services with no configuration.
 - **Real senders are no longer refused.** The SMTP checks rejected any `=` in an
   address, which is how Gmail forwarding and bounce handling write senders, and
   matched SQL words inside addresses, so `updates@example.org` looked like an

@@ -69,6 +69,22 @@ fi
 dc() { docker compose --env-file "$env_file" "${files[@]}" "$@"; }
 step() { printf '\n==> %s\n' "$*"; }
 
+# A host installed before the compose file named its project. Carrying on would
+# fail on the old stack's network, or worse, without the prefix, bring up a
+# working system on new, empty volumes, with the real mail sitting in the old
+# ones. Stop before anything changes.
+# shellcheck source=SCRIPTDIR/lib/compose.sh
+. "$root/scripts/lib/compose.sh"
+if docker volume inspect compose_mailbox_metadata >/dev/null 2>&1 &&
+    [ "$(volume_prefix "$env_file")" != compose ]; then
+    echo "cloud-deploy: this host's mail is on compose_* volumes; add ELEMTA_VOLUME_PREFIX=compose to $env_file (docs/production-compose.md, \"Upgrades\")" >&2
+    exit 1
+fi
+if [ -n "$(docker ps -aq --filter label=com.docker.compose.project=compose --filter name=elemta)" ]; then
+    echo "cloud-deploy: the old stack is still running; take it down once with: docker compose -p compose down --remove-orphans (volumes are kept)" >&2
+    exit 1
+fi
+
 # Service credentials, and a self-signed placeholder certificate the mail
 # services start with until the real one is copied over it.
 step "Service credentials"
