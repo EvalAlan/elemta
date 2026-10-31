@@ -122,7 +122,16 @@ scripts/cloud-deploy.sh
 Read the release's upgrade notes in [CHANGELOG.md](../CHANGELOG.md) first.
 Schema changes apply on start and are additive.
 
-**From v0.5.3 or earlier:** the directory moved to its own image (OpenLDAP
+**From v0.5.3 or earlier:** the Compose project was renamed, so do this once
+before `scripts/cloud-deploy.sh`, which stops with a message if you don't. Add
+`ELEMTA_VOLUME_PREFIX=compose` to `cloud.env`, so the stack keeps its volumes,
+and take the old stack down, which keeps them too:
+
+```sh
+docker compose -p compose down --remove-orphans
+```
+
+The directory also moved to its own image (OpenLDAP
 2.6, built and published with the release) on new volumes, because the
 previous image's OpenLDAP 2.4 database can't be opened by 2.6.
 `scripts/cloud-deploy.sh` moves it for you with `scripts/ldap-migrate.sh`:
