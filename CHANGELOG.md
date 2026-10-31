@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Publish MTA-STS policies.** `MTA_STS_DOMAINS` in `cloud.env` serves a policy
+  for each domain, and the deploy prints the records to publish. See "MTA-STS"
+  in [docs/cloud-dev.md](docs/cloud-dev.md).
+
 - **Check a domain's DNS from the console.** Mail Administration's domain dialog
   has a **Check DNS** button covering MX, reverse DNS, SPF, DKIM, DMARC, MTA-STS,
   TLS-RPT and mail app discovery, with the record to publish where there's one

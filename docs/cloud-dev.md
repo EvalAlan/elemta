@@ -232,6 +232,34 @@ updates Caddy's site names, installs the certificates, removes ones no longer
 wanted, and reports in `.secrets/cert-sync/status.json`. The twice-daily
 timer runs the same script, so renewals are copied without anyone asking.
 
+## MTA-STS
+
+MTA-STS tells other mail servers to refuse unencrypted delivery to your domain,
+which stops an attacker downgrading the connection. To publish a policy, list
+the domains in `.secrets/cloud.env`:
+
+```
+MTA_STS_DOMAINS="example.org example.net"
+MTA_STS_MODE=testing
+```
+
+Run `scripts/cloud-deploy.sh`, then publish the records it prints: an A record
+for `mta-sts.<domain>`, which Caddy needs for the certificate, and a TXT record
+at `_mta-sts.<domain>`. Check DNS in Mail Administration shows the result.
+
+- The policy lists every mail host on this server, so any MX pointing here is
+  covered. It's the same for every domain.
+- The TXT record's `id` comes from the policy. When the deploy prints a new one,
+  publish it, because senders only refetch the policy when it changes. That
+  happens when you change the mode or add a mail host.
+- Stay on `testing` until the TLS reports at `_smtp._tls.<domain>` come back
+  clean, for a week or so. In `testing`, senders report failures but still
+  deliver. In `enforce` they refuse, and they remember the policy for a week, so
+  a mistake can't be undone quickly.
+- To back out of `enforce`, change the mode to `none` and publish the new `id`.
+  Keep it up for at least a week before removing the records, or senders go on
+  following the old policy.
+
 ## Accounts
 
 The directory starts empty. Create the domain's accounts with the provision

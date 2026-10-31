@@ -14,6 +14,9 @@
 #                                   created in .secrets/mailbox-body-keys.env.
 #                                   Keep a copy off the server; see
 #                                   docs/mailbox-service.md
+#   MTA_STS_DOMAINS="example.org"   optional: domains that publish an MTA-STS
+#                                   policy; see docs/cloud-dev.md, "MTA-STS"
+#   MTA_STS_MODE=testing            optional: testing (default), enforce or none
 #   ELEMTA_TAG=v0.5.0               optional: run that release's images from
 #                                   ghcr.io, pinned and hardened
 #                                   (docker-compose.release.yml), instead of
@@ -416,6 +419,10 @@ mail.$x, before moving the MX: a strict DMARC policy rejects unsigned mail.
   $x.                     MX   10 mail.$x.   (last)
 EOF
 done
+if [ -n "${MTA_STS_DOMAINS:-}" ]; then
+    printf '\nMTA-STS records. Publish the A records first; the certificate needs them.\n'
+    "$root/scripts/cloud-sync-certs.sh" --mta-sts-records "$ip4"
+fi
 cat <<EOF
 
 Next: create the domain's first account (docs/cloud-dev.md, "Accounts").
