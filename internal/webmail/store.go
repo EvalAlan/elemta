@@ -106,6 +106,19 @@ type Conversation struct {
 // Count is the number of messages in the conversation.
 func (c Conversation) Count() int { return len(c.UIDs) }
 
+// OpenUID is the message its row opens: the oldest unread, or the latest when
+// all are read. Opening a message is what marks it read, so a row that always
+// opened the latest could never clear an older unread one. The rest stay
+// unread rather than being marked read unseen, and the next click reaches them.
+func (c Conversation) OpenUID() uint32 {
+	for _, m := range c.Messages {
+		if !m.Seen {
+			return m.UID
+		}
+	}
+	return c.Latest.UID
+}
+
 // UIDList is the conversation's UIDs as one form value ("12,15,19").
 func (c Conversation) UIDList() string {
 	parts := make([]string, len(c.UIDs))

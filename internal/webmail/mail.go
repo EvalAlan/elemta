@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -169,9 +170,15 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 			}
 			v.Threaded, v.Conversations = true, tp.Conversations
 			p = Page{Folder: tp.Folder, Total: tp.Total, Page: tp.Page, PageSize: tp.PageSize}
-			// Newer/older navigation walks the conversations' latest messages.
+			// Newer/older navigation walks the conversations' latest messages,
+			// except that the open message stands for its own conversation:
+			// a row can open an older one, and the arrows have to find it.
 			for _, c := range tp.Conversations {
-				p.Messages = append(p.Messages, c.Latest)
+				row := c.Latest
+				if i := slices.IndexFunc(c.Messages, func(m Summary) bool { return hasUID && m.UID == uid }); i >= 0 {
+					row = c.Messages[i]
+				}
+				p.Messages = append(p.Messages, row)
 			}
 		} else {
 			var err error
