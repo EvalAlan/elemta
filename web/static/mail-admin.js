@@ -143,13 +143,13 @@
     }
     function renderTable() {
         root.querySelectorAll('[data-ma-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.maTab === tab)));
-        el('ma-domain-form').hidden = tab !== 'domains' || !scope.all; el('ma-alias-domain-form').hidden = tab !== 'domains' || !mailboxAdmin || !scope.all; el('ma-status').hidden = tab !== 'accounts'; el('ma-domain-filter').hidden = !['accounts', 'aliases', 'lists'].includes(tab);
-        el('ma-create').hidden = tab === 'lists' || tab === 'classes' || tab === 'audit'; el('ma-create-list').hidden = tab !== 'lists'; el('ma-create-class').hidden = tab !== 'classes';
+        el('ma-domain-form').hidden = tab !== 'domains' || !scope.all; el('ma-alias-domain-form').hidden = tab !== 'domains' || !mailboxAdmin || !scope.all; el('ma-status').hidden = tab !== 'accounts'; el('ma-new-alias-form').hidden = tab !== 'aliases'; el('ma-domain-filter').hidden = !['accounts', 'aliases', 'lists'].includes(tab);
+        el('ma-create').hidden = tab === 'aliases' || tab === 'lists' || tab === 'classes' || tab === 'audit'; el('ma-create-list').hidden = tab !== 'lists'; el('ma-create-class').hidden = tab !== 'classes';
         if (tab === 'audit') { renderAudit(); return; }
         const head = el('ma-table-head'), body = el('ma-table-body'); head.replaceChildren(); body.replaceChildren();
         const headers = {
             accounts: ['Address', 'Display name', 'Status', 'Quota', 'Aliases'],
-            aliases: ['Delivery alias', 'Mailbox account'],
+            aliases: ['Delivery alias', 'Mailbox account', ''],
             lists: ['List', 'Name', 'Members', 'Who may post', 'Owner'],
             classes: ['Class', 'Description', 'Accounts', 'Domains', 'Settings'],
             domains: mailboxAdmin ? ['Domain', 'Routing', 'Status', 'Accounts', 'Aliases', 'Default class', 'Catch-all', ''] : ['Domain', 'Routing', 'Accounts', 'Aliases', ''],
@@ -170,6 +170,11 @@
                 cell(row, node('span', item.status, 'ma-status ' + item.status)); cell(row, quota(item.quota_bytes)); cell(row, item.aliases.length);
             } else if (tab === 'aliases') {
                 cell(row, item.alias); cell(row, button(item.account, () => openAccount(accounts.find(a => a.address === item.account)), 'ma-account-link'));
+                cell(row, button('Remove', () => perform(async () => {
+                    if (!window.confirm('Remove the delivery alias ' + item.alias + '? Mail to it will be refused.')) return;
+                    await request('/accounts/' + encodeURIComponent(item.account) + '/aliases', 'DELETE', { alias: item.alias });
+                    message('Delivery alias ' + item.alias + ' removed.'); await refresh();
+                })));
             } else if (tab === 'lists') {
                 cell(row, button(item.address, () => perform(async () => openList(await request('/lists/' + encodeURIComponent(item.address)))), 'ma-account-link'));
                 cell(row, item.name); cell(row, item.member_count); cell(row, item.posting); cell(row, item.owner || '—');
@@ -212,6 +217,7 @@
         const [a, d, l, c] = await Promise.all([request('/accounts'), request('/domains'), mailboxAdmin ? request('/lists') : null, mailboxAdmin ? request('/classes') : null]);
         if (seq !== sequence) return;
         accounts = a.accounts; domains = d.domains;
+        el('ma-account-options').replaceChildren(...accounts.map(x => option(x.address, x.name || x.address, '')));
         lists = l ? l.lists : []; classes = c ? c.classes : [];
         domainClasses = {}; (c ? c.domains : []).forEach(x => { domainClasses[x.domain] = x.class; });
         root.querySelectorAll('[data-ma-needs-mailbox]').forEach(b => { b.hidden = !mailboxAdmin; });
@@ -360,6 +366,13 @@
     el('ma-account-form').addEventListener('submit', event => { event.preventDefault(); perform(saveAccount); });
     el('ma-policy-form').addEventListener('submit', event => { event.preventDefault(); perform(saveAccount); });
     el('ma-mail-form').addEventListener('submit', event => { event.preventDefault(); perform(saveAccount); });
+    // The Delivery aliases tab adds one without opening the account first.
+    el('ma-new-alias-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+        const alias = el('ma-new-alias').value.trim(), account = el('ma-new-alias-account').value.trim();
+        if (!accounts.some(a => a.address === account)) throw new Error('Choose an existing mailbox account for ' + alias + ' to deliver to.');
+        await request('/accounts/' + encodeURIComponent(account) + '/aliases', 'POST', { alias });
+        el('ma-new-alias').value = ''; message('Delivery alias ' + alias + ' now delivers to ' + account + '.'); await refresh();
+    }); });
     el('ma-alias-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => { const updated = await request(accountPath() + '/aliases', 'POST', { alias: el('ma-alias').value }); fillAccount(updated); el('ma-account-policy').hidden = !mailboxAdmin; message('Delivery alias added.'); await refresh(); }); });
     el('ma-password-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
         if (el('ma-password').value !== el('ma-confirm-password').value) throw new Error('The new passwords do not match.');
