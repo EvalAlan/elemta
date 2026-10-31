@@ -48,6 +48,7 @@ type Account struct {
 	Forward         []string
 	ForwardKeepCopy bool
 	SendAs          []string
+	Aliases         []string
 	DirectoryClass  string
 }
 type Folder struct {

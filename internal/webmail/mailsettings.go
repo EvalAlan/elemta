@@ -127,19 +127,50 @@ func (s *Server) accountMail(ctx context.Context, sess *Session) (AccountMail, b
 }
 
 // fromChoices are the sender addresses compose offers: the session's own
-// (or the shared mailbox it has selected), then each address an
-// administrator lets this user send as. A grant for a whole domain
-// (@example.com) isn't listed: there is no one address to offer.
+// (or the shared mailbox it has selected), then the rest the mailbox service
+// says it may send as. That includes its own address when a shared mailbox is
+// selected. The directory's grants stand in when the service can't answer, so
+// an outage there doesn't take away what the user is known to have.
 func (s *Server) fromChoices(ctx context.Context, sess *Session) []string {
 	choices := []string{s.sendAddress(ctx, sess)}
-	if m, ok := s.accountMail(ctx, sess); ok {
+	offer := func(a string) {
+		if !strings.HasPrefix(a, "@") && !slices.Contains(choices, a) {
+			choices = append(choices, a)
+		}
+	}
+	offer(sess.Address)
+	if addresses, ok := s.sendAsAddresses(ctx, sess); ok {
+		for _, a := range addresses {
+			offer(a)
+		}
+	} else if m, ok := s.accountMail(ctx, sess); ok {
 		for _, a := range m.SendAs {
-			if !strings.HasPrefix(a, "@") && !slices.Contains(choices, a) {
-				choices = append(choices, a)
-			}
+			offer(a)
 		}
 	}
 	return choices
+}
+
+// sendAsAddresses asks the mailbox service, which applies the same rule as the
+// MTA, so the list can't promise a sender that the send then refuses.
+func (s *Server) sendAsAddresses(ctx context.Context, sess *Session) ([]string, bool) {
+	if s.security == nil {
+		return nil, false
+	}
+	if addresses, ok := s.pages.getSendAs(sess.ID, s.now()); ok {
+		return addresses, true
+	}
+	pw, err := s.sessions.password(sess)
+	if err != nil {
+		return nil, false
+	}
+	var out []string
+	if err := s.security.call(ctx, http.MethodGet, "/v1/security/send-as", sess.User, pw, nil, &out); err != nil {
+		s.log.Warn("send-as list unavailable", "error", err)
+		return nil, false
+	}
+	s.pages.putSendAs(sess.ID, out, s.now())
+	return out, true
 }
 
 // chosenFrom is the sender a compose form asked for, if it is one of the

@@ -60,7 +60,7 @@ func (a LDAPAuth) lookup(ctx context.Context, address string, delivery bool) (Ac
 		filter = "(&(objectClass=posixAccount)(|(mail=" + escaped + ")(mailAlternateAddress=" + escaped + ")))"
 	}
 	result, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, filter,
-		[]string{"entryUUID", "mail", "accountStatus", "mailQuotaSize", "elemtaForwardTo", "elemtaForwardKeepCopy", "elemtaSendAs", "elemtaClassOfService"}, nil))
+		[]string{"entryUUID", "mail", "accountStatus", "mailQuotaSize", "elemtaForwardTo", "elemtaForwardKeepCopy", "elemtaSendAs", "mailAlternateAddress", "elemtaClassOfService"}, nil))
 	if err != nil {
 		return Account{}, "", err
 	}
@@ -85,6 +85,7 @@ func (a LDAPAuth) lookup(ctx context.Context, address string, delivery bool) (Ac
 	account.Forward = lowerAll(entry.GetAttributeValues("elemtaForwardTo"))
 	account.ForwardKeepCopy = strings.EqualFold(entry.GetAttributeValue("elemtaForwardKeepCopy"), "TRUE")
 	account.SendAs = lowerAll(entry.GetAttributeValues("elemtaSendAs"))
+	account.Aliases = lowerAll(entry.GetAttributeValues("mailAlternateAddress"))
 	account.DirectoryClass = strings.TrimSpace(entry.GetAttributeValue("elemtaClassOfService"))
 	return account, entry.DN, nil
 }

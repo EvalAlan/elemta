@@ -92,6 +92,12 @@ func TestLDAPDirectoryMail(t *testing.T) {
 		!slices.Equal(l.Members, []string{"ana@" + domain, "out@remote.example"}) {
 		t.Errorf("list = %+v", l)
 	}
+	// By the member's entry and by a plain address.
+	for _, member := range []string{"ana@" + domain, "out@remote.example"} {
+		if lists, err := a.DirectoryListsOf(ctx, member); err != nil || !slices.Equal(lists, []string{"crew@" + domain}) {
+			t.Errorf("lists of %s = %v, %v", member, lists, err)
+		}
+	}
 	if _, ok, err := a.DirectoryList(ctx, "nobody@"+domain); ok || err != nil {
 		t.Errorf("a list that isn't there: %v %v", ok, err)
 	}

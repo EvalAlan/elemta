@@ -4,6 +4,10 @@
 
 ### Upgrade notes
 
+- **Webmail's From menu matches what sending allows.** It now lists shared
+  mailboxes the user can send from, and their own aliases and lists under a
+  `@domain` grant. Sending from an alias without a grant is refused outright
+  rather than failing as a temporary fault.
 - **The default certificate is a choice.** **Make default** on the Certificates
   page picks what a client gets when it names no host we hold a certificate for.
   `MAIL_DOMAIN` keeps its own certificate, since internal connections check that

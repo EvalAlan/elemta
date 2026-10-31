@@ -43,6 +43,7 @@ type DirectoryDomain struct {
 type MailDirectory interface {
 	DirectoryList(ctx context.Context, address string) (mailpolicy.List, bool, error)
 	DirectoryDomain(ctx context.Context, domain string) (DirectoryDomain, bool, error)
+	DirectoryListsOf(ctx context.Context, address string) ([]string, error)
 }
 
 // maxListMemberEntries bounds the member DNs read for one directory list.
@@ -284,6 +285,83 @@ func (s *Service) directoryClasses(ctx context.Context, address string) (domainC
 	s.dirMail.classes[address] = cachedClass{at: now, class: a.DirectoryClass}
 	s.dirMail.mu.Unlock()
 	return d.Class, a.DirectoryClass, nil
+}
+
+// DirectoryListsOf returns the addresses of the directory lists that name
+// address as a member, by address or by the account's entry.
+func (a LDAPAuth) DirectoryListsOf(ctx context.Context, address string) ([]string, error) {
+	address = strings.ToLower(strings.TrimSpace(address))
+	filter := "(elemtaListMember=" + ldap.EscapeFilter(address) + ")"
+	if _, dn, err := a.lookup(ctx, address, false); err == nil && dn != "" {
+		filter = "(|" + filter + "(member=" + ldap.EscapeFilter(dn) + "))"
+	}
+	c, err := a.bound()
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	res, err := c.Search(ldap.NewSearchRequest(a.directoryBase(), ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 5, false,
+		"(&(objectClass=elemtaMailList)"+filter+")", []string{"mail"}, nil))
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, e := range res.Entries {
+		if m := strings.ToLower(strings.TrimSpace(e.GetAttributeValue("mail"))); m != "" {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+// sendAddresses lists what compose can offer the account, beside its own
+// address. It follows the check SMTP makes (share-access), so an address here
+// is one the send will be allowed. Holding an alias or belonging to a list
+// doesn't by itself count: membership of a large list would otherwise let
+// everyone on it speak as the list. A whole-domain grant covers too many
+// addresses to list, so it offers the account's own aliases and lists there.
+func (s *Service) sendAddresses(ctx context.Context, a Account) ([]string, error) {
+	out := []string{}
+	domainGrant := false
+	for _, g := range a.SendAs {
+		if strings.HasPrefix(g, "@") {
+			domainGrant = true
+		} else {
+			out = append(out, g)
+		}
+	}
+	shares, err := s.engine.SharesForMember(ctx, a.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, share := range shares {
+		if share.CanSend {
+			out = append(out, share.Mailbox)
+		}
+	}
+	if domainGrant {
+		held := slices.Clone(a.Aliases)
+		lists, err := s.engine.ListsOfMember(ctx, a.Address)
+		if err != nil {
+			return nil, err
+		}
+		held = append(held, lists...)
+		if md := s.mailDirectory(); md != nil {
+			lists, err := md.DirectoryListsOf(ctx, a.Address)
+			if err != nil {
+				return nil, err
+			}
+			held = append(held, lists...)
+		}
+		for _, addr := range held {
+			if sendAsAllowed(a.SendAs, addr) {
+				out = append(out, addr)
+			}
+		}
+	}
+	slices.Sort(out)
+	out = slices.Compact(out)
+	return slices.DeleteFunc(out, func(addr string) bool { return addr == a.Address }), nil
 }
 
 // sendAsAllowed reports whether the account's directory grants (an

@@ -24,6 +24,32 @@ type pageCache struct {
 	shares map[string]cachedShares
 	raw    map[string]cachedRaw
 	mail   map[string]cachedMail
+	sendAs map[string]cachedSendAs
+}
+
+type cachedSendAs struct {
+	at        time.Time
+	addresses []string
+}
+
+// The addresses the user may send as, like the shares, for a minute.
+func (c *pageCache) getSendAs(session string, now time.Time) ([]string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.sendAs[session]
+	if !ok || now.Sub(e.at) >= sharesTTL || now.Before(e.at) {
+		return nil, false
+	}
+	return e.addresses, true
+}
+
+func (c *pageCache) putSendAs(session string, addresses []string, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sendAs == nil || len(c.sendAs) >= maxCacheSessions {
+		c.sendAs = map[string]cachedSendAs{}
+	}
+	c.sendAs[session] = cachedSendAs{at: now, addresses: addresses}
 }
 
 type cachedMail struct {

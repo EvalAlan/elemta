@@ -137,6 +137,25 @@ func (e *Engine) Lists(ctx context.Context) ([]mailpolicy.List, error) {
 	return out, rows.Err()
 }
 
+// ListsOfMember returns the addresses of the lists that have address as a
+// direct member.
+func (e *Engine) ListsOfMember(ctx context.Context, address string) ([]string, error) {
+	rows, err := e.DB.QueryContext(ctx, `SELECT list FROM mailbox_list_members WHERE member=$1 ORDER BY list`, strings.ToLower(strings.TrimSpace(address)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var list string
+		if err := rows.Scan(&list); err != nil {
+			return nil, err
+		}
+		out = append(out, list)
+	}
+	return out, rows.Err()
+}
+
 // List returns one list with its members, sorted.
 func (e *Engine) List(ctx context.Context, address string) (mailpolicy.List, error) {
 	l := mailpolicy.List{Address: strings.ToLower(strings.TrimSpace(address))}

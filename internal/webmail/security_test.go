@@ -26,6 +26,7 @@ type fakeSecurity struct {
 	// The company address book /v1/directory returns.
 	directory []directoryEntry
 	shares    []sharedMailbox
+	sendAs    []string
 	// Free/busy: what was published, and what lookups return.
 	published map[string]any
 	freeBusy  []map[string]any
@@ -85,6 +86,13 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		switch {
 		case r.URL.Path == "/v1/security/shares":
 			_ = json.NewEncoder(w).Encode(f.shares)
+			return
+		case r.URL.Path == "/v1/security/send-as":
+			if f.sendAs == nil {
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(f.sendAs)
 			return
 		case r.URL.Path == "/v1/security/senders":
 			if r.Method == http.MethodPut {

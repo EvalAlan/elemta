@@ -116,3 +116,33 @@ func mustURL(t *testing.T, raw string) *url.URL {
 	}
 	return u
 }
+
+// The mailbox service decides, so a list it allows shows up and a grant it
+// has since dropped doesn't linger because the directory copy says so.
+func TestComposeOffersWhatTheServiceAllows(t *testing.T) {
+	h := newSecurityHarness(t, &fakeSecurity{sendAs: []string{"crew@example.com", "ana2@example.com"}})
+	h.server.mailSettings = &fakeMailSettings{mail: AccountMail{SendAs: []string{"stale@example.com"}}}
+	csrf := h.login()
+	_, body := h.get("/compose")
+	for _, want := range []string{`value="crew@example.com"`, `value="ana2@example.com"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("compose doesn't offer %s", want)
+		}
+	}
+	if strings.Contains(body, "stale@example.com") {
+		t.Error("compose offered a grant the service didn't list")
+	}
+	sendForm(t, h, csrf, map[string]string{"to": "x@remote.example", "subject": "hi", "body": "hello", "from": "crew@example.com"})
+	if h.sub.from != "crew@example.com" {
+		t.Errorf("sent from %q", h.sub.from)
+	}
+}
+
+func TestComposeKeepsDirectoryGrantsWhenTheServiceCantAnswer(t *testing.T) {
+	h := newSecurityHarness(t, &fakeSecurity{})
+	h.server.mailSettings = &fakeMailSettings{mail: AccountMail{SendAs: []string{"sales@example.com"}}}
+	h.login()
+	if _, body := h.get("/compose"); !strings.Contains(body, `value="sales@example.com"`) {
+		t.Error("compose lost the directory's grant")
+	}
+}

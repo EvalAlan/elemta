@@ -275,6 +275,11 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 			return map[string]bool{"allowed": true}, nil
 		}
 		owner, err := s.directoryAccount(r.Context(), r.URL.Query().Get("mailbox"))
+		// An alias isn't a mailbox to share, and a sender without a grant for
+		// one is refused. As an error, SMTP would report a temporary fault.
+		if sending && errors.Is(err, mailpolicy.ErrInvalid) {
+			return map[string]bool{"allowed": false}, nil
+		}
 		if err != nil {
 			return nil, err
 		}

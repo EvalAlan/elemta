@@ -3,7 +3,9 @@ package mailbox
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,6 +28,16 @@ func (m mailDirAuth) DirectoryList(_ context.Context, address string) (mailpolic
 func (m mailDirAuth) DirectoryDomain(_ context.Context, domain string) (DirectoryDomain, bool, error) {
 	d, ok := m.domains[strings.ToLower(domain)]
 	return d, ok, nil
+}
+
+func (m mailDirAuth) DirectoryListsOf(_ context.Context, address string) ([]string, error) {
+	out := []string{}
+	for _, l := range m.lists {
+		if slices.Contains(l.Members, strings.ToLower(address)) {
+			out = append(out, l.Address)
+		}
+	}
+	return out, nil
 }
 
 func newMailDirRig(t *testing.T, setup func(r *addressingRig, m *mailDirAuth)) (*addressingRig, *mailDirAuth) {
@@ -195,6 +207,59 @@ func TestDirectorySendAs(t *testing.T) {
 	} {
 		if got := allowed(c.mailbox, c.member); got != c.want {
 			t.Errorf("%s sending as %s = %v, want %v", c.member, c.mailbox, got, c.want)
+		}
+	}
+}
+
+// A held alias without a grant is a refusal, not a fault: SMTP turns an error
+// here into a temporary failure the sender would retry for days.
+func TestSendAsOwnAliasWithoutAGrant(t *testing.T) {
+	r, _ := newMailDirRig(t, nil)
+	r.svc.adminToken = "admin-secret"
+	req := httptest.NewRequest("GET", "/v1/admin/share-access?send=true&mailbox="+r.addr("benny")+"&member="+r.addr("ben"), nil)
+	req.RemoteAddr = "127.0.0.1:5000"
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	w := httptest.NewRecorder()
+	r.svc.http.Handler.ServeHTTP(w, req)
+	var out map[string]bool
+	if err := json.Unmarshal(w.Body.Bytes(), &out); w.Code != http.StatusOK || err != nil || out["allowed"] {
+		t.Fatalf("sending as an alias = %d %s", w.Code, w.Body)
+	}
+}
+
+func TestSendAddresses(t *testing.T) {
+	r, m := newMailDirRig(t, nil)
+	ctx := context.Background()
+	m.lists[r.addr("crew")] = mailpolicy.List{Address: r.addr("crew"), Members: []string{r.addr("ana")}}
+	m.lists["club@brand.example"] = mailpolicy.List{Address: "club@brand.example", Members: []string{r.addr("ana")}}
+	if _, err := r.svc.engine.PutList(ctx, mailpolicy.List{Address: "desk@brand.example", Members: []string{r.addr("ana")}}); err != nil {
+		t.Fatal(err)
+	}
+	ana := r.dir.accounts[r.addr("ana")]
+	ana.Aliases = []string{"ana2@brand.example", "ana3@other.example"}
+
+	// Belonging to a list or holding an alias isn't permission.
+	got, err := r.svc.sendAddresses(ctx, ana)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("without a grant = %v, %v", got, err)
+	}
+	// A grant for one address offers that one.
+	ana.SendAs = []string{r.addr("crew"), ana.Address}
+	if got, err = r.svc.sendAddresses(ctx, ana); err != nil || !slices.Equal(got, []string{r.addr("crew")}) {
+		t.Fatalf("one grant = %v, %v", got, err)
+	}
+	// A domain grant offers what the account holds there, and nothing else.
+	ana.SendAs = []string{"@brand.example"}
+	if got, err = r.svc.sendAddresses(ctx, ana); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"ana2@brand.example", "club@brand.example", "desk@brand.example"}; !slices.Equal(got, want) {
+		t.Fatalf("domain grant = %v, want %v", got, want)
+	}
+	// Every address offered is one the send check allows.
+	for _, addr := range got {
+		if !sendAsAllowed(ana.SendAs, addr) {
+			t.Errorf("offered %s, which sending refuses", addr)
 		}
 	}
 }

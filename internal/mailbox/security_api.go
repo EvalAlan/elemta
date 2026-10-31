@@ -161,6 +161,9 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 	handle("GET /v1/security/shares", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		return s.engine.SharesForMember(r.Context(), a.account.ID)
 	})
+	handle("GET /v1/security/send-as", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.sendAddresses(r.Context(), a.account)
+	})
 	// Free/busy: the webmail publishes the user's own busy times and reads
 	// colleagues'.
 	handle("PUT /v1/freebusy", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
