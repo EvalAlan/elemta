@@ -272,10 +272,13 @@ func TestRefusedBDATChunkIsNotExecutedAsCommands(t *testing.T) {
 
 	// A chunk far larger than max_size is refused before it is read.
 	p.send("BDAT 99999999\r\n")
-	// These are chunk octets, not commands.
-	p.send("RCPT TO:<victim@example.com>\r\n")
-	p.send("BDAT 10 LAST\r\n")
-	p.send("injected!\n")
+	// These are chunk octets, not commands. The server gives up on a chunk
+	// this large and closes the connection, so a write can lose that race.
+	for _, chunk := range []string{"RCPT TO:<victim@example.com>\r\n", "BDAT 10 LAST\r\n", "injected!\n"} {
+		if !p.trySend(chunk) {
+			break
+		}
+	}
 
 	got := p.drainFor(3 * time.Second)
 
