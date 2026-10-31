@@ -777,6 +777,37 @@ func TestConversationRowOpensOldestUnread(t *testing.T) {
 	}
 }
 
+func TestQuarantineFolder(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	h.store.folders = append(h.store.folders, Folder{Name: "Quarantine", Display: "Quarantine", Role: RoleQuarantine, Selectable: true})
+	h.store.messages["Quarantine"] = []Summary{{UID: 31, Subject: "Held", Date: time.Now()}}
+	h.store.raw[31] = []byte("Subject: Held\r\n\r\nbody\r\n")
+	_, page := h.get("/mail?f=Quarantine")
+	for _, want := range []string{"Release anything you were expecting", ">Release</button>"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("Quarantine list lacks %q", want)
+		}
+	}
+	if strings.Contains(page, ">Not junk</button>") {
+		t.Error("Quarantine offers Not junk as well as Release")
+	}
+	_, inbox := h.get("/mail?f=INBOX")
+	if strings.Contains(inbox, "Release anything you were expecting") {
+		t.Error("the Quarantine note shows on other folders")
+	}
+	resp := h.post("/mail/action", url.Values{"csrf": {csrf}, "f": {"Quarantine"}, "uid": {"31"}, "op": {"notjunk"}})
+	if resp.StatusCode != http.StatusSeeOther || h.store.moved[31] != "INBOX" {
+		t.Fatalf("release: status %d moved %v", resp.StatusCode, h.store.moved)
+	}
+	if !countable(Folder{Role: RoleInbox}) || countable(Folder{Role: RoleQuarantine}) {
+		t.Error("held mail isn't waiting for the user, so it shouldn't count as unread")
+	}
+	if got := roleOf("Quarantine", nil); got != RoleQuarantine {
+		t.Errorf("role %q", got)
+	}
+}
+
 func TestConversationCardsInReader(t *testing.T) {
 	h := newHarness(t)
 	h.login()

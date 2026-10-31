@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Spam quarantine.** Mail the spam check would refuse now waits in the user's
+  Quarantine folder for 30 days, and they can release it from the webmail.
+  Viruses are still refused, and so is spam for outside addresses. Existing
+  installs keep rejecting until you turn on **Quarantine instead of rejecting**
+  under Plugins, Rspamd. Senders of held mail get no bounce. See "Quarantine" in
+  [docs/mail-administration.md](docs/mail-administration.md).
+
 - **Publish MTA-STS policies.** `MTA_STS_DOMAINS` in `cloud.env` serves a policy
   for each domain, and the deploy prints the records to publish. See "MTA-STS"
   in [docs/cloud-dev.md](docs/cloud-dev.md).

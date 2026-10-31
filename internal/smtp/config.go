@@ -551,8 +551,12 @@ type ClamAVConfig struct {
 
 // AntispamConfig represents antispam configuration
 type AntispamConfig struct {
-	Enabled      bool                `toml:"enabled" json:"enabled"`
-	RejectOnSpam bool                `toml:"reject_on_spam" json:"reject_on_spam"`
+	Enabled      bool `toml:"enabled" json:"enabled"`
+	RejectOnSpam bool `toml:"reject_on_spam" json:"reject_on_spam"`
+	// Quarantine holds mail reject_on_spam would refuse in the recipients'
+	// Quarantine folders, when they are all mailboxes here. Viruses are never
+	// held, and mail that can't be held is still refused.
+	Quarantine   bool                `toml:"quarantine" json:"quarantine"`
 	SpamAssassin *SpamAssassinConfig `toml:"spamassassin" json:"spamassassin"`
 	Rspamd       *RspamdConfig       `toml:"rspamd" json:"rspamd"`
 }

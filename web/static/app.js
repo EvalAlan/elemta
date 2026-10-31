@@ -1961,6 +1961,8 @@ const PLUGIN_SETTINGS_SCHEMA = {
               hint: 'Only used when rspamd reports no action of its own' },
             { key: 'reject_on_spam', label: 'Reject spam at SMTP', type: 'checkbox',
               hint: 'Off delivers spam tagged with X-Spam headers for downstream filtering' },
+            { key: 'quarantine', label: 'Quarantine instead of rejecting', type: 'checkbox',
+              hint: "Holds mail for local mailboxes in each user's Quarantine folder, where they can release it. Viruses are always refused, and mail for outside addresses is still rejected." },
         ],
     },
     rbl: {
@@ -2091,7 +2093,7 @@ function pluginSummary(plugin) {
     const bits = [];
     if (c.address) bits.push(escapeHtml(String(c.address)));
     if (typeof c.threshold === 'number' && c.threshold > 0) bits.push(`threshold ${c.threshold}`);
-    if (c.reject_on_spam) bits.push('rejects spam');
+    if (c.reject_on_spam) bits.push(c.quarantine ? 'quarantines spam' : 'rejects spam');
     if (c.reject_on_failure) bits.push('rejects on scan failure');
     if (typeof c.max_messages_per_minute === 'number') bits.push(`${c.max_messages_per_minute}/min`);
     if (c.verify) bits.push('verifies inbound');

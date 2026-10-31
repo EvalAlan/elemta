@@ -200,6 +200,8 @@ func roleOf(name string, attrs []imap.MailboxAttr) Role {
 		return RoleSent
 	case "junk", "spam":
 		return RoleJunk
+	case "quarantine":
+		return RoleQuarantine
 	case "trash", "deleted items", "deleted messages":
 		return RoleTrash
 	case "archive":
@@ -208,7 +210,7 @@ func roleOf(name string, attrs []imap.MailboxAttr) Role {
 	return RoleNone
 }
 
-var roleOrder = map[Role]int{RoleInbox: 0, RoleDrafts: 1, RoleSent: 2, RoleArchive: 3, RoleJunk: 4, RoleTrash: 5}
+var roleOrder = map[Role]int{RoleInbox: 0, RoleDrafts: 1, RoleSent: 2, RoleArchive: 3, RoleJunk: 4, RoleQuarantine: 5, RoleTrash: 6}
 
 // sortFolders puts the special folders first in a fixed order, then the rest
 // by name, which keeps a parent directly above its children. Children of a

@@ -67,7 +67,11 @@ type SecurityScanResult struct {
 	// SpamDefer records that an engine asked for a temporary refusal rather
 	// than a permanent one. Answering 554 to that turns "retry later" into
 	// "never", which loses mail the engine expected to see again.
-	SpamDefer   bool
+	SpamDefer bool
+	// SpamHeld records that spam which would have been refused was accepted
+	// for the recipients' Quarantine folders instead. The sender gets no
+	// bounce: this is what lets someone rescue real mail the filter got wrong.
+	SpamHeld    bool
 	VirusFound  bool
 	Quarantined bool
 }
@@ -1166,6 +1170,11 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 		if scanResult.SpamDetected {
 			spamStatus = "Yes"
 		}
+		// Still "Yes" first: a mailbox that doesn't know this word yet files
+		// it in Junk, where a misstep during an upgrade stays out of the INBOX.
+		if scanResult.SpamHeld {
+			spamStatus = "Yes, quarantine"
+		}
 		additionalHeaders = append(additionalHeaders, "X-Spam-Scanned: Yes")
 		threshold := scanResult.SpamThreshold
 		if threshold <= 0 && dh.config.Antispam != nil && dh.config.Antispam.Rspamd != nil {
@@ -1748,6 +1757,12 @@ func mergeScanResult(dst, src *SecurityScanResult) {
 	if src.SpamDetected {
 		dst.SpamDetected = true
 	}
+	if src.SpamDefer {
+		dst.SpamDefer = true
+	}
+	if src.SpamHeld {
+		dst.SpamHeld = true
+	}
 	if src.SpamScore > dst.SpamScore {
 		dst.SpamScore = src.SpamScore
 	}
@@ -1945,6 +1960,23 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, view *scanConte
 	return nil
 }
 
+// canQuarantine reports whether this message can be held rather than refused.
+// Only a mailbox here has a Quarantine folder. A logged-in user's own mail is
+// also refused as before: they're there to see the error and fix it, and held
+// mail they sent to themselves would help nobody.
+func (dh *DataHandler) canQuarantine() bool {
+	if dh.config.Antispam == nil || !dh.config.Antispam.Quarantine || dh.state.IsAuthenticated() {
+		return false
+	}
+	recipients := dh.state.GetRecipients()
+	for _, r := range recipients {
+		if !inLocalDomains(dh.config.LocalDomains, r) {
+			return false
+		}
+	}
+	return len(recipients) > 0
+}
+
 // performSpamScan performs spam detection
 func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, metadata *MessageMetadata, result *SecurityScanResult) error {
 	if dh.scannerManager == nil || !dh.scannerManager.HasAntispamScanners() {
@@ -2028,7 +2060,16 @@ func (dh *DataHandler) performSpamScan(ctx context.Context, view *scanContent, m
 			// Only a real reject is grounds for refusing outright, and only
 			// when the operator asked for rejection at all.
 			if dh.config.Antispam != nil && dh.config.Antispam.RejectOnSpam {
-				result.Passed = false
+				if dh.canQuarantine() {
+					result.SpamHeld = true
+					dh.logger.InfoContext(ctx, "Message held for quarantine",
+						"event_type", "quarantine",
+						"spam_score", highest,
+						"message_id", metadata.MessageID,
+					)
+				} else {
+					result.Passed = false
+				}
 			}
 		default:
 			// Tagging. The message is delivered carrying its spam headers and

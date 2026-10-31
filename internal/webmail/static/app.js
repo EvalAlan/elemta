@@ -1160,7 +1160,8 @@
       return folderTargets(folder).map(function (n) { return { label: n, run: act("move", { dest: n }) }; });
     } });
     if (role !== "archive") items.push({ label: "Archive", run: act("archive") });
-    items.push(role === "junk" ? { label: "Not junk", run: act("notjunk") } : { label: "Report junk", run: act("junk") });
+    items.push(role === "quarantine" ? { label: "Release to Inbox", run: act("notjunk") } :
+      role === "junk" ? { label: "Not junk", run: act("notjunk") } : { label: "Report junk", run: act("junk") });
     items.push({ label: role === "trash" ? "Delete for good" : "Delete", danger: true, run: function () {
       if (role === "trash" && !window.confirm("Delete " + (one ? "this message" : uids.length + " messages") + " for good?")) return;
       act("delete")();
