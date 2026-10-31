@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Check a domain's DNS from the console.** Mail Administration's domain dialog
+  has a **Check DNS** button covering MX, reverse DNS, SPF, DKIM, DMARC, MTA-STS,
+  TLS-RPT and mail app discovery, with the record to publish where there's one
+  right answer. See "Checking a domain's DNS" in
+  [docs/mail-administration.md](docs/mail-administration.md).
 - **Conversations no longer get stuck unread.** A conversation row always opened
   its latest message, so an older unread message could never be cleared by
   clicking it. Rows now open the oldest unread message.

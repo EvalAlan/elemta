@@ -469,9 +469,51 @@
         missing: 'Not published: DNS has no DKIM record at this name yet.',
         mismatch: 'Wrong key: DNS has a different key at this name.',
     };
+    // Words as well as colour, so the result reads without either.
+    const HEALTH_LABEL = { ok: 'OK', info: 'Optional', unknown: "Couldn't check", warn: 'Needs attention', fail: 'Problem' };
+    const HEALTH_SUMMARY = {
+        ok: 'Everything this domain needs is in place.',
+        info: 'Everything this domain needs is in place.',
+        unknown: "Nothing is wrong so far, but some checks couldn't finish. Try again in a minute.",
+        warn: 'Mail works, but something needs attention.',
+        fail: 'Something is wrong that affects mail for this domain.',
+    };
+    function healthCheck(check) {
+        const row = node('div', undefined, 'ma-key');
+        const heading = node('div', undefined, 'ma-key-heading');
+        heading.appendChild(node('strong', check.name));
+        heading.appendChild(node('span', HEALTH_LABEL[check.status] || check.status, 'ma-health-status ma-health-' + check.status));
+        row.appendChild(heading);
+        row.appendChild(node('p', check.summary, 'ma-health-text'));
+        (check.found || []).forEach(line => row.appendChild(node('code', line, 'ma-health-found')));
+        if (check.fix) row.appendChild(node('p', check.fix, 'ma-health-text'));
+        if (check.record) row.appendChild(copyField('Publish', check.record));
+        return row;
+    }
+    function clearDomainHealth() {
+        el('ma-domain-health-summary').textContent = 'Checks the records this domain needs to send and receive mail.';
+        el('ma-domain-health-results').replaceChildren();
+    }
+    async function runDomainHealth() {
+        const domain = selectedDomain.domain;
+        el('ma-domain-health-summary').textContent = 'Checking…';
+        el('ma-domain-health-results').replaceChildren();
+        try {
+            const report = await request(domainPath('/dns-health'));
+            // The dialog may have moved on to another domain by now.
+            if (selectedDomain.domain !== domain) return;
+            el('ma-domain-health-summary').textContent = (HEALTH_SUMMARY[report.status] || '') +
+                ' A record you just changed can take until its TTL runs out to show here.';
+            report.checks.forEach(check => el('ma-domain-health-results').appendChild(healthCheck(check)));
+        } catch (error) {
+            clearDomainHealth();
+            throw error;
+        }
+    }
     function domainPath(suffix) { return '/domains/' + encodeURIComponent(selectedDomain.domain) + suffix; }
     async function openDomain(name) {
         fillDomain(await request('/domains/' + encodeURIComponent(name) + '/settings'));
+        clearDomainHealth();
         el('ma-domain-message').hidden = true;
         if (!el('ma-domain-dialog').open) el('ma-domain-dialog').showModal();
     }
@@ -548,6 +590,7 @@
         try { fillDomain(await request(domainPath('/status'), 'PUT', { status })); } catch (error) { event.target.value = selectedDomain.status; throw error; }
         message(selectedDomain.domain + ' is now ' + status + '.'); await refresh();
     }));
+    el('ma-domain-health-run').addEventListener('click', () => perform(runDomainHealth));
     el('ma-domain-signing-off').addEventListener('click', () => perform(async () => {
         if (!window.confirm('Stop signing mail from ' + selectedDomain.domain + '? Its keys are kept. Under a strict DMARC policy, unsigned mail depends on SPF alone.')) return;
         fillDomain(await request(domainPath('/dkim/signing'), 'PUT', { enabled: false }));

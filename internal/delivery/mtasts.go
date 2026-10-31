@@ -324,6 +324,11 @@ func (m *MTASTSManager) fetchPolicyFromDNS(ctx context.Context, domain string) (
 
 // parsePolicyText parses MTA-STS policy text format into an MTASTSPolicy struct.
 // Reference: RFC 8461 Section 3.1
+// ParseMTASTSPolicy reads a policy file, or returns nil if it isn't valid.
+// The admin console's DNS health check uses it, so a policy is judged by the
+// same rules that enforce it at delivery.
+func ParseMTASTSPolicy(text string) *MTASTSPolicy { return parsePolicyText(text) }
+
 func parsePolicyText(text string) *MTASTSPolicy {
 	policy := &MTASTSPolicy{
 		Version: "",

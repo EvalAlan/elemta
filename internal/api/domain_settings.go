@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/dnshealth"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/gorilla/mux"
@@ -200,6 +201,25 @@ func (s *Server) domainSettingsRoutes(protected *mux.Router) {
 		writeJSON(w, view)
 		return nil
 	})).Methods("GET")
+	// Read-only, so a domain's own administrators can run it too: they're the
+	// ones who can change the domain's DNS.
+	protected.HandleFunc("/domains/{domain}/dns-health", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+		domain, err := s.configuredDomain(ctx, r)
+		if err != nil {
+			return err
+		}
+		if err := scopeOf(r).checkDomain(domain); err != nil {
+			return err
+		}
+		view, err := s.domainSettings(ctx, domain)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(ctx, dnsHealthTimeout)
+		defer cancel()
+		writeJSON(w, s.runDNSHealth(ctx, view))
+		return nil
+	})).Methods("GET")
 	protected.HandleFunc("/domains/{domain}/status", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		if err := scopeOf(r).systemOnly(); err != nil {
 			return err
@@ -322,6 +342,32 @@ func (s *Server) domainSettingsRoutes(protected *mux.Router) {
 		writeJSON(w, map[string]string{"state": state, "found": found, "name": view.Keys[i].DNSName})
 		return nil
 	})).Methods("GET")
+}
+
+// dnsHealthTimeout bounds a check. Slow answers come back as "couldn't check"
+// rather than holding the dialog open.
+const dnsHealthTimeout = 12 * time.Second
+
+func (s *Server) runDNSHealth(ctx context.Context, view domainSettingsView) dnshealth.Report {
+	o := dnshealth.Options{Domain: view.Domain, Resolver: net.DefaultResolver, Signing: dnshealth.SigningNo}
+	if s.mainConfig != nil {
+		o.Hostname = s.mainConfig.Hostname
+	}
+	switch view.Signing {
+	case signingOn:
+		o.Signing = dnshealth.SigningOn
+	case signingOff, signingPluginOff:
+		o.Signing = dnshealth.SigningOff
+	}
+	for _, k := range view.Keys {
+		if k.Active {
+			o.DKIMKeys = append(o.DKIMKeys, dnshealth.DKIMKey{Name: k.DNSName, Record: k.Record})
+		}
+	}
+	if s.dnsHealth != nil {
+		return s.dnsHealth(ctx, o)
+	}
+	return dnshealth.Run(ctx, o)
 }
 
 // selectorFree refuses a selector the configuration file already uses for
