@@ -35,6 +35,9 @@ func init() {
 			defer cancel()
 			plan := e.Plan()
 			out := c.OutOrStdout()
+			// Startup logging shares stdout, so the agent reads only between
+			// these lines, and the end marker shows it got the whole plan.
+			fmt.Fprintln(out, "plan-begin")
 			fmt.Fprintf(out, "mode %s\n", plan.Mode)
 			for _, a := range plan.Allow {
 				fmt.Fprintf(out, "allow %s\n", a)
@@ -42,6 +45,7 @@ func init() {
 			for _, entry := range plan.Entries {
 				fmt.Fprintf(out, "block %s %d\n", entry.Target, entry.Seconds)
 			}
+			fmt.Fprintln(out, "plan-end")
 			return nil
 		},
 	})

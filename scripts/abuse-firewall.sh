@@ -18,7 +18,9 @@ max_entries=20000
 container=${ELEMTA_ABUSE_CONTAINER:-elemta-admin}
 host=$(hostname)
 
-# plan: "mode log|apply|off", then "allow <net>" and "block <target> <seconds>".
+# plan: between "plan-begin" and "plan-end" lines, "mode log|apply|off", then
+# "allow <net>" and "block <target> <seconds>". Anything outside them is the
+# container's own logging; a plan with no end was cut short and isn't used.
 plan_source() {
     if [ -n "${ELEMTA_ABUSE_PLAN_FILE:-}" ]; then
         cat "$ELEMTA_ABUSE_PLAN_FILE"
@@ -51,10 +53,16 @@ valid_ip() {
     [[ $v != */* ]] || [ "${v#*/}" -le 128 ]
 }
 
-if ! plan=$(plan_source 2>/dev/null); then
+if ! raw=$(plan_source 2>/dev/null); then
     echo "abuse-firewall: no plan; leaving the firewall as it is" >&2
     exit 0
 fi
+if ! grep -qx plan-begin <<<"$raw" || ! grep -qx plan-end <<<"$raw"; then
+    echo "abuse-firewall: incomplete plan; leaving the firewall as it is" >&2
+    report unknown 0 0 "the plan was incomplete"
+    exit 1
+fi
+plan=$(sed -n '/^plan-begin$/,/^plan-end$/p' <<<"$raw" | sed -e '1d' -e '$d')
 
 mode=""
 allow4=() allow6=() block4=() block6=()
