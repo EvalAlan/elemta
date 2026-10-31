@@ -23,7 +23,14 @@
 # hold up the others. Prints "updated" when it replaced any files.
 #
 # --render-only writes Caddy's site names and stops: the deploy needs the
-# Caddyfile before Caddy can start.
+# Caddyfile before Caddy can start. --mta-sts-records <address> prints the DNS
+# records MTA_STS_DOMAINS needs, changing nothing.
+#
+# MTA_STS_DOMAINS in cloud.env lists domains that publish an MTA-STS policy
+# (RFC 8461), on a site of their own at mta-sts.<domain>. It's a list because
+# Caddy keeps failing to get a certificate for a name with no DNS, and a name
+# needs one whether or not anyone wants a policy. MTA_STS_MODE is testing, the
+# default, enforce or none.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -75,10 +82,72 @@ names=$MAIL_DOMAIN
 for h in "${configured[@]}" "${requested[@]}"; do
     names="$names, $h"
 done
+
+# One policy serves every domain, since they all deliver to this server. It
+# lists every mail host here, so it can't disagree with an MX pointing at any
+# of them. A week's max_age only in enforce: senders keep following a policy
+# that long, and testing is where mistakes should still be cheap.
+mta_sts_mode=${MTA_STS_MODE:-testing}
+case $mta_sts_mode in
+enforce) mta_sts_age=604800 ;;
+testing | none) mta_sts_age=86400 ;;
+*)
+    echo "cloud-sync-certs: MTA_STS_MODE must be enforce, testing or none, not '$mta_sts_mode'" >&2
+    exit 1
+    ;;
+esac
+mta_sts_policy="version: STSv1
+mode: $mta_sts_mode"
+for h in "$MAIL_DOMAIN" "${configured[@]}" "${requested[@]}"; do
+    mta_sts_policy="$mta_sts_policy
+mx: $h"
+done
+mta_sts_policy="$mta_sts_policy
+max_age: $mta_sts_age"
+# Senders refetch the policy only when this changes, so it comes from the
+# policy itself and can't be forgotten.
+mta_sts_id=$(printf '%s' "$mta_sts_policy" | sha256sum | cut -c1-20)
+mta_sts_sites=()
+for d in ${MTA_STS_DOMAINS:-}; do
+    if valid_host "$d"; then
+        mta_sts_sites+=("mta-sts.$d")
+    else
+        echo "cloud-sync-certs: '$d' in MTA_STS_DOMAINS isn't a domain name; skipping it" >&2
+    fi
+done
+
+if [ "${1:-}" = --mta-sts-records ]; then
+    for site in "${mta_sts_sites[@]}"; do
+        d=${site#mta-sts.}
+        printf '  %s.  A    %s\n' "$site" "${2:?an address for the A records}"
+        printf '  _mta-sts.%s.  TXT  "v=STSv1; id=%s"\n' "$d" "$mta_sts_id"
+    done
+    exit 0
+fi
+
 sed -e "s|^{\$MAIL_DOMAIN} {|{\$MAIL_DOMAIN}${names#"$MAIL_DOMAIN"} {|" "$root/deployments/cloud/Caddyfile" >"$tmp/Caddyfile"
 if ! grep -q "^{\$MAIL_DOMAIN}" "$tmp/Caddyfile"; then
     echo "cloud-sync-certs: the Caddyfile template no longer has the {\$MAIL_DOMAIN} site" >&2
     exit 1
+fi
+if [ ${#mta_sts_sites[@]} -gt 0 ]; then
+    # Its own site, so these names serve the policy and nothing else: the
+    # webmail's sign-in page has no business on them.
+    {
+        echo
+        echo "# MTA-STS, from MTA_STS_DOMAINS (scripts/cloud-sync-certs.sh)."
+        (IFS=,; echo "${mta_sts_sites[*]} {" | sed 's/,/, /g')
+        printf '\theader -Server\n'
+        printf '\t@policy path /.well-known/mta-sts.txt\n'
+        printf '\thandle @policy {\n'
+        printf '\t\theader Content-Type "text/plain; charset=utf-8"\n'
+        printf '\t\trespond <<POLICY\n'
+        printf '%s\n' "$mta_sts_policy" | sed 's/^/\t\t\t/'
+        printf '\t\t\tPOLICY 200\n'
+        printf '\t}\n'
+        printf '\thandle {\n\t\trespond 404\n\t}\n'
+        echo "}"
+    } >>"$tmp/Caddyfile"
 fi
 if ! cmp -s "$tmp/Caddyfile" "$caddyfile"; then
     mkdir -p "$(dirname "$caddyfile")"
