@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -250,4 +251,43 @@ func pemPair(t *testing.T, days int, names ...string) ([]byte, []byte) {
 		t.Fatal(err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+}
+
+func TestCertificateRequestForSeveralNames(t *testing.T) {
+	s, m := managedServer(t)
+	request := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		s.handleTLSCertificateRequest(rec, jsonRequest(http.MethodPost, "/api/tls/certificates", body))
+		return rec
+	}
+	// A bad name refuses the lot, so nothing is half requested.
+	if rec := request(`{"hosts": ["mail.example.org", "bad_host"]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a bad name = %d", rec.Code)
+	}
+	if hosts, _ := m.hosts(); len(hosts) != 0 {
+		t.Fatalf("a refused request left %v", hosts)
+	}
+	if rec := request(`{"hosts": ["Mail.Example.org.", "imap.example.org", "mail.example.org"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("names = %d %s", rec.Code, rec.Body)
+	}
+	hosts, _ := m.hosts()
+	if strings.Join(hosts, ",") != "mail.example.org,imap.example.org" {
+		t.Fatalf("hosts = %v", hosts)
+	}
+	if rec := request(`{"hosts": ["pop.example.org", "imap.example.org"]}`); rec.Code != http.StatusConflict {
+		t.Fatalf("one already requested = %d", rec.Code)
+	}
+	if hosts, _ = m.hosts(); len(hosts) != 2 {
+		t.Fatalf("a refused request changed the list: %v", hosts)
+	}
+	var many []string
+	for i := 0; i <= maxCertRequest; i++ {
+		many = append(many, fmt.Sprintf(`"h%d.example.org"`, i))
+	}
+	if rec := request(`{"hosts": [` + strings.Join(many, ",") + `]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("too many names = %d", rec.Code)
+	}
+	if rec := request(`{"hosts": []}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("no names = %d", rec.Code)
+	}
 }

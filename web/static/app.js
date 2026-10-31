@@ -3508,7 +3508,9 @@ document.addEventListener('DOMContentLoaded', () => {
     requestForm.addEventListener('submit', async event => {
         event.preventDefault();
         const input = document.getElementById('cert-request-host');
-        try { await certCall('', 'POST', { host: input.value }); input.value = ''; } catch (error) { showToast(error.message, 'error'); }
+        // Several names, for a host and its alternatives.
+        const hosts = input.value.split(/[\s,]+/).filter(Boolean);
+        try { await certCall('', 'POST', { hosts }); input.value = ''; } catch (error) { showToast(error.message, 'error'); }
     });
     document.getElementById('cert-upload-form').addEventListener('submit', async event => {
         event.preventDefault();

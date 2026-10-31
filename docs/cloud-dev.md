@@ -205,11 +205,13 @@ services serve (names, source, expiry), the one each local domain's clients
 get (a domain without one is flagged), and requests still waiting. An
 administrator can:
 
-- **request a Let's Encrypt certificate** for a host name that already points
-  at the server; Caddy obtains and renews it;
+- **request Let's Encrypt certificates** for up to ten host names at once, such
+  as a mail host and its alternatives, all already pointing at the server. Caddy
+  obtains and renews one certificate per name, and the mail services pick by the
+  name a client asks for, so clients can't tell that from one naming them all;
 - **upload a certificate** chain and unencrypted key in PEM, filed under the
   certificate's first name (a wildcard `*.example.org` as
-  `wildcard.example.org`); it isn't renewed;
+  `wildcard.example.org`). It serves every name in it. It isn't renewed;
 - **remove** either kind, and **sync now**.
 
 Certificates for `MAIL_DOMAIN` and `EXTRA_MAIL_DOMAINS` come from

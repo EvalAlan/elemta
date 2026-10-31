@@ -396,28 +396,40 @@ func (s *Server) handleTLSCertificateSync(w http.ResponseWriter, r *http.Request
 
 // handleTLSCertificateRequest asks for a Let's Encrypt certificate for a
 // host name.
+// maxCertRequest bounds one request: every name is a Let's Encrypt order, and
+// failed ones count towards its hourly limit.
+const maxCertRequest = 10
+
+// handleTLSCertificateRequest asks for certificates for one or more names, such
+// as a mail host and its alternatives. Caddy issues one certificate per name,
+// not one naming them all, which clients can't tell apart: the mail services
+// pick by the name asked for. The whole request is checked before any of it is
+// written, so a typo in the third name doesn't leave the first two requested.
 func (s *Server) handleTLSCertificateRequest(w http.ResponseWriter, r *http.Request) {
 	m := certManagerFor(w)
 	if m == nil {
 		return
 	}
 	var in struct {
-		Host string `json:"host"`
+		Host  string   `json:"host"`
+		Hosts []string `json:"hosts"`
 	}
 	if !decodeJSONBody(w, r, &in) {
 		return
 	}
-	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(in.Host)), ".")
-	if len(host) > 253 || !certHost.MatchString(host) {
+	wanted := []string{}
+	for _, raw := range append([]string{in.Host}, in.Hosts...) {
+		host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(raw)), ".")
+		if host != "" && !slices.Contains(wanted, host) {
+			wanted = append(wanted, host)
+		}
+	}
+	if len(wanted) == 0 {
 		http.Error(w, "Enter a host name such as mail.example.org.", http.StatusBadRequest)
 		return
 	}
-	if why := s.reservedCertHost(m, host); why != "" {
-		http.Error(w, why, http.StatusConflict)
-		return
-	}
-	if m.uploaded(host) {
-		http.Error(w, host+" already has an uploaded certificate. Remove it first.", http.StatusConflict)
+	if len(wanted) > maxCertRequest {
+		http.Error(w, fmt.Sprintf("Request at most %d names at a time.", maxCertRequest), http.StatusBadRequest)
 		return
 	}
 	hosts, err := m.hosts()
@@ -425,20 +437,35 @@ func (s *Server) handleTLSCertificateRequest(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "The certificate requests could not be read", http.StatusInternalServerError)
 		return
 	}
-	if slices.Contains(hosts, host) {
-		http.Error(w, host+" is already requested.", http.StatusConflict)
-		return
+	for _, host := range wanted {
+		if len(host) > 253 || !certHost.MatchString(host) {
+			http.Error(w, host+" isn't a host name such as mail.example.org.", http.StatusBadRequest)
+			return
+		}
+		if why := s.reservedCertHost(m, host); why != "" {
+			http.Error(w, why, http.StatusConflict)
+			return
+		}
+		if m.uploaded(host) {
+			http.Error(w, host+" already has an uploaded certificate. Remove it first.", http.StatusConflict)
+			return
+		}
+		if slices.Contains(hosts, host) {
+			http.Error(w, host+" is already requested.", http.StatusConflict)
+			return
+		}
 	}
-	if err = m.setHosts(append(hosts, host)); err == nil {
+	if err = m.setHosts(append(hosts, wanted...)); err == nil {
 		err = m.trigger()
 	}
 	if err != nil {
-		slog.Error("certificate request failed", "host", host, "error", err)
+		slog.Error("certificate request failed", "hosts", wanted, "error", err)
 		http.Error(w, "The certificate request could not be written", http.StatusInternalServerError)
 		return
 	}
-	slog.Info("certificate requested", "actor", certActor(r), "host", host)
-	writeJSON(w, map[string]string{"status": "Requested a certificate for " + host + ". It's issued only once " + host + " points at this server; each failed attempt counts toward Let's Encrypt's limit of 5 an hour."})
+	slog.Info("certificates requested", "actor", certActor(r), "hosts", wanted)
+	names := strings.Join(wanted, ", ")
+	writeJSON(w, map[string]string{"status": "Requested certificates for " + names + ". Each is issued only once its name points at this server."})
 }
 
 // handleTLSCertificateUpload stores an uploaded certificate and key for the
