@@ -44,7 +44,7 @@
       <ol class="messages" data-folder="{{$.Folder}}" data-role="{{roleName $.Folder $.Folders}}" data-back="{{$.List.URL}}">
       {{if $.Threaded}}
       {{range $.Conversations}}
-        {{$open := $.List.MessageURL .Latest.UID}}
+        {{$open := $.List.MessageURL .OpenUID}}
         <li class="row-wrap{{if .Unread}} unread{{end}}{{if and $.Message (inUIDs $.Message.UID .UIDs)}} selected{{end}}" data-uid="{{.UIDList}}" data-latest="{{.Latest.UID}}" data-ctx="message"{{if not .Unread}} data-seen{{end}}{{if .Flagged}} data-flagged{{end}}{{with .Latest.From}} data-from="{{(index . 0).Email}}"{{end}} data-open="{{$open}}" data-count="{{.Count}}">
           <label class="check"><input type="checkbox" name="uid" value="{{.UIDList}}"><span class="visually-hidden">Select conversation</span></label>
           <a class="row" href="{{$open}}"{{if and $.Message (inUIDs $.Message.UID .UIDs)}} aria-current="true"{{end}}>

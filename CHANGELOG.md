@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Conversations no longer get stuck unread.** A conversation row always opened
+  its latest message, so an older unread message could never be cleared by
+  clicking it. Rows now open the oldest unread message.
+
 - **Users' spam reports now train the filter.** Moving mail in or out of Junk,
   from the webmail or any mail app, teaches Rspamd's classifier. Nothing did
   before, and the classifier had nothing to learn from. See "Learning from

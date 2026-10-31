@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"html"
 	"io"
 	"math"
 	"mime/multipart"
@@ -691,7 +692,7 @@ func TestConversationList(t *testing.T) {
 	if h.store.threadCalls == 0 {
 		t.Fatal("conversations are the default, but the list wasn't threaded")
 	}
-	for _, want := range []string{`value="7,8"`, `class="thread-count"`, "Priya Shah, Marcus Lee", "uid=8"} {
+	for _, want := range []string{`value="7,8"`, `class="thread-count"`, "Priya Shah, Marcus Lee", "uid=7"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("threaded list lacks %q", want)
 		}
@@ -707,6 +708,72 @@ func TestConversationList(t *testing.T) {
 	_, page = h.get("/mail?f=INBOX")
 	if h.store.threadCalls != before || strings.Contains(page, `value="7,8"`) {
 		t.Fatal("grouping still on after switching it off")
+	}
+}
+
+// A conversation row used to open the latest message whatever was unread. With
+// an older message unread, clicking the row could never mark it read, so the
+// row and the folder's count stayed unread however often it was clicked.
+func TestConversationRowOpensOldestUnread(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	now := time.Now()
+	h.store.messages["INBOX"] = []Summary{
+		{UID: 20, Subject: "Newest", Date: now, Seen: true},
+		{UID: 21, Subject: "Plan", Date: now.Add(-3 * time.Hour)},
+		{UID: 22, Subject: "Re: Plan", Date: now.Add(-2 * time.Hour)},
+		{UID: 23, Subject: "Re: Plan", Date: now.Add(-time.Hour), Seen: true},
+		{UID: 24, Subject: "Oldest", Date: now.Add(-4 * time.Hour), Seen: true},
+	}
+	for uid := uint32(20); uid <= 24; uid++ {
+		h.store.raw[uid] = []byte("Subject: x\r\n\r\nbody\r\n")
+	}
+	row := func(page string) string {
+		start := strings.Index(page, `data-latest="23"`)
+		if start < 0 {
+			t.Fatalf("no conversation row in %s", page)
+		}
+		rest := page[start:]
+		end := strings.Index(rest, "</li>")
+		return rest[:end]
+	}
+	_, page := h.get("/mail?f=INBOX")
+	if r := row(page); !strings.Contains(r, "uid=21") {
+		t.Fatalf("the row must open the oldest unread message, got %s", r)
+	}
+	// Single-message actions still mean the latest.
+	if !strings.Contains(row(page), `data-latest="23"`) {
+		t.Fatal("data-latest changed")
+	}
+
+	// The arrows must survive opening a message that isn't the latest.
+	_, page = h.get("/mail?f=INBOX&uid=21")
+	if !h.store.seen[21] {
+		t.Fatal("opening the row didn't mark the unread message read")
+	}
+	if h.store.seen[22] {
+		t.Fatal("a message nobody opened was marked read")
+	}
+	newer, older := -1, -1
+	for _, match := range regexp.MustCompile(`href="[^"]*uid=(\d+)[^"]*"[^>]*data-key="([jk])"`).FindAllStringSubmatch(html.UnescapeString(page), -1) {
+		n, _ := strconv.Atoi(match[1])
+		if match[2] == "k" {
+			newer = n
+		} else {
+			older = n
+		}
+	}
+	if newer != 20 || older != 24 {
+		t.Fatalf("newer %d older %d, want 20 and 24", newer, older)
+	}
+
+	// Nothing unread: the row opens the latest, as before.
+	for i := range h.store.messages["INBOX"] {
+		h.store.messages["INBOX"][i].Seen = true
+	}
+	_, page = h.get("/mail?f=INBOX")
+	if r := row(page); !strings.Contains(r, "uid=23") {
+		t.Fatalf("a read conversation must open its latest, got %s", r)
 	}
 }
 
