@@ -316,3 +316,63 @@ func TestRefusedSmallBDATChunkKeepsConnectionUsable(t *testing.T) {
 		t.Errorf("connection was not left at a command boundary after a refused chunk: %q", got)
 	}
 }
+
+// Refusing MAIL leaves the session where BDAT isn't accepted at all, and that
+// refusal has to consume the chunk too. A relay that forwards a stranger's mail
+// sends the body straight after BDAT, so otherwise a crafted body issues
+// commands on the relay's connection, with the relay's reputation.
+func TestBDATRefusedBySessionPhaseIsNotExecutedAsCommands(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	p.cmd("EHLO probe.example")
+	if reply := p.cmd("MAIL FROM:<refused|sender@example.com>"); !strings.HasPrefix(reply, "5") {
+		t.Fatalf("MAIL FROM: %q", reply)
+	}
+
+	body := "MAIL FROM:<forged@example.com>\r\nRCPT TO:<victim@example.com>\r\nBDAT 10 LAST\r\ninjected!\n"
+	p.send(fmt.Sprintf("BDAT %d LAST\r\n%s", len(body), body))
+	got := p.drainFor(2 * time.Second)
+
+	if !strings.Contains(got, "503") {
+		t.Errorf("expected the chunk to be refused, got:\n%s", got)
+	}
+	for _, accepted := range []string{"Sender OK", "Recipient OK", "accepted for delivery"} {
+		if strings.Contains(got, accepted) {
+			t.Errorf("chunk content ran as a command (%s):\n%s", accepted, got)
+		}
+	}
+	if reply := p.cmd("NOOP"); !strings.HasPrefix(reply, "250") {
+		t.Errorf("the connection isn't at a command boundary: %q", reply)
+	}
+}
+
+// The senders that forwarding and bounce handling really use, through a whole
+// transaction rather than one validator.
+func TestSendersFromRealMailAreAccepted(t *testing.T) {
+	for _, sender := range []string{
+		"alan.denniston+caf_=alan=example.org@gmail.com",
+		"bounces+5341422-7092-someone=gmail.com@cloudmail.example.com",
+		"prvs=1234abcd=user@example.com",
+		"SRS0=ab/c=TT=example.org=user@forwarder.example",
+		"updates@linkedin.example",
+		"o'brien@example.com",
+	} {
+		t.Run(sender, func(t *testing.T) {
+			server := startDesyncTestServer(t)
+			p := dialProbe(t, server.Addr().String())
+			p.cmd("EHLO probe.example")
+			if reply := p.cmd("MAIL FROM:<" + sender + "> SIZE=8034"); !strings.HasPrefix(reply, "250") {
+				t.Fatalf("MAIL FROM: %q", reply)
+			}
+			if reply := p.cmd("RCPT TO:<rcpt@example.com>"); !strings.HasPrefix(reply, "250") {
+				t.Fatalf("RCPT TO: %q", reply)
+			}
+			msg := "Subject: forwarded\r\n\r\nhello\r\n"
+			p.send(fmt.Sprintf("BDAT %d LAST\r\n%s", len(msg), msg))
+			if reply := p.readReply(); !strings.HasPrefix(reply, "250") {
+				t.Fatalf("BDAT: %q", reply)
+			}
+		})
+	}
+}
