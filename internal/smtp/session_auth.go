@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/logging"
 )
@@ -86,6 +87,7 @@ type AuthHandler struct {
 	state               *SessionState
 	authenticator       Authenticator
 	securityManager     *AuthenticationSecurityManager
+	abuse               *abuse.Engine
 	sessionStateMachine *auth.SessionStateMachine
 	logger              *slog.Logger
 	msgLogger           *logging.MessageLogger
@@ -178,6 +180,11 @@ func (ah *AuthHandler) HandleAuth(ctx context.Context, cmd string) error {
 
 	// Check security constraints
 	if err := ah.checkSecurityConstraints(ctx, method); err != nil {
+		// Back out of authenticating, or a client that retries on this
+		// connection gets a misleading system error instead of this refusal.
+		if ah.sessionStateMachine != nil {
+			_ = ah.sessionStateMachine.TransitionTo(auth.SessionStateFailed, "auth_refused")
+		}
 		return err
 	}
 
@@ -384,6 +391,9 @@ func (ah *AuthHandler) performAuthentication(ctx context.Context, username, pass
 			"duration", duration,
 		)
 		ah.recordAuthFailure(ctx, username, method, err, duration)
+		if ah.session == nil || !ah.session.webmailSubmission {
+			ah.abuse.Failure(ctx, ah.conn.RemoteAddr().String(), "smtp", username)
+		}
 
 		// Update session state machine if available
 		if ah.sessionStateMachine != nil {
@@ -567,6 +577,11 @@ func (ah *AuthHandler) checkSecurityConstraints(ctx context.Context, method Auth
 
 	// Check IP-based rate limiting
 	remoteAddr := ah.conn.RemoteAddr().String()
+	if ah.session == nil || !ah.session.webmailSubmission {
+		if _, blocked := ah.abuse.Blocked(remoteAddr); blocked {
+			return fmt.Errorf("421 4.7.1 Too many failed sign-ins from this address; try again later")
+		}
+	}
 	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
 		if ah.isIPRateLimited(host) {
 			ah.logger.WarnContext(ctx, "IP rate limited for authentication", "ip", host)

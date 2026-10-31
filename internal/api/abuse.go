@@ -18,7 +18,12 @@ import (
 )
 
 // SetAbuse connects the shared engine.
-func (s *Server) SetAbuse(e *abuse.Engine) { s.abuse = e }
+func (s *Server) SetAbuse(e *abuse.Engine) {
+	s.abuse = e
+	if s.authMiddleware != nil {
+		s.authMiddleware.abuse = e
+	}
+}
 
 func (s *Server) abuseRoutes(api *mux.Router) {
 	if s.authMiddleware == nil {
@@ -44,7 +49,9 @@ func (s *Server) handleAbusePolicy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Abuse protection is not available", http.StatusServiceUnavailable)
 		return
 	}
-	var p abuse.Policy
+	// Over the policy in force, so a field left out keeps its value while one
+	// sent as zero is still refused below.
+	p := s.abuse.Policy()
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		http.Error(w, "Send the policy as JSON", http.StatusBadRequest)

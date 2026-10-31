@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/webmail"
 	"github.com/spf13/cobra"
 )
@@ -48,6 +49,11 @@ func runWebmail(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("webmail: %w (configure the [webmail] table)", err)
 	}
 	defer srv.Close()
+	abuseCtx, stopAbuse := context.WithCancel(context.Background())
+	defer stopAbuse()
+	abuseEngine := abuse.New("webmail", os.Getenv("VALKEY_ADDR"), logger)
+	srv.SetAbuse(abuseEngine)
+	go abuseEngine.Run(abuseCtx)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/abuse"
 )
 
 // fakeStore is an in-memory Mailstore for handler tests.
@@ -639,6 +641,48 @@ func TestFailedLoginsDoNotLockOutOtherAddresses(t *testing.T) {
 	}
 	if got := attempt("198.51.100.20", "secret"); got != http.StatusSeeOther {
 		t.Fatalf("the user from their own address = %d, want a sign-in", got)
+	}
+}
+
+// A block made anywhere stops the webmail, and wrong passwords here count
+// towards one, because the attacker's next stop is another protocol.
+func TestSharedBlocksReachTheWebmail(t *testing.T) {
+	h := newHarness(t)
+	h.server.cfg.TrustedProxies = []string{"127.0.0.0/8"}
+	e := abuse.New("test", "", nil)
+	p := abuse.DefaultPolicy()
+	p.FailuresPerAddress = 2
+	if err := e.Publish(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	h.server.SetAbuse(e)
+	attempt := func(from, password string) int {
+		t.Helper()
+		_, body := h.get("/login")
+		form := url.Values{"token": {hiddenRE("token").FindStringSubmatch(body)[1]}, "user": {"dana"}, "password": {password}}
+		req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/login", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-Forwarded-For", from)
+		resp, err := h.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	for i := 0; i < 2; i++ {
+		if got := attempt("203.0.113.9", "wrong"); got != http.StatusUnauthorized {
+			t.Fatalf("failure %d = %d", i+1, got)
+		}
+	}
+	if got := attempt("203.0.113.9", "secret"); got != http.StatusTooManyRequests {
+		t.Fatalf("a blocked address = %d, want 429", got)
+	}
+	if got := attempt("198.51.100.20", "secret"); got != http.StatusSeeOther {
+		t.Fatalf("another address = %d, want a sign-in", got)
 	}
 }
 

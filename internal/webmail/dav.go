@@ -230,7 +230,7 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 	}
 	ip := s.clientIP(r)
 	userKey := loginKey(user, ip)
-	if s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser) {
+	if s.throttled(ip, userKey) {
 		w.Header().Set("Retry-After", "300")
 		http.Error(w, "Too many sign-in attempts. Wait a few minutes.", http.StatusTooManyRequests)
 		return nil, false
@@ -248,8 +248,7 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 	}
 	switch {
 	case errors.Is(err, ErrAuthFailed):
-		s.limiter.fail(ip)
-		s.limiter.fail(userKey)
+		s.loginFailed(r, ip, userKey, user)
 		s.log.Info("webmail: dav sign-in failed", "user", user, "ip", ip)
 		challenge()
 		return nil, false
@@ -273,8 +272,7 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 				_ = st.Close()
 			}
 			if errors.Is(err, errSecurityAuth) {
-				s.limiter.fail(ip)
-				s.limiter.fail(userKey)
+				s.loginFailed(r, ip, userKey, user)
 				challenge()
 				return nil, false
 			}

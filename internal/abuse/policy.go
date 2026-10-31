@@ -30,6 +30,14 @@ type Policy struct {
 	// ConnectionsPerAddress caps one address's open connections to one
 	// service instance.
 	ConnectionsPerAddress int `toml:"connections_per_address" json:"connections_per_address"`
+	// FailuresPerAddress is how many failed sign-ins, across every service
+	// and account, block an address within WindowMinutes.
+	FailuresPerAddress int `toml:"failures_per_address" json:"failures_per_address"`
+	WindowMinutes      int `toml:"window_minutes" json:"window_minutes"`
+	// BlockMinutes is the first block; each repeat lasts four times longer,
+	// up to MaxBlockHours.
+	BlockMinutes  int `toml:"block_minutes" json:"block_minutes"`
+	MaxBlockHours int `toml:"max_block_hours" json:"max_block_hours"`
 	// Allowlist holds addresses and networks that are never limited or
 	// blocked: an operator's own, monitoring, trusted relays.
 	Allowlist []string `toml:"allowlist" json:"allowlist"`
@@ -38,7 +46,8 @@ type Policy struct {
 // DefaultPolicy leaves room for a busy office behind one address and for large
 // mail senders, and is far below what one host needs to exhaust a service.
 func DefaultPolicy() Policy {
-	return Policy{Mode: ModeEnforce, ConnectionsPerAddress: 25, Allowlist: []string{}}
+	return Policy{Mode: ModeEnforce, ConnectionsPerAddress: 25, FailuresPerAddress: 50, WindowMinutes: 15,
+		BlockMinutes: 15, MaxBlockHours: 24, Allowlist: []string{}}
 }
 
 // Validate refuses a policy that couldn't be applied. A typo in an allowlist
@@ -53,10 +62,50 @@ func (p Policy) Validate() error {
 	if p.ConnectionsPerAddress < 1 || p.ConnectionsPerAddress > 100000 {
 		return errors.New("connections per address must be between 1 and 100000")
 	}
+	if p.FailuresPerAddress < 1 || p.FailuresPerAddress > 100000 {
+		return errors.New("failures per address must be between 1 and 100000")
+	}
+	if p.WindowMinutes < 1 || p.WindowMinutes > 1440 {
+		return errors.New("the window must be between 1 minute and 24 hours")
+	}
+	if p.BlockMinutes < 1 || p.BlockMinutes > 10080 {
+		return errors.New("a block must last between 1 minute and 7 days")
+	}
+	if p.MaxBlockHours < 1 || p.MaxBlockHours > 720 {
+		return errors.New("the longest block must be between 1 hour and 30 days")
+	}
 	if _, err := parseNetworks(p.Allowlist); err != nil {
 		return err
 	}
 	return nil
+}
+
+// WithDefaults fills settings a policy doesn't name, such as one saved before
+// they existed, so an older configuration still validates.
+func (p Policy) WithDefaults() Policy {
+	d := DefaultPolicy()
+	if p.Mode == "" {
+		p.Mode = d.Mode
+	}
+	if p.ConnectionsPerAddress == 0 {
+		p.ConnectionsPerAddress = d.ConnectionsPerAddress
+	}
+	if p.FailuresPerAddress == 0 {
+		p.FailuresPerAddress = d.FailuresPerAddress
+	}
+	if p.WindowMinutes == 0 {
+		p.WindowMinutes = d.WindowMinutes
+	}
+	if p.BlockMinutes == 0 {
+		p.BlockMinutes = d.BlockMinutes
+	}
+	if p.MaxBlockHours == 0 {
+		p.MaxBlockHours = d.MaxBlockHours
+	}
+	if p.Allowlist == nil {
+		p.Allowlist = []string{}
+	}
+	return p
 }
 
 func parseNetworks(entries []string) ([]*net.IPNet, error) {

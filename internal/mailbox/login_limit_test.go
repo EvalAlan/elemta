@@ -6,6 +6,7 @@ import (
 	"net"
 	"testing"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
@@ -78,5 +79,31 @@ func TestInternalSignInsDontCountAgainstTheClient(t *testing.T) {
 	}
 	if ok, err := r.svc.allowLogin(r.a.Address); err != nil || ok {
 		t.Fatalf("the account's own count wasn't kept: %v, %v", ok, err)
+	}
+}
+
+// Failures on the mail protocols reach the shared engine, which is what lets a
+// block on one protocol stop an attacker moving to another.
+func TestMailFailuresReachTheSharedEngine(t *testing.T) {
+	r := newSieveRig(t)
+	ctx := context.Background()
+	p := abuse.DefaultPolicy()
+	p.FailuresPerAddress = 3
+	if err := r.svc.abuse.Publish(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	const client = "203.0.113.50"
+	for i := 0; i < 3; i++ {
+		_, _ = r.svc.login(ctx, r.a.Address, "wrong", true, mailpolicy.POP3, client)
+	}
+	if _, blocked := r.svc.abuse.Blocked(client); !blocked {
+		t.Fatal("repeated failures didn't block the address")
+	}
+	// The webmail's hop has no client of its own and must not be blocked.
+	for i := 0; i < 5; i++ {
+		_, _ = r.svc.login(ctx, r.a.Address, "wrong", false, "", "")
+	}
+	if blocks := r.svc.abuse.Blocks(); len(blocks) != 1 {
+		t.Fatalf("blocks = %+v", blocks)
 	}
 }

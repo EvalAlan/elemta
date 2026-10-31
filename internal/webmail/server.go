@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
@@ -49,6 +50,7 @@ type Server struct {
 	tmpl         map[string]*template.Template
 	log          *slog.Logger
 	limiter      *loginLimiter
+	abuse        *abuse.Engine
 	now          func() time.Time
 	// dav keeps the mail connections of CalDAV and CardDAV clients.
 	dav *davPool
@@ -629,7 +631,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := s.clientIP(r)
 	userKey := loginKey(user, ip)
-	if s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser) {
+	if s.throttled(ip, userKey) {
 		s.renderLogin(w, r, http.StatusTooManyRequests, user, "", "Too many sign-in attempts. Wait a few minutes and try again.")
 		return
 	}
@@ -642,8 +644,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	store, err := s.dial(ctx, user, password)
 	if err != nil {
 		if errors.Is(err, ErrAuthFailed) {
-			s.limiter.fail(ip)
-			s.limiter.fail(userKey)
+			s.loginFailed(r, ip, userKey, user)
 			s.log.Info("webmail: login failed", "user", user, "ip", ip)
 			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
 			return
@@ -738,7 +739,7 @@ func (s *Server) adminLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := s.clientIP(r)
 	userKey := loginKey(user, ip)
-	if s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser) {
+	if s.throttled(ip, userKey) {
 		http.Error(w, "Too many sign-in attempts.", http.StatusTooManyRequests)
 		return
 	}
@@ -747,8 +748,7 @@ func (s *Server) adminLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	store, err := s.dial(ctx, user, token)
 	if err != nil {
 		if errors.Is(err, ErrAuthFailed) {
-			s.limiter.fail(ip)
-			s.limiter.fail(userKey)
+			s.loginFailed(r, ip, userKey, user)
 			http.Error(w, "Administrator access was refused.", http.StatusUnauthorized)
 			return
 		}
@@ -836,6 +836,24 @@ const (
 	maxFailuresPerUser = 10
 	maxFailuresPerIP   = 50
 )
+
+// throttled reports whether a sign-in shouldn't even be tried.
+func (s *Server) throttled(ip, userKey string) bool {
+	if _, blocked := s.abuse.Blocked(ip); blocked {
+		return true
+	}
+	return s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser)
+}
+
+// loginFailed counts a wrong password here and with the rest of the platform.
+func (s *Server) loginFailed(r *http.Request, ip, userKey, user string) {
+	s.limiter.fail(ip)
+	s.limiter.fail(userKey)
+	s.abuse.Failure(r.Context(), ip, "webmail", user)
+}
+
+// SetAbuse connects the shared abuse engine (internal/abuse).
+func (s *Server) SetAbuse(e *abuse.Engine) { s.abuse = e }
 
 // loginKey is what an address's failures for one account count against.
 func loginKey(user, ip string) string {

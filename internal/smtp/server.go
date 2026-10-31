@@ -1046,6 +1046,25 @@ func (s *Server) Addr() net.Addr {
 	return nil
 }
 
+// refuseBlocked turns away a blocked client on the submission port before it
+// costs a session. Port 25 stays open to it: mail from that network shouldn't
+// stop arriving because something there guessed passwords, and a block lost on
+// port 25 is lost mail. The webmail's submission port carries its users, not
+// the webmail, so it isn't blocked as one address either.
+func (s *Server) refuseBlocked(conn net.Conn) bool {
+	sc, ok := conn.(submissionConn)
+	if !ok || sc.webmail {
+		return false
+	}
+	if _, blocked := s.abuse.Blocked(conn.RemoteAddr().String()); !blocked {
+		return false
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	_, _ = conn.Write([]byte("421 4.7.1 Too many failed sign-ins from this address; try again later\r\n"))
+	_ = conn.Close()
+	return true
+}
+
 // SetAbuse connects the shared abuse policy (internal/abuse). The per-address
 // connection limit then follows it, with no restart. Anything but enforcing
 // leaves the limit from the configuration file.
@@ -1312,6 +1331,9 @@ func (s *Server) acceptLoop(current func() net.Listener, wrap func(net.Conn) net
 		if wrap != nil {
 			conn = wrap(conn)
 		}
+		if s.refuseBlocked(conn) {
+			continue
+		}
 
 		// Reset deadline after successful accept
 		if tcpListener, ok := listener.(*net.TCPListener); ok {
@@ -1469,6 +1491,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	s.slogger.Debug("Creating new SMTP session", "client_ip", clientIP)
 	session := NewSession(context.Background(), conn, s.config, s.authenticator)
 	session.useAuthSecurity(s.authSecurity)
+	session.useAbuse(s.abuse)
 	session.rcptVerifier = s.rcptVerifier
 	session.senderPolicies = s.senderPolicies
 	if sc, ok := conn.(submissionConn); ok {

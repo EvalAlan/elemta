@@ -437,6 +437,7 @@ func (s *Service) failLogin(key string) int {
 func (s *Service) recordLoginFailure(user, client string) {
 	if client != "" {
 		s.failLogin(loginFailureKey(user, client))
+		s.abuse.Failure(s.ctx, client, "mailbox", user)
 	}
 	if s.failLogin(user) == loginFailureLimit {
 		s.log.Warn("mailbox: many failed sign-ins for one account", "user", user)
@@ -668,6 +669,10 @@ func (l *abuseListener) Accept() (net.Conn, error) {
 		c, err := l.Listener.Accept()
 		if err != nil {
 			return nil, err
+		}
+		if _, blocked := l.abuse.Blocked(c.RemoteAddr().String()); blocked {
+			_ = c.Close()
+			continue
 		}
 		release, ok := l.abuse.Acquire(c.RemoteAddr().String())
 		if !ok {

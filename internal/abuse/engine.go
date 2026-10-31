@@ -35,6 +35,7 @@ type Engine struct {
 	source    *Policy // set on the service that owns the policy
 	onPolicy  []func(Policy)
 	conns     map[string]int
+	seen      local
 }
 
 // New returns an engine for service. An empty addr means there is no Valkey:
@@ -43,7 +44,8 @@ func New(service, addr string, log *slog.Logger) *Engine {
 	if log == nil {
 		log = slog.Default()
 	}
-	e := &Engine{service: service, addr: addr, log: log.With("component", "abuse"), conns: map[string]int{}}
+	e := &Engine{service: service, addr: addr, log: log.With("component", "abuse"), conns: map[string]int{},
+		seen: local{blocks: map[string]Block{}, counts: map[string]*tally{}, accounts: map[string]*tally{}}}
 	e.setPolicy(DefaultPolicy())
 	return e
 }
@@ -51,6 +53,7 @@ func New(service, addr string, log *slog.Logger) *Engine {
 // Own makes this service the one that publishes p, whenever Valkey lacks it.
 // Only the admin console does: the configuration file is its to edit.
 func (e *Engine) Own(p Policy) {
+	p = p.WithDefaults()
 	e.mu.Lock()
 	e.source = &p
 	e.mu.Unlock()
@@ -144,13 +147,19 @@ func (e *Engine) Run(ctx context.Context) {
 	}
 }
 
-// valkey returns the client, connecting if it can. Failing here is normal and
-// quiet: Valkey may simply not be up yet, and the next sync tries again.
+// valkey returns the client if there is one. It never connects: this runs
+// beside sign-ins, and an unreachable Valkey can take seconds to fail.
 func (e *Engine) valkey() valkey.Client {
 	e.mu.RLock()
-	client := e.client
-	e.mu.RUnlock()
-	if client != nil || e.addr == "" {
+	defer e.mu.RUnlock()
+	return e.client
+}
+
+// connect makes the client, from the background sync or an administrator's
+// save. Failing here is normal and quiet: Valkey may simply not be up yet, and
+// the next sync tries again.
+func (e *Engine) connect() valkey.Client {
+	if client := e.valkey(); client != nil || e.addr == "" {
 		return client
 	}
 	created, err := valkeyaddr.NewClient(e.addr, nil)
@@ -169,13 +178,15 @@ func (e *Engine) valkey() valkey.Client {
 }
 
 func (e *Engine) sync(ctx context.Context) {
-	client := e.valkey()
+	client := e.connect()
 	if client == nil {
+		e.pruneLocal()
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, valkeyTimeout)
 	defer cancel()
 	e.syncPolicy(ctx, client)
+	e.syncBlocks(ctx, client)
 }
 
 func (e *Engine) syncPolicy(ctx context.Context, client valkey.Client) {
@@ -197,6 +208,7 @@ func (e *Engine) syncPolicy(ctx context.Context, client valkey.Client) {
 		e.log.Error("Ignoring an unreadable abuse policy", "error", err)
 		return
 	}
+	p = p.WithDefaults()
 	if err := p.Validate(); err != nil {
 		e.log.Error("Ignoring an invalid abuse policy", "error", err)
 		return
@@ -238,7 +250,7 @@ func (e *Engine) Publish(ctx context.Context, p Policy) error {
 		e.source = &p
 	}
 	e.mu.Unlock()
-	client := e.valkey()
+	client := e.connect()
 	if client == nil {
 		e.receive(p)
 		return nil

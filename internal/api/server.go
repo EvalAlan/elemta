@@ -1415,6 +1415,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	addr := s.loginAddr(r)
+	if b, blocked := s.abuse.Blocked(addr); blocked {
+		writeThrottled(w, time.Until(b.Until))
+		return
+	}
 	if wait := s.loginThrottle.retryAfter(addr, ""); wait > 0 {
 		writeThrottled(w, wait)
 		return
@@ -1443,6 +1447,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	authenticated, err := s.authSystem.Authenticate(ctx, loginReq.Username, loginReq.Password)
 	if err != nil || !authenticated {
 		s.loginThrottle.recordFailure(addr, loginReq.Username)
+		s.abuse.Failure(r.Context(), addr, "admin", loginReq.Username)
 		slog.Warn("Failed login", "username", sanitizeForLog(loginReq.Username), "remote", addr)
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
@@ -2539,6 +2544,10 @@ func (s *Server) persistConfig() error {
 		edits = append(edits,
 			edit{"abuse", "mode", p.Mode},
 			edit{"abuse", "connections_per_address", p.ConnectionsPerAddress},
+			edit{"abuse", "failures_per_address", p.FailuresPerAddress},
+			edit{"abuse", "window_minutes", p.WindowMinutes},
+			edit{"abuse", "block_minutes", p.BlockMinutes},
+			edit{"abuse", "max_block_hours", p.MaxBlockHours},
 			edit{"abuse", "allowlist", p.Allowlist},
 		)
 	}

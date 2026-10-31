@@ -76,3 +76,31 @@ type renamedConn struct{ net.Conn }
 func (renamedConn) RemoteAddr() net.Addr {
 	return &net.TCPAddr{IP: net.ParseIP("203.0.113.9"), Port: 4000}
 }
+
+func TestAbuseListenerDropsBlockedAddresses(t *testing.T) {
+	e := abuse.New("test", "", nil)
+	if _, err := e.BlockAddress(context.Background(), "203.0.113.9", "", "test", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inner.Close()
+	ln := &abuseListener{Listener: renamedListener{inner}, abuse: e}
+	go func() {
+		if c, err := ln.Accept(); err == nil {
+			_ = c.Close()
+			t.Error("a blocked address was accepted")
+		}
+	}()
+	c, err := net.Dial("tcp", inner.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := c.Read(make([]byte, 1)); err == nil {
+		t.Fatal("the connection stayed open")
+	}
+}

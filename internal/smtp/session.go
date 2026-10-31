@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/authresult"
 	"github.com/EvalAlan/elemta/internal/dmarcrpt"
 	"github.com/EvalAlan/elemta/internal/queue"
@@ -145,6 +146,13 @@ func NewSession(ctx context.Context, conn net.Conn, config *Config, authenticato
 func (s *Session) useAuthSecurity(m *AuthenticationSecurityManager) {
 	if m != nil && s.authHandler != nil {
 		s.authHandler.securityManager = m
+	}
+}
+
+// useAbuse reports the session's failed sign-ins to the shared engine.
+func (s *Session) useAbuse(e *abuse.Engine) {
+	if s.authHandler != nil {
+		s.authHandler.abuse = e
 	}
 }
 

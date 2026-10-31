@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/auth"
 	"golang.org/x/time/rate"
 )
@@ -31,6 +32,8 @@ const (
 
 // AuthMiddleware provides authentication middleware
 type AuthMiddleware struct {
+	// abuse is the shared abuse engine; nil without one.
+	abuse          *abuse.Engine
 	rbac           *auth.RBAC
 	apiKeyManager  *auth.APIKeyManager
 	sessionManager *auth.SessionManager
@@ -194,9 +197,13 @@ func (am *AuthMiddleware) authenticateBasicAuthThrottled(r *http.Request, userna
 	if am.throttle.retryAfter(addr, username) > 0 {
 		return nil, errLoginThrottled
 	}
+	if _, blocked := am.abuse.Blocked(addr); blocked {
+		return nil, errLoginThrottled
+	}
 	ctx, err := am.authenticateBasicAuth(username, password)
 	if err != nil {
 		am.throttle.recordFailure(addr, username)
+		am.abuse.Failure(r.Context(), addr, "admin", username)
 		return nil, err
 	}
 	am.throttle.recordSuccess(addr, username)
