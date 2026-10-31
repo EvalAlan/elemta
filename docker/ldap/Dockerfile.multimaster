@@ -1,0 +1,21 @@
+# Multi-master LDAP: OpenLDAP 2.6 from Alpine with syncrepl + MirrorMode
+# Uses a separate entrypoint and config template for N-way replication.
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+
+RUN apk add --no-cache \
+        openldap openldap-clients openldap-back-mdb \
+        openldap-overlay-memberof openldap-overlay-refint openldap-overlay-syncprov openldap-passwd-sha2 \
+    # The package's sample slapd.conf would win over slapd.d for tools run
+    # without -F (backup.sh's slapcat); configuration lives in slapd.d only.
+    && rm -f /etc/openldap/slapd.conf /etc/openldap/slapd.ldif \
+    && mkdir -p /etc/ldap/slapd.d /var/lib/ldap /var/lib/openldap/run \
+    && rm -rf /etc/openldap/slapd.d && ln -s /etc/ldap/slapd.d /etc/openldap/slapd.d \
+    && chown ldap:ldap /etc/ldap/slapd.d /var/lib/ldap /var/lib/openldap/run
+
+COPY docker/ldap/slapd-multimaster.ldif.in docker/ldap/10-mail-schema.ldif /usr/share/elemta-ldap/
+COPY docker/ldap/entrypoint-multimaster.sh /usr/local/bin/elemta-ldap-mm
+RUN chmod +x /usr/local/bin/elemta-ldap-mm
+
+EXPOSE 389
+ENTRYPOINT ["/usr/local/bin/elemta-ldap-mm"]
+CMD ["serve"]

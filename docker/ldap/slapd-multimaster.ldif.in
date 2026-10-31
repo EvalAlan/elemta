@@ -1,0 +1,103 @@
+# cn=config for multi-master directory, rendered by entrypoint.sh (@@BASE@@, @@DATA@@, @@ROOTPW@@, @@SERVER_ID@@).
+# Based on the single-node slapd.ldif.in with syncrepl + MirrorMode for N-way multi-master.
+dn: cn=config
+objectClass: olcGlobal
+cn: config
+olcArgsFile: /var/lib/openldap/run/slapd.args
+olcPidFile: /var/lib/openldap/run/slapd.pid
+olcLogLevel: none
+olcToolThreads: 1
+olcServerID: @@SERVER_ID@@
+
+# pw-sha2 makes {SSHA512} usable: Elemta writes users' passwords that way
+# (internal/datasource/ldap.go), and the previous image could not check them.
+dn: cn=module{0},cn=config
+objectClass: olcModuleList
+cn: module{0}
+olcModulePath: /usr/lib/openldap
+olcModuleLoad: back_mdb
+olcModuleLoad: memberof
+olcModuleLoad: refint
+olcModuleLoad: pw-sha2
+olcModuleLoad: syncprov
+
+dn: cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: schema
+
+include: file:///etc/openldap/schema/core.ldif
+include: file:///etc/openldap/schema/cosine.ldif
+include: file:///etc/openldap/schema/inetorgperson.ldif
+include: file:///etc/openldap/schema/nis.ldif
+include: file:///usr/share/elemta-ldap/10-mail-schema.ldif
+
+dn: olcDatabase={-1}frontend,cn=config
+objectClass: olcDatabaseConfig
+objectClass: olcFrontendConfig
+olcDatabase: {-1}frontend
+olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break
+olcAccess: {1}to dn.exact="" by * read
+olcAccess: {2}to dn.base="cn=Subschema" by * read
+olcPasswordHash: {SSHA512}
+olcSizeLimit: 500
+
+dn: olcDatabase={0}config,cn=config
+objectClass: olcDatabaseConfig
+olcDatabase: {0}config
+olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break
+olcRootDN: cn=admin,cn=config
+
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcDatabaseConfig
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
+olcDbDirectory: @@DATA@@
+olcSuffix: @@BASE@@
+olcRootDN: cn=admin,@@BASE@@
+olcRootPW: @@ROOTPW@@
+olcLastMod: TRUE
+olcDbCheckpoint: 512 30
+olcDbMaxSize: 1073741824
+olcDbIndex: objectClass eq
+olcDbIndex: uid eq
+olcDbIndex: mail eq
+olcDbIndex: mailAlternateAddress eq
+olcDbIndex: memberOf eq
+olcDbIndex: member eq
+olcDbIndex: elemtaDomainName eq
+olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break
+olcAccess: {1}to attrs=userPassword,shadowLastChange by self write by anonymous auth by * none
+olcAccess: {2}to * by self read by * none
+@@SYNCREPL_PEERS@@
+
+# syncprov overlay for multi-master replication
+dn: olcOverlay={0}syncprov,olcDatabase={1}mdb,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcSyncProvConfig
+olcOverlay: {0}syncprov
+olcSpCheckpoint: 100 10
+olcSpSessionLog: 100
+
+# MirrorMode: this node accepts writes and replicates them
+olcMirrorMode: TRUE
+
+# Groups are groupOfNames with member DNs
+dn: olcOverlay={1}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcMemberOf
+olcOverlay: {1}memberof
+olcMemberOfDangling: ignore
+olcMemberOfRefInt: TRUE
+olcMemberOfGroupOC: groupOfNames
+olcMemberOfMemberAD: member
+olcMemberOfMemberOfAD: memberOf
+
+dn: olcOverlay={2}refint,olcDatabase={1}mdb,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcRefintConfig
+olcOverlay: {2}refint
+olcRefintAttribute: owner
+olcRefintAttribute: manager
+olcRefintAttribute: uniqueMember
+olcRefintAttribute: member
+olcRefintAttribute: memberOf
