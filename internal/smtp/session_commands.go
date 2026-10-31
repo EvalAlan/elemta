@@ -66,6 +66,13 @@ func (ch *CommandHandler) ProcessCommand(ctx context.Context, line string) error
 
 	// Check if command is allowed in current phase
 	if !ch.state.CanAcceptCommand(ctx, cmd) {
+		// A chunk follows BDAT with no reply in between, so it is already
+		// arriving and would be read as commands. HandleBDAT consumes it for
+		// its own refusals; this one comes first, typically after a refused
+		// MAIL, when a client that pipelines sends BDAT anyway.
+		if strings.EqualFold(cmd, "BDAT") {
+			ch.discardRefusedBDAT(ctx, args)
+		}
 		err := fmt.Errorf("503 5.5.1 Bad sequence of commands")
 		ch.logCommandResult(ctx, line, false, err.Error(), time.Since(startTime))
 		return err
@@ -476,6 +483,18 @@ func (ch *CommandHandler) HandleDATA(ctx context.Context) error {
 	)
 
 	return nil
+}
+
+// discardRefusedBDAT consumes the chunk of a BDAT refused before HandleBDAT.
+// A size that can't be read commits the server to no chunk (see HandleBDAT).
+func (ch *CommandHandler) discardRefusedBDAT(ctx context.Context, args string) {
+	parts := strings.Fields(args)
+	if len(parts) == 0 || len(parts) > 2 {
+		return
+	}
+	if size, err := strconv.ParseInt(parts[0], 10, 64); err == nil && size > 0 {
+		ch.session.dataHandler.DiscardBDATChunk(ctx, size)
+	}
 }
 
 // HandleBDAT processes the BDAT command (RFC 3030 CHUNKING extension)

@@ -159,9 +159,13 @@ func (csm *CommandSecurityManager) ValidateCommand(ctx context.Context, line str
 		return err
 	}
 
-	// Step 9: Check for blocked patterns
-	if err := csm.checkBlockedPatterns(timeoutCtx, cmd, args); err != nil {
-		return err
+	// Step 9: Check for blocked patterns. Addresses were checked character by
+	// character in step 8. Matching words in them refuses real senders: to
+	// these patterns, updates@example.com is an UPDATE statement.
+	if cmd != "MAIL" && cmd != "RCPT" {
+		if err := csm.checkBlockedPatterns(timeoutCtx, cmd, args); err != nil {
+			return err
+		}
 	}
 
 	// Step 10: Memory usage check (if enabled)
@@ -513,9 +517,17 @@ func (csm *CommandSecurityManager) validateEmailAddress(ctx context.Context, add
 		return fmt.Errorf("501 5.1.3 Invalid email address format")
 	}
 
-	// Check for valid email characters (RFC 5321 compliant)
+	// Forwarding and bounce handling put = in senders, and rewriting schemes
+	// can add / and more, so a narrow list refuses real mail: Gmail's
+	// forwarding sender has an =. This is RFC 5321's atext without & | ` and $,
+	// which no real sender needs and which stay out as shell metacharacters.
+	// A sender is free text from anyone, so ../ stays out as well, even
+	// though nothing here builds a path from one today.
+	if strings.Contains(addr, "../") {
+		return fmt.Errorf("501 5.1.3 Invalid email address format")
+	}
 	// Require proper domain with TLD (e.g., example.com) or special case for localhost
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}|localhost)$`)
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+=/'!#*?^{}~-]+@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}|localhost)$`)
 	if !emailRegex.MatchString(addr) {
 		csm.logger.WarnContext(ctx, "Invalid email address format",
 			"address", addr,

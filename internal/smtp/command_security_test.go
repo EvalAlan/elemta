@@ -98,6 +98,13 @@ func TestCommandSecurityManager(t *testing.T) {
 			{"MAIL FROM:invalid-email", "invalid email format"},
 			{"MAIL FROM:<invalid@>", "invalid email format"},
 			{"MAIL FROM:<@example.com>", "invalid email format"},
+			{"MAIL FROM:<a|b@example.com>", "pipe in address"},
+			{"MAIL FROM:<a`b@example.com>", "backtick in address"},
+			{"MAIL FROM:<a$b@example.com>", "dollar in address"},
+			{"MAIL FROM:<a;b@example.com>", "semicolon in address"},
+			{"MAIL FROM:<a&b@example.com>", "ampersand in address"},
+			{"MAIL FROM:<a/../b@example.com>", "path traversal in address"},
+			{"RCPT TO:<a/../b@example.com>", "path traversal in recipient"},
 			{"RCPT TO:", "missing address"},
 			{"RCPT TO:invalid-email", "invalid email format"},
 			{"AUTH INVALID", "invalid auth mechanism"},
@@ -109,6 +116,21 @@ func TestCommandSecurityManager(t *testing.T) {
 					t.Errorf("Invalid parameter accepted: %s (reason: %s)", tc.command, tc.reason)
 				}
 			})
+		}
+	})
+
+	// A word in an address is not an attack: a mailbox can be called updates.
+	t.Run("Ordinary addresses", func(t *testing.T) {
+		for _, command := range []string{
+			"MAIL FROM:<updates@linkedin.example>",
+			"MAIL FROM:<notifications@select-bank.example>",
+			"MAIL FROM:<executive@create.example>",
+			"RCPT TO:<delete.me@example.com>",
+			"MAIL FROM:<a+caf_=b=example.org@gmail.com> SIZE=8034",
+		} {
+			if err := csm.ValidateCommand(ctx, command); err != nil {
+				t.Errorf("%s: %v", command, err)
+			}
 		}
 	})
 

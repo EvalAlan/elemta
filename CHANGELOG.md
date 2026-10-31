@@ -4,6 +4,11 @@
 
 ### Upgrade notes
 
+- **Real senders are no longer refused.** The SMTP checks rejected any `=` in an
+  address, which is how Gmail forwarding and bounce handling write senders, and
+  matched SQL words inside addresses, so `updates@example.org` looked like an
+  attack. A `BDAT` chunk refused after a failed `MAIL` is now consumed, because
+  it was being read as commands.
 - **Accounts can send as their own aliases.** Webmail's From menu lists them,
   with no grant needed, along with shared mailboxes the user can send from and
   their lists under a `@domain` grant. Lists still need a grant. Sending as
