@@ -123,7 +123,7 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	} else if c.SpamLearning.RspamdURL != "" {
 		// Said out loud: otherwise Junk moves just never teach anything,
 		// and nothing anywhere looks wrong.
-		log.Warn("spam learning is off: no controller password", "env", c.SpamLearning.PasswordEnv)
+		log.Warn("spam learning is off: the variable named by spam_learning.password_env is empty")
 	}
 	var tlsConfig *tls.Config
 	if c.Server.TLSCert != "" {
