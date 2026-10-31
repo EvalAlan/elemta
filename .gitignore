@@ -187,3 +187,8 @@ CLAUDE.md
 deployments/compose/.secrets/
 deployments/kubernetes/dev/ha/mailbox.toml
 deployments/kubernetes/dev/ha/elemta.toml
+# One real Linode deployment: settings, generated config and secrets.
+deployments/kubernetes/production/linode/instance/
+
+# Copy of the dev server's configuration. Real values: never commit.
+.dev-server/

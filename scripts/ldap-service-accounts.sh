@@ -25,7 +25,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$root/scripts/dev-secrets.sh" >/dev/null
 # shellcheck disable=SC1091
-. "$root/deployments/compose/.secrets/ldap-services.env"
+. "${ELEMTA_SECRETS_DIR:-$root/deployments/compose/.secrets}/ldap-services.env"
 
 # shellcheck source=SCRIPTDIR/lib/ldap.sh
 . "$root/scripts/lib/ldap.sh"

@@ -1,0 +1,86 @@
+# One Elemta deployment on Linode, generated into ../instance/ by
+# `make linode-config`. Edit ../instance/settings.env and regenerate rather
+# than editing the copy; IMAGE_TAG below is filled in from it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: elemta
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: elemta
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - ../../../ha
+
+# In this order: the edge writes its example names, then the Linode
+# component replaces them with this deployment's.
+components:
+  - ../../edge
+  - ../component
+
+configMapGenerator:
+  # Read by ../component's replacements, by name.
+  - name: elemta-linode-settings
+    envs:
+      - settings.env
+      - derived.env
+    options:
+      disableNameSuffixHash: true
+  # Generated from config/elemta.toml and config/mailbox-main.toml.
+  - name: elemta-config
+    files:
+      - elemta.toml
+  - name: elemta-mailbox-config
+    files:
+      - mailbox.toml
+  - name: elemta-rspamd-override
+    files:
+      - ../../../../../docker/rspamd/override.d/rbl.conf
+      - ../../../../../docker/rspamd/override.d/surbl.conf
+      - ../../../../../docker/rspamd/override.d/asn.conf
+      - ../../../../../docker/rspamd/override.d/fuzzy_check.conf
+      - ../../../../../docker/rspamd/override.d/options.inc
+  - name: elemta-rspamd-local
+    files:
+      - ../../../../../docker/rspamd/local.d/greylist.conf
+      - ../../../../../docker/rspamd/local.d/actions.conf
+      - ../../../../../docker/rspamd/local.d/url_suspect_group.conf
+
+# Generated once by `make linode-init` into secrets/, apart from the
+# Object Storage keys and the recovery mailbox's password, which you add.
+secretGenerator:
+  - name: elemta-ldap-admin
+    envs: [secrets/ldap-admin.env]
+  - name: elemta-ldap-smtp
+    envs: [secrets/elemta.env]
+  - name: elemta-ldap-web
+    envs: [secrets/web.env]
+  - name: elemta-mailbox
+    envs: [secrets/mailbox.env]
+  - name: elemta-webmail
+    envs: [secrets/webmail.env]
+  - name: elemta-mailbox-s3
+    envs: [secrets/s3.env]
+  # CloudNativePG refers to these by name, in a resource kustomize doesn't
+  # rewrite references in, so without the hash suffix.
+  - name: elemta-db-mailbox
+    type: kubernetes.io/basic-auth
+    options:
+      disableNameSuffixHash: true
+    envs: [secrets/db-mailbox.env]
+  - name: elemta-db-queue
+    type: kubernetes.io/basic-auth
+    options:
+      disableNameSuffixHash: true
+    envs: [secrets/db-queue.env]
+
+images:
+  - name: ghcr.io/evalalan/elemta
+    newTag: "@IMAGE_TAG@"
+  - name: ghcr.io/evalalan/elemta-mailbox
+    newTag: "@IMAGE_TAG@"
+  - name: ghcr.io/evalalan/elemta-ldap
+    newTag: "@IMAGE_TAG@"

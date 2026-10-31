@@ -1,0 +1,15 @@
+# Linode settings for the HAProxy ingress, on top of ../edge/haproxy-values.yaml
+# (install-controllers.sh with EDGE_HAPROXY_VALUES set to this file).
+#
+# Its LoadBalancer Service becomes a NodeBalancer, which proxies the
+# connection; the PROXY protocol header carries the browser's address, and
+# HAProxy accepts the header only from the NodeBalancer range. With VPC
+# backends, replace 192.168.255.0/24 here with the range set as
+# PROXY_PROTOCOL_FROM in the instance's settings.env (README.md).
+controller:
+  service:
+    annotations:
+      service.beta.kubernetes.io/linode-loadbalancer-default-protocol: tcp
+      service.beta.kubernetes.io/linode-loadbalancer-default-proxy-protocol: v2
+  config:
+    proxy-protocol: "192.168.255.0/24"

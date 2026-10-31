@@ -163,7 +163,9 @@ The [production edge component](production/edge/README.md) adds cert-manager
 Certificates, HAProxy HTTPS ingress for admin and webmail, and direct mail
 LoadBalancer Services with source-address preservation. A production overlay
 must include it and provide real hostnames, app configuration, storage and
-secrets before deployment.
+secrets before deployment. [production/linode](production/linode/README.md)
+is that overlay for Linode Kubernetes Engine, with each deployment's own
+settings and secrets kept out of git.
 
 It isn't applied on its own: an overlay adds the configuration, secrets,
 image tag and exposure. It needs:

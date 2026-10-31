@@ -1,6 +1,8 @@
 #!/bin/sh
 # Generates the dev stack's service credentials, once, into
 # deployments/compose/.secrets/ (ignored by git, readable only by you).
+# ELEMTA_SECRETS_DIR points it at another deployment's own directory, so a
+# production cluster never shares the dev stack's passwords.
 #
 # Every component that talks to LDAP binds as its own service account with
 # only the access it needs (see scripts/ldap-service-accounts.sh), and each
@@ -13,7 +15,7 @@
 # directories need scripts/ldap-admin-password.sh to apply the admin secret.
 set -eu
 
-dir="$(dirname "$0")/../deployments/compose/.secrets"
+dir="${ELEMTA_SECRETS_DIR:-$(dirname "$0")/../deployments/compose/.secrets}"
 mkdir -p "$dir"
 chmod 700 "$dir"
 master="$dir/ldap-services.env"

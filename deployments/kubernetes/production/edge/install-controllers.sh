@@ -5,8 +5,13 @@ set -euo pipefail
 # CRDs, not just resources in the Elemta namespace.
 : "${EDGE_CONTEXT:?Set EDGE_CONTEXT to the target production kube context}"
 
-# HELM picks a binary that isn't on PATH.
+# HELM picks a binary that isn't on PATH. EDGE_HAPROXY_VALUES adds a
+# provider's own settings (production/linode/haproxy-values.yaml) on top.
 helm=${HELM:-helm}
+extra_values=()
+if [ -n "${EDGE_HAPROXY_VALUES:-}" ]; then
+  extra_values=(--values "$EDGE_HAPROXY_VALUES")
+fi
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
@@ -20,7 +25,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
   oci://ghcr.io/haproxytech/helm-charts/kubernetes-ingress \
   --version 1.54.2 \
   --namespace haproxy-controller --create-namespace \
-  --values "$script_dir/haproxy-values.yaml" --wait
+  --values "$script_dir/haproxy-values.yaml" "${extra_values[@]}" --wait
 
 kubectl --context "$EDGE_CONTEXT" wait \
   --for=condition=Established crd/certificates.cert-manager.io --timeout=120s

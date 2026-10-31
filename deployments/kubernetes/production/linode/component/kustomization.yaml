@@ -1,0 +1,101 @@
+# What running ../../../ha with ../../edge on Linode Kubernetes Engine
+# changes. A component, applied after the edge by an instance kustomization
+# that `make linode-config` generates from ../template (../README.md). It
+# sits in its own directory because kustomize refuses a component whose
+# directory contains the instance using it. Every value
+# specific to one deployment comes from that instance's
+# elemta-linode-settings ConfigMap, so nothing real is committed here.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  # Each mail Service becomes a NodeBalancer. A NodeBalancer proxies the
+  # connection, so the client's address reaches Elemta only in a PROXY
+  # protocol header. externalTrafficPolicy Local (from the edge) keeps
+  # kube-proxy from rewriting the source, so the header arrives from the
+  # NodeBalancer's own range, the one Elemta is told to trust below.
+  - target:
+      kind: Service
+      name: elemta-mail-public|elemta-mailbox-public
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          service.beta.kubernetes.io/linode-loadbalancer-default-protocol: tcp
+          service.beta.kubernetes.io/linode-loadbalancer-default-proxy-protocol: v2
+  # Placeholders the replacements below fill in.
+  - target:
+      kind: StatefulSet
+      name: elemta-mta
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: ELEMTA_PROXY_PROTOCOL_FROM, value: "" }
+  - target:
+      kind: Deployment
+      name: elemta-mailbox
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: ELEMTA_MAILBOX_PROXY_PROTOCOL_FROM, value: "" }
+  - target:
+      kind: Deployment
+      name: elemta-admin
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: ELEMTA_WEBMAIL_PUBLIC_URL, value: "" }
+  # LKE's own volumes are ReadWriteOnce; the shared runtime config needs a
+  # class that provides ReadWriteMany (../README.md, "Storage").
+  - target:
+      kind: PersistentVolumeClaim
+      name: elemta-runtime-config
+    patch: |-
+      - op: add
+        path: /spec/storageClassName
+        value: ""
+
+replacements:
+  - source: { kind: ConfigMap, name: elemta-linode-settings, fieldPath: data.PROXY_PROTOCOL_FROM }
+    targets:
+      - select: { kind: StatefulSet, name: elemta-mta }
+        fieldPaths: ["spec.template.spec.containers.0.env.[name=ELEMTA_PROXY_PROTOCOL_FROM].value"]
+      - select: { kind: Deployment, name: elemta-mailbox }
+        fieldPaths: ["spec.template.spec.containers.0.env.[name=ELEMTA_MAILBOX_PROXY_PROTOCOL_FROM].value"]
+  - source: { kind: ConfigMap, name: elemta-linode-settings, fieldPath: data.RWX_STORAGE_CLASS }
+    targets:
+      - select: { kind: PersistentVolumeClaim, name: elemta-runtime-config }
+        fieldPaths: [spec.storageClassName]
+  - source: { kind: ConfigMap, name: elemta-linode-settings, fieldPath: data.WEBMAIL_URL }
+    targets:
+      - select: { kind: Deployment, name: elemta-admin }
+        fieldPaths: ["spec.template.spec.containers.0.env.[name=ELEMTA_WEBMAIL_PUBLIC_URL].value"]
+  # The edge has already written its example names; these replace them.
+  - source: { kind: ConfigMap, name: elemta-linode-settings, fieldPath: data.ACME_EMAIL }
+    targets:
+      - select: { kind: Issuer, name: elemta-public }
+        fieldPaths: [spec.acme.email]
+      - select: { kind: ConfigMap, name: elemta-edge-settings }
+        fieldPaths: [data.ACME_EMAIL]
+  - source: { kind: ConfigMap, name: elemta-linode-settings, fieldPath: data.MAIL_HOST }
+    targets:
+      - select: { kind: Certificate, name: elemta-mail-tls }
+        fieldPaths: [spec.dnsNames.0]
+      - select: { kind: ConfigMap, name: elemta-edge-settings }
+        fieldPaths: [data.MAIL_HOST]
+  - source: { kind: ConfigMap, name: elemta-linode-settings, fieldPath: data.ADMIN_HOST }
+    targets:
+      - select: { kind: Certificate, name: elemta-web-tls }
+        fieldPaths: [spec.dnsNames.0]
+      - select: { kind: Ingress, name: elemta-admin }
+        fieldPaths: [spec.rules.0.host, spec.tls.0.hosts.0]
+      - select: { kind: ConfigMap, name: elemta-edge-settings }
+        fieldPaths: [data.ADMIN_HOST]
+  - source: { kind: ConfigMap, name: elemta-linode-settings, fieldPath: data.WEBMAIL_HOST }
+    targets:
+      - select: { kind: Certificate, name: elemta-web-tls }
+        fieldPaths: [spec.dnsNames.1]
+      - select: { kind: Ingress, name: elemta-webmail }
+        fieldPaths: [spec.rules.0.host, spec.tls.0.hosts.0]
+      - select: { kind: ConfigMap, name: elemta-edge-settings }
+        fieldPaths: [data.WEBMAIL_HOST]
