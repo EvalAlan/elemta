@@ -4,6 +4,12 @@
 
 ### Upgrade notes
 
+- **Failed sign-ins no longer lock a user out.** Webmail, DAV, IMAP, POP3 and
+  ManageSieve used to block an account after enough wrong passwords from
+  anywhere, so anyone who knew an address could keep its owner out. They now
+  block the account for the address the failures came from (an IPv6 client's
+  /64), and a correct app password works from any address. Many addresses
+  guessing at one account are logged but no longer refused.
 - **Message bodies can be encrypted at rest**
   ([mailbox-service.md](docs/mailbox-service.md)). Off unless
   `ELEMTA_MAILBOX_BODY_KEYS` is set, or `MAILBOX_BODY_ENCRYPTION=true` with the

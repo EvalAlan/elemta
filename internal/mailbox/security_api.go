@@ -343,6 +343,7 @@ func (s *Service) securityLogin(ctx context.Context, user, password string) (sec
 		a, actor, expires, err := s.adminLogin(ctx, user, password)
 		return securityAuth{account: a, admin: actor, expires: expires}, err
 	}
-	a, app, err := s.authenticate(ctx, user, password)
+	// Internal callers only (internalClient), and they limit by the real client.
+	a, app, err := s.authenticate(ctx, user, password, "")
 	return securityAuth{account: a, app: app}, err
 }

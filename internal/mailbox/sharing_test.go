@@ -129,19 +129,19 @@ func TestSharedMailboxLoginUsesMemberCredentials(t *testing.T) {
 	}
 	t.Cleanup(s.cancel)
 	login := member.Address + "|" + owner.Address
-	if got, err := s.login(ctx, login, "member-password", true, mailpolicy.IMAP); err != nil || got.ID != owner.ID {
+	if got, err := s.login(ctx, login, "member-password", true, mailpolicy.IMAP, ""); err != nil || got.ID != owner.ID {
 		t.Fatalf("shared sign-in = %+v, %v", got, err)
 	}
-	if _, err := s.login(ctx, login, "wrong", true, mailpolicy.IMAP); !errors.Is(err, ErrCredentials) {
+	if _, err := s.login(ctx, login, "wrong", true, mailpolicy.IMAP, ""); !errors.Is(err, ErrCredentials) {
 		t.Fatalf("wrong member password = %v", err)
 	}
-	if _, err := s.login(ctx, login, "member-password", true, mailpolicy.POP3); !errors.Is(err, ErrCredentials) {
+	if _, err := s.login(ctx, login, "member-password", true, mailpolicy.POP3, ""); !errors.Is(err, ErrCredentials) {
 		t.Fatalf("shared POP3 sign-in = %v", err)
 	}
 	if err := e.RevokeShare(ctx, owner.ID, member.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.login(ctx, login, "member-password", true, mailpolicy.IMAP); !errors.Is(err, ErrCredentials) {
+	if _, err := s.login(ctx, login, "member-password", true, mailpolicy.IMAP, ""); !errors.Is(err, ErrCredentials) {
 		t.Fatalf("revoked shared sign-in = %v", err)
 	}
 }

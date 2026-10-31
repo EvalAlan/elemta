@@ -594,7 +594,7 @@ func TestSuccessfulSignInsAreNotThrottled(t *testing.T) {
 		}
 		h.post("/logout", url.Values{"csrf": {hiddenRE("csrf").FindStringSubmatch(func() string { _, b := h.get("/mail"); return b }())[1]}})
 	}
-	// Failures still lock the account out.
+	// Failures still stop the address they came from.
 	for i := 0; i < maxFailuresPerUser; i++ {
 		_, body := h.get("/login")
 		tok := hiddenRE("token").FindStringSubmatch(body)[1]
@@ -604,6 +604,41 @@ func TestSuccessfulSignInsAreNotThrottled(t *testing.T) {
 	tok := hiddenRE("token").FindStringSubmatch(body)[1]
 	if resp := h.post("/login", url.Values{"token": {tok}, "user": {"dana"}, "password": {"secret"}}); resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("after %d failures the right password got %d, want 429", maxFailuresPerUser, resp.StatusCode)
+	}
+}
+
+// Wrong passwords from one address must not lock the account for everyone: if
+// they did, anyone could keep a user out of their mail by guessing badly.
+func TestFailedLoginsDoNotLockOutOtherAddresses(t *testing.T) {
+	h := newHarness(t)
+	h.server.cfg.TrustedProxies = []string{"127.0.0.0/8"}
+	attempt := func(from, password string) int {
+		t.Helper()
+		_, body := h.get("/login")
+		form := url.Values{"token": {hiddenRE("token").FindStringSubmatch(body)[1]}, "user": {"dana"}, "password": {password}}
+		req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/login", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-Forwarded-For", from)
+		resp, err := h.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	for i := 0; i < maxFailuresPerUser; i++ {
+		if got := attempt("203.0.113.9", "wrong"); got != http.StatusUnauthorized {
+			t.Fatalf("failure %d = %d", i+1, got)
+		}
+	}
+	if got := attempt("203.0.113.9", "secret"); got != http.StatusTooManyRequests {
+		t.Fatalf("the guessing address = %d, want 429", got)
+	}
+	if got := attempt("198.51.100.20", "secret"); got != http.StatusSeeOther {
+		t.Fatalf("the user from their own address = %d, want a sign-in", got)
 	}
 }
 

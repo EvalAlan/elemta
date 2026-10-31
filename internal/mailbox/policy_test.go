@@ -132,10 +132,10 @@ func TestClassOfServiceEnforcedByMailbox(t *testing.T) {
 	// Protocols: IMAP refused on the public listener only; the internal
 	// listener (the webmail) applies its own switches.
 	assign(mailpolicy.Settings{Protocols: map[string]bool{mailpolicy.IMAP: false}})
-	if _, err := r.svc.login(ctx, r.a.Address, "testpass", true, mailpolicy.IMAP); !errors.Is(err, ErrProtocolDisabled) {
+	if _, err := r.svc.login(ctx, r.a.Address, "testpass", true, mailpolicy.IMAP, ""); !errors.Is(err, ErrProtocolDisabled) {
 		t.Fatalf("IMAP sign-in with IMAP turned off: %v", err)
 	}
-	if _, err := r.svc.login(ctx, r.a.Address, "testpass", false, ""); err != nil {
+	if _, err := r.svc.login(ctx, r.a.Address, "testpass", false, "", ""); err != nil {
 		t.Fatalf("internal sign-in refused: %v", err)
 	}
 	if ok, _ := r.svc.allowLogin(r.a.Address); !ok {

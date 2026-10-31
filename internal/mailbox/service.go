@@ -369,15 +369,44 @@ func (l *limitedListener) Accept() (net.Conn, error) {
 	}
 }
 
+// loginFailureLimit is how many failures in the window a client gets for one
+// account, and the count at which an account alone is reported as under attack.
+const loginFailureLimit = 20
+
 func loginKey(user string) string {
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(user))))
 	return hex.EncodeToString(sum[:])
 }
-func (s *Service) allowLogin(user string) (bool, error) {
+
+// loginFailureKey is what a client's failures for one account count against.
+func loginFailureKey(user, client string) string { return user + "\x00" + client }
+
+// clientKey is a remote address as the failure limit counts it. An IPv6 client
+// is its /64: one network holds all of it, so counting single addresses would
+// give an attacker as many tries as they cared to rotate through.
+func clientKey(addr net.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		host = addr.String()
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return host
+	}
+	if ip.To4() == nil {
+		return ip.Mask(net.CIDRMask(64, 128)).String()
+	}
+	return ip.String()
+}
+
+func (s *Service) allowLogin(key string) (bool, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
 	defer cancel()
 	var blocked bool
-	err := s.engine.DB.QueryRowContext(ctx, `SELECT attempts>=20 AND expires>now() FROM mailbox_auth_failures WHERE key=$1`, loginKey(user)).Scan(&blocked)
+	err := s.engine.DB.QueryRowContext(ctx, `SELECT attempts>=$2 AND expires>now() FROM mailbox_auth_failures WHERE key=$1`, loginKey(key), loginFailureLimit).Scan(&blocked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
@@ -386,10 +415,27 @@ func (s *Service) allowLogin(user string) (bool, error) {
 	}
 	return !blocked, nil
 }
-func (s *Service) failLogin(user string) {
+
+// failLogin counts a failure and returns the count so far in its window.
+func (s *Service) failLogin(key string) int {
 	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
 	defer cancel()
-	_, _ = s.engine.DB.ExecContext(ctx, `INSERT INTO mailbox_auth_failures(key) VALUES($1) ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN mailbox_auth_failures.expires<now() THEN 1 ELSE mailbox_auth_failures.attempts+1 END,expires=CASE WHEN mailbox_auth_failures.expires<now() THEN now()+interval '15 minutes' ELSE mailbox_auth_failures.expires END`, loginKey(user))
+	var attempts int
+	_ = s.engine.DB.QueryRowContext(ctx, `INSERT INTO mailbox_auth_failures(key) VALUES($1) ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN mailbox_auth_failures.expires<now() THEN 1 ELSE mailbox_auth_failures.attempts+1 END,expires=CASE WHEN mailbox_auth_failures.expires<now() THEN now()+interval '15 minutes' ELSE mailbox_auth_failures.expires END RETURNING attempts`, loginKey(key)).Scan(&attempts)
+	return attempts
+}
+
+// recordLoginFailure counts a failure against the client, which is what
+// blocks, and against the account, which only reports. Many clients guessing
+// at one account aren't stopped here, because stopping them by account is what
+// would hand them a way to lock the user out.
+func (s *Service) recordLoginFailure(user, client string) {
+	if client != "" {
+		s.failLogin(loginFailureKey(user, client))
+	}
+	if s.failLogin(user) == loginFailureLimit {
+		s.log.Warn("mailbox: many failed sign-ins for one account", "user", user)
+	}
 }
 
 type lmtpSession struct {

@@ -229,7 +229,7 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 		return nil, false
 	}
 	ip := s.clientIP(r)
-	userKey := "user:" + strings.ToLower(user)
+	userKey := loginKey(user, ip)
 	if s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser) {
 		w.Header().Set("Retry-After", "300")
 		http.Error(w, "Too many sign-in attempts. Wait a few minutes.", http.StatusTooManyRequests)

@@ -313,7 +313,7 @@ func (ss *sieveSession) authenticate(ctx context.Context, args []string) {
 	}
 	// ManageSieve is internal-only in deployments (the webmail edits
 	// filters), so it is not a listener the requirement covers.
-	a, err := ss.s.login(ctx, string(parts[1]), string(parts[2]), false, "")
+	a, err := ss.s.login(ctx, string(parts[1]), string(parts[2]), false, "", clientKey(ss.conn.RemoteAddr()))
 	if err == nil && a.Policy != nil && !a.Policy.Filters {
 		ss.no("", mailpolicy.FiltersOffMessage)
 		return

@@ -35,13 +35,13 @@ func TestSuspendedAccountRefusesAppPasswords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.login(ctx, a.Address, password, true, ""); err != nil {
+	if _, err := s.login(ctx, a.Address, password, true, "", ""); err != nil {
 		t.Fatalf("app password before suspension: %v", err)
 	}
 	suspended := a
 	suspended.Suspended = true
 	s.auth = testAuth{suspended}
-	if _, err := s.login(ctx, a.Address, password, true, ""); err == nil {
+	if _, err := s.login(ctx, a.Address, password, true, "", ""); err == nil {
 		t.Fatal("a suspended account signed in with an app password")
 	}
 	if got, err := s.auth.Resolve(ctx, a.Address); err != nil || got.ID != a.ID {

@@ -40,8 +40,18 @@ type imapSession struct {
 var _ imapserver.SessionIMAP4rev2 = (*imapSession)(nil)
 
 func (s *imapSession) Close() error { s.cancel(); return nil }
+
+// client is who the failure limit should count this session as. The internal
+// listener has no client of its own: every webmail user arrives from the
+// webmail's address, and the webmail limits them by their real one.
+func (s *imapSession) client() string {
+	if !s.public || s.conn == nil {
+		return ""
+	}
+	return clientKey(s.conn.RemoteAddr())
+}
 func (s *imapSession) Login(user, password string) error {
-	a, err := s.service.login(s.ctx, user, password, s.public, s.protocol())
+	a, err := s.service.login(s.ctx, user, password, s.public, s.protocol(), s.client())
 	if errors.Is(err, ErrCredentials) {
 		return imapserver.ErrAuthFailed
 	}
@@ -82,7 +92,7 @@ func (s *imapSession) watchCredentials() {
 		case <-s.ctx.Done():
 			return
 		case <-ticks:
-			a, err := s.service.login(s.ctx, s.user, s.password, s.public, s.protocol())
+			a, err := s.service.login(s.ctx, s.user, s.password, s.public, s.protocol(), s.client())
 			if err != nil || a.ID != s.account.ID {
 				_ = s.conn.Close()
 				return
@@ -102,7 +112,7 @@ var ErrProtocolDisabled = errors.New("this account may not use this protocol")
 // own switches. On a public listener, an account that requires app
 // passwords, or whose class does, refuses its account password
 // (security.go).
-func (s *Service) login(ctx context.Context, user, password string, public bool, protocol string) (Account, error) {
+func (s *Service) login(ctx context.Context, user, password string, public bool, protocol, client string) (Account, error) {
 	if strings.Contains(user, "|") {
 		// An administrator access token opens the one mailbox it names,
 		// not the shared mailboxes its owner may open.
@@ -114,7 +124,7 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 		if !ok || actorName == "" || mailboxName == "" || strings.Contains(mailboxName, "|") || !strings.Contains(mailboxName, "@") || protocol == mailpolicy.POP3 {
 			return Account{}, ErrCredentials
 		}
-		actor, err := s.login(ctx, actorName, password, public, protocol)
+		actor, err := s.login(ctx, actorName, password, public, protocol, client)
 		if err != nil {
 			return Account{}, err
 		}
@@ -135,7 +145,7 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 			return Account{}, err
 		}
 		if !allowed {
-			s.failLogin(actor.Address)
+			s.recordLoginFailure(actor.Address, client)
 			return Account{}, ErrCredentials
 		}
 		if err := s.applyPolicy(ctx, &mailbox); err != nil {
@@ -161,7 +171,7 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 		a, _, _, err := s.adminLogin(ctx, user, password)
 		return a, err
 	}
-	a, app, err := s.authenticate(ctx, user, password)
+	a, app, err := s.authenticate(ctx, user, password, client)
 	if err != nil {
 		return a, err
 	}
@@ -177,7 +187,7 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 		return Account{}, err
 	}
 	if required || a.Policy != nil && a.Policy.RequireAppPasswords {
-		s.failLogin(a.Address)
+		s.recordLoginFailure(a.Address, client)
 		s.log.Info("mailbox: account password refused; app password required", "user", a.Address)
 		return Account{}, ErrCredentials
 	}
@@ -186,7 +196,7 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 
 // authenticate checks an app password or the account password, with the
 // shared failure limit, and reports which one it was.
-func (s *Service) authenticate(ctx context.Context, user, password string) (Account, bool, error) {
+func (s *Service) authenticate(ctx context.Context, user, password, client string) (Account, bool, error) {
 	if len(user) > 320 {
 		return Account{}, false, ErrCredentials
 	}
@@ -196,12 +206,15 @@ func (s *Service) authenticate(ctx context.Context, user, password string) (Acco
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	allowed, err := s.allowLogin(user)
-	if err != nil {
-		return Account{}, false, err
-	}
-	if !allowed {
-		return Account{}, false, ErrCredentials
+	// Limited per account and client, never per account alone: that would let
+	// anyone lock a user out by guessing wrong. An empty client is an internal
+	// caller, which applies its own limit by the real client address.
+	allowed := true
+	if client != "" {
+		var err error
+		if allowed, err = s.allowLogin(loginFailureKey(user, client)); err != nil {
+			return Account{}, false, err
+		}
 	}
 	// An app password is one indexed lookup, and trying it first keeps a
 	// mail app that uses one from counting LDAP failures against the user.
@@ -221,7 +234,7 @@ func (s *Service) authenticate(ctx context.Context, user, password string) (Acco
 		}
 		if err != nil {
 			if errors.Is(err, ErrCredentials) {
-				s.failLogin(user)
+				s.recordLoginFailure(user, client)
 			}
 			return Account{}, false, err
 		}
@@ -233,10 +246,15 @@ func (s *Service) authenticate(ctx context.Context, user, password string) (Acco
 		}
 		return a, true, nil
 	}
+	// After the app password, deliberately: it is far too random to guess, so
+	// a mail app holding one keeps working from a client that is blocked.
+	if !allowed {
+		return Account{}, false, ErrCredentials
+	}
 	a, err := s.auth.Login(ctx, user, password)
 	if err != nil {
 		if errors.Is(err, ErrCredentials) {
-			s.failLogin(user)
+			s.recordLoginFailure(user, client)
 		}
 		return Account{}, false, err
 	}

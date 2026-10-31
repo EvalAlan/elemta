@@ -90,7 +90,7 @@ func (p *popSession) renew(ctx context.Context) bool {
 func (p *popSession) login(ctx context.Context, password string) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	a, err := p.s.login(ctx, p.user, password, true, mailpolicy.POP3)
+	a, err := p.s.login(ctx, p.user, password, true, mailpolicy.POP3, clientKey(p.conn.RemoteAddr()))
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func (p *popSession) run(ctx context.Context) {
 			return
 		}
 		if p.owner != "" && time.Since(p.checkedAt) >= 30*time.Second {
-			a, err := p.s.login(ctx, p.user, p.password, true, mailpolicy.POP3)
+			a, err := p.s.login(ctx, p.user, p.password, true, mailpolicy.POP3, clientKey(p.conn.RemoteAddr()))
 			if err != nil || a.ID != p.account.ID {
 				_ = p.line("-ERR Account credentials have changed")
 				return

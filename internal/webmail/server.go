@@ -628,7 +628,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := s.clientIP(r)
-	userKey := "user:" + strings.ToLower(user)
+	userKey := loginKey(user, ip)
 	if s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser) {
 		s.renderLogin(w, r, http.StatusTooManyRequests, user, "", "Too many sign-in attempts. Wait a few minutes and try again.")
 		return
@@ -737,7 +737,7 @@ func (s *Server) adminLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := s.clientIP(r)
-	userKey := "user:" + strings.ToLower(user)
+	userKey := loginKey(user, ip)
 	if s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser) {
 		http.Error(w, "Too many sign-in attempts.", http.StatusTooManyRequests)
 		return
@@ -829,12 +829,18 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, sess *Session) {
 // count: behind Docker's port publishing, a NAT or a proxy, many people
 // reach the webmail from one address, and counting every attempt let
 // ordinary use lock everyone out. A password-guessing run fails, so it is
-// still stopped: per account after a few tries, and per address after
-// more, allowing for a shared address.
+// still stopped: per account and address after a few tries, and per address
+// after more, allowing for a shared address. Never per account alone, which
+// would let anyone lock a user out by guessing wrong from somewhere else.
 const (
 	maxFailuresPerUser = 10
 	maxFailuresPerIP   = 50
 )
+
+// loginKey is what an address's failures for one account count against.
+func loginKey(user, ip string) string {
+	return "user:" + strings.ToLower(user) + "|" + ip
+}
 
 // loginLimiter counts failures per key (an address or an account) in fixed
 // windows.
