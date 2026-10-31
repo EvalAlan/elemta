@@ -80,6 +80,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 			ScanLimit:    as.Rspamd.ScanLimit,
 			Threshold:    as.Rspamd.Threshold,
 			RejectOnSpam: as.RejectOnSpam,
+			Quarantine:   as.Quarantine,
 		}
 	}
 

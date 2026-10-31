@@ -32,6 +32,10 @@ func TestLearnClass(t *testing.T) {
 		{"Drafts", "Junk", ""},
 		{"Junk", "Spam", ""},
 		{"INBOX", "Archive", ""},
+		// Releasing held mail says it was real; deleting it says nothing.
+		{"Quarantine", "INBOX", antispam.LearnHam},
+		{"Quarantine", "Trash", ""},
+		{"Quarantine", "Junk", ""},
 		{"INBOX", "Trash", ""},
 	}
 	for _, tt := range tests {

@@ -182,6 +182,7 @@ type ScannerStatus struct {
 	ScanLimit       int64   `json:"scan_limit"`
 	Threshold       float64 `json:"threshold,omitempty"`
 	RejectOnSpam    bool    `json:"reject_on_spam,omitempty"`
+	Quarantine      bool    `json:"quarantine,omitempty"`
 	RejectOnFailure bool    `json:"reject_on_failure,omitempty"`
 }
 
@@ -2148,6 +2149,7 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"scan_limit":     as.ScanLimit,
 			"threshold":      as.Threshold,
 			"reject_on_spam": as.RejectOnSpam,
+			"quarantine":     as.Quarantine,
 		}
 	}
 
@@ -2644,6 +2646,7 @@ func (s *Server) persistConfig() error {
 		edits = append(edits,
 			edit{"antispam", "enabled", as.Enabled},
 			edit{"antispam", "reject_on_spam", as.RejectOnSpam},
+			edit{"antispam", "quarantine", as.Quarantine},
 			edit{"antispam.rspamd", "enabled", as.Enabled},
 		)
 		if as.Address != "" {

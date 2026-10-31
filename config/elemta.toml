@@ -393,6 +393,10 @@ enabled = true
 # threshold. Trained, 0 of 61 real ham messages reach the reject action while
 # GTUBE reaches it exactly. If you retrain, re-measure before trusting this.
 reject_on_spam = true
+# Hold what would be refused in each recipient's Quarantine folder, where they
+# can release it. Only for mail to local mailboxes: viruses are always refused,
+# and so is spam for outside addresses, or from a logged-in user.
+quarantine = true
 
 [antispam.rspamd]
 enabled = true

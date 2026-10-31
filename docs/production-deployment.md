@@ -354,6 +354,9 @@ section gate and the per-scanner gate are both honoured.
   message unscanned rather than refusing it. Leave it `false` unless you would
   rather lose mail than accept it unscanned; a scanner outage becomes a mail
   outage otherwise.
+- **`quarantine`** — hold what `reject_on_spam` would refuse in each recipient's
+  Quarantine folder, for mail to local mailboxes. See "Quarantine" in
+  [mail-administration.md](mail-administration.md).
 - **`reject_on_spam`** — the engine decides what is spam against its own
   threshold; this decides whether that verdict refuses the message. With it
   `false`, spam is delivered carrying `X-Spam-*` headers for downstream

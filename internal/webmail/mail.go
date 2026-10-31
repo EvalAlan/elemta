@@ -229,7 +229,7 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 // without the user asking: only when they chose that in Settings, and never
 // in Junk, where a tracking pixel would confirm the address to a spammer.
 func (s *Server) autoImages(sess *Session, folder string, folders []Folder) bool {
-	return s.prefsCached(sess).LoadImages && !isRoleIn(folder, folders, RoleJunk)
+	return s.prefsCached(sess).LoadImages && !isRoleIn(folder, folders, RoleJunk) && !isRoleIn(folder, folders, RoleQuarantine)
 }
 
 func isRoleIn(name string, folders []Folder, role Role) bool {
@@ -782,7 +782,7 @@ func (s *Server) foldersSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	case errors.Is(err, ErrExists):
 		s.renderProblem(w, r, sess, http.StatusConflict, "A folder with that name already exists.")
 	case errors.Is(err, errProtectedFolder):
-		s.renderProblem(w, r, sess, http.StatusBadRequest, "Inbox, Drafts, Sent, Archive, Junk and Trash can't be renamed or deleted.")
+		s.renderProblem(w, r, sess, http.StatusBadRequest, "Inbox, Drafts, Sent, Archive, Junk, Quarantine and Trash can't be renamed or deleted.")
 	case errors.Is(err, errFolderHasChildren):
 		s.renderProblem(w, r, sess, http.StatusBadRequest, "Delete or move the folders inside it first.")
 	case err != nil:

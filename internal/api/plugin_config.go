@@ -126,6 +126,7 @@ func (s *Server) applyPluginConfig(plugin string, cfg map[string]interface{}) er
 		r.int64v("scan_limit", &next.ScanLimit, 0, 1<<40)
 		r.floatv("threshold", &next.Threshold, 0, 1000)
 		r.boolv("reject_on_spam", &next.RejectOnSpam)
+		r.boolv("quarantine", &next.Quarantine)
 		if err := r.err(); err != nil {
 			return err
 		}

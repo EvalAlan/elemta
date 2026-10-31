@@ -13,13 +13,16 @@ type Role string
 
 // Folder roles the UI treats specially.
 const (
-	RoleNone    Role = ""
-	RoleInbox   Role = "inbox"
-	RoleDrafts  Role = "drafts"
-	RoleSent    Role = "sent"
-	RoleJunk    Role = "junk"
-	RoleTrash   Role = "trash"
-	RoleArchive Role = "archive"
+	RoleNone   Role = ""
+	RoleInbox  Role = "inbox"
+	RoleDrafts Role = "drafts"
+	RoleSent   Role = "sent"
+	RoleJunk   Role = "junk"
+	// RoleQuarantine holds mail the spam check would have refused. The mailbox
+	// service creates it on first use, so it isn't a default folder.
+	RoleQuarantine Role = "quarantine"
+	RoleTrash      Role = "trash"
+	RoleArchive    Role = "archive"
 )
 
 // Folder is one mailbox in the user's folder tree.

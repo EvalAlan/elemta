@@ -235,9 +235,9 @@ var templateFuncs = template.FuncMap{
 type option struct{ Value, Label string }
 
 // countable reports whether a folder's unread count means anything to the
-// user. Unread mail in Sent, Drafts, Junk or Trash isn't waiting for them.
+// user. Unread mail in Sent, Drafts, Junk, Quarantine or Trash isn't waiting for them.
 func countable(f Folder) bool {
-	return f.Role != RoleSent && f.Role != RoleTrash && f.Role != RoleDrafts && f.Role != RoleJunk
+	return f.Role != RoleSent && f.Role != RoleTrash && f.Role != RoleDrafts && f.Role != RoleJunk && f.Role != RoleQuarantine
 }
 
 // tagClass gives each tag one of eight colours, the same one everywhere it

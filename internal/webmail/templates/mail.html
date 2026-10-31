@@ -23,11 +23,12 @@
           </div>
         </details>
       </div>
+      {{if isRole .Folder .Folders "quarantine"}}<p class="muted folder-note">Mail the spam check would have refused. Release anything you were expecting. The rest is deleted automatically.</p>{{end}}
       <div class="bulk-bar" role="toolbar" aria-label="Selected messages">
         <button class="button" name="op" value="read">Mark read</button>
         <button class="button" name="op" value="unread">Mark unread</button>
         <button class="button" name="op" value="flag">Flag</button>
-        {{if isRole .Folder .Folders "junk"}}<button class="button" name="op" value="notjunk">Not junk</button>{{else}}<button class="button" name="op" value="junk">Junk</button>{{end}}
+        {{if isRole .Folder .Folders "quarantine"}}<button class="button" name="op" value="notjunk">Release</button>{{else if isRole .Folder .Folders "junk"}}<button class="button" name="op" value="notjunk">Not junk</button>{{else}}<button class="button" name="op" value="junk">Junk</button>{{end}}
         {{if not (isRole .Folder .Folders "archive")}}<button class="button" name="op" value="archive">Archive</button>{{end}}
         <button class="button danger" name="op" value="delete" data-confirm="{{if isRole .Folder .Folders "trash"}}Delete the selected messages for good?{{end}}">Delete</button>
         <label class="visually-hidden" for="bulk-dest">Move selected to</label>
@@ -142,7 +143,7 @@
           <form action="/mail/action" method="post">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
             <button class="menu-item" name="op" value="unread">Mark unread</button>
-            {{if isRole .Folder $.Folders "junk"}}<button class="menu-item" name="op" value="notjunk">Not junk</button>{{else}}<button class="menu-item" name="op" value="junk">Report junk</button>{{end}}
+            {{if isRole .Folder $.Folders "quarantine"}}<button class="menu-item" name="op" value="notjunk">Release to Inbox</button>{{else if isRole .Folder $.Folders "junk"}}<button class="menu-item" name="op" value="notjunk">Not junk</button>{{else}}<button class="menu-item" name="op" value="junk">Report junk</button>{{end}}
           </form>
           {{if and .From (not $.Session.AdminActor)}}
           <form action="/mail/block-sender" method="post">

@@ -52,7 +52,7 @@ type spamLearner interface {
 }
 
 func junkFolderName(name string) bool {
-	return retentionFolderName(name, "Junk", "Spam", "Junk E-mail")
+	return retentionFolderName(name, "Junk", "Spam", "Junk E-mail", quarantineFolder)
 }
 
 // learnClass says what moving mail from src to dst tells us, if anything.

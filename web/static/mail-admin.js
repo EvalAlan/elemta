@@ -20,7 +20,7 @@
     ];
     const PROTOCOLS = [['imap', 'IMAP'], ['pop3', 'POP3'], ['webmail', 'Webmail'], ['dav', 'Calendar and contact sync (DAV)'], ['submission', 'SMTP submission from mail apps']];
     const SWITCHES = [['address_book', 'Organisation address book (off by default)'], ['external_forwarding', 'Forwarding outside the server'], ['filters', 'Filters and vacation replies'], ['require_app_passwords', 'Require app passwords'], ['require_two_factor', 'Require two-step verification']];
-    const RETENTION = [['trash_days', 'Empty Trash after (days)', 'days'], ['junk_days', 'Empty Junk after (days)', 'days'], ['sent_days', 'Empty Sent after (days)', 'days'], ['retention_days', 'Delete all mail older than (days)', 'days'], ['legal_hold', 'Legal hold (keep everything)', 'switch']];
+    const RETENTION = [['trash_days', 'Empty Trash after (days)', 'days'], ['junk_days', 'Empty Junk after (days)', 'days'], ['quarantine_days', 'Empty Quarantine after (days, 30 if unset)', 'days'], ['sent_days', 'Empty Sent after (days)', 'days'], ['retention_days', 'Delete all mail older than (days)', 'days'], ['legal_hold', 'Legal hold (keep everything)', 'switch']];
 
     async function request(path, method = 'GET', body) {
         const options = { method, headers: { Accept: 'application/json' } };

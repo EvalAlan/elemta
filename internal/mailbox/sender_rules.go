@@ -181,6 +181,18 @@ func spamFlagged(raw []byte) bool {
 	return len(lines) > 0 && strings.HasPrefix(strings.ToLower(strings.TrimSpace(lines[0])), "yes")
 }
 
+// spamHeld reports whether the MTA marked the message for quarantine. As with
+// spamFlagged, only the first header counts.
+func spamHeld(raw []byte) bool {
+	lines := headerLines(headerBlock(raw), "X-Spam-Status")
+	if len(lines) == 0 {
+		return false
+	}
+	fields := strings.Split(lines[0], ",")
+	return len(fields) > 1 && strings.EqualFold(strings.TrimSpace(fields[0]), "yes") &&
+		strings.EqualFold(strings.TrimSpace(fields[1]), quarantineFolder)
+}
+
 // headerLines returns the unfolded values of a header, in order.
 func headerLines(head []byte, name string) []string {
 	var out []string
@@ -211,19 +223,31 @@ func (s *Service) junkFolder(ctx context.Context, account string) string {
 	return "Junk"
 }
 
-// fileAsJunk reports whether delivery should put the message in Junk,
-// before forwarding and the user's filters: a blocked sender, or a message
-// the spam check flagged from a sender the user hasn't allowed.
-func (s *Service) fileAsJunk(ctx context.Context, d delivery) (bool, error) {
+// quarantineFolder holds mail the spam check would have refused, for the user
+// to release or leave to expire (retention.go).
+const quarantineFolder = "Quarantine"
+
+// spamFolder is where delivery should file the message before forwarding and
+// the user's filters, or "" for normal delivery: Junk for a blocked sender or a
+// message the spam check flagged, Quarantine for one it would have refused.
+//
+// An allowed sender skips Junk but not Quarantine. An allow entry can match the
+// From header, which anyone can forge, and a forged message scoring that high
+// is the thing being held. The user can still see it and release it.
+func (s *Service) spamFolder(ctx context.Context, d delivery) (string, error) {
 	verdict, err := s.engine.senderVerdict(ctx, d.account.ID, messageSenders(d.from, d.raw))
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	switch verdict {
-	case "block":
-		return true, nil
-	case "allow":
-		return false, nil
+	switch {
+	case verdict == "block":
+		return s.junkFolder(ctx, d.account.ID), nil
+	case spamHeld(d.raw):
+		return quarantineFolder, nil
+	case verdict == "allow":
+		return "", nil
+	case spamFlagged(d.raw):
+		return s.junkFolder(ctx, d.account.ID), nil
 	}
-	return spamFlagged(d.raw), nil
+	return "", nil
 }

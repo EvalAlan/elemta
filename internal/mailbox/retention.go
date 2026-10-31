@@ -187,6 +187,8 @@ func (e *Engine) Retention(ctx context.Context, now time.Time) (RetentionReport,
 				days = shorterRetention(days, eff.TrashDays)
 			case retentionFolderName(folder.Name, "Junk", "Spam", "Junk E-mail"):
 				days = shorterRetention(days, eff.JunkDays)
+			case retentionFolderName(folder.Name, quarantineFolder):
+				days = shorterRetention(days, eff.QuarantineDays)
 			case retentionFolderName(folder.Name, "Sent", "Sent Items", "Sent Messages"):
 				days = shorterRetention(days, eff.SentDays)
 			}

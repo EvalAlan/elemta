@@ -571,9 +571,32 @@ Account, "Junk mail"): addresses, or `@example.com` for a whole domain,
 matched against the envelope sender and the message's From. Mail from an
 allowed sender stays in the INBOX even when flagged; mail from a blocked
 sender goes to Junk even when it isn't. A blocked envelope sender wins over
-an allowed From, so a forged From can't lift a block. Mail the MTA refused
-outright never reaches the mailbox, so allowing a sender can't bring that
-back; raise the reject threshold or allow the sender in Rspamd for that.
+an allowed From, so a forged From can't lift a block.
+
+### Quarantine
+
+Mail the spam check would refuse goes to the recipient's **Quarantine** folder
+instead, when `quarantine = true` under `[antispam]` (Plugins, Rspamd, in the
+console). Users can open it in the webmail, or see it as an ordinary folder in a
+mail app, and choose **Release** to move a message to the Inbox. Releasing also
+teaches the classifier that it was good mail.
+
+The folder appears the first time something is held. Held mail is deleted after
+30 days. To change that, set `quarantine_days` on a class of service, or use
+`set-policy --quarantine-days`; 0 keeps it. Legal hold keeps it, as it does all
+mail.
+
+Some mail is still refused at SMTP:
+
+- Viruses, always.
+- Spam addressed to anyone outside this server's local domains, since they have
+  no Quarantine folder here. One outside recipient is enough.
+- Spam from a logged-in user, who is there to see the error.
+
+The sender of held mail gets no bounce, so they can't tell it wasn't read. An
+allowed sender doesn't skip Quarantine, because an allow entry can match the From
+header and anyone can forge that. A blocked sender goes to Junk as usual. Held
+mail counts towards the user's quota, and isn't forwarded or filtered.
 
 How many entries a user may keep is the class of service's
 `max_sender_rules` (100 by default).
@@ -587,7 +610,8 @@ corrects what was learned. Some moves teach nothing:
 
 - Junk to Trash, because deleting spam doesn't make it good mail.
 - Anything into Junk from Sent or Drafts.
-- Mail that delivery filed in Junk, because only a person's decision counts.
+- Mail that delivery filed in Junk or Quarantine, because only a person's
+  decision counts.
 
 The classifier is shared by every account, so a user's reports affect everyone
 on the server. `[spam_learning]` in the mailbox configuration limits each
