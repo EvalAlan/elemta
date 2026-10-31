@@ -2716,6 +2716,13 @@ func (s *Server) persistConfig() error {
 		doc = config.RemoveTOMLSection(doc, "dkim")
 	}
 
+	// The running services keep working from memory after a bad write, so a
+	// broken file shows up only at the next restart, as every service failing
+	// at once. Refuse it here, where it's still just a failed save.
+	if err := config.ValidateTOML(doc); err != nil {
+		return fmt.Errorf("the configuration would not be valid, so it was not saved: %w", err)
+	}
+
 	// Write via a temp file in the same directory so a failure part-way through
 	// cannot leave a half-written config behind.
 	//

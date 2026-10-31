@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Saving in the console can no longer break the configuration.** On a
+  deployment whose DKIM domains were written as `[[plugins.dkim.domains]]`, which
+  `cloud-deploy.sh` does, saving any plugin setting left an invalid file, and
+  every service failed at its next restart. The save now works, and the console
+  refuses to write a file that wouldn't load. If yours has been saved since
+  `v0.6.0`, check it before restarting.
+
 - **Calendar sharing.** Users can share their calendar with people in their
   domain, from Settings, Account, and administrators can set it up from the
   account dialog or `provision grant-calendar`. View shows events, with private
