@@ -341,6 +341,13 @@ Unit=elemta-cert-sync.service
 [Install]
 WantedBy=multi-user.target
 EOF
+# systemd won't run a script with the wrong SELinux label, and one copied
+# through /tmp keeps that label: the units below would fail with nothing but
+# status 203 to show for it.
+if command -v restorecon >/dev/null 2>&1; then
+    sudo restorecon -R "$root/scripts"
+fi
+
 # Abuse protection's firewall. Installed always, and it does nothing to traffic
 # until the console's firewall setting is "apply".
 fw=/etc/systemd/system/elemta-abuse-firewall
