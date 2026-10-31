@@ -269,14 +269,17 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		if err != nil {
 			return nil, err
 		}
-		// Send-as rights in the directory cover any address (an alias, a
-		// list, a shared or role address), whether or not it is a mailbox.
-		if sending && sendAsAllowed(member.SendAs, r.URL.Query().Get("mailbox")) {
+		// An account's own aliases are its addresses: an administrator gave
+		// them to it, and their mail arrives here. Send-as rights in the
+		// directory cover any other address (a list, a shared or role
+		// address), whether or not it is a mailbox.
+		if sending && (ownsAlias(member, r.URL.Query().Get("mailbox")) || sendAsAllowed(member.SendAs, r.URL.Query().Get("mailbox"))) {
 			return map[string]bool{"allowed": true}, nil
 		}
 		owner, err := s.directoryAccount(r.Context(), r.URL.Query().Get("mailbox"))
-		// An alias isn't a mailbox to share, and a sender without a grant for
-		// one is refused. As an error, SMTP would report a temporary fault.
+		// Someone else's alias isn't a mailbox to share, so a sender without
+		// a grant for it is refused. As an error, SMTP would report a
+		// temporary fault.
 		if sending && errors.Is(err, mailpolicy.ErrInvalid) {
 			return map[string]bool{"allowed": false}, nil
 		}

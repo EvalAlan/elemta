@@ -270,12 +270,12 @@ provision list-shares support@example.com
 provision revoke-share support@example.com lee@example.com
 ```
 
-Send-as rights decide what webmail's From menu offers, and SMTP checks the same
-rights. Holding an alias or belonging to a list isn't permission by itself, since
-that would let everyone on a large list speak as it. Grant the address with
-`--send-as`, or **May also send as** on the account. A `@domain` grant allows the
-whole domain, and the menu lists this account's own aliases and lists there.
-Mailboxes shared with `--send` appear too.
+Webmail's From menu offers what SMTP allows. An account can always send as its
+own aliases. Belonging to a list isn't permission by itself, since that would
+let everyone on a large list speak as it. Grant the address with `--send-as`, or
+**May also send as** on the account. A `@domain` grant allows the whole domain,
+and the menu lists the account's lists there. Mailboxes shared with `--send`
+appear too.
 
 The shared account must be active to receive mail. Give it an unused random
 password; members use their own credentials. The grant without `--send` gives

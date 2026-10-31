@@ -316,12 +316,12 @@ func (a LDAPAuth) DirectoryListsOf(ctx context.Context, address string) ([]strin
 
 // sendAddresses lists what compose can offer the account, beside its own
 // address. It follows the check SMTP makes (share-access), so an address here
-// is one the send will be allowed. Holding an alias or belonging to a list
-// doesn't by itself count: membership of a large list would otherwise let
-// everyone on it speak as the list. A whole-domain grant covers too many
-// addresses to list, so it offers the account's own aliases and lists there.
+// is one the send will be allowed. The account's aliases are its own, but
+// belonging to a list doesn't by itself count: membership of a large list
+// would otherwise let everyone on it speak as the list. A whole-domain grant
+// covers too many addresses to list, so it offers the account's lists there.
 func (s *Service) sendAddresses(ctx context.Context, a Account) ([]string, error) {
-	out := []string{}
+	out := slices.Clone(a.Aliases)
 	domainGrant := false
 	for _, g := range a.SendAs {
 		if strings.HasPrefix(g, "@") {
@@ -340,20 +340,18 @@ func (s *Service) sendAddresses(ctx context.Context, a Account) ([]string, error
 		}
 	}
 	if domainGrant {
-		held := slices.Clone(a.Aliases)
 		lists, err := s.engine.ListsOfMember(ctx, a.Address)
 		if err != nil {
 			return nil, err
 		}
-		held = append(held, lists...)
 		if md := s.mailDirectory(); md != nil {
-			lists, err := md.DirectoryListsOf(ctx, a.Address)
+			directory, err := md.DirectoryListsOf(ctx, a.Address)
 			if err != nil {
 				return nil, err
 			}
-			held = append(held, lists...)
+			lists = append(lists, directory...)
 		}
-		for _, addr := range held {
+		for _, addr := range lists {
 			if sendAsAllowed(a.SendAs, addr) {
 				out = append(out, addr)
 			}
@@ -362,6 +360,11 @@ func (s *Service) sendAddresses(ctx context.Context, a Account) ([]string, error
 	slices.Sort(out)
 	out = slices.Compact(out)
 	return slices.DeleteFunc(out, func(addr string) bool { return addr == a.Address }), nil
+}
+
+// ownsAlias reports whether address is one of the account's aliases.
+func ownsAlias(a Account, address string) bool {
+	return slices.Contains(a.Aliases, strings.ToLower(strings.TrimSpace(address)))
 }
 
 // sendAsAllowed reports whether the account's directory grants (an
