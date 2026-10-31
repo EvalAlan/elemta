@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.6.0 (2026-10-31)
+
+The mail platform's first full release: webmail, mailboxes, calendars and an
+administration console, with encryption of stored mail, abuse protection, and
+per-domain certificates. It also closes an SMTP smuggling hole and stops
+refusing real senders, so anyone running an earlier release should upgrade.
+
 ### Upgrade notes
 
 - **Real senders are no longer refused.** The SMTP checks rejected any `=` in an
