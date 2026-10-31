@@ -247,3 +247,12 @@ CREATE TABLE IF NOT EXISTS mailbox_spam_feedback (
     PRIMARY KEY (account, body)
 );
 CREATE INDEX IF NOT EXISTS mailbox_spam_feedback_due ON mailbox_spam_feedback(not_before) WHERE learned IS NULL;
+-- Who can see whose calendar (calendar_sharing.go).
+CREATE TABLE IF NOT EXISTS mailbox_calendar_shares (
+    owner text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    member text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    level text NOT NULL CHECK (level IN ('view', 'edit', 'delegate')),
+    created timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (owner, member)
+);
+CREATE INDEX IF NOT EXISTS mailbox_calendar_shares_member ON mailbox_calendar_shares(member);

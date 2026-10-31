@@ -26,6 +26,9 @@ type imapSession struct {
 	// reported is the MODSEQ up to which flag changes have been sent.
 	reported uint64
 	readOnly bool
+	// calendarLevel is set on a session holding a calendar grant, which sees
+	// only the calendar folder (calendar_sharing.go).
+	calendarLevel string
 	// public is a listener mail apps connect to, where a user's app-password
 	// requirement applies.
 	public   bool
@@ -50,8 +53,21 @@ func (s *imapSession) client() string {
 	}
 	return clientKey(s.conn.RemoteAddr())
 }
-func (s *imapSession) Login(user, password string) error {
+
+// signIn authenticates a session, by whichever path its login name asks for.
+func (s *imapSession) signIn(user, password string) (Account, string, error) {
+	if isCalendarLogin(user) {
+		if s.public {
+			return Account{}, "", ErrCredentials
+		}
+		return s.service.calendarLogin(s.ctx, user, password, s.client())
+	}
 	a, err := s.service.login(s.ctx, user, password, s.public, s.protocol(), s.client())
+	return a, "", err
+}
+
+func (s *imapSession) Login(user, password string) error {
+	a, level, err := s.signIn(user, password)
 	if errors.Is(err, ErrCredentials) {
 		return imapserver.ErrAuthFailed
 	}
@@ -62,6 +78,7 @@ func (s *imapSession) Login(user, password string) error {
 		return protocolError(err)
 	}
 	s.account = a
+	s.calendarLevel = level
 	s.user, s.password = user, password
 	go s.watchCredentials()
 	return nil
@@ -92,8 +109,10 @@ func (s *imapSession) watchCredentials() {
 		case <-s.ctx.Done():
 			return
 		case <-ticks:
-			a, err := s.service.login(s.ctx, s.user, s.password, s.public, s.protocol(), s.client())
-			if err != nil || a.ID != s.account.ID {
+			// A changed level ends the session too: someone cut back from
+			// edit to view must not keep writing on an open connection.
+			a, level, err := s.signIn(s.user, s.password)
+			if err != nil || a.ID != s.account.ID || level != s.calendarLevel {
 				_ = s.conn.Close()
 				return
 			}
@@ -292,6 +311,9 @@ func protocolError(err error) error {
 	return &imap.Error{Type: imap.StatusResponseTypeNo, Code: code, Text: text}
 }
 func (s *imapSession) Select(name string, options *imap.SelectOptions) (*imap.SelectData, error) {
+	if err := s.allowFolder(name); err != nil {
+		return nil, err
+	}
 	info, err := s.service.engine.SelectFolder(s.ctx, s.account.ID, name)
 	if err != nil {
 		return nil, protocolError(err)
@@ -299,7 +321,7 @@ func (s *imapSession) Select(name string, options *imap.SelectOptions) (*imap.Se
 	s.folder = info.Folder
 	s.uids = info.UIDs
 	s.reported = info.Folder.ModSeq
-	s.readOnly = options.ReadOnly
+	s.readOnly = options.ReadOnly || s.calendarLevel == CalendarView
 	var unseen uint32
 	if info.FirstUnseen != 0 {
 		if i, ok := s.viewIndex(info.FirstUnseen); ok {
@@ -325,18 +347,34 @@ func (s *imapSession) Namespace() (*imap.NamespaceData, error) {
 	return &imap.NamespaceData{Personal: []imap.NamespaceDescriptor{{Delim: '/'}}}, nil
 }
 func (s *imapSession) Create(name string, _ *imap.CreateOptions) error {
+	// An editor may be the first to write to a calendar never used.
+	if err := s.allowWrite(name); err != nil {
+		return err
+	}
 	return protocolError(s.service.engine.Create(s.ctx, s.account.ID, name))
 }
 func (s *imapSession) Delete(name string) error {
+	if err := s.allowNone(); err != nil {
+		return err
+	}
 	return protocolError(s.service.engine.DeleteFolder(s.ctx, s.account.ID, name))
 }
 func (s *imapSession) Rename(old, newName string, _ *imap.RenameOptions) error {
+	if err := s.allowNone(); err != nil {
+		return err
+	}
 	return protocolError(s.service.engine.Rename(s.ctx, s.account.ID, old, newName))
 }
 func (s *imapSession) Subscribe(name string) error {
+	if err := s.allowNone(); err != nil {
+		return err
+	}
 	return protocolError(s.service.engine.Subscribe(s.ctx, s.account.ID, name, true))
 }
 func (s *imapSession) Unsubscribe(name string) error {
+	if err := s.allowNone(); err != nil {
+		return err
+	}
 	return protocolError(s.service.engine.Subscribe(s.ctx, s.account.ID, name, false))
 }
 func role(name string) imap.MailboxAttr {
@@ -361,6 +399,9 @@ func (s *imapSession) List(w *imapserver.ListWriter, ref string, patterns []stri
 		return protocolError(err)
 	}
 	for _, f := range folders {
+		if s.allowFolder(f.Name) != nil {
+			continue
+		}
 		match := false
 		for _, p := range patterns {
 			if imapserver.MatchList(f.Name, '/', ref, p) {
@@ -395,6 +436,9 @@ func (s *imapSession) List(w *imapserver.ListWriter, ref string, patterns []stri
 	return nil
 }
 func (s *imapSession) Status(name string, options *imap.StatusOptions) (*imap.StatusData, error) {
+	if err := s.allowFolder(name); err != nil {
+		return nil, err
+	}
 	f, n, unseen, size, err := s.service.engine.FolderStatus(s.ctx, s.account.ID, name)
 	if err != nil {
 		return nil, protocolError(err)
@@ -432,6 +476,9 @@ func (s *imapSession) AppendLimit() uint32 {
 	return uint32(v)
 }
 func (s *imapSession) Append(name string, r imap.LiteralReader, options *imap.AppendOptions) (*imap.AppendData, error) {
+	if err := s.allowWrite(name); err != nil {
+		return nil, err
+	}
 	release, err := s.service.receiveSlot(s.ctx)
 	if err != nil {
 		return nil, protocolError(err)
@@ -832,6 +879,9 @@ func (s *imapSession) Expunge(w *imapserver.ExpungeWriter, set *imap.UIDSet) err
 	return s.dropFromView(gone, w.WriteExpungeUID)
 }
 func (s *imapSession) Copy(set imap.NumSet, dest string) (*imap.CopyData, error) {
+	if err := s.allowNone(); err != nil {
+		return nil, err
+	}
 	v, from, to, err := s.service.engine.CopyMove(s.ctx, s.account.ID, s.folder.Name, dest, s.selected(set), false)
 	if err != nil {
 		return nil, protocolError(err)
@@ -849,6 +899,9 @@ func copyData(v uint32, from, to []uint32) *imap.CopyData {
 	return &imap.CopyData{UIDValidity: v, SourceUIDs: f, DestUIDs: t}
 }
 func (s *imapSession) Move(w *imapserver.MoveWriter, set imap.NumSet, dest string) error {
+	if err := s.allowNone(); err != nil {
+		return err
+	}
 	if s.readOnly {
 		return protocolError(ErrReadOnly)
 	}

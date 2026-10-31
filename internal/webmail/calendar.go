@@ -88,9 +88,13 @@ type calendarView struct {
 	Agenda    []calDay
 	Mini      miniMonth
 	Calendars []string
-	ScrollTo  int
-	Event     *eventDetail
-	Form      *eventForm
+	// OwnerName titles a new event on someone else's calendar.
+	OwnerName string
+	// Shared is the calendars shared with the user, for the sidebar.
+	Shared   []sharedCalendar
+	ScrollTo int
+	Event    *eventDetail
+	Form     *eventForm
 	// NowQ is the current quarter hour, for the red line in day and week.
 	NowQ int
 	// Upcoming is the next week's events, for the panel beside mail.
@@ -152,6 +156,18 @@ func calURL(view string, d time.Time) string {
 	return "/calendar?" + url.Values{"view": {view}, "date": {d.Format("2006-01-02")}}.Encode()
 }
 
+// occurrenceURL is eventURL for an event that may be on a shared calendar.
+func occurrenceURL(e *Event, occ time.Time) string {
+	return sharedEventURL(eventURL(e.UID, occ), e.Owner)
+}
+
+func sharedEventURL(u, owner string) string {
+	if owner == "" {
+		return u
+	}
+	return u + "&owner=" + url.QueryEscape(owner)
+}
+
 func eventURL(uid string, occ time.Time) string {
 	v := url.Values{"uid": {uid}}
 	if !occ.IsZero() {
@@ -191,7 +207,12 @@ func (s *Server) calendarPage(w http.ResponseWriter, r *http.Request, sess *Sess
 		return
 	}
 	events = append(events, holidayItems...)
+	own := calendarNames(events)
+	sharedItems, shared := s.overlayEvents(r.Context(), sess, loc)
+	events = append(events, sharedItems...)
 	cv := s.buildCalendar(view, date, today, now, prefs, events)
+	// The legend is the user's own labels; shared calendars have their list.
+	cv.Calendars, cv.Shared = own, shared
 	v := view2(sess, "Calendar", cv)
 	v.Notice = notices[q.Get("n")]
 	s.render(w, "calendar.html", http.StatusOK, v)
@@ -260,7 +281,7 @@ func (s *Server) buildCalendar(view string, date, today, now time.Time, prefs Se
 	cv.NowQ = now.Hour()*4 + now.Minute()/15
 
 	item := func(o Occurrence, day time.Time) calItem {
-		it := calItem{Occ: o, Class: calClass(o.Event.Calendar), URL: eventURL(o.Event.UID, o.Start)}
+		it := calItem{Occ: o, Class: calClass(o.Event.Calendar), URL: occurrenceURL(o.Event, o.Start)}
 		if !o.Event.AllDay {
 			it.TimeLabel = clock(h24, o.Start)
 		}
@@ -449,13 +470,22 @@ func buildMini(date, today time.Time, first int, view string) miniMonth {
 	return m
 }
 
+// label is the calendar name an event offers: the owner's own, not the name a
+// shared event is shown under.
+func label(e Event) string {
+	if e.Owner != "" {
+		return e.OwnerCalendar
+	}
+	return e.Calendar
+}
+
 func calendarNames(events []Event) []string {
 	seen := map[string]bool{defaultCalendar: true}
 	out := []string{defaultCalendar}
 	for _, e := range events {
-		if e.Calendar != "" && !seen[e.Calendar] {
-			seen[e.Calendar] = true
-			out = append(out, e.Calendar)
+		if label(e) != "" && !seen[label(e)] {
+			seen[label(e)] = true
+			out = append(out, label(e))
 		}
 	}
 	sort.Strings(out[1:])
@@ -489,23 +519,26 @@ type eventForm struct {
 	UID, Summary, Location, Description, URL string
 	StartDate, StartTime, EndDate, EndTime   string
 	AllDay                                   bool
-	Repeat                                   string // "", daily, weekdays, weekly, monthly, yearly, custom
-	Interval                                 int
-	Days                                     map[int]bool
-	Ends                                     string // never, until, count
-	Until                                    string
-	Count                                    int
-	CustomRule                               string
-	Calendar                                 string
-	Calendars                                []string
-	Reminder                                 int
-	Busy                                     bool
-	Attendees                                string
-	Notify                                   bool
-	Occ                                      int64 // the occurrence being edited, for "this one only"
-	Recurring                                bool
-	Problem                                  string
-	WeekdayOpts                              []weekdayOpt
+	// Owner is set when the event is on someone else's calendar.
+	Owner       string
+	Private     bool
+	Repeat      string // "", daily, weekdays, weekly, monthly, yearly, custom
+	Interval    int
+	Days        map[int]bool
+	Ends        string // never, until, count
+	Until       string
+	Count       int
+	CustomRule  string
+	Calendar    string
+	Calendars   []string
+	Reminder    int
+	Busy        bool
+	Attendees   string
+	Notify      bool
+	Occ         int64 // the occurrence being edited, for "this one only"
+	Recurring   bool
+	Problem     string
+	WeekdayOpts []weekdayOpt
 }
 
 type weekdayOpt struct {
@@ -524,7 +557,21 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 	prefs := s.prefsCached(sess)
 	q := r.URL.Query()
 	now := s.now().In(loc)
-	events, err := s.calendarEvents(r.Context(), sess, loc)
+	owner := strings.ToLower(strings.TrimSpace(q.Get("owner")))
+	var share *calendarShare
+	var events []Event
+	var err error
+	if owner == "" {
+		events, err = s.calendarEvents(r.Context(), sess, loc)
+	} else {
+		share, err = s.calendarShareFor(r.Context(), sess, owner)
+		if err == nil && share == nil {
+			err = ErrNotFound
+		}
+		if err == nil {
+			events, err = s.sharedEventsOf(r.Context(), sess, *share, loc)
+		}
+	}
 	if err != nil {
 		s.fail(w, r, sess, err)
 		return
@@ -567,6 +614,10 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 
 	switch {
 	case q.Get("new") == "1":
+		if share != nil && !share.CanEdit() {
+			s.fail(w, r, sess, ErrNotFound)
+			return
+		}
 		hour := 9
 		if h, err := strconv.Atoi(q.Get("hour")); err == nil && h >= 0 && h < 24 {
 			hour = h
@@ -578,13 +629,16 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 			StartDate: start.Format("2006-01-02"), StartTime: start.Format("15:04"),
 			EndDate: start.Add(time.Hour).Format("2006-01-02"), EndTime: start.Add(time.Hour).Format("15:04"),
 			Interval: 1, Ends: "never", Calendar: defaultCalendar, Reminder: 15, Busy: true, Notify: true,
-			Summary: q.Get("title"),
+			Summary: q.Get("title"), Owner: owner,
 		}
 		if q.Get("allday") == "1" {
 			f.AllDay = true
 		}
 		cv.Form = s.finishForm(f, events, start)
 		v.Title = "New event"
+		if share != nil {
+			cv.OwnerName = sharedName(share.Owner)
+		}
 	case ev == nil:
 		s.fail(w, r, sess, ErrNotFound)
 		return
@@ -600,7 +654,7 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 		d := &eventDetail{
 			Event: ev, Occ: o, Repeat: ruleSummary(ev.RRule, ev.Start), Organizer: ev.IsOrganizer(sess.Address),
 			Class: calClass(ev.Calendar), ICSURL: "/calendar/export?uid=" + url.QueryEscape(ev.UID),
-			OccURL: eventURL(ev.UID, occ),
+			OccURL: occurrenceURL(ev, occ),
 		}
 		for _, a := range ev.Attendees {
 			if strings.EqualFold(a.Email, sess.Address) {
@@ -647,7 +701,12 @@ func formFromEvent(e *Event, occ time.Time, loc *time.Location) *eventForm {
 		StartDate: start.Format("2006-01-02"), StartTime: start.Format("15:04"),
 		EndDate: end.Format("2006-01-02"), EndTime: end.Format("15:04"), AllDay: e.AllDay,
 		Interval: 1, Ends: "never", Calendar: e.Calendar, Reminder: e.Reminder, Busy: e.Busy,
+		Owner: e.Owner, Private: e.Private,
 		Recurring: e.Recurring(), Occ: occ.Unix(),
+	}
+	// The label the owner gave it, not the name it's shown under here.
+	if e.Owner != "" {
+		f.Calendar = e.OwnerCalendar
 	}
 	var att []string
 	for _, a := range e.Attendees {
@@ -761,6 +820,7 @@ func parseEventForm(r *http.Request) *eventForm {
 		Ends: r.PostFormValue("ends"), Until: r.PostFormValue("until"), CustomRule: r.PostFormValue("custom_rule"),
 		Calendar: strings.TrimSpace(r.PostFormValue("calendar")), Busy: r.PostFormValue("busy") != "free",
 		Attendees: r.PostFormValue("attendees"), Notify: r.PostFormValue("notify") == "1",
+		Owner: strings.ToLower(strings.TrimSpace(r.PostFormValue("owner"))), Private: r.PostFormValue("private") == "1",
 		Days: map[int]bool{},
 	}
 	f.Interval, _ = strconv.Atoi(r.PostFormValue("interval"))
@@ -786,7 +846,7 @@ func parseEventForm(r *http.Request) *eventForm {
 func eventFromForm(f *eventForm, loc *time.Location) (Event, error) {
 	e := Event{
 		UID: f.UID, Summary: f.Summary, Location: f.Location, Description: f.Description, URL: f.URL,
-		AllDay: f.AllDay, Calendar: f.Calendar, Reminder: f.Reminder, Busy: f.Busy, Status: "CONFIRMED",
+		AllDay: f.AllDay, Calendar: f.Calendar, Reminder: f.Reminder, Busy: f.Busy, Status: "CONFIRMED", Private: f.Private,
 	}
 	if e.Summary == "" {
 		e.Summary = "(no title)"
@@ -849,14 +909,29 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 	loc := s.loc(sess)
 	ctx := r.Context()
 	op := r.PostFormValue("op")
-	events, err := s.events(ctx, sess, loc)
+	owner := strings.ToLower(strings.TrimSpace(r.PostFormValue("owner")))
+	var events []Event
+	var err error
+	if owner == "" {
+		events, err = s.events(ctx, sess, loc)
+	} else {
+		var share *calendarShare
+		share, err = s.calendarShareFor(ctx, sess, owner)
+		if err == nil && (share == nil || !share.CanEdit()) {
+			http.Error(w, "You can't change this calendar.", http.StatusForbidden)
+			return
+		}
+		if err == nil {
+			events, err = s.sharedEventsOf(ctx, sess, *share, loc)
+		}
+	}
 	if err != nil {
 		s.fail(w, r, sess, err)
 		return
 	}
 	switch op {
 	case "delete", "delete-occurrence":
-		s.deleteEventSubmit(w, r, sess, events, op == "delete-occurrence")
+		s.deleteEventSubmit(w, r, sess, owner, events, op == "delete-occurrence")
 		return
 	case "save":
 	default:
@@ -875,6 +950,10 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 	}
 
 	existing := findEvent(events, f.UID)
+	if owner != "" && (len(e.Attendees) > 0 || (existing != nil && len(existing.Attendees) > 0)) {
+		s.renderGuestsOnShared(w, sess)
+		return
+	}
 	scope := r.PostFormValue("scope")
 	switch {
 	case existing == nil:
@@ -886,7 +965,7 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 		series := *existing
 		series.ExDates = append(series.ExDates, occ)
 		series.Sequence++
-		if err := s.putEvent(ctx, sess, series); err != nil {
+		if err := s.putEventIn(ctx, sess, owner, series); err != nil {
 			s.fail(w, r, sess, err)
 			return
 		}
@@ -916,12 +995,12 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 		prefs := s.prefsCached(sess)
 		e.Organizer = &Attendee{Email: sess.Address, Name: prefs.DisplayName}
 	}
-	if err := s.putEvent(ctx, sess, e); err != nil {
+	if err := s.putEventIn(ctx, sess, owner, e); err != nil {
 		s.fail(w, r, sess, err)
 		return
 	}
 	notice := "event-saved"
-	if f.Notify && len(e.Attendees) > 0 && e.IsOrganizer(sess.Address) {
+	if owner == "" && f.Notify && len(e.Attendees) > 0 && e.IsOrganizer(sess.Address) {
 		var removed []Attendee
 		if existing != nil {
 			keep := map[string]bool{}
@@ -945,14 +1024,24 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 			}
 		}
 	}
-	http.Redirect(w, r, eventURL(e.UID, time.Time{})+"&n="+notice, http.StatusSeeOther)
+	http.Redirect(w, r, sharedEventURL(eventURL(e.UID, time.Time{}), owner)+"&n="+notice, http.StatusSeeOther)
 }
 
-func (s *Server) deleteEventSubmit(w http.ResponseWriter, r *http.Request, sess *Session, events []Event, oneOccurrence bool) {
+// renderGuestsOnShared explains the refusal. Guests would have to hear about
+// the change, and that's mail in the owner's name.
+func (s *Server) renderGuestsOnShared(w http.ResponseWriter, sess *Session) {
+	http.Error(w, "This event has guests, so only its organizer can change it.", http.StatusForbidden)
+}
+
+func (s *Server) deleteEventSubmit(w http.ResponseWriter, r *http.Request, sess *Session, owner string, events []Event, oneOccurrence bool) {
 	ctx := r.Context()
 	ev := findEvent(events, r.PostFormValue("uid"))
 	if ev == nil {
 		s.fail(w, r, sess, ErrNotFound)
+		return
+	}
+	if owner != "" && len(ev.Attendees) > 0 {
+		s.renderGuestsOnShared(w, sess)
 		return
 	}
 	back := calURL("month", ev.Start)
@@ -961,20 +1050,20 @@ func (s *Server) deleteEventSubmit(w http.ResponseWriter, r *http.Request, sess 
 		cp := *ev
 		cp.ExDates = append(cp.ExDates, time.Unix(occ, 0).In(ev.Start.Location()))
 		cp.Sequence++
-		if err := s.putEvent(ctx, sess, cp); err != nil {
+		if err := s.putEventIn(ctx, sess, owner, cp); err != nil {
 			s.fail(w, r, sess, err)
 			return
 		}
 		http.Redirect(w, r, calURL("month", time.Unix(occ, 0))+"&n=event-deleted", http.StatusSeeOther)
 		return
 	}
-	if err := s.deleteEvent(ctx, sess, ev.UID); err != nil {
+	if err := s.deleteEvent(ctx, sess, owner, ev.UID); err != nil {
 		s.fail(w, r, sess, err)
 		return
 	}
 	// Guests hear about a cancelled meeting; a declined invitation that the
 	// user only removes from their own calendar tells nobody.
-	if len(ev.Attendees) > 0 && ev.IsOrganizer(sess.Address) && r.PostFormValue("notify") == "1" {
+	if owner == "" && len(ev.Attendees) > 0 && ev.IsOrganizer(sess.Address) && r.PostFormValue("notify") == "1" {
 		cp := *ev
 		cp.Sequence++
 		cp.Status = "CANCELLED"

@@ -45,6 +45,14 @@ type Event struct {
 	// ReadOnly marks events made from other data (contact birthdays),
 	// which the calendar shows but can't edit.
 	ReadOnly bool
+	// Private (CLASS:PRIVATE) hides the details from someone with view access
+	// to the calendar (calendar_shares.go).
+	Private bool
+	// Owner is whose shared calendar the event came from; empty for the
+	// user's own. Calendar then holds the owner's name, so the event takes
+	// their colour, and OwnerCalendar keeps the label they gave it.
+	Owner         string
+	OwnerCalendar string
 	// HolidayKey identifies a holiday across years for the user's hide list.
 	HolidayKey string
 	// HolidayKeys is every region's key when the same holiday falls in more
@@ -225,6 +233,10 @@ func eventFromComponent(comp *ical.Component, loc *time.Location) (Event, error)
 	if c := text("X-ELEMTA-CALENDAR"); c != "" {
 		e.Calendar = c
 	}
+	// CONFIDENTIAL means the same here: don't show this to other people.
+	if c := strings.ToUpper(text(ical.PropClass)); c == "PRIVATE" || c == "CONFIDENTIAL" {
+		e.Private = true
+	}
 	var dateOnly bool
 	var err error
 	e.Start, dateOnly, err = propTime(props.Get(ical.PropDateTimeStart), loc)
@@ -308,6 +320,9 @@ func eventFromComponent(comp *ical.Component, loc *time.Location) (Event, error)
 func (e Event) toComponent(now time.Time) *ical.Component {
 	ev := ical.NewEvent()
 	p := ev.Props
+	if e.Private {
+		p.SetText(ical.PropClass, "PRIVATE")
+	}
 	p.SetText(ical.PropUID, e.UID)
 	p.SetDateTime(ical.PropDateTimeStamp, now.UTC())
 	if !e.Modified.IsZero() {

@@ -65,6 +65,18 @@
   <ul class="cal-legend">
     {{range .Calendars}}<li><span class="swatch {{calClass .}}"></span>{{.}}</li>{{end}}
   </ul>
+  {{if .Shared}}
+  <h3 class="small muted">Shared with you</h3>
+  <ul class="cal-legend">
+    {{range .Shared}}<li>
+      <form action="/calendar/shared" method="post" class="inline">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="owner" value="{{.Owner}}"><input type="hidden" name="hide" value="{{if .Hidden}}0{{else}}1{{end}}">
+        <button class="link-button" type="submit" aria-pressed="{{if .Hidden}}false{{else}}true{{end}}" title="{{if .Hidden}}Show{{else}}Hide{{end}} {{.Name}}'s calendar"><span class="swatch{{if not .Hidden}} {{calClass .Name}}{{end}}"></span>{{.Name}}</button>
+      </form>
+      {{if .Failed}}<span class="small muted">unavailable</span>{{else if and .CanEdit (not .Hidden)}}<a class="small" href="/calendar/event?new=1&amp;owner={{.Owner}}" title="Add an event to {{.Name}}'s calendar" aria-label="Add an event to {{.Name}}'s calendar">Add</a>{{end}}
+    </li>{{end}}
+  </ul>
+  {{end}}
   <a class="small manage" href="/settings#holidays">Customize holidays</a>
   <form class="import" action="/calendar/import" method="post" enctype="multipart/form-data">
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">

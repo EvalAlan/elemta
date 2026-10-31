@@ -17,9 +17,11 @@ import (
 // Settings are one user's preferences. They are stored as a JSON object in
 // the Settings collection, so they follow the user to any webmail pod.
 type Settings struct {
-	DisplayName string `json:"display_name,omitempty"`
-	ReplyTo     string `json:"reply_to,omitempty"`
-	Signature   string `json:"signature,omitempty"`
+	// HiddenCalendars are shared calendars the user has switched off.
+	HiddenCalendars []string `json:"hidden_calendars,omitempty"`
+	DisplayName     string   `json:"display_name,omitempty"`
+	ReplyTo         string   `json:"reply_to,omitempty"`
+	Signature       string   `json:"signature,omitempty"`
 	// SignatureAbove puts the signature above quoted text in replies,
 	// rather than at the very bottom.
 	SignatureAbove bool   `json:"signature_above,omitempty"`
@@ -268,6 +270,10 @@ type settingsView struct {
 	HolidayCountries []holidayRegionChoice
 	HolidayDefault   string
 	HiddenHolidays   []hiddenHolidayChoice
+	// CalendarShares is who can see the user's calendar; Shared is set when
+	// the mailbox service can manage that.
+	CalendarShares   []calendarShare
+	CanShareCalendar bool
 	// CanChangePassword shows the password form.
 	CanChangePassword bool
 	MinPasswordLength int
@@ -417,6 +423,13 @@ func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view,
 		v.Settings.Security = &securityView{Status: st, Unavailable: err != nil}
 	}
 	s.withFolders(r, sess, &v)
+	if tab == "account" && s.security != nil && sess.AdminActor == "" {
+		if shares, err := s.calendarShareList(r.Context(), sess); err != nil {
+			s.log.Warn("webmail: calendar shares", "user", sess.User, "error", err)
+		} else {
+			v.Settings.CanShareCalendar, v.Settings.CalendarShares = true, shares.Granted
+		}
+	}
 	if tab == "account" {
 		if saved, err := s.folderRetentions(r.Context(), sess); err != nil {
 			s.log.Warn("webmail: read folder retention", "user", sess.User, "error", err)

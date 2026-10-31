@@ -297,10 +297,26 @@
         const row = node('tr'); cell(row, 'Class in effect'); cell(row, e.class); cell(row, ''); body.prepend(row);
         if (view.held || e.legal_hold) { const held = node('tr'); cell(held, 'Messages on hold'); cell(held, view.held || 0); cell(held, 'export with provision export-held'); body.appendChild(held); }
     }
+    const CALENDAR_LEVEL = { view: 'View', edit: 'Edit', delegate: 'Delegate' };
+    function fillCalendarShares(shares) {
+        const list = el('ma-calendar-list'); list.replaceChildren();
+        shares.forEach(share => {
+            const li = node('li'); li.appendChild(node('span', share.member + ' · ' + (CALENDAR_LEVEL[share.level] || share.level)));
+            li.appendChild(button('Remove', () => perform(async () => {
+                await request(accountPath() + '/calendar-shares/' + encodeURIComponent(share.member), 'DELETE');
+                fillCalendarShares(await request(accountPath() + '/calendar-shares'));
+                message('Calendar sharing removed.');
+            })));
+            list.appendChild(li);
+        });
+        if (!shares.length) list.appendChild(node('li', 'Not shared with anyone.'));
+    }
     async function openAccount(account) {
         policyLoaded = false; policyDirty = false;
         fillAccount(account); el('ma-account-dialog').showModal();
+        el('ma-calendar-section').hidden = !(account && mailboxAdmin);
         if (account && mailboxAdmin) {
+            try { fillCalendarShares(await request(accountPath() + '/calendar-shares')); } catch (error) { message(error.message, true); }
             try { fillPolicy(await request(accountPath() + '/policy')); } catch (error) { message(error.message, true); }
         }
     }
@@ -374,6 +390,12 @@
         el('ma-new-alias').value = ''; message('Delivery alias ' + alias + ' now delivers to ' + account + '.'); await refresh();
     }); });
     el('ma-alias-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => { const updated = await request(accountPath() + '/aliases', 'POST', { alias: el('ma-alias').value }); fillAccount(updated); el('ma-account-policy').hidden = !mailboxAdmin; message('Delivery alias added.'); await refresh(); }); });
+    el('ma-calendar-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+        await request(accountPath() + '/calendar-shares/' + encodeURIComponent(el('ma-calendar-member').value.trim()), 'PUT', { level: el('ma-calendar-level').value });
+        el('ma-calendar-member').value = '';
+        fillCalendarShares(await request(accountPath() + '/calendar-shares'));
+        message('Calendar shared.');
+    }); });
     el('ma-password-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
         if (el('ma-password').value !== el('ma-confirm-password').value) throw new Error('The new passwords do not match.');
         const result = await request(accountPath() + '/password', 'POST', { password: el('ma-password').value }); el('ma-password').value = ''; el('ma-confirm-password').value = ''; message(result.status);

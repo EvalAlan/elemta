@@ -157,7 +157,8 @@ var templateFuncs = template.FuncMap{
 	"tasksURL":   tasksURL,
 	"calURL":     calURL,
 	"calClass":   calClass,
-	"evURL":      func(o Occurrence) string { return eventURL(o.Event.UID, o.Start) },
+	"domainOf":   domainOf,
+	"evURL":      func(o Occurrence) string { return occurrenceURL(o.Event, o.Start) },
 	"newEventAt": func(d time.Time, hour int) string { return newEventURL(d, hour) },
 	"hourLabel": func(h24 bool, h int) string {
 		return clock(h24, time.Date(2000, 1, 1, h, 0, 0, 0, time.UTC))

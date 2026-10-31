@@ -13,6 +13,30 @@ type Share struct {
 	CanSend bool   `json:"can_send"`
 }
 
+// CalendarShare is a member's access to someone's calendar. OwnerID lets the
+// webmail lock the same object store the owner writes to.
+type CalendarShare struct {
+	Owner   string `json:"owner"`
+	OwnerID string `json:"owner_id,omitempty"`
+	Member  string `json:"member"`
+	Level   string `json:"level"`
+}
+
+func (c *Client) CalendarShares(ctx context.Context, owner string) ([]CalendarShare, error) {
+	out := []CalendarShare{}
+	return out, c.do(ctx, http.MethodGet, "/v1/admin/accounts/"+seg(owner)+"/calendar-shares", nil, &out)
+}
+
+func (c *Client) GrantCalendar(ctx context.Context, owner, member, level string) (CalendarShare, error) {
+	var out CalendarShare
+	err := c.do(ctx, http.MethodPut, "/v1/admin/accounts/"+seg(owner)+"/calendar-shares/"+seg(member), map[string]string{"level": level}, &out)
+	return out, err
+}
+
+func (c *Client) RevokeCalendar(ctx context.Context, owner, member string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/admin/accounts/"+seg(owner)+"/calendar-shares/"+seg(member), nil, nil)
+}
+
 func (c *Client) Shares(ctx context.Context, mailbox string) ([]Share, error) {
 	out := []Share{}
 	return out, c.do(ctx, http.MethodGet, "/v1/admin/accounts/"+seg(mailbox)+"/shares", nil, &out)

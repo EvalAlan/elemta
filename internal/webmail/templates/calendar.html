@@ -30,7 +30,7 @@
     <div class="day{{if .Other}} other{{end}}{{if .Today}} today{{end}}" role="gridcell">
       <a class="daynum" href="{{.URL}}">{{.Date.Day}}</a>
       {{range .AllDay}}
-        <a class="chip-ev {{.Class}}{{if not .Occ.Event.AllDay}} timed{{end}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}" data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}} title="{{.Occ.Event.Summary}}">{{if .TimeLabel}}<span class="t">{{.TimeLabel}}</span>{{end}}{{.Occ.Event.Summary}}</a>
+        <a class="chip-ev {{.Class}}{{if not .Occ.Event.AllDay}} timed{{end}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}} title="{{.Occ.Event.Summary}}">{{if .TimeLabel}}<span class="t">{{.TimeLabel}}</span>{{end}}{{.Occ.Event.Summary}}</a>
       {{end}}
       {{if .More}}<a class="more" href="{{.URL}}">+{{.More}} more</a>{{end}}
     </div>
@@ -42,7 +42,7 @@
     {{range .Agenda}}
       <h2{{if .Today}} class="today"{{end}}><a href="{{.URL}}">{{.Date.Format "Monday, January 2"}}</a>{{if .Today}} · Today{{end}}</h2>
       {{range .AllDay}}
-      <a class="agenda-item" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}" data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}}>
+      <a class="agenda-item" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}}>
         <span class="mono muted">{{if .Occ.Event.AllDay}}All day{{else}}{{.TimeLabel}} – {{clock $.Clock24 (.Occ.End.In $.Loc)}}{{end}}</span>
         <span class="swatch {{.Class}}" aria-hidden="true"></span>
         <span><span class="strong">{{.Occ.Event.Summary}}</span>{{if .Occ.Event.Location}} <span class="muted">· {{.Occ.Event.Location}}</span>{{end}}{{if .Occ.Event.Recurring}} <span class="marker" title="Repeats">{{template "icon-repeat"}}</span>{{end}}</span>
@@ -59,7 +59,7 @@
     </div>
     <div class="allday-row cols-{{len .Days}}">
       <div class="gutter">all day</div>
-      {{range .Days}}<div class="cell">{{range .AllDay}}<a class="chip-ev {{.Class}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}" data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}} title="{{.Occ.Event.Summary}}">{{.Occ.Event.Summary}}</a>{{end}}</div>{{end}}
+      {{range .Days}}<div class="cell">{{range .AllDay}}<a class="chip-ev {{.Class}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}} title="{{.Occ.Event.Summary}}">{{.Occ.Event.Summary}}</a>{{end}}</div>{{end}}
     </div>
     </div>
     <div class="hours cols-{{len .Days}}">
@@ -69,7 +69,7 @@
       <div class="daycol{{if .Today}} today{{end}}">
         {{range $.Calendar.Hours}}<a class="slot" href="{{newEventAt $day.Date .}}" data-hour="{{.}}" aria-label="New event at {{hourLabel $.Clock24 .}}"></a>{{end}}
         {{range .Timed}}
-        <a class="ev {{.Class}} {{.PosClass}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}" data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}} title="{{.Occ.Event.Summary}}"><span class="t">{{.TimeLabel}}</span><strong>{{.Occ.Event.Summary}}</strong>{{if .Occ.Event.Location}}<br><span>{{.Occ.Event.Location}}</span>{{end}}</a>
+        <a class="ev {{.Class}} {{.PosClass}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}} title="{{.Occ.Event.Summary}}"><span class="t">{{.TimeLabel}}</span><strong>{{.Occ.Event.Summary}}</strong>{{if .Occ.Event.Location}}<br><span>{{.Occ.Event.Location}}</span>{{end}}</a>
         {{end}}
         {{if .Today}}<div class="now-line q{{$.Calendar.NowQ}}" aria-hidden="true"></div>{{end}}
       </div>
@@ -85,16 +85,16 @@
 {{with .Calendar.Event}}
 <div class="toolbar" role="toolbar" aria-label="Event actions">
   {{if not .Event.ReadOnly}}
-  <a class="button" href="/calendar/event?uid={{.Event.UID}}&amp;occ={{.Occ.Start.Unix}}&amp;edit=1">Edit</a>
-  <a class="button" href="{{.ICSURL}}">Download .ics</a>
+  {{if not (and .Event.Owner .Event.HasAttendees)}}<a class="button" href="/calendar/event?uid={{.Event.UID}}&amp;occ={{.Occ.Start.Unix}}&amp;edit=1{{if .Event.Owner}}&amp;owner={{.Event.Owner}}{{end}}">Edit</a>{{end}}
+  {{if not .Event.Owner}}<a class="button" href="{{.ICSURL}}">Download .ics</a>{{end}}
   {{if .Event.Recurring}}
   <form action="/calendar/event" method="post" class="inline">
-    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="delete-occurrence"><input type="hidden" name="uid" value="{{.Event.UID}}"><input type="hidden" name="occ" value="{{.Occ.Start.Unix}}">
+    {{if .Event.Owner}}<input type="hidden" name="owner" value="{{.Event.Owner}}">{{end}}<input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="delete-occurrence"><input type="hidden" name="uid" value="{{.Event.UID}}"><input type="hidden" name="occ" value="{{.Occ.Start.Unix}}">
     <button class="button danger" data-confirm="Delete only this occurrence?">Delete this one</button>
   </form>
   {{end}}
   <form action="/calendar/event" method="post" class="inline">
-    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="uid" value="{{.Event.UID}}">
+    {{if .Event.Owner}}<input type="hidden" name="owner" value="{{.Event.Owner}}">{{end}}<input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="uid" value="{{.Event.UID}}">
     {{if and .Event.HasAttendees .Organizer}}<input type="hidden" name="notify" value="1">{{end}}
     <button class="button danger" data-confirm="{{if .Event.Recurring}}Delete every occurrence of this event?{{else}}Delete this event?{{end}}{{if and .Event.HasAttendees .Organizer}} Guests will be told it is cancelled.{{end}}">{{if .Event.Recurring}}Delete series{{else}}Delete{{end}}</button>
   </form>
@@ -104,6 +104,7 @@
     <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="uid" value="{{.Event.UID}}"><input type="hidden" name="date" value="{{.Occ.Start.Format "2006-01-02"}}"><input type="hidden" name="back" value="{{$.Calendar.PrevURL}}">
     <button class="button" type="submit">Hide this holiday</button>
   </form>
+  {{else if .Event.Owner}}<span class="muted small">On {{.Event.Calendar}}'s calendar, which you can view but not change.</span>
   {{else}}<span class="muted small">This event comes from your contacts. Edit the contact to change it.</span>{{end}}
   {{end}}
 </div>
@@ -117,6 +118,7 @@
   <dl class="details">
     <dt>Calendar</dt><dd>{{.Event.Calendar}}</dd>
     <dt>Show as</dt><dd>{{if .Event.Busy}}Busy{{else}}Free{{end}}</dd>
+    {{if .Event.Private}}<dt>Visibility</dt><dd>Private</dd>{{end}}
     {{if ge .Event.Reminder 0}}<dt>Reminder</dt><dd>{{reminderLabel .Event.Reminder}}</dd>{{end}}
     {{with .Event.Organizer}}<dt>Organizer</dt><dd>{{.Label}}{{if .Name}} <span class="mono muted">{{.Email}}</span>{{end}}</dd>{{end}}
     {{if .Event.Attendees}}
@@ -136,8 +138,9 @@
 {{with .Calendar.Form}}
 <form class="card form-grid event-form" action="/calendar/event" method="post" data-unsaved-warning>
   <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="save">
+  {{if .Owner}}<input type="hidden" name="owner" value="{{.Owner}}">{{end}}
   <input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="occ" value="{{.Occ}}">{{if .Recurring}}<input type="hidden" name="recurring" value="1">{{end}}
-  <h2 class="card-title">{{if .UID}}Edit event{{else}}New event{{end}}</h2>
+  <h2 class="card-title">{{if .UID}}Edit event{{else}}New event{{end}}{{if .Owner}} on {{.Owner}}'s calendar{{end}}</h2>
   {{if .Problem}}<p class="problem form-wide" role="alert">{{.Problem}}</p>{{end}}
   <label for="ev-title">Title</label><input id="ev-title" name="summary" type="text" value="{{.Summary}}" maxlength="500" autofocus required>
   <span class="label">When</span>
@@ -196,10 +199,11 @@
   </select>
   <label for="ev-busy">Show as</label>
   <select id="ev-busy" name="busy"><option value="busy"{{if .Busy}} selected{{end}}>Busy</option><option value="free"{{if not .Busy}} selected{{end}}>Free</option></select>
+  <span class="label">Visibility</span><label class="checkline"><input type="checkbox" name="private" value="1"{{if .Private}} checked{{end}}> Private: people who can only view this calendar see "Busy"</label>
   <label for="ev-desc">Description</label><textarea id="ev-desc" name="description" rows="5">{{.Description}}</textarea>
   <div class="form-actions">
     <button class="button primary" type="submit">Save event</button>
-    <a class="button ghost" href="{{if .UID}}/calendar/event?uid={{.UID}}{{else}}/calendar{{end}}">Cancel</a>
+    <a class="button ghost" href="{{if .UID}}/calendar/event?uid={{.UID}}{{if .Owner}}&amp;owner={{.Owner}}{{end}}{{else}}/calendar{{end}}">Cancel</a>
   </div>
 </form>
 {{end}}
