@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+
+	"github.com/EvalAlan/elemta/internal/provision"
 )
 
 // Every certificate the mail services serve, whether each local domain has
@@ -96,8 +99,11 @@ type CertificatesReport struct {
 
 // certSyncStatus is status.json, written by the host's sync.
 type certSyncStatus struct {
-	AppliedAt  string                 `json:"applied_at"`
-	Primary    string                 `json:"primary"`
+	AppliedAt string `json:"applied_at"`
+	Primary   string `json:"primary"`
+	// Deployment is MAIL_DOMAIN, which stays the deployment's whichever
+	// certificate is the default.
+	Deployment string                 `json:"deployment"`
 	Configured []string               `json:"configured"`
 	Requested  []string               `json:"requested"`
 	Uploaded   []string               `json:"uploaded"`
@@ -251,7 +257,7 @@ func (s *Server) certificatesReport() CertificatesReport {
 	}
 	source := func(label string) string {
 		switch {
-		case slices.Contains(st.Configured, label):
+		case label == st.Deployment, slices.Contains(st.Configured, label):
 			return "configured"
 		case slices.Contains(st.Requested, label):
 			return "requested"
@@ -288,7 +294,7 @@ func (s *Server) certificatesReport() CertificatesReport {
 		report.Message = "No certificate is configured."
 	}
 
-	domains := append([]string(nil), s.mainConfig.LocalDomains...)
+	domains := s.localDomains()
 	sort.Strings(domains)
 	for _, d := range domains {
 		d = strings.ToLower(strings.TrimSpace(d))
@@ -303,6 +309,24 @@ func (s *Server) certificatesReport() CertificatesReport {
 // domainCertificate finds the certificate that serves the domain's mail
 // host. The primary is the one a client gets when no other covers the name,
 // so it is tried last.
+// localDomains reads the file, because domains are added while the console
+// runs and it only loads its configuration at start. Without one it has what
+// it started with.
+func (s *Server) localDomains() []string {
+	if s.configPath != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		names, err := (provision.FileDomains{Path: s.configPath}).List(ctx)
+		if err == nil && len(names) > 0 {
+			return names
+		}
+	}
+	if s.mainConfig == nil {
+		return nil
+	}
+	return append([]string(nil), s.mainConfig.LocalDomains...)
+}
+
 func domainCertificate(domain string, certs []ServedCertificate) DomainCertificate {
 	out := DomainCertificate{Domain: domain, Status: "missing"}
 	ordered := make([]ServedCertificate, 0, len(certs))
@@ -365,10 +389,49 @@ func (s *Server) reservedCertHost(m *certManager, host string) string {
 	switch {
 	case host == primary:
 		return host + " is the primary certificate, set by the deployment."
+	case host == st.Deployment:
+		return host + " is the deployment's own name, set by its settings."
 	case slices.Contains(st.Configured, host):
 		return host + " is set by the deployment's settings (EXTRA_MAIL_DOMAINS)."
 	}
 	return ""
+}
+
+// handleTLSCertificateDefault chooses the certificate a client gets when it
+// names no host we hold one for. Only the host's sync can check Caddy has it,
+// so this records the wish and the sync reports if it can't be met; the
+// current default keeps serving until then.
+func (s *Server) handleTLSCertificateDefault(w http.ResponseWriter, r *http.Request) {
+	m := certManagerFor(w)
+	if m == nil {
+		return
+	}
+	var in struct {
+		Host string `json:"host"`
+	}
+	if !decodeJSONBody(w, r, &in) {
+		return
+	}
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(in.Host)), ".")
+	if len(host) > 253 || !certHost.MatchString(host) {
+		http.Error(w, "Enter a host name such as mail.example.org.", http.StatusBadRequest)
+		return
+	}
+	if m.uploaded(host) {
+		http.Error(w, "An uploaded certificate can't be the default: it isn't renewed, and the default must never lapse.", http.StatusConflict)
+		return
+	}
+	err := writeFileAtomic(filepath.Join(m.requests(), "primary"), []byte(host+"\n"), 0o644)
+	if err == nil {
+		err = m.trigger()
+	}
+	if err != nil {
+		slog.Error("default certificate request failed", "host", host, "error", err)
+		http.Error(w, "The request could not be written", http.StatusInternalServerError)
+		return
+	}
+	slog.Info("default certificate requested", "actor", certActor(r), "host", host)
+	writeJSON(w, map[string]string{"status": host + " will be the default certificate within a few seconds."})
 }
 
 func certActor(r *http.Request) string {

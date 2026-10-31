@@ -212,6 +212,11 @@ administrator can:
 - **upload a certificate** chain and unencrypted key in PEM, filed under the
   certificate's first name (a wildcard `*.example.org` as
   `wildcard.example.org`). It serves every name in it. It isn't renewed;
+- **make one the default**: what a client gets when it names no host we hold a
+  certificate for, `MAIL_DOMAIN`'s to begin with. Only a Let's Encrypt certificate
+  can be, since an uploaded one isn't renewed. `MAIL_DOMAIN` keeps a certificate
+  of its own, because the webmail and LMTP check the public certificate against
+  that name;
 - **remove** either kind, and **sync now**.
 
 Certificates for `MAIL_DOMAIN` and `EXTRA_MAIL_DOMAINS` come from

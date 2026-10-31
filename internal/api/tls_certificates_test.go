@@ -291,3 +291,45 @@ func TestCertificateRequestForSeveralNames(t *testing.T) {
 		t.Fatalf("no names = %d", rec.Code)
 	}
 }
+
+// Domains are added while the console runs, and SMTP goes by the top-level
+// list, so a stale [server] copy or the list at start must not decide this.
+func TestCertificatesReportUsesTheLiveDomainList(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "elemta.toml")
+	doc := "local_domains = [\"added.example\", \"example.org\"]\n\n[server]\nlocal_domains = [\"example.org\"]\n"
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{configPath: path, mainConfig: &MainConfig{LocalDomains: []string{"example.org"}}}
+	got := s.certificatesReport()
+	names := []string{}
+	for _, d := range got.Domains {
+		names = append(names, d.Domain)
+	}
+	if strings.Join(names, ",") != "added.example,example.org" {
+		t.Fatalf("domains = %v", names)
+	}
+	s.configPath = ""
+	if got := s.localDomains(); len(got) != 1 || got[0] != "example.org" {
+		t.Fatalf("without a file = %v", got)
+	}
+}
+
+func TestDefaultCertificateRequest(t *testing.T) {
+	s, m := managedServer(t)
+	request := func(body string) int {
+		rec := httptest.NewRecorder()
+		s.handleTLSCertificateDefault(rec, jsonRequest(http.MethodPost, "/api/tls/certificates/default", body))
+		return rec.Code
+	}
+	if got := request(`{"host": "bad_host"}`); got != http.StatusBadRequest {
+		t.Fatalf("a bad name = %d", got)
+	}
+	if got := request(`{"host": "Mail.Example.net."}`); got != http.StatusOK {
+		t.Fatalf("a good name = %d", got)
+	}
+	data, err := os.ReadFile(filepath.Join(m.requests(), "primary"))
+	if err != nil || string(data) != "mail.example.net\n" {
+		t.Fatalf("recorded = %q, %v", data, err)
+	}
+}

@@ -257,3 +257,37 @@ func TestForwardingAndSendAs(t *testing.T) {
 		t.Errorf("clearing forwarding: %v %v", got.Forward, err)
 	}
 }
+
+func TestDomainsKeepTheServerCopyInStep(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "elemta.toml")
+	doc := "local_domains = [\"example.org\"]\n\n[server]\nhostname = \"mx\"\nlocal_domains = [\"example.org\"]\n\n[other]\nkept = true\n"
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := FileDomains{Path: path}
+	if err := f.Set(context.Background(), []string{"example.org", "added.example"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), `local_domains = ["example.org", "added.example"]`); got != 2 {
+		t.Fatalf("copies updated = %d:\n%s", got, data)
+	}
+	if !strings.Contains(string(data), "kept = true") || !strings.Contains(string(data), `hostname = "mx"`) {
+		t.Fatalf("other settings changed:\n%s", data)
+	}
+	// A file with only the top-level list doesn't grow a second one.
+	path2 := filepath.Join(t.TempDir(), "elemta.toml")
+	if err := os.WriteFile(path2, []byte("local_domains = [\"example.org\"]\n\n[server]\nhostname = \"mx\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (FileDomains{Path: path2}).Set(context.Background(), []string{"added.example"}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(path2)
+	if strings.Count(string(data), "local_domains") != 1 {
+		t.Fatalf("a second list appeared:\n%s", data)
+	}
+}

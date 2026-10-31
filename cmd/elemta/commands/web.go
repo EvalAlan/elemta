@@ -35,10 +35,8 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 		maxSize = cfg.MaxSize // fallback
 	}
 
-	localDomains := cfg.Server.LocalDomains
-	if len(localDomains) == 0 {
-		localDomains = cfg.LocalDomains // fallback
-	}
+	// The list SMTP accepts mail for, so the console reports on the same one.
+	localDomains := cfg.EffectiveLocalDomains()
 
 	queueDir := cfg.Queue.Dir
 	if queueDir == "" {

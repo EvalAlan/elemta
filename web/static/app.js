@@ -3414,6 +3414,21 @@ async function refreshCertificate() {
 // Health page's card.
 const certSources = { primary: 'Primary', configured: 'Deployment settings', requested: "Let's Encrypt (requested here)", uploaded: 'Uploaded', unknown: '—' };
 
+// The default is a copy of a served certificate, so the original has a row of
+// its own that shouldn't offer to become what it already is.
+function isDefaultCertificate(cert, certs) {
+    const primary = certs.find(c => c.primary);
+    const names = cert.dns_names || [];
+    return !!primary && !cert.primary && names.length > 0 && names.every(n => (primary.dns_names || []).includes(n));
+}
+
+// The hosted domains whose mail apps get this certificate.
+function domainsUsingCertificate(host, domains) {
+    return (domains || []).filter(d => d.label === host).map(d => d.domain);
+}
+
+let certDomainRows = [];
+
 async function refreshCertificates() {
     const list = document.getElementById('cert-list');
     const domains = document.getElementById('cert-domains');
@@ -3429,6 +3444,7 @@ async function refreshCertificates() {
         document.getElementById('cert-manage').hidden = !report.manage_available;
 
         const certs = report.certificates || [];
+        certDomainRows = report.domains || [];
         list.innerHTML = (report.message ? `<div class="field-hint">${escapeHtml(report.message)}</div>` : '') + (certs.length ? `
             <table class="messages-table domain-stats-table">
                 <thead><tr><th>Certificate</th><th>Names</th><th>Source</th><th>Status</th><th>Expires</th><th>Issuer</th><th></th></tr></thead>
@@ -3440,7 +3456,7 @@ async function refreshCertificates() {
                         <td>${status(c.status, c.message)}</td>
                         <td>${c.not_after ? `${escapeHtml(formatDate(c.not_after))} (${c.days_remaining} days)` : '—'}</td>
                         <td>${escapeHtml(c.issuer || '—')}${c.self_signed ? ' <span class="plugin-note">self-signed</span>' : ''}</td>
-                        <td>${c.removable ? `<button class="btn btn-secondary btn-sm" data-cert-remove="${escapeHtml(c.label)}">Remove</button>` : ''}</td>
+                        <td>${report.manage_available && !c.primary && c.source !== 'uploaded' && (c.dns_names || []).length && !isDefaultCertificate(c, certs) ? `<button class="btn btn-secondary btn-sm" data-cert-default="${escapeHtml(c.label)}">Make default</button> ` : ''}${c.removable ? `<button class="btn btn-secondary btn-sm" data-cert-remove="${escapeHtml(c.label)}">Remove</button>` : ''}</td>
                     </tr>`).join('')}
                 </tbody>
             </table>` : '');
@@ -3526,8 +3542,19 @@ document.addEventListener('DOMContentLoaded', () => {
         if (f.files[0]) document.getElementById(f.dataset.target).value = await f.files[0].text();
     }));
     document.getElementById('view-certificates').addEventListener('click', async event => {
+        const chosen = event.target.dataset && event.target.dataset.certDefault;
+        if (chosen) {
+            if (!confirm(`Make ${chosen} the default certificate? Clients that name no host we hold a certificate for get it.`)) return;
+            try { await certCall('/default', 'POST', { host: chosen }); } catch (error) { showToast(error.message, 'error'); }
+            return;
+        }
         const host = event.target.dataset && event.target.dataset.certRemove;
-        if (!host || !confirm(`Remove the certificate for ${host}? The mail services stop serving it, and its clients get the primary certificate instead.`)) return;
+        if (!host) return;
+        const used = domainsUsingCertificate(host, certDomainRows);
+        const warning = used.length
+            ? `Mail apps for ${used.join(', ')} use this certificate. They get the default one instead, and will refuse it.`
+            : 'The mail services stop serving it, and its clients get the default certificate instead.';
+        if (!confirm(`Remove the certificate for ${host}? ${warning}`)) return;
         try { await certCall('/' + encodeURIComponent(host), 'DELETE'); } catch (error) { showToast(error.message, 'error'); }
     });
 });

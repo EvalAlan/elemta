@@ -130,9 +130,34 @@ from_caddy() {
     }
 }
 
-from_caddy "$MAIL_DOMAIN" "$dir" || { echo "cloud-sync-certs: no certificate for $MAIL_DOMAIN from Caddy yet" >&2; exit 1; }
+# The default certificate is MAIL_DOMAIN's unless the console chose another of
+# Caddy's names. MAIL_DOMAIN still gets its own below: the webmail's submission
+# and LMTP check the public certificate against that name.
+primary=$MAIL_DOMAIN
+if [ -f "$requests/primary" ]; then
+    IFS= read -r wanted <"$requests/primary" || true
+    wanted=${wanted//[[:space:]]/}
+    if [ -z "$wanted" ] || [ "$wanted" = "$MAIL_DOMAIN" ]; then
+        :
+    elif ! valid_host "$wanted"; then
+        reject "$wanted" "not a valid host name"
+    elif [[ " ${configured[*]} ${requested[*]} " != *" $wanted "* ]]; then
+        reject "$wanted" "can't be the default: it has no Let's Encrypt certificate here"
+    elif from_caddy "$wanted" "$tmp/primary"; then
+        primary=$wanted
+    else
+        reject "$wanted" "can't be the default yet: no certificate from Caddy"
+    fi
+fi
+from_caddy "$MAIL_DOMAIN" "$tmp/deployment" || { echo "cloud-sync-certs: no certificate for $MAIL_DOMAIN from Caddy yet" >&2; exit 1; }
+changed=0
+from_caddy "$primary" "$dir"
 
 keep=() pending=()
+if [ "$primary" != "$MAIL_DOMAIN" ]; then
+    keep+=("$MAIL_DOMAIN")
+    from_caddy "$MAIL_DOMAIN" "$dir/sni/$MAIL_DOMAIN"
+fi
 for h in "${configured[@]}" "${requested[@]}"; do
     keep+=("$h")
     from_caddy "$h" "$dir/sni/$h" || pending+=("$h")
@@ -182,7 +207,8 @@ json_list() {
 if [ -d "$manage" ]; then
     {
         printf '{\n  "applied_at": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        printf '  "primary": "%s",\n' "$MAIL_DOMAIN"
+        printf '  "primary": "%s",\n' "$primary"
+        printf '  "deployment": "%s",\n' "$MAIL_DOMAIN"
         printf '  "configured": %s,\n' "$(json_list "${configured[@]}")"
         printf '  "requested": %s,\n' "$(json_list "${requested[@]}")"
         printf '  "uploaded": %s,\n' "$(json_list "${uploaded[@]}")"

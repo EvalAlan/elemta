@@ -782,6 +782,7 @@ func (s *Server) Start() error {
 	}
 	api.Handle("/tls/certificates/sync", certAdmin(s.handleTLSCertificateSync)).Methods("POST")
 	api.Handle("/tls/certificates/upload", certAdmin(s.handleTLSCertificateUpload)).Methods("POST")
+	api.Handle("/tls/certificates/default", certAdmin(s.handleTLSCertificateDefault)).Methods("POST")
 	api.Handle("/tls/certificates", certAdmin(s.handleTLSCertificateRequest)).Methods("POST")
 	api.Handle("/tls/certificates/{host}", certAdmin(s.handleTLSCertificateDelete)).Methods("DELETE")
 
@@ -2087,7 +2088,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		"max_queue_time":               s.mainConfig.MaxQueueTime,
 		"retry_schedule":               s.mainConfig.RetrySchedule,
 		"session_timeout":              s.mainConfig.SessionTimeout,
-		"local_domains":                s.mainConfig.LocalDomains,
+		"local_domains":                s.localDomains(),
 		"failed_queue_retention_hours": s.mainConfig.FailedQueueRetentionHours,
 		// Read-only. Changing the backend does not migrate queued mail — it
 		// points the server at a different store and orphans what is in the old

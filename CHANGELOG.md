@@ -4,6 +4,11 @@
 
 ### Upgrade notes
 
+- **The default certificate is a choice.** **Make default** on the Certificates
+  page picks what a client gets when it names no host we hold a certificate for.
+  `MAIL_DOMAIN` keeps its own certificate, since internal connections check that
+  name. Removing a certificate says which domains use it, and the page can
+  request several hostnames at once.
 - **Abuse protection in the admin console.** A new **Abuse** page sets how many
   connections one address may hold, for SMTP, IMAP and POP3, with no restart.
   The default is 25; `[resources] max_connections_per_ip` now applies only with

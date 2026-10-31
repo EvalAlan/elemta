@@ -71,9 +71,20 @@ func (f FileDomains) Set(ctx context.Context, names []string) error {
 	if err != nil {
 		return err
 	}
-	var parsed map[string]any
+	var parsed struct {
+		Server struct {
+			LocalDomains []string `toml:"local_domains"`
+		} `toml:"server"`
+	}
 	if err = toml.Unmarshal(data, &parsed); err != nil {
 		return fmt.Errorf("invalid updated config: %w", err)
+	}
+	// SMTP uses the top-level list, but a file can carry [server]'s as well.
+	// Left behind, that copy says something different to anything reading it.
+	if parsed.Server.LocalDomains != nil {
+		if data, err = config.SetTOMLValue(data, "server", "local_domains", names); err != nil {
+			return err
+		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(f.Path), ".mail-domains-*")
 	if err != nil {
