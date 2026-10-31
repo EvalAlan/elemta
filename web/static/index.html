@@ -1328,6 +1328,11 @@
                         <label for="ma-domain-status">Domain status</label><select id="ma-domain-status"><option value="active">Active</option><option value="suspended">Suspended</option><option value="disabled">Disabled</option></select>
                         <p class="field-hint">Suspended keeps receiving mail but nobody can sign in. Disabled also refuses its mail.</p>
                     </section>
+                    <section class="ma-health" aria-labelledby="ma-domain-health-title">
+                        <div class="ma-health-heading"><h4 id="ma-domain-health-title">DNS health</h4><button type="button" class="btn btn-secondary" id="ma-domain-health-run">Check DNS</button></div>
+                        <p id="ma-domain-health-summary" class="field-hint" role="status">Checks the records this domain needs to send and receive mail.</p>
+                        <div id="ma-domain-health-results" class="ma-health-results"></div>
+                    </section>
                     <h4>DKIM signing</h4>
                     <p id="ma-domain-signing"></p>
                     <div id="ma-domain-keys" class="ma-keys"></div>

@@ -533,6 +533,32 @@ Verification includes service validation and configuration-lock tests, admin
 API permissions and lifecycle tests, CLI output/alias tests, SMTP cache tests,
 and real LDAP/IMAP/SMTP checks against the development stack.
 
+## Checking a domain's DNS
+
+Open a domain under Mail Administration and choose **Check DNS**. Anyone who
+administers the domain can run it. It reports what's wrong, and when there's one
+right answer, the record to publish.
+
+| Check | Looks at |
+|---|---|
+| Incoming mail (MX) | The MX exists and reaches this server, by comparing addresses, so any name for the server counts |
+| Reverse DNS | This server's address names a host that leads back to it, and that host is its `hostname` |
+| Sending permission (SPF) | One record, and evaluating it for this server's address passes |
+| Signatures (DKIM) | The key in DNS is the one this server signs with |
+| Forgery policy (DMARC) | One record with a policy that acts on forgery. A subdomain inherits its parent's |
+| Encryption policy (MTA-STS) | If advertised: the policy can be fetched and lists every MX |
+| Encryption reports (TLS-RPT), mail app setup (SRV) | Optional. Leaving these out doesn't count against a domain |
+
+"Couldn't check" means DNS didn't answer. It says nothing about the record, so
+try again rather than publishing anything. This server's identity comes from
+`hostname`, so that name has to resolve. Answers come through the stack's own
+resolver, so a record you just changed can take until its TTL runs out to show.
+
+An MTA-STS failure deserves quick attention. A policy in `enforce` mode that
+doesn't list your MX makes senders that honour it refuse to deliver, and senders
+that saved a policy keep following it until its `max_age` runs out, even after
+you remove the record.
+
 ## Junk mail and users' allowed and blocked senders
 
 The MTA's spam check refuses mail over its reject threshold and marks mail it

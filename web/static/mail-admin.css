@@ -96,3 +96,14 @@
 .ma-key-field { display: grid; grid-template-columns: 5rem minmax(0, 1fr) auto; gap: .5rem; align-items: start; }
 .ma-key-label { font-size: .8rem; color: var(--text-secondary); }
 .ma-key-field code { font-size: .75rem; overflow-wrap: anywhere; }
+.ma-health { margin: .75rem 0; padding-bottom: .75rem; border-bottom: 1px solid var(--border-color); }
+.ma-health-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+.ma-health-heading h4 { margin: 0; }
+.ma-health-results { display: grid; gap: .5rem; margin-top: .5rem; }
+.ma-health-text { margin: 0; font-size: .875rem; overflow-wrap: anywhere; }
+.ma-health-found { display: block; font-size: .75rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+.ma-health-status { margin-left: auto; padding: .1rem .5rem; border: 1px solid currentColor; border-radius: 999px; font-size: .75rem; white-space: nowrap; }
+.ma-health-ok { color: var(--success, #15803d); }
+.ma-health-info, .ma-health-unknown { color: var(--text-secondary); }
+.ma-health-warn { color: var(--warning, #b45309); }
+.ma-health-fail { color: var(--danger, #dc2626); }

@@ -29,6 +29,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/campaign"
 	"github.com/EvalAlan/elemta/internal/config"
 	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/dnshealth"
 	"github.com/EvalAlan/elemta/internal/metrics"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/EvalAlan/elemta/internal/queue"
@@ -207,6 +208,8 @@ type Server struct {
 	metricsStore   MetricsStore
 	// mailAuthLookupTXT is replaceable for deterministic DNS preflight tests.
 	mailAuthLookupTXT func(context.Context, string) ([]string, error)
+	// dnsHealth is replaceable for the same reason.
+	dnsHealth func(context.Context, dnshealth.Options) dnshealth.Report
 
 	// Mass mailer. Guarded because the plugin toggle builds and tears these
 	// down while requests are in flight, unlike the rest of the server's
