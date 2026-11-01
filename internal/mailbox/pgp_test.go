@@ -111,3 +111,42 @@ func TestPGPPins(t *testing.T) {
 		t.Fatal("accepted a bad fingerprint")
 	}
 }
+
+// Turning publishing off takes a key out of the public directory only, and a new
+// key keeps the owner's choice.
+func TestPGPPublishChoice(t *testing.T) {
+	e, a := testEngine(t)
+	ctx := context.Background()
+	public, private := testPGPPair(t, a.Address, "correct horse battery staple")
+	saved, err := e.PutPGPKey(ctx, a, public, private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.Published {
+		t.Fatal("a new key should be published until its owner says otherwise")
+	}
+	local, domain, _ := strings.Cut(strings.ToLower(a.Address), "@")
+	if err := e.SetPGPPublished(ctx, a, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.WKDKey(ctx, domain, wkdHash(local)); err == nil {
+		t.Fatal("an unpublished key is still in the directory")
+	}
+	if found, err := e.PGPLookup(ctx, []string{a.Address}); err != nil || len(found) != 1 {
+		t.Fatalf("colleagues lost the key: %+v %v", found, err)
+	}
+	second, secondPrivate := testPGPPair(t, a.Address, "correct horse battery staple")
+	again, err := e.PutPGPKey(ctx, a, second, secondPrivate)
+	if err != nil || again.Published {
+		t.Fatalf("replacing the key changed the choice: %+v %v", again, err)
+	}
+	if err := e.SetPGPPublished(ctx, a, true); err != nil {
+		t.Fatal(err)
+	}
+	if key, err := e.WKDKey(ctx, domain, wkdHash(local)); err != nil || key != second {
+		t.Fatalf("back on: %v", err)
+	}
+	if err := e.SetPGPPublished(ctx, Account{ID: "nobody", Address: "x@example.com"}, false); err == nil {
+		t.Fatal("an account with no key")
+	}
+}

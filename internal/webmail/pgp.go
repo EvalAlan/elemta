@@ -36,6 +36,8 @@ type pgpKeyInfo struct {
 	PublicKey   string `json:"public_key"`
 	PrivateKey  string `json:"private_key,omitempty"`
 	Created     string `json:"created,omitempty"`
+	// Published is whether the key is in the public directory.
+	Published bool `json:"published,omitempty"`
 	// Status compares this key with the one the user last accepted: new, pinned
 	// or changed.
 	Status string `json:"status,omitempty"`
@@ -86,6 +88,20 @@ func (s *Server) pgpKeyDelete(w http.ResponseWriter, r *http.Request, sess *Sess
 	if s.pgpCall(w, r, sess, http.MethodPost, "/v1/security/pgp/delete", map[string]string{"password": r.PostFormValue("password")}, nil) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
+}
+
+// pgpPublishSubmit is the switch in Settings. It's a plain form, because a
+// published key is public anyway and nothing here needs the browser's crypto.
+func (s *Server) pgpPublishSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
+	on := r.PostFormValue("published") == "1"
+	if !s.securityAction(w, r, sess, "/v1/security/pgp/publish", map[string]bool{"published": on}, nil) {
+		return
+	}
+	n := "pgp-unpublished"
+	if on {
+		n = "pgp-published"
+	}
+	http.Redirect(w, r, "/settings/security?n="+n+"#pgp", http.StatusSeeOther)
 }
 
 func (s *Server) pgpPin(w http.ResponseWriter, r *http.Request, sess *Session) {

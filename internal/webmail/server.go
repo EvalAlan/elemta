@@ -260,6 +260,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/pgp/key/delete", s.authed(s.pgpKeyDelete))
 	mux.HandleFunc("POST /api/pgp/lookup", s.authed(s.pgpLookup))
 	mux.HandleFunc("POST /api/pgp/pin", s.authed(s.pgpPin))
+	mux.HandleFunc("POST /settings/pgp/publish", s.authed(s.pgpPublishSubmit))
 	mux.HandleFunc("GET /.well-known/openpgpkey/{path...}", s.wkdServe)
 	mux.HandleFunc("POST /settings/passkeys/begin", s.authed(s.passkeyAddBegin))
 	mux.HandleFunc("POST /settings/passkeys/finish", s.authed(s.passkeyAddFinish))
@@ -537,6 +538,8 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"calendar-shared":        "Calendar shared.",
 	"pgp-key-saved":          "Your PGP key is ready. Keep your passphrase safe: nobody can recover it.",
 	"pgp-key-removed":        "Your PGP key was removed.",
+	"pgp-published":          "Your key is published. People outside can find it and write to you encrypted.",
+	"pgp-unpublished":        "Your key is no longer published. Colleagues can still find it.",
 	"passkey-added":          "Passkey added. You can use it next time you sign in.",
 	"passkey-removed":        "Passkey removed.",
 	"calendar-unshared":      "Calendar sharing removed.",

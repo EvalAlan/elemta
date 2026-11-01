@@ -38,6 +38,11 @@ type PGPKey struct {
 	PublicKey   string    `json:"public_key"`
 	PrivateKey  string    `json:"private_key,omitempty"`
 	Created     time.Time `json:"created"`
+	// Published says the key is in the public Web Key Directory. It's the
+	// owner's choice, because a directory answer tells anyone who guesses an
+	// address that it has a key. Colleagues find it either way, or they
+	// couldn't encrypt to each other.
+	Published bool `json:"published"`
 }
 
 // PGPPin is the key a user last accepted for an address.
@@ -119,7 +124,7 @@ func (e *Engine) PutPGPKey(ctx context.Context, a Account, public, private strin
 	domain := address[strings.LastIndexByte(address, '@')+1:]
 	err = e.DB.QueryRowContext(ctx, `INSERT INTO mailbox_pgp_keys(account,address,domain,wkd_hash,fingerprint,public_key,private_key) VALUES($1,$2,$3,$4,$5,$6,$7)
 ON CONFLICT(account) DO UPDATE SET address=EXCLUDED.address,domain=EXCLUDED.domain,wkd_hash=EXCLUDED.wkd_hash,fingerprint=EXCLUDED.fingerprint,public_key=EXCLUDED.public_key,private_key=EXCLUDED.private_key,created=now()
-RETURNING created`, a.ID, address, domain, wkdHash(local), fingerprint, public, private).Scan(&key.Created)
+RETURNING created,published`, a.ID, address, domain, wkdHash(local), fingerprint, public, private).Scan(&key.Created, &key.Published)
 	if err != nil {
 		return PGPKey{}, err
 	}
@@ -130,8 +135,8 @@ RETURNING created`, a.ID, address, domain, wkdHash(local), fingerprint, public, 
 // PGPKeyOf returns an account's key with its locked private half, nil if none.
 func (e *Engine) PGPKeyOf(ctx context.Context, account string) (*PGPKey, error) {
 	var k PGPKey
-	err := e.DB.QueryRowContext(ctx, `SELECT address,fingerprint,public_key,private_key,created FROM mailbox_pgp_keys WHERE account=$1`, account).
-		Scan(&k.Address, &k.Fingerprint, &k.PublicKey, &k.PrivateKey, &k.Created)
+	err := e.DB.QueryRowContext(ctx, `SELECT address,fingerprint,public_key,private_key,created,published FROM mailbox_pgp_keys WHERE account=$1`, account).
+		Scan(&k.Address, &k.Fingerprint, &k.PublicKey, &k.PrivateKey, &k.Created, &k.Published)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -145,6 +150,23 @@ func (e *Engine) DeletePGPKey(ctx context.Context, a Account) error {
 		return err
 	}
 	_, err := e.Audit(ctx, mailpolicy.AuditEntry{Actor: a.Address, Source: "webmail", Action: "pgp-key-remove", Target: a.Address})
+	return err
+}
+
+// SetPGPPublished records whether an account's key is in the public directory.
+func (e *Engine) SetPGPPublished(ctx context.Context, a Account, published bool) error {
+	res, err := e.DB.ExecContext(ctx, `UPDATE mailbox_pgp_keys SET published=$2 WHERE account=$1`, a.ID, published)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	detail := "not published"
+	if published {
+		detail = "published"
+	}
+	_, err = e.Audit(ctx, mailpolicy.AuditEntry{Actor: a.Address, Source: "webmail", Action: "pgp-key-publish", Target: a.Address, Detail: detail})
 	return err
 }
 
@@ -171,7 +193,7 @@ func (e *Engine) PGPLookup(ctx context.Context, addresses []string) ([]PGPKey, e
 // publishing a key means.
 func (e *Engine) WKDKey(ctx context.Context, domain, hash string) (string, error) {
 	var public string
-	err := e.DB.QueryRowContext(ctx, `SELECT public_key FROM mailbox_pgp_keys WHERE domain=$1 AND wkd_hash=$2`, strings.ToLower(domain), hash).Scan(&public)
+	err := e.DB.QueryRowContext(ctx, `SELECT public_key FROM mailbox_pgp_keys WHERE domain=$1 AND wkd_hash=$2 AND published`, strings.ToLower(domain), hash).Scan(&public)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}

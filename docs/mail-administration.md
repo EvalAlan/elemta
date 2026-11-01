@@ -730,6 +730,8 @@ PGP_WKD_DOMAINS="example.org"
 ```
 
 That serves `openpgpkey.<domain>`, on a site of its own that answers nothing else.
+Each user can stop publishing their own key in Settings, which is in the audit log as
+`pgp-key-publish`. Colleagues on the server find a key either way.
 
 OpenPGP.js is included unchanged in `internal/webmail/static`, under the LGPL (see
 `openpgp.LICENSE` beside it).

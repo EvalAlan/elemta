@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Choose whether your PGP key is published.** Settings, Security, has a switch for
+  the public Web Key Directory, on by default. Colleagues find a key either way.
+
 - **Encrypted mail with PGP.** People can create or import a key in Settings,
   Security, and send and read encrypted, signed mail in the webmail, with standard
   PGP/MIME that other PGP programs read. Encryption happens in the browser, and the

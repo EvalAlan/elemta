@@ -333,6 +333,15 @@
         <button class="button" type="button" data-pgp-export-private>Download private key</button>
       </div>
       <p class="small muted">The private key stays locked with your passphrase. Use it to read this mail in Thunderbird or another PGP program.</p>
+      <form class="toggle-row" action="/settings/pgp/publish#pgp" method="post">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+        <input type="hidden" name="published" value="{{if .PGP.Published}}0{{else}}1{{end}}">
+        <div>
+          <strong>Publish my key</strong>
+          <p class="small muted">{{if .PGP.Published}}People outside can find your key and send you encrypted mail. It also shows anyone who guesses your address that you have a key.{{else}}Only colleagues on this server can find your key. Give it to anyone else yourself.{{end}}</p>
+        </div>
+        <button class="button" type="submit">{{if .PGP.Published}}Stop publishing{{else}}Publish{{end}}</button>
+      </form>
       <form class="form-grid" data-pgp-remove data-confirm-submit>
         <label for="pgp-remove-password">Your account password</label><input id="pgp-remove-password" name="password" type="password" autocomplete="current-password" required>
         <div class="form-actions"><button class="button danger" type="submit" data-confirm="Remove your key? Mail encrypted to it can't be read again unless you've downloaded it.">Remove key</button></div>
