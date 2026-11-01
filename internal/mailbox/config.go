@@ -138,6 +138,9 @@ type BodyConfig struct {
 	SecretKeyEnv string `toml:"secret_key_env"`
 	// KeysEnv names the variable holding the encryption keys (body_crypto.go).
 	KeysEnv string `toml:"keys_env"`
+	// Compression is "zstd" to compress new mail (body_compress.go). Mail
+	// already compressed stays readable whatever this says.
+	Compression string `toml:"compression"`
 }
 type AuthConfig struct {
 	LDAPURL    string `toml:"ldap_url"`
@@ -330,6 +333,9 @@ func (c Config) Validate() error {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return fmt.Errorf("LMTP network: %w", err)
 		}
+	}
+	if c.Bodies.Compression != "" && c.Bodies.Compression != "none" && c.Bodies.Compression != CompressionZstd {
+		return errors.New("bodies.compression must be none or zstd")
 	}
 	switch c.Bodies.Driver {
 	case "file":

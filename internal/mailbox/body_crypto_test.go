@@ -10,11 +10,17 @@ import (
 )
 
 type memBodies struct {
-	objects map[string][]byte
-	checks  int
+	objects  map[string][]byte
+	checks   int
+	identity string
 }
 
-func (m *memBodies) Identity() string { return "memory" }
+func (m *memBodies) Identity() string {
+	if m.identity != "" {
+		return m.identity
+	}
+	return "memory"
+}
 func (m *memBodies) Put(_ context.Context, key string, data []byte) error {
 	if _, ok := m.objects[key]; ok {
 		return errors.New("exists")

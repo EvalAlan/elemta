@@ -14,6 +14,10 @@
 #                                   created in .secrets/mailbox-body-keys.env.
 #                                   Keep a copy off the server; see
 #                                   docs/mailbox-service.md
+#   MAILBOX_BODY_COMPRESSION=true   optional: compress new message bodies. Once
+#                                   on, images older than this feature can't
+#                                   read that mail, so a rollback across it
+#                                   needs care; see docs/mailbox-service.md
 #   MTA_STS_DOMAINS="example.org"   optional: domains that publish an MTA-STS
 #                                   policy; see docs/cloud-dev.md, "MTA-STS"
 #   MTA_STS_MODE=testing            optional: testing (default), enforce or none
@@ -215,6 +219,9 @@ if [ "${MAILBOX_BODY_ENCRYPTION:-}" = true ] && [ ! -f "$body_keys" ]; then
         printf 'ELEMTA_MAILBOX_BODY_KEYS=v1:%s\n' "$(openssl rand -base64 32)" >"$body_keys"
     )
     echo "cloud-deploy: created $body_keys. Copy it somewhere off this server NOW: without it encrypted mail can't be read." >&2
+fi
+if [ "${MAILBOX_BODY_COMPRESSION:-}" = true ]; then
+    mailbox_edits+=('/^\[bodies\]/a compression = "zstd"')
 fi
 render "$root/config/mailbox-main.toml" "$secrets/cloud/mailbox.toml" "${mailbox_edits[@]}"
 # Without collection a deleted message's body stays in storage forever. The

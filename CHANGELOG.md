@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Compress message bodies.** `[bodies] compression = "zstd"` compresses new mail
+  before it's encrypted, and `elemta mailbox compress-bodies` does what's already
+  stored. See "Compressing message bodies" in
+  [docs/mailbox-service.md](docs/mailbox-service.md).
+
 - **Calendar delegates.** The Delegate level now works: a delegate can invite
   guests, change or cancel meetings and answer invitations for the owner, and gets
   a copy of the owner's invitations. Their mail comes from their own address, with
