@@ -6,7 +6,8 @@
   Security, and send and read encrypted, signed mail in the webmail, with standard
   PGP/MIME that other PGP programs read. Encryption happens in the browser, and the
   passphrase never reaches the server. A forgotten passphrase can't be recovered.
-  Attachments can't be encrypted yet. See "Encrypted mail" in
+  Attachments are encrypted with the message, and signed mail is checked. See
+  "Encrypted mail" in
   [docs/user-guide.md](docs/user-guide.md).
 - **The console sees real addresses behind a proxy.** On a cloud deployment it took
   every visitor for the proxy, so they shared one login throttle and API rate limit,
