@@ -156,6 +156,9 @@ writing a message.
 - **Your passphrase can't be recovered.** It never leaves your browser. If you forget
   it, nobody can get encrypted mail back, and resetting your account password won't
   help. Download your private key and keep it somewhere safe.
+- Your key is published so people outside can find it and write to you encrypted. To
+  stop that, choose **Stop publishing** in the same place. Colleagues can still find
+  it, and anyone else needs it from you directly.
 - Everyone you write to needs a key. Elemta finds your colleagues' keys, and outside
   keys if their domain publishes them. If it can't find one, it won't send, rather
   than send in the clear.

@@ -156,3 +156,16 @@ func TestEncryptedOriginalKeepsARepliesEncryptionOn(t *testing.T) {
 		t.Fatal("a reply to encrypted mail doesn't start encrypted")
 	}
 }
+
+func TestPublishChoiceReachesTheMailboxService(t *testing.T) {
+	security := &fakeSecurity{}
+	h := newSecurityHarness(t, security)
+	csrf := h.login()
+	resp := h.post("/settings/pgp/publish", url.Values{"csrf": {csrf}, "published": {"0"}})
+	if resp.StatusCode != 303 || !strings.Contains(resp.Header.Get("Location"), "pgp-unpublished") {
+		t.Fatalf("status %d location %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if len(security.pgpPublished) != 1 || security.pgpPublished[0] != false {
+		t.Fatalf("calls %v", security.pgpPublished)
+	}
+}

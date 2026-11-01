@@ -37,8 +37,9 @@ type fakeSecurity struct {
 	maxForward   int
 	retention    map[string]int
 	// Calendar sharing: what the list returns, and what was changed.
-	calendars calendarShares
-	resources []bookable
+	calendars    calendarShares
+	resources    []bookable
+	pgpPublished []bool
 	// Mail protocols the user can choose about, and what they chose.
 	protocolChoices []protocolChoice
 	protocolCalls   []map[string]any
@@ -94,6 +95,11 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		switch {
 		case r.URL.Path == "/v1/security/protocols":
 			f.protocolCalls = append(f.protocolCalls, in)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		case r.URL.Path == "/v1/security/pgp/publish":
+			on, _ := in["published"].(bool)
+			f.pgpPublished = append(f.pgpPublished, on)
 			_, _ = w.Write([]byte(`{"ok":true}`))
 			return
 		case r.URL.Path == "/v1/security/pgp":

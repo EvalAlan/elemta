@@ -346,6 +346,8 @@ var noticeCards = map[string]string{
 	"passkey-added":        "passkeys",
 	"pgp-key-saved":        "pgp",
 	"pgp-key-removed":      "pgp",
+	"pgp-published":        "pgp",
+	"pgp-unpublished":      "pgp",
 	"protocol-off":         "mail-access",
 	"protocol-on":          "mail-access",
 	"passkey-removed":      "passkeys",

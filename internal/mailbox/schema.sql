@@ -315,6 +315,8 @@ CREATE TABLE IF NOT EXISTS mailbox_pgp_keys (
     private_key text NOT NULL,
     created timestamptz NOT NULL DEFAULT now()
 );
+-- Whether the key is in the public Web Key Directory. Colleagues find it either way.
+ALTER TABLE mailbox_pgp_keys ADD COLUMN IF NOT EXISTS published boolean NOT NULL DEFAULT true;
 CREATE INDEX IF NOT EXISTS mailbox_pgp_keys_address ON mailbox_pgp_keys(address);
 CREATE INDEX IF NOT EXISTS mailbox_pgp_keys_wkd ON mailbox_pgp_keys(domain, wkd_hash);
 CREATE TABLE IF NOT EXISTS mailbox_pgp_pins (

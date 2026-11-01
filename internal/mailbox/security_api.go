@@ -226,6 +226,15 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		}
 		return map[string]bool{"ok": true}, s.engine.DeletePGPKey(r.Context(), a.account)
 	})
+	handle("POST /v1/security/pgp/publish", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Published bool `json:"published"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.SetPGPPublished(r.Context(), a.account, in.Published)
+	})
 	handle("POST /v1/security/pgp/lookup", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		var in struct {
 			Addresses []string `json:"addresses"`
