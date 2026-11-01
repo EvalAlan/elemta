@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,11 +61,25 @@ func newFakeStore() *fakeStore {
 }
 
 func (f *fakeStore) Folders(context.Context) ([]Folder, error) { return f.folders, nil }
+
+// A real mailbox lists a message as read once it has been opened.
+func (f *fakeStore) listed(folder string) []Summary {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	msgs := slices.Clone(f.messages[folder])
+	for i := range msgs {
+		if f.seen[msgs[i].UID] {
+			msgs[i].Seen = true
+		}
+	}
+	return msgs
+}
+
 func (f *fakeStore) List(_ context.Context, folder string, q ListQuery) (Page, error) {
 	f.mu.Lock()
 	f.lastQuery = q
 	f.mu.Unlock()
-	msgs := f.messages[folder]
+	msgs := f.listed(folder)
 	return Page{Folder: folder, Messages: msgs, Total: len(msgs), Page: 1, PageSize: q.PageSize}, nil
 }
 func (f *fakeStore) ListThreads(_ context.Context, folder string, q ListQuery) (ThreadPage, error) {
@@ -75,7 +90,7 @@ func (f *fakeStore) ListThreads(_ context.Context, folder string, q ListQuery) (
 	// Messages sharing a base subject form one conversation.
 	var out []Conversation
 	idx := map[string]int{}
-	for _, m := range f.messages[folder] {
+	for _, m := range f.listed(folder) {
 		key := baseSubject(m.Subject)
 		i, ok := idx[key]
 		if !ok {

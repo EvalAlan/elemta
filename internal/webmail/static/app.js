@@ -978,37 +978,118 @@
   // sized to its content here, so a long message scrolls with the page
   // instead of inside a box; images that load later resize it again.
   // Conversation cards load their message when first opened.
-  $$("details.thread-card").forEach(function (card) {
-    card.addEventListener("toggle", function () {
-      var f = $("iframe[data-src]", card);
-      if (card.open && f && !f.getAttribute("src")) f.setAttribute("src", f.getAttribute("data-src"));
+  function setUpFrames(scope) {
+    $$("details.thread-card", scope).forEach(function (card) {
+      card.addEventListener("toggle", function () {
+        var f = $("iframe[data-src]", card);
+        if (card.open && f && !f.getAttribute("src")) f.setAttribute("src", f.getAttribute("data-src"));
+      });
     });
-  });
-  $$("iframe[data-autosize]").forEach(function (frame) {
-    var fit = function () {
-      try {
-        var d = frame.contentDocument;
-        if (!d || !d.documentElement) return;
-        // The body's height is the content's; the document's is never less
-        // than the frame, so measuring it could only ever grow the frame.
-        var b = d.body || d.documentElement;
-        var cs = frame.contentWindow.getComputedStyle(b);
-        var h = b.getBoundingClientRect().height + parseFloat(cs.marginTop || 0) + parseFloat(cs.marginBottom || 0);
-        frame.style.height = Math.ceil(Math.max(120, h, b.scrollHeight)) + 2 + "px";
-        // Sized to fit, the frame needs no scrollbar of its own.
-        d.documentElement.style.overflowY = "hidden";
-      } catch (err) { /* not same-origin (an old cached page): keep the fixed height */ }
-    };
-    frame.addEventListener("load", function () {
-      frame.classList.add("autosized");
-      fit();
-      try {
-        if (window.ResizeObserver) new ResizeObserver(fit).observe(frame.contentDocument.body || frame.contentDocument.documentElement);
-        Array.prototype.forEach.call(frame.contentDocument.images, function (img) { img.addEventListener("load", fit); });
-      } catch (err) { /* see above */ }
+    $$("iframe[data-autosize]", scope).forEach(function (frame) {
+      var fit = function () {
+        try {
+          var d = frame.contentDocument;
+          if (!d || !d.documentElement) return;
+          // The body's height is the content's; the document's is never less
+          // than the frame, so measuring it could only ever grow the frame.
+          var b = d.body || d.documentElement;
+          var cs = frame.contentWindow.getComputedStyle(b);
+          var h = b.getBoundingClientRect().height + parseFloat(cs.marginTop || 0) + parseFloat(cs.marginBottom || 0);
+          frame.style.height = Math.ceil(Math.max(120, h, b.scrollHeight)) + 2 + "px";
+          // Sized to fit, the frame needs no scrollbar of its own.
+          d.documentElement.style.overflowY = "hidden";
+        } catch (err) { /* not same-origin (an old cached page): keep the fixed height */ }
+      };
+      frame.addEventListener("load", function () {
+        frame.classList.add("autosized");
+        fit();
+        try {
+          if (window.ResizeObserver) new ResizeObserver(fit).observe(frame.contentDocument.body || frame.contentDocument.documentElement);
+          Array.prototype.forEach.call(frame.contentDocument.images, function (img) { img.addEventListener("load", fit); });
+        } catch (err) { /* see above */ }
+      });
+      // A frame added by the reading pane is still about:blank here, and sizing
+      // that would squash it to the minimum until the message arrives.
+      if (frame.contentDocument && frame.contentDocument.readyState === "complete" && frame.contentDocument.URL !== "about:blank") fit();
     });
-    if (frame.contentDocument && frame.contentDocument.readyState === "complete") fit();
+  }
+  setUpFrames(doc);
+
+  // ---- reading pane ------------------------------------------------------
+  // Opening a message from the list replaces only the reader. A full page load
+  // repainted the whole app on every click and lost the list's scroll position,
+  // so a message opened from further down threw the reader's user back to the
+  // top of the list. The server's page is still the only source: this fetches
+  // what the link would have loaded, and anything unexpected falls back to
+  // following the link, so a dead session reaches the sign-in page as it always
+  // did.
+  var opening = 0;
+
+  function revealSelected() {
+    var row = $(".messages .selected"), list = row && row.closest(".list");
+    // Only where the list is its own scroller: elsewhere this would move the page.
+    if (list && window.getComputedStyle(list).overflowY !== "visible") row.scrollIntoView({ block: "nearest" });
+  }
+
+  // The rows stay, because they hold the user's ticks and the list's scroll
+  // position. Only what opening a message changes is copied across.
+  function syncRows(fresh) {
+    $$("li[data-uid]", listEl()).forEach(function (li) {
+      var next = $('li[data-uid="' + li.getAttribute("data-uid") + '"]', fresh);
+      var selected = !!next && next.classList.contains("selected");
+      li.classList.toggle("selected", selected);
+      var link = $("a.row", li);
+      if (link) {
+        if (selected) link.setAttribute("aria-current", "true"); else link.removeAttribute("aria-current");
+      }
+      if (next) {
+        li.classList.toggle("unread", next.classList.contains("unread"));
+        li.toggleAttribute("data-seen", next.hasAttribute("data-seen"));
+      }
+    });
+  }
+
+  function showMessage(url, remember) {
+    var token = ++opening;
+    fetch(url, { credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok || r.redirected) throw new Error("not a message page");
+        return r.text();
+      })
+      .then(function (html) {
+        if (token !== opening) return;
+        var fresh = new DOMParser().parseFromString(html, "text/html");
+        var next = $(".reader", fresh), panes = $(".panes", fresh), reader = $(".reader");
+        if (!next || !panes || !reader || !listEl()) throw new Error("not a message page");
+        var added = doc.importNode(next, true);
+        reader.replaceWith(added);
+        $(".panes").classList.toggle("has-message", panes.classList.contains("has-message"));
+        syncRows(fresh);
+        if (remember) history.pushState(null, "", url);
+        baseTitle = fresh.title.replace(/^\(\d+\) /, "");
+        doc.title = fresh.title;
+        // In the single-pane layouts the page scrolls, not the reader.
+        window.scrollTo(0, 0);
+        revealSelected();
+        setUpFrames(added);
+        doc.dispatchEvent(new CustomEvent("elemta:reader"));
+        checkMail();
+      })
+      .catch(function () { if (token === opening) location.href = url; });
+  }
+
+  doc.addEventListener("click", function (e) {
+    if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest('.messages a.row, .reader a[data-key="j"], .reader a[data-key="k"]');
+    if (!a || !listEl()) return;
+    e.preventDefault();
+    showMessage(a.href, true);
   });
+  // Only the reader's own history entries land here; the rest are other pages.
+  if (listEl()) {
+    window.addEventListener("popstate", function () { showMessage(location.href, false); });
+    revealSelected();
+  }
 
   // ---- print -------------------------------------------------------------
   if (body.hasAttribute("data-print")) {
