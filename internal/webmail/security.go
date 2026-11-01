@@ -89,6 +89,8 @@ type appPassword struct {
 }
 
 type securityStatus struct {
+	// PGP is the user's key, read separately for the settings page.
+	PGP *pgpKeyInfo `json:"-"`
 	// Protocols are the mail protocols the user can choose about.
 	Protocols []protocolChoice `json:"protocols"`
 	// Passkeys are read separately, for the settings page.
@@ -372,6 +374,17 @@ type protocolChoice struct {
 // Label is how the protocol is written.
 func (p protocolChoice) Label() string { return strings.ToUpper(p.Protocol) }
 
+// GroupedFingerprint is how people compare a key.
+func (k pgpKeyInfo) GroupedFingerprint() string {
+	var parts []string
+	for f := k.Fingerprint; f != ""; {
+		n := min(4, len(f))
+		parts = append(parts, f[:n])
+		f = f[n:]
+	}
+	return strings.Join(parts, " ")
+}
+
 // IMAPOn and POP3On say whether to list a protocol's server settings.
 func (st securityStatus) IMAPOn() bool { return st.protocolOn("imap") }
 func (st securityStatus) POP3On() bool { return st.protocolOn("pop3") }
@@ -427,6 +440,9 @@ func (s *Server) securityStatusFor(ctx context.Context, sess *Session) (*securit
 		return nil, err
 	}
 	st.Passkeys = s.passkeysFor(ctx, sess)
+	if err := s.security.call(ctx, http.MethodGet, "/v1/security/pgp", sess.User, password, nil, &st.PGP); err != nil {
+		s.log.Warn("webmail: pgp key unavailable", "user", sess.User, "error", err)
+	}
 	return &st, nil
 }
 
@@ -618,4 +634,23 @@ func (s *Server) appRequiredSubmit(w http.ResponseWriter, r *http.Request, sess 
 		n = "app-required"
 	}
 	http.Redirect(w, r, "/settings/security?n="+n+"#app-passwords", http.StatusSeeOther)
+}
+
+// text fetches a plain response without credentials, for public data.
+func (c *securityClient) text(ctx context.Context, path string) (string, error) {
+	// #nosec G704 -- base is the operator's security_url
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.client.Do(req) // #nosec G704 -- request built above from operator configuration
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", errors.New("security: not found")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxPGPLookup))
+	return string(data), err
 }

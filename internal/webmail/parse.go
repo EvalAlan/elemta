@@ -52,6 +52,15 @@ type Message struct {
 	SenderContact string
 	// Calendar holds the iCalendar part of an invitation or a reply to one.
 	Calendar []byte
+	// PGP is the armored message when this mail is encrypted, for the browser
+	// to open. The server can't read it.
+	PGP string
+	// PGPSignedContent and PGPSignature are a multipart/signed message: the
+	// exact signed bytes and the detached signature. PGPClearsigned is inline.
+	// Only the browser checks them: this server has no business vouching.
+	PGPSignedContent []byte
+	PGPSignature     string
+	PGPClearsigned   string
 	// Invite is the parsed invitation, set by the calendar decorator.
 	Invite *inviteView
 	// AuthResults is the topmost Authentication-Results header, which on a
@@ -97,6 +106,19 @@ func parseMessage(raw []byte) (*Message, error) {
 		msg.ReceiptTo = dnt[0].Email
 	}
 
+	rootType, rootParams, _ := h.ContentType()
+	encrypted := rootType == "multipart/encrypted" && strings.EqualFold(rootParams["protocol"], "application/pgp-encrypted")
+	signed := rootType == "multipart/signed" && strings.EqualFold(rootParams["protocol"], "application/pgp-signature")
+	defer func() {
+		// Older mail apps put the armored message in the text itself.
+		if msg.PGP == "" {
+			msg.PGP = armoredMessage(msg.Text)
+		}
+		msg.PGPClearsigned = clearsigned(msg.Text)
+		if signed && msg.PGPSignature != "" {
+			msg.PGPSignedContent = signedContent(raw, rootParams["boundary"])
+		}
+	}()
 	index := 0
 	for {
 		p, err := r.NextPart()
@@ -116,6 +138,15 @@ func parseMessage(raw []byte) (*Message, error) {
 		case *mail.InlineHeader:
 			ct, _, _ := ph.ContentType()
 			cid := strings.Trim(ph.Get("Content-Id"), "<>")
+			// RFC 3156 parts carry no attachment disposition, so they arrive
+			// here or below depending on the sending program.
+			if encrypted && msg.pgpPart(ct, p.Body) {
+				continue
+			}
+			if signed && ct == "application/pgp-signature" {
+				msg.PGPSignature = readLimited(p.Body)
+				continue
+			}
 			if ct == "text/plain" && msg.Text == "" && cid == "" {
 				msg.Text = readLimited(p.Body)
 				continue
@@ -137,6 +168,13 @@ func parseMessage(raw []byte) (*Message, error) {
 		case *mail.AttachmentHeader:
 			ct, _, _ := ph.ContentType()
 			name, _ := ph.Filename()
+			if encrypted && msg.pgpPart(ct, p.Body) {
+				continue
+			}
+			if signed && ct == "application/pgp-signature" {
+				msg.PGPSignature = readLimited(p.Body)
+				continue
+			}
 			if (ct == "text/calendar" || ct == "application/ics") && msg.Calendar == nil {
 				body := readLimited(p.Body)
 				msg.Calendar = []byte(body)
@@ -271,4 +309,75 @@ func headerAddresses(h mail.Header, key string) []Address {
 		out = append(out, Address{Name: legacyText(a.Name), Email: a.Address})
 	}
 	return out
+}
+
+// pgpPart takes the parts of a PGP/MIME message, which aren't attachments.
+func (m *Message) pgpPart(contentType string, body io.Reader) bool {
+	switch contentType {
+	case "application/pgp-encrypted":
+		return true
+	case "application/octet-stream":
+		if m.PGP == "" {
+			m.PGP = armoredMessage(readLimited(body))
+		}
+		return m.PGP != ""
+	}
+	return false
+}
+
+// armoredMessage finds a PGP message in text.
+func armoredMessage(text string) string {
+	const head, tail = "-----BEGIN PGP MESSAGE-----", "-----END PGP MESSAGE-----"
+	start := strings.Index(text, head)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(text[start:], tail)
+	if end < 0 {
+		return ""
+	}
+	return text[start : start+end+len(tail)]
+}
+
+// clearsigned finds an inline signed block in text.
+func clearsigned(text string) string {
+	const head, tail = "-----BEGIN PGP SIGNED MESSAGE-----", "-----END PGP SIGNATURE-----"
+	start := strings.Index(text, head)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(text[start:], tail)
+	if end < 0 {
+		return ""
+	}
+	return text[start : start+end+len(tail)]
+}
+
+// signedContent cuts the first part of a multipart/signed message out of the
+// raw mail. The signature covers those exact bytes, so parsing and re-encoding
+// them isn't an option. RFC 3156 signs them with CRLF line endings, whatever the
+// message was stored with.
+func signedContent(raw []byte, boundary string) []byte {
+	if boundary == "" {
+		return nil
+	}
+	mark := []byte("--" + boundary)
+	start := bytes.Index(raw, mark)
+	if start < 0 {
+		return nil
+	}
+	start += len(mark)
+	for start < len(raw) && (raw[start] == '\r' || raw[start] == '\n') {
+		start++
+		if raw[start-1] == '\n' {
+			break
+		}
+	}
+	end := bytes.Index(raw[start:], append([]byte("\n"), mark...))
+	if end < 0 {
+		return nil
+	}
+	body := bytes.TrimSuffix(raw[start:start+end], []byte("\r"))
+	body = bytes.ReplaceAll(body, []byte("\r\n"), []byte("\n"))
+	return bytes.ReplaceAll(body, []byte("\n"), []byte("\r\n"))
 }

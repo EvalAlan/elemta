@@ -302,3 +302,24 @@ CREATE TABLE IF NOT EXISTS mailbox_session_tokens (
     absolute_expires timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS mailbox_session_tokens_account ON mailbox_session_tokens(account);
+
+-- PGP keys (pgp.go). The private key is locked with a passphrase that never
+-- reaches this server.
+CREATE TABLE IF NOT EXISTS mailbox_pgp_keys (
+    account text PRIMARY KEY REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    address text NOT NULL,
+    domain text NOT NULL,
+    wkd_hash text NOT NULL,
+    fingerprint text NOT NULL,
+    public_key text NOT NULL,
+    private_key text NOT NULL,
+    created timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS mailbox_pgp_keys_address ON mailbox_pgp_keys(address);
+CREATE INDEX IF NOT EXISTS mailbox_pgp_keys_wkd ON mailbox_pgp_keys(domain, wkd_hash);
+CREATE TABLE IF NOT EXISTS mailbox_pgp_pins (
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    address text NOT NULL,
+    fingerprint text NOT NULL,
+    PRIMARY KEY (account, address)
+);

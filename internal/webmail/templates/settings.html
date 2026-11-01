@@ -318,6 +318,46 @@
         <div class="form-actions"><button class="button primary" type="submit">Add a passkey</button></div>
       </form>
     </div>
+    <div class="card" id="pgp" data-pgp-settings>
+      <div class="card-head">
+        <h2 class="card-title">Encrypted mail (PGP)</h2>
+        <span class="badge{{if .PGP}} on{{end}}">{{if .PGP}}On{{else}}Off{{end}}</span>
+      </div>
+      {{if eq $.Settings.NoticeCard "pgp"}}<p class="notice card-notice" role="status">{{$.Settings.Notice}}</p>{{end}}
+      <p class="problem" role="alert" data-pgp-problem hidden></p>
+      {{if .PGP}}
+      <p class="small muted">Your fingerprint, for comparing with people you write to:</p>
+      <p class="mono">{{.PGP.GroupedFingerprint}}</p>
+      <div class="form-actions">
+        <button class="button" type="button" data-pgp-export-public>Download public key</button>
+        <button class="button" type="button" data-pgp-export-private>Download private key</button>
+      </div>
+      <p class="small muted">The private key stays locked with your passphrase. Use it to read this mail in Thunderbird or another PGP program.</p>
+      <form class="form-grid" data-pgp-remove data-confirm-submit>
+        <label for="pgp-remove-password">Your account password</label><input id="pgp-remove-password" name="password" type="password" autocomplete="current-password" required>
+        <div class="form-actions"><button class="button danger" type="submit" data-confirm="Remove your key? Mail encrypted to it can't be read again unless you've downloaded it.">Remove key</button></div>
+      </form>
+      {{else}}
+      <p class="small muted">Mail you encrypt can only be read by you and the people you send it to, not by this server or anyone who runs it. Your key is locked with a passphrase that never leaves your browser. <strong>If you forget it, nobody can get that mail back.</strong> It isn't your account password, so resetting that won't help.</p>
+      <form class="form-grid" data-pgp-create data-name="{{$.Session.Address}}" data-email="{{$.Session.Address}}">
+        <label for="pgp-passphrase">New passphrase</label><input id="pgp-passphrase" name="passphrase" type="password" autocomplete="new-password" minlength="12" required>
+        <label for="pgp-confirm">Again</label><input id="pgp-confirm" name="confirm" type="password" autocomplete="new-password" required>
+        <label for="pgp-password">Your account password</label><input id="pgp-password" name="password" type="password" autocomplete="current-password" required>
+        <div class="form-actions"><button class="button primary" type="submit">Create a key</button></div>
+      </form>
+      <details>
+        <summary>Use a key you already have</summary>
+        <form class="form-grid" data-pgp-import>
+          <label for="pgp-armored">Private key</label><textarea id="pgp-armored" name="armored" rows="6" required></textarea>
+          <label for="pgp-old">Its current passphrase</label><input id="pgp-old" name="old" type="password" autocomplete="off">
+          <label for="pgp-new">New passphrase</label><input id="pgp-new" name="passphrase" type="password" autocomplete="new-password" minlength="12" required>
+          <label for="pgp-new2">Again</label><input id="pgp-new2" name="confirm" type="password" autocomplete="new-password" required>
+          <label for="pgp-import-password">Your account password</label><input id="pgp-import-password" name="password" type="password" autocomplete="current-password" required>
+          <div class="form-actions"><button class="button" type="submit">Import key</button></div>
+        </form>
+      </details>
+      {{end}}
+    </div>
     <div class="card" id="app-passwords">
       <div class="card-head">
         <h2 class="card-title">App passwords</h2>

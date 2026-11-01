@@ -709,3 +709,27 @@ docker exec elemta-rspamd-valkey valkey-cli hgetall RS
 
 The mailbox logs `spam feedback learned` as it works and `spam learning failed`
 when it can't reach Rspamd or the password is wrong.
+
+## Encrypted mail
+
+Users' PGP keys are held by the mailbox service: the public key, and the private key
+locked with a passphrase only the user knows. A private key that isn't locked is
+refused. Administrators can't read this mail or recover it. Replacing or removing a
+key needs the account password, and is in the audit log as `pgp-key-set` and
+`pgp-key-remove`.
+
+Spam filtering and virus scanning can't see inside encrypted mail, so its only checks
+are its sender and headers. An administrator's "Open mailbox" shows it as encrypted.
+
+The webmail answers Web Key Directory requests, so that other mail systems can find
+users' public keys. To publish a domain's, list it in `cloud.env` and add the DNS
+record that `cloud-deploy.sh` prints:
+
+```
+PGP_WKD_DOMAINS="example.org"
+```
+
+That serves `openpgpkey.<domain>`, on a site of its own that answers nothing else.
+
+OpenPGP.js is included unchanged in `internal/webmail/static`, under the LGPL (see
+`openpgp.LICENSE` beside it).

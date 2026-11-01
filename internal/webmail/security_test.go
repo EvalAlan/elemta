@@ -96,6 +96,9 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 			f.protocolCalls = append(f.protocolCalls, in)
 			_, _ = w.Write([]byte(`{"ok":true}`))
 			return
+		case r.URL.Path == "/v1/security/pgp":
+			_, _ = w.Write([]byte("null"))
+			return
 		case r.URL.Path == "/v1/security/passkeys":
 			_ = json.NewEncoder(w).Encode([]passkeyInfo{})
 			return
