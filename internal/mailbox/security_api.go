@@ -72,6 +72,9 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			if strings.HasPrefix(r.URL.Path, "/v1/security/passkeys") {
 				limit = 1 << 16 // an authenticator's attestation
 			}
+			if strings.HasPrefix(r.URL.Path, "/v1/security/pgp") {
+				limit = 3 * maxPGPKey // a key pair, armored
+			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 			defer cancel()
@@ -192,6 +195,69 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			return map[string]bool{"ok": true}, nil
 		}
 		return map[string]bool{"ok": true}, s.engine.endSessionToken(r.Context(), token)
+	})
+	// PGP keys (pgp.go). The password guards replacing or removing one.
+	handle("GET /v1/security/pgp", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.PGPKeyOf(r.Context(), a.account.ID)
+	})
+	handle("PUT /v1/security/pgp", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Password   string `json:"password"`
+			PublicKey  string `json:"public_key"`
+			PrivateKey string `json:"private_key"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if _, app, err := s.authenticate(r.Context(), a.account.Address, in.Password, ""); err != nil || app {
+			return nil, ErrCredentials
+		}
+		return s.engine.PutPGPKey(r.Context(), a.account, in.PublicKey, in.PrivateKey)
+	})
+	handle("POST /v1/security/pgp/delete", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Password string `json:"password"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if _, app, err := s.authenticate(r.Context(), a.account.Address, in.Password, ""); err != nil || app {
+			return nil, ErrCredentials
+		}
+		return map[string]bool{"ok": true}, s.engine.DeletePGPKey(r.Context(), a.account)
+	})
+	handle("POST /v1/security/pgp/lookup", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Addresses []string `json:"addresses"`
+		}
+		if err := decode(r, &in); err != nil || len(in.Addresses) > 100 {
+			return nil, errBadRequest
+		}
+		return s.engine.PGPLookup(r.Context(), in.Addresses)
+	})
+	handle("GET /v1/security/pgp/pins", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.PGPPins(r.Context(), a.account.ID)
+	})
+	handle("PUT /v1/security/pgp/pins", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in PGPPin
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.PutPGPPin(r.Context(), a.account.ID, in)
+	})
+	// The Web Key Directory is public, and reached through the webmail.
+	mux.HandleFunc("GET /v1/pgp/wkd/{domain}/{hash}", func(w http.ResponseWriter, r *http.Request) {
+		if !s.internalClient(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		public, err := s.engine.WKDKey(r.Context(), r.PathValue("domain"), r.PathValue("hash"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(public))
 	})
 	// A passkey sign-in has no credentials yet, so these two are open to the
 	// webmail, and to nothing else. It limits attempts by client, as it does for

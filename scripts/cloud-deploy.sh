@@ -18,6 +18,9 @@
 #                                   on, images older than this feature can't
 #                                   read that mail, so a rollback across it
 #                                   needs care; see docs/mailbox-service.md
+#   PGP_WKD_DOMAINS="example.org"   optional: domains that publish users' PGP
+#                                   keys, at openpgpkey.<domain>; each needs the
+#                                   DNS record printed at the end
 #   MTA_STS_DOMAINS="example.org"   optional: domains that publish an MTA-STS
 #                                   policy; see docs/cloud-dev.md, "MTA-STS"
 #   MTA_STS_MODE=testing            optional: testing (default), enforce or none
@@ -429,6 +432,10 @@ done
 if [ -n "${MTA_STS_DOMAINS:-}" ]; then
     printf '\nMTA-STS records. Publish the A records first; the certificate needs them.\n'
     "$root/scripts/cloud-sync-certs.sh" --mta-sts-records "$ip4"
+fi
+if [ -n "${PGP_WKD_DOMAINS:-}" ]; then
+    printf '\nWeb Key Directory records. The certificate needs them.\n'
+    "$root/scripts/cloud-sync-certs.sh" --wkd-records "$ip4"
 fi
 cat <<EOF
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Encrypted mail with PGP.** People can create or import a key in Settings,
+  Security, and send and read encrypted, signed mail in the webmail, with standard
+  PGP/MIME that other PGP programs read. Encryption happens in the browser, and the
+  passphrase never reaches the server. A forgotten passphrase can't be recovered.
+  Attachments can't be encrypted yet. See "Encrypted mail" in
+  [docs/user-guide.md](docs/user-guide.md).
+
 - **Turn off IMAP and POP3 for yourself.** Settings, Mail apps and sync, lets
   someone switch off a protocol they don't use, when their class of service allows
   it. Nobody can then sign in that way, even with an app password, and the webmail

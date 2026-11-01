@@ -116,6 +116,22 @@ for d in ${MTA_STS_DOMAINS:-}; do
     fi
 done
 
+wkd_sites=()
+for d in ${PGP_WKD_DOMAINS:-}; do
+    if valid_host "$d"; then
+        wkd_sites+=("openpgpkey.$d")
+    else
+        echo "cloud-sync-certs: '$d' in PGP_WKD_DOMAINS isn't a domain name; skipping it" >&2
+    fi
+done
+
+if [ "${1:-}" = --wkd-records ]; then
+    for site in "${wkd_sites[@]}"; do
+        printf '  %s.  A    %s\n' "$site" "${2:?an address for the A records}"
+    done
+    exit 0
+fi
+
 if [ "${1:-}" = --mta-sts-records ]; then
     for site in "${mta_sts_sites[@]}"; do
         d=${site#mta-sts.}
@@ -145,6 +161,19 @@ if [ ${#mta_sts_sites[@]} -gt 0 ]; then
         printf '%s\n' "$mta_sts_policy" | sed 's/^/\t\t\t/'
         printf '\t\t\tPOLICY 200\n'
         printf '\t}\n'
+        printf '\thandle {\n\t\trespond 404\n\t}\n'
+        echo "}"
+    } >>"$tmp/Caddyfile"
+fi
+if [ ${#wkd_sites[@]} -gt 0 ]; then
+    # Its own site, for the same reason: published keys are public, and nothing
+    # else behind the webmail should be reachable through these names.
+    {
+        echo
+        echo "# Web Key Directory, from PGP_WKD_DOMAINS (scripts/cloud-sync-certs.sh)."
+        (IFS=,; echo "${wkd_sites[*]} {" | sed 's/,/, /g')
+        printf '\theader -Server\n'
+        printf '\thandle /.well-known/openpgpkey/* {\n\t\treverse_proxy elemta-webmail:8027\n\t}\n'
         printf '\thandle {\n\t\trespond 404\n\t}\n'
         echo "}"
     } >>"$tmp/Caddyfile"

@@ -3,6 +3,7 @@ package webmail
 import (
 	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"hash/fnv"
@@ -95,6 +96,7 @@ var templateFuncs = template.FuncMap{
 	"codeURL":    func() string { return version.SourceURL },
 	"appVersion": func() string { return version.Version },
 	"asset":      assetURL,
+	"base64":     func(b []byte) string { return base64.StdEncoding.EncodeToString(b) },
 	"shortDate":  shortDate,
 	"longDate":   longDate,
 	"clock":      clock,

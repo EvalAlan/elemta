@@ -96,7 +96,10 @@
   <div class="field options">
     <label class="checkline"><input type="checkbox" name="priority" value="high"{{if .HighPriority}} checked{{end}}> High priority</label>
     <label class="checkline"><input type="checkbox" name="receipt" value="1"{{if .Receipt}} checked{{end}}> Request a read receipt</label>
+    <label class="checkline"><input type="checkbox" data-pgp-toggle{{if .EncryptedOriginal}} data-pgp-original{{end}}> Encrypt (PGP)</label>
   </div>
+  <p class="small muted" role="status" data-pgp-status hidden></p>
+  <div class="field" data-pgp-passphrase hidden><label class="field-label" for="pgp-unlock">Passphrase</label><input id="pgp-unlock" name="pgp_passphrase" type="password" autocomplete="off"></div>
   <div class="actions">
     <button class="button primary" type="submit" name="op" value="send" data-submit-key>Send</button>
     <button class="button" type="submit" name="op" value="save" formnovalidate>Save draft</button>

@@ -41,6 +41,9 @@ type Draft struct {
 	// Calendar is an iCalendar part sent alongside the text, which is how
 	// invitations and replies to them travel (iMIP, RFC 6047).
 	Calendar *CalendarPart
+	// Encrypted is an armored PGP message from the browser. With it set, nothing
+	// else of the body is sent (RFC 3156).
+	Encrypted []byte
 	// OriginatingIP, when set, goes in X-Originating-IP (see stampOrigin).
 	OriginatingIP string
 	// MessageID is set by Build to the Message-ID it gave the message.
@@ -185,6 +188,14 @@ func container(kind string, children ...*mimePart) *mimePart {
 //	    text/calendar               for invitations
 //	  attachments
 func (d *Draft) bodyTree() *mimePart {
+	if d.Encrypted != nil {
+		control := leaf("application/pgp-encrypted", nil, "7bit", []byte("Version: 1\r\n"))
+		data := leaf("application/octet-stream", map[string]string{"name": "encrypted.asc"}, "7bit", d.Encrypted)
+		data.header.Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": "encrypted.asc"}))
+		root := container("encrypted", control, data)
+		root.header.SetContentType("multipart/encrypted", map[string]string{"protocol": "application/pgp-encrypted"})
+		return root
+	}
 	utf8 := func() map[string]string { return map[string]string{"charset": "utf-8"} }
 	alts := []*mimePart{leaf("text/plain", utf8(), "quoted-printable", []byte(normaliseNewlines(d.Text)))}
 	if d.HTML != "" {

@@ -146,6 +146,37 @@ passwords for your apps before turning it on, or they will stop connecting.
 App passwords can't sign in to the webmail. The webmail always needs your
 account password, and your code if two-step verification is on.
 
+## Encrypted mail
+
+With PGP, a message can only be read by you and the people you send it to, not by
+this server or anyone who runs it. Create a key under **Settings → Security →
+Encrypted mail**, or import one you already have. Then tick **Encrypt (PGP)** when
+writing a message.
+
+- **Your passphrase can't be recovered.** It never leaves your browser. If you forget
+  it, nobody can get encrypted mail back, and resetting your account password won't
+  help. Download your private key and keep it somewhere safe.
+- Everyone you write to needs a key. Elemta finds your colleagues' keys, and outside
+  keys if their domain publishes them. If it can't find one, it won't send, rather
+  than send in the clear.
+- If someone's key changes, you're asked before sending. That's usually a new device,
+  but it's worth checking with them.
+- The subject is hidden too, and shows as "..." to anyone without the key. To, From
+  and the date stay visible, because mail servers need them.
+- Attachments are encrypted with the message. Encrypted messages can't be saved as
+  drafts, and when you forward one, attach its files again.
+- A reply to encrypted mail is encrypted too, and quotes the original once you've
+  opened it. If you haven't, it starts without the quote.
+- Search, spam filtering and virus scanning can't see inside encrypted mail.
+- Once unlocked, your key stays open in that browser for 30 minutes unused, or until
+  you sign out. Sign out on shared computers.
+- In Thunderbird or another PGP program, import the private key you downloaded. The
+  mail reads the same there.
+
+The webmail's code comes from the server, so this protects mail that's stored, and
+against someone reading the server's disks. It can't protect you from the server
+itself being changed to steal your passphrase.
+
 ## Filters and out-of-office
 
 Under **Settings → Filters and out-of-office**:

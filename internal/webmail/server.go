@@ -255,6 +255,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/password", s.authed(s.passwordSubmit))
 	mux.HandleFunc("POST /settings/forwarding", s.authed(s.forwardingSubmit))
 	mux.HandleFunc("POST /settings/calendar-shares", s.authed(s.calendarShareSubmit))
+	mux.HandleFunc("GET /api/pgp/key", s.authed(s.pgpKeyGet))
+	mux.HandleFunc("POST /api/pgp/key", s.authed(s.pgpKeyPut))
+	mux.HandleFunc("POST /api/pgp/key/delete", s.authed(s.pgpKeyDelete))
+	mux.HandleFunc("POST /api/pgp/lookup", s.authed(s.pgpLookup))
+	mux.HandleFunc("POST /api/pgp/pin", s.authed(s.pgpPin))
+	mux.HandleFunc("GET /.well-known/openpgpkey/{path...}", s.wkdServe)
 	mux.HandleFunc("POST /settings/passkeys/begin", s.authed(s.passkeyAddBegin))
 	mux.HandleFunc("POST /settings/passkeys/finish", s.authed(s.passkeyAddFinish))
 	mux.HandleFunc("POST /settings/passkeys/delete", s.authed(s.passkeyDelete))
@@ -529,6 +535,8 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"senders-failed":         "Allowed and blocked senders couldn't be saved. Try again later.",
 	"forwarding-failed":      "Forwarding couldn't be saved. Try again, or ask your administrator.",
 	"calendar-shared":        "Calendar shared.",
+	"pgp-key-saved":          "Your PGP key is ready. Keep your passphrase safe: nobody can recover it.",
+	"pgp-key-removed":        "Your PGP key was removed.",
 	"passkey-added":          "Passkey added. You can use it next time you sign in.",
 	"passkey-removed":        "Passkey removed.",
 	"calendar-unshared":      "Calendar sharing removed.",

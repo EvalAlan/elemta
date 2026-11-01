@@ -162,7 +162,7 @@
       </span>
     </div>
     <div class="message">
-      <h2>{{if .HighPriority}}<span class="priority" title="High priority">!</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
+      <h2 data-message-subject>{{if .HighPriority}}<span class="priority" title="High priority">!</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
       {{if $.Thread}}<p class="small muted thread-note">{{add (len $.Thread) 1}} messages in this conversation</p>{{end}}
       {{range $.ThreadBefore}}{{template "thread-card" (threadCard . $)}}{{end}}
       <div class="sender">
@@ -215,7 +215,22 @@
         {{end}}
       </ul>
       {{end}}
-      {{if $.Body}}
+      {{if .PGPSignature}}{{if .PGPSignedContent}}<p class="small" role="status" data-pgp-verify data-sender="{{with .From}}{{(index . 0).Email}}{{end}}" data-content="{{base64 .PGPSignedContent}}">Checking the signature…</p><textarea hidden data-pgp-detached>{{.PGPSignature}}</textarea>{{end}}
+      {{else if .PGPClearsigned}}<p class="small" role="status" data-pgp-verify data-sender="{{with .From}}{{(index . 0).Email}}{{end}}">Checking the signature…</p><textarea hidden data-pgp-cleartext>{{.PGPClearsigned}}</textarea>{{end}}
+      {{if .PGP}}
+        <section class="invite" aria-label="Encrypted message" data-pgp-message data-folder="{{.Folder}}" data-uid="{{.UID}}" data-sender="{{with .From}}{{(index . 0).Email}}{{end}}">
+          <p class="strong">Encrypted message</p>
+          <textarea hidden data-pgp-armor>{{.PGP}}</textarea>
+          <p class="small" role="status" data-pgp-signature hidden></p>
+          <p class="problem" role="alert" data-pgp-problem hidden></p>
+          <form class="form-grid" data-pgp-unlock hidden>
+            <label for="pgp-unlock-read">Your PGP passphrase</label><input id="pgp-unlock-read" name="passphrase" type="password" autocomplete="off" required>
+            <div class="form-actions"><button class="button primary" type="submit">Unlock</button></div>
+          </form>
+          <pre class="text-body" data-pgp-text hidden></pre>
+          <ul class="attachments" data-pgp-attachments hidden></ul>
+        </section>
+      {{else if $.Body}}
         {{if $.Body.BlockedImages}}
         <p class="banner">Remote images are hidden to protect your privacy. <a href="{{$.List.MessageURL .UID}}&amp;remote=1">Show images</a></p>
         {{end}}
