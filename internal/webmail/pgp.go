@@ -204,6 +204,7 @@ func fetchWKD(ctx context.Context, address string) (pgpKeyInfo, error) {
 		"https://openpgpkey." + domain + "/.well-known/openpgpkey/" + domain + "/hu/" + hash + query,
 		"https://" + domain + "/.well-known/openpgpkey/hu/" + hash + query,
 	} {
+		// #nosec G704 -- wkdClient's dialer refuses private addresses at connection time, redirects included
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
 			continue
