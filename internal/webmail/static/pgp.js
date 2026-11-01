@@ -195,79 +195,92 @@
   function replyKey(folder, uid) { return "pgp-reply:" + folder + ":" + uid; }
 
   // ---- signed mail -------------------------------------------------------
-  var signed = $("[data-pgp-verify]");
-  if (signed) {
-    var from = signed.getAttribute("data-sender");
-    api("/api/pgp/lookup", { addresses: from }).catch(function () { return []; }).then(function (found) {
-      if (!found.length) { show(signed, "Signed, but no key was found for " + from + ", so it can't be checked."); return null; }
-      var request = { senderKeys: found.map(function (k) { return k.public_key; }) };
-      var clear = $("[data-pgp-cleartext]");
-      if (clear) {
-        request.cleartext = clear.value;
-      } else {
-        request.content = toBytes(atob(signed.getAttribute("data-content")));
-        request.signature = $("[data-pgp-detached]").value;
-      }
-      return call("verify", request).then(function (out) {
-        show(signed, out.verified ? "Signed by " + from + ". The signature checks out." :
-          "The signature doesn't match. This message may have been changed, or it isn't from " + from + ".");
-        signed.classList.toggle("problem", !out.verified);
-      });
-    }).catch(function () { show(signed, "Signed, but the signature couldn't be read."); });
-  }
-
-  var reading = $("[data-pgp-message]");
-  if (reading) {
-    var unlockForm = $("[data-pgp-unlock]", reading), note = $("[data-pgp-problem]", reading);
-    var output = $("[data-pgp-text]", reading), banner = $("[data-pgp-signature]", reading);
-    var armored = $("[data-pgp-armor]", reading).value, sender = reading.getAttribute("data-sender");
-    var open = function () {
-      return api("/api/pgp/lookup", { addresses: sender }).catch(function () { return []; }).then(function (found) {
-        return call("decrypt", { message: armored, senderKeys: found.map(function (k) { return k.public_key; }) }).then(function (result) {
-          var mime = { attachments: [] };
-          readMime(latin(result.data), mime, 0);
-          var text = mime.text || (mime.html ? plainFromHTML(mime.html) : bytesToText(result.data));
-          output.textContent = text;
-          output.hidden = false;
-          unlockForm.hidden = true;
-          if (mime.subject) { var subject = $("[data-message-subject]"); if (subject) subject.textContent = mime.subject; }
-          var state = result.verified ? "Encrypted and signed by " + sender + "." :
-            result.signed ? "Encrypted. The signature couldn't be checked, so the sender isn't confirmed." : "Encrypted, but not signed.";
-          show(banner, state);
-          // Saved, never opened: the type is forced so the browser can't render
-          // a file from a stranger in this page's origin.
-          var list = $("[data-pgp-attachments]", reading);
-          mime.attachments.forEach(function (file) {
-            var item = doc.createElement("li"), a = doc.createElement("a");
-            a.className = "attachment";
-            a.href = URL.createObjectURL(new Blob([file.data], { type: "application/octet-stream" }));
-            a.download = file.name;
-            a.textContent = file.name;
-            item.appendChild(a);
-            list.appendChild(item);
-          });
-          list.hidden = !mime.attachments.length;
-          // The reply is written in this browser, so its quote stays here too.
-          try {
-            sessionStorage.setItem(replyKey(reading.getAttribute("data-folder"), reading.getAttribute("data-uid")),
-              JSON.stringify({ subject: mime.subject || "", text: text, sender: sender }));
-          } catch (err) { /* then the reply just has no quote */ }
+  // The reading pane replaces the message without loading a page, so this runs
+  // again for each one. Decrypted attachments would otherwise stay in memory
+  // until the tab closed.
+  var attachmentURLs = [];
+  function readMessage() {
+    attachmentURLs.splice(0).forEach(function (url) { URL.revokeObjectURL(url); });
+    var signed = $("[data-pgp-verify]");
+    if (signed) {
+      var from = signed.getAttribute("data-sender");
+      api("/api/pgp/lookup", { addresses: from }).catch(function () { return []; }).then(function (found) {
+        if (!found.length) { show(signed, "Signed, but no key was found for " + from + ", so it can't be checked."); return null; }
+        var request = { senderKeys: found.map(function (k) { return k.public_key; }) };
+        var clear = $("[data-pgp-cleartext]");
+        if (clear) {
+          request.cleartext = clear.value;
+        } else {
+          request.content = toBytes(atob(signed.getAttribute("data-content")));
+          request.signature = $("[data-pgp-detached]").value;
+        }
+        return call("verify", request).then(function (out) {
+          show(signed, out.verified ? "Signed by " + from + ". The signature checks out." :
+            "The signature doesn't match. This message may have been changed, or it isn't from " + from + ".");
+          signed.classList.toggle("problem", !out.verified);
         });
+      }).catch(function () { show(signed, "Signed, but the signature couldn't be read."); });
+    }
+
+    var reading = $("[data-pgp-message]");
+    if (reading) {
+      var unlockForm = $("[data-pgp-unlock]", reading), note = $("[data-pgp-problem]", reading);
+      var output = $("[data-pgp-text]", reading), banner = $("[data-pgp-signature]", reading);
+      var armored = $("[data-pgp-armor]", reading).value, sender = reading.getAttribute("data-sender");
+      var open = function () {
+        return api("/api/pgp/lookup", { addresses: sender }).catch(function () { return []; }).then(function (found) {
+          return call("decrypt", { message: armored, senderKeys: found.map(function (k) { return k.public_key; }) }).then(function (result) {
+            // The reading pane may have moved on, and the subject below is outside
+            // this message's element: it would land on the next message.
+            if (!reading.isConnected) return;
+            var mime = { attachments: [] };
+            readMime(latin(result.data), mime, 0);
+            var text = mime.text || (mime.html ? plainFromHTML(mime.html) : bytesToText(result.data));
+            output.textContent = text;
+            output.hidden = false;
+            unlockForm.hidden = true;
+            if (mime.subject) { var subject = $("[data-message-subject]"); if (subject) subject.textContent = mime.subject; }
+            var state = result.verified ? "Encrypted and signed by " + sender + "." :
+              result.signed ? "Encrypted. The signature couldn't be checked, so the sender isn't confirmed." : "Encrypted, but not signed.";
+            show(banner, state);
+            // Saved, never opened: the type is forced so the browser can't render
+            // a file from a stranger in this page's origin.
+            var list = $("[data-pgp-attachments]", reading);
+            mime.attachments.forEach(function (file) {
+              var item = doc.createElement("li"), a = doc.createElement("a");
+              a.className = "attachment";
+              a.href = URL.createObjectURL(new Blob([file.data], { type: "application/octet-stream" }));
+              attachmentURLs.push(a.href);
+              a.download = file.name;
+              a.textContent = file.name;
+              item.appendChild(a);
+              list.appendChild(item);
+            });
+            list.hidden = !mime.attachments.length;
+            // The reply is written in this browser, so its quote stays here too.
+            try {
+              sessionStorage.setItem(replyKey(reading.getAttribute("data-folder"), reading.getAttribute("data-uid")),
+                JSON.stringify({ subject: mime.subject || "", text: text, sender: sender }));
+            } catch (err) { /* then the reply just has no quote */ }
+          });
+        });
+      };
+      call("status").then(function (st) {
+        if (st.unlocked) { open().catch(function () { show(note, "This message wasn't encrypted to your key."); unlockForm.hidden = true; }); return; }
+        unlockForm.hidden = false;
       });
-    };
-    call("status").then(function (st) {
-      if (st.unlocked) { open().catch(function () { show(note, "This message wasn't encrypted to your key."); unlockForm.hidden = true; }); return; }
-      unlockForm.hidden = false;
-    });
-    unlockForm.addEventListener("submit", function (event) {
-      event.preventDefault();
-      show(note, "");
-      ensureUnlocked(unlockForm.elements.passphrase.value).then(function () {
-        unlockForm.elements.passphrase.value = "";
-        return open().catch(function () { throw new Error("This message wasn't encrypted to your key."); });
-      }).catch(function (err) { show(note, err.message); });
-    });
+      unlockForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        show(note, "");
+        ensureUnlocked(unlockForm.elements.passphrase.value).then(function () {
+          unlockForm.elements.passphrase.value = "";
+          return open().catch(function () { throw new Error("This message wasn't encrypted to your key."); });
+        }).catch(function (err) { show(note, err.message); });
+      });
+    }
   }
+  readMessage();
+  doc.addEventListener("elemta:reader", readMessage);
 
   // ---- compose -----------------------------------------------------------
   var toggle = $("[data-pgp-toggle]");

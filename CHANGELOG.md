@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Clicking through mail no longer reloads the page.** Opening a message replaces
+  only the reading pane, and on wide screens the list and the message scroll
+  separately, so a message opened from far down the list stays in view.
+
 - **Choose whether your PGP key is published.** Settings, Security, has a switch for
   the public Web Key Directory, on by default. Colleagues find a key either way.
 
