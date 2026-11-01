@@ -63,6 +63,10 @@ services:
       # scripts/cloud-sync-certs.sh, which checks them again before acting.
       # The console never talks to Caddy or writes the served certificates.
       - ELEMTA_CERT_MANAGE_DIR=/app/cert-sync
+      # Caddy, as for the webmail below, so the console sees who is really
+      # connecting. It's here rather than in the configuration because that is
+      # kept across deploys.
+      - ELEMTA_API_TRUSTED_PROXIES=${ELEMTA_CADDY_IP:-10.253.53.80}/32
     volumes:
       - ./.secrets/cloud/config:/app/config:ro
       - ./.secrets/mailbox-tls:/app/tls:ro

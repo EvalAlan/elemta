@@ -429,6 +429,9 @@ mail.$x, before moving the MX: a strict DMARC policy rejects unsigned mail.
   $x.                     MX   10 mail.$x.   (last)
 EOF
 done
+# A build leaves its layers in the cache for good, and on this machine that
+# filled the disk at 20 GB a day. Enough stays to keep the next build quick.
+docker builder prune -af --keep-storage 5GB >/dev/null || true
 if [ -n "${MTA_STS_DOMAINS:-}" ]; then
     printf '\nMTA-STS records. Publish the A records first; the certificate needs them.\n'
     "$root/scripts/cloud-sync-certs.sh" --mta-sts-records "$ip4"

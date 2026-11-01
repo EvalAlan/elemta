@@ -8,6 +8,13 @@
   passphrase never reaches the server. A forgotten passphrase can't be recovered.
   Attachments can't be encrypted yet. See "Encrypted mail" in
   [docs/user-guide.md](docs/user-guide.md).
+- **The console sees real addresses behind a proxy.** On a cloud deployment it took
+  every visitor for the proxy, so they shared one login throttle and API rate limit,
+  audit entries named the proxy, and the Abuse page showed a private address as
+  yours. `ELEMTA_API_TRUSTED_PROXIES` now sets the proxies, and `cloud-deploy.sh`
+  deployments get it automatically.
+- **`cloud-deploy.sh` trims Docker's build cache** after each deploy, keeping 5 GB.
+  It grew without limit and could fill a server's disk.
 
 - **Turn off IMAP and POP3 for yourself.** Settings, Mail apps and sync, lets
   someone switch off a protocol they don't use, when their class of service allows
