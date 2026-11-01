@@ -252,11 +252,17 @@ func (s *Server) sharedCalendarChanged(sess *Session, owner string) {
 	if err != nil {
 		return
 	}
+	s.publishSharedFreeBusySoon(sess.User, pw, owner)
+}
+
+// publishSharedFreeBusySoon outlives the request that changed the calendar,
+// which is why it takes no context.
+func (s *Server) publishSharedFreeBusySoon(user, password, owner string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		if err := s.publishSharedFreeBusy(ctx, sess.User, pw, owner); err != nil {
-			s.log.Warn("webmail: free/busy not published", "user", sess.User, "owner", owner, "error", err)
+		if err := s.publishSharedFreeBusy(ctx, user, password, owner); err != nil {
+			s.log.Warn("webmail: free/busy not published", "user", user, "owner", owner, "error", err)
 		}
 	}()
 }

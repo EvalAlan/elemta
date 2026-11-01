@@ -769,14 +769,7 @@ func (b davCalBackend) davChanged(ctx context.Context, c *davCalendar) {
 		return
 	}
 	conn := davFrom(ctx)
-	user, pw, owner := conn.user, conn.pw, c.share.Owner
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		if err := b.s.publishSharedFreeBusy(ctx, user, pw, owner); err != nil {
-			b.s.log.Warn("webmail: free/busy not published", "user", user, "owner", owner, "error", err)
-		}
-	}()
+	b.s.publishSharedFreeBusySoon(conn.user, conn.pw, c.share.Owner)
 }
 
 // davCalendarChanged republishes free/busy after a CalDAV client changed
