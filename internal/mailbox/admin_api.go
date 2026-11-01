@@ -388,6 +388,11 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		if err := s.engine.DisableTOTP(r.Context(), a.ID); err != nil {
 			return nil, err
 		}
+		// Someone locked out needs a way back, and someone recovering a
+		// compromised account mustn't leave a stranger's passkey on it.
+		if err := s.engine.DeletePasskeys(r.Context(), a.ID); err != nil {
+			return nil, err
+		}
 		return map[string]bool{"ok": true}, nil
 	})
 	handle("POST /v1/admin/accounts/{address}/purge", func(r *http.Request) (any, error) {

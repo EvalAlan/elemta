@@ -213,6 +213,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.loginSubmit)
 	mux.HandleFunc("POST /login/admin", s.adminLoginSubmit)
+	mux.HandleFunc("POST /login/passkey/begin", s.passkeyLoginBegin)
+	mux.HandleFunc("POST /login/passkey/finish", s.passkeyLoginFinish)
 	mux.HandleFunc("GET /login/verify", s.twoFactorPage)
 	mux.HandleFunc("POST /login/verify", s.twoFactorSubmit)
 	mux.HandleFunc("GET /login/setup", s.forcedSetupPage)
@@ -252,6 +254,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/password", s.authed(s.passwordSubmit))
 	mux.HandleFunc("POST /settings/forwarding", s.authed(s.forwardingSubmit))
 	mux.HandleFunc("POST /settings/calendar-shares", s.authed(s.calendarShareSubmit))
+	mux.HandleFunc("POST /settings/passkeys/begin", s.authed(s.passkeyAddBegin))
+	mux.HandleFunc("POST /settings/passkeys/finish", s.authed(s.passkeyAddFinish))
+	mux.HandleFunc("POST /settings/passkeys/delete", s.authed(s.passkeyDelete))
 	mux.HandleFunc("POST /settings/senders", s.authed(s.sendersSubmit))
 	mux.HandleFunc("POST /settings/retention", s.authed(s.retentionSubmit))
 	mux.HandleFunc("POST /mail/block-sender", s.authed(s.blockSender))
@@ -489,7 +494,7 @@ func (s *Server) renderProblem(w http.ResponseWriter, r *http.Request, sess *Ses
 
 // notices maps the codes redirects carry to their text, so a crafted link
 // can't put arbitrary words on the page.
-var notices = map[string]string{
+var notices = map[string]string{ // #nosec G101 -- messages shown on the page, not credentials
 	"sent":                   "Message sent.",
 	"sent-nocopy":            "Message sent, but a copy couldn't be saved to Sent.",
 	"saved":                  "Draft saved.",
@@ -521,6 +526,8 @@ var notices = map[string]string{
 	"senders-failed":         "Allowed and blocked senders couldn't be saved. Try again later.",
 	"forwarding-failed":      "Forwarding couldn't be saved. Try again, or ask your administrator.",
 	"calendar-shared":        "Calendar shared.",
+	"passkey-added":          "Passkey added. You can use it next time you sign in.",
+	"passkey-removed":        "Passkey removed.",
 	"calendar-unshared":      "Calendar sharing removed.",
 	"calendar-share-invalid": "Enter the address of someone in your domain, and an access level.",
 	"calendar-share-failed":  "That person couldn't be added. They must have an account in your domain.",
@@ -548,6 +555,9 @@ var notices = map[string]string{
 
 type loginView struct {
 	Recovery bool
+	// Passkeys offers the passkey button; passkey.js hides it from browsers
+	// that can't use one.
+	Passkeys bool
 	Theme    string
 	Palette  string
 	Token    string
@@ -584,7 +594,7 @@ func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int,
 		return
 	}
 	s.setCookie(w, preLoginCookie, token, 600)
-	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Theme: themeFromCookie(r), Palette: paletteFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
+	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Passkeys: s.security != nil, Theme: themeFromCookie(r), Palette: paletteFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
 }
 
 func remoteHost(r *http.Request) string {
@@ -679,6 +689,13 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 			_ = store.Close()
 			s.log.Warn("webmail: account security check unavailable", "user", user, "error", err)
 			s.renderLogin(w, r, http.StatusBadGateway, user, "", "Sign-in is temporarily unavailable. Try again in a moment.")
+			return
+		}
+		if check.Kind == "session" {
+			// Never something anyone types.
+			_ = store.Close()
+			s.loginFailed(r, ip, userKey, user)
+			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
 			return
 		}
 		if check.Kind == "app" {
@@ -832,6 +849,7 @@ func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWrit
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, sess *Session) {
+	s.endPasskeySession(r.Context(), sess)
 	s.sessions.Destroy(sess.ID)
 	s.pages.forget(sess.ID)
 	s.setCookie(w, sessionCookie, "", -1)

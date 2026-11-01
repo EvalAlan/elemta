@@ -269,3 +269,34 @@ CREATE TABLE IF NOT EXISTS mailbox_resources (
     booking text NOT NULL CHECK (booking IN ('auto', 'manual'))
 );
 CREATE INDEX IF NOT EXISTS mailbox_resources_domain ON mailbox_resources(split_part(address, '@', 2));
+
+-- Passkeys (passkey.go). The credential is the WebAuthn library's own record:
+-- public key, counters and flags, and nothing that can sign.
+CREATE TABLE IF NOT EXISTS mailbox_passkeys (
+    id bigserial PRIMARY KEY,
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    credential_id bytea NOT NULL UNIQUE,
+    credential jsonb NOT NULL,
+    name text NOT NULL,
+    host text NOT NULL,
+    created timestamptz NOT NULL DEFAULT now(),
+    last_used timestamptz
+);
+CREATE INDEX IF NOT EXISTS mailbox_passkeys_account ON mailbox_passkeys(account);
+-- A ceremony between its two requests, which may reach different replicas. The
+-- account is empty for a sign-in, which doesn't know whose it is yet.
+CREATE TABLE IF NOT EXISTS mailbox_passkey_challenges (
+    id text PRIMARY KEY,
+    account text NOT NULL,
+    session jsonb NOT NULL,
+    expires timestamptz NOT NULL
+);
+-- What a passkey sign-in presents in place of a password. Only the hash is kept.
+CREATE TABLE IF NOT EXISTS mailbox_session_tokens (
+    token_hash text PRIMARY KEY,
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    passkey bigint NOT NULL REFERENCES mailbox_passkeys(id) ON DELETE CASCADE,
+    expires timestamptz NOT NULL,
+    absolute_expires timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mailbox_session_tokens_account ON mailbox_session_tokens(account);

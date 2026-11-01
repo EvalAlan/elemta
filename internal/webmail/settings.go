@@ -343,6 +343,8 @@ var noticeCards = map[string]string{
 	"2fa-off":              "two-step",
 	"app-password-deleted": "app-passwords",
 	"app-required":         "app-passwords",
+	"passkey-added":        "passkeys",
+	"passkey-removed":      "passkeys",
 	"app-optional":         "app-passwords",
 }
 

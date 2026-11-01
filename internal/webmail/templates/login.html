@@ -7,6 +7,7 @@
 <title>Sign in · Elemta Mail</title>
 <link rel="stylesheet" href="{{asset "tidewater.css"}}">
 <script src="{{asset "login.js"}}" defer></script>
+<script src="{{asset "passkey.js"}}" defer></script>
 </head>
 <body class="login-body">
 <main class="login">
@@ -22,6 +23,10 @@
     <input id="password" name="password" type="password" autocomplete="current-password" required>
     <button class="button primary block" type="submit">{{template "icon-signin"}}Sign in</button>
   </form>
+  {{if .Passkeys}}
+  <p class="problem" role="alert" data-passkey-problem hidden></p>
+  <button class="button block" type="button" data-passkey-signin data-token="{{.Token}}" hidden>Sign in with a passkey</button>
+  {{end}}
   {{if .Recovery}}<p class="login-links"><a href="/forgot-password">Forgot password?</a></p>{{end}}
 </main>
 {{template "login-footer"}}

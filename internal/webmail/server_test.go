@@ -286,6 +286,17 @@ func (h *harness) get(path string) (*http.Response, string) {
 	return resp, string(b)
 }
 
+// postJSON posts a JSON body without the session's cookies.
+func (h *harness) postJSON(path, body string) *http.Response {
+	h.t.Helper()
+	resp, err := http.Post(h.srv.URL+path, "application/json", strings.NewReader(body))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	return resp
+}
+
 func (h *harness) post(path string, form url.Values) *http.Response {
 	h.t.Helper()
 	resp, err := h.client.PostForm(h.srv.URL+path, form)

@@ -27,10 +27,20 @@ import (
 type securityAuth struct {
 	account Account
 	app     bool
+	// session is a passkey sign-in's token rather than a password.
+	session bool
 	// admin is an administrator access token (admin_access.go), with the
 	// administrator's name. Only the check accepts one.
 	admin   string
 	expires time.Time
+}
+
+// passkeyLoginRequest is either half of a passkey sign-in.
+type passkeyLoginRequest struct {
+	Challenge string          `json:"challenge"`
+	Host      string          `json:"host"`
+	Origin    string          `json:"origin"`
+	Response  json.RawMessage `json:"response"`
 }
 
 func (s *Service) securityAPI(mux *http.ServeMux) {
@@ -57,6 +67,9 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			}
 			if strings.HasSuffix(r.URL.Path, "/freebusy") {
 				limit = 1 << 20 // an editor publishing the owner's busy times
+			}
+			if strings.HasPrefix(r.URL.Path, "/v1/security/passkeys") {
+				limit = 1 << 16 // an authenticator's attestation
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
@@ -99,6 +112,11 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		if a.app {
 			kind = "app"
 		}
+		if a.session {
+			// The MTA takes this only on the webmail's own port, and DAV not
+			// at all.
+			kind = "session"
+		}
 		if a.admin != "" {
 			// Neither the MTA nor DAV accepts this kind; the webmail shows
 			// whose session it is.
@@ -123,6 +141,97 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			out["address_book"] = p.AddressBook
 		}
 		return out, nil
+	})
+	// Passkeys (passkey.go). Adding one asks for the account password whatever
+	// the session signed in with.
+	handle("GET /v1/security/passkeys", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.Passkeys(r.Context(), a.account.ID)
+	})
+	handle("POST /v1/security/passkeys/begin", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Password string `json:"password"`
+			Host     string `json:"host"`
+			Origin   string `json:"origin"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if _, app, err := s.authenticate(r.Context(), a.account.Address, in.Password, ""); err != nil || app {
+			return nil, ErrCredentials
+		}
+		id, options, err := s.beginPasskeyRegistration(r.Context(), a.account, in.Host, in.Origin)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"challenge": id, "options": options}, nil
+	})
+	handle("POST /v1/security/passkeys/finish", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Challenge string          `json:"challenge"`
+			Name      string          `json:"name"`
+			Host      string          `json:"host"`
+			Origin    string          `json:"origin"`
+			Response  json.RawMessage `json:"response"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return s.finishPasskeyRegistration(r.Context(), a.account, in.Host, in.Origin, in.Challenge, in.Name, in.Response)
+	})
+	handle("POST /v1/security/passkeys/{id}/delete", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			return nil, errBadRequest
+		}
+		return map[string]bool{"ok": true}, s.engine.DeletePasskey(r.Context(), a.account, id)
+	})
+	handle("POST /v1/security/session/end", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		_, token, _ := r.BasicAuth()
+		if !a.session {
+			return map[string]bool{"ok": true}, nil
+		}
+		return map[string]bool{"ok": true}, s.engine.endSessionToken(r.Context(), token)
+	})
+	// A passkey sign-in has no credentials yet, so these two are open to the
+	// webmail, and to nothing else. It limits attempts by client, as it does for
+	// passwords.
+	passkeyLogin := func(pattern string, fn func(ctx context.Context, in passkeyLoginRequest) (any, error)) {
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			if !s.internalClient(r) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+			var in passkeyLoginRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				writeSecurityError(w, errBadRequest)
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+			defer cancel()
+			out, err := fn(ctx, in)
+			if err != nil {
+				writeSecurityError(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(out)
+		})
+	}
+	passkeyLogin("POST /v1/passkeys/login/begin", func(ctx context.Context, in passkeyLoginRequest) (any, error) {
+		id, options, err := s.beginPasskeyLogin(ctx, in.Host, in.Origin)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"challenge": id, "options": options}, nil
+	})
+	passkeyLogin("POST /v1/passkeys/login/finish", func(ctx context.Context, in passkeyLoginRequest) (any, error) {
+		address, token, err := s.finishPasskeyLogin(ctx, in.Host, in.Origin, in.Challenge, in.Response)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"address": address, "token": token}, nil
 	})
 	// The user's allowed and blocked senders (sender_rules.go).
 	senderMax := func(a securityAuth) int {
@@ -405,6 +514,10 @@ func (s *Service) securityLogin(ctx context.Context, user, password string) (sec
 	if strings.HasPrefix(password, adminTokenPrefix) {
 		a, actor, expires, err := s.adminLogin(ctx, user, password)
 		return securityAuth{account: a, admin: actor, expires: expires}, err
+	}
+	if strings.HasPrefix(password, sessionTokenPrefix) {
+		a, err := s.sessionLogin(ctx, user, password)
+		return securityAuth{account: a, session: true}, err
 	}
 	// Internal callers only (internalClient), and they limit by the real client.
 	a, app, err := s.authenticate(ctx, user, password, "")
