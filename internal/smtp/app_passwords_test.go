@@ -24,7 +24,7 @@ func appPasswordAuthenticator(t *testing.T, required *atomic.Bool, apiUp *atomic
 			return
 		}
 		user, pw, _ := r.BasicAuth()
-		kind := map[string]string{"account-pw": "password", "app-pw": "app", "admin-token": "admin"}[pw]
+		kind := map[string]string{"account-pw": "password", "app-pw": "app", "admin-token": "admin", sessionTokenPrefix + "good": "session"}[pw]
 		if r.URL.Path != "/v1/security/check" || user != "dana@example.com" || kind == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -140,4 +140,22 @@ func TestWebmailSubmissionPort(t *testing.T) {
 	assert.True(t, ok, "account password accepted on the webmail's port")
 	ok, _ = a.AuthenticateFrom(withWebmailSubmission(context.Background()), "dana@example.com", "wrong", pod)
 	assert.False(t, ok, "the webmail's port still checks the password")
+}
+
+// A passkey sign-in's token sends mail from the webmail, and nowhere else.
+func TestSessionTokenOnlyOnTheWebmailPort(t *testing.T) {
+	var required, up atomic.Bool
+	up.Store(true)
+	a := appPasswordAuthenticator(t, &required, &up)
+	ip := net.ParseIP("203.0.113.9")
+	webmail := withWebmailSubmission(context.Background())
+	if ok, err := a.AuthenticateFrom(webmail, "dana@example.com", sessionTokenPrefix+"good", ip); !ok || err != nil {
+		t.Fatalf("webmail port: %v %v", ok, err)
+	}
+	if ok, _ := a.AuthenticateFrom(context.Background(), "dana@example.com", sessionTokenPrefix+"good", ip); ok {
+		t.Fatal("worked on the public submission port")
+	}
+	if ok, _ := a.AuthenticateFrom(webmail, "dana@example.com", sessionTokenPrefix+"forged", ip); ok {
+		t.Fatal("a forged token worked")
+	}
 }

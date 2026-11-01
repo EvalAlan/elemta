@@ -76,9 +76,11 @@ disabling ends its webmail sessions immediately. A suspended account stays in
 the company address book and can still be opened by an administrator ("Open
 mailbox"); a disabled one can't, and it can't be opened as a shared mailbox.
 
-`reset-two-factor` removes an account's authenticator enrollment, pending setup
-and recovery codes. An administrator should verify the user's identity before
-running it. The CLI records the reset in the audit log. If the account's class
+`reset-two-factor` removes an account's authenticator enrollment, pending setup,
+recovery codes and passkeys, and any session a passkey started is ended at once. Use
+it for someone locked out, and when recovering a compromised account: changing the
+password alone leaves any passkey an intruder added in place. An administrator
+should verify the user's identity before running it. The CLI records the reset in the audit log. If the account's class
 requires two-step verification, the next webmail sign-in requires fresh setup.
 
 Quota sizes accept integer bytes or suffixes such as `K`, `M`, `G`, `MiB`, and

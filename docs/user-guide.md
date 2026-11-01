@@ -99,6 +99,21 @@ your new phone to get a fresh set. If you have lost both the phone and the
 recovery codes, ask your administrator to turn two-step verification off for
 your account.
 
+
+## Passkeys
+
+A passkey signs you in to the webmail with your fingerprint, face, device PIN or
+security key, with no password or code. Add one under Settings, Security. You'll
+be asked for your password first, and you can add one for each device.
+
+- A passkey only works on the web address you added it on. If you use the webmail
+  at more than one address, add one on each.
+- Your password keeps working, so keep it, and keep your recovery codes.
+- Mail, calendar and contacts apps don't use passkeys. They keep using your
+  password or an app password.
+- If you lose a device, remove its passkey from another signed-in device. If you
+  can't, your administrator can remove all of them.
+
 ## App passwords
 
 An app password is a separate password for one mail, calendar or contacts app.

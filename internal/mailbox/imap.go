@@ -190,6 +190,13 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 		a, _, _, err := s.adminLogin(ctx, user, password)
 		return a, err
 	}
+	// A session token from a passkey sign-in, likewise (passkey.go).
+	if strings.HasPrefix(password, sessionTokenPrefix) {
+		if public || protocol != "" {
+			return Account{}, ErrCredentials
+		}
+		return s.sessionLogin(ctx, user, password)
+	}
 	a, app, err := s.authenticate(ctx, user, password, client)
 	if err != nil {
 		return a, err

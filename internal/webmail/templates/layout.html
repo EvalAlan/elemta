@@ -7,6 +7,7 @@
 <title>{{if .Title}}{{.Title}} · {{end}}Elemta Mail</title>
 <link rel="stylesheet" href="{{asset "tidewater.css"}}">
 <script src="{{asset "app.js"}}" defer></script>
+{{if eq .SettingsTab "security"}}<script src="{{asset "passkey.js"}}" defer></script>{{end}}
 </head>
 <body data-app="{{.App}}"{{if not .TZSet}} data-detect-tz="1"{{end}}{{with .MailSound}} data-mail-sound="{{.}}"{{end}} data-csrf="{{.Session.CSRF}}">
 <a class="skip" href="#main">Skip to content</a>

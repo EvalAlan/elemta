@@ -130,6 +130,25 @@ func (m *mailboxSecurity) check(ctx context.Context, username, password string) 
 // AuthenticateFrom applies the app-password rules described above on top of
 // the directory check.
 func (a *SMTPAuthenticator) AuthenticateFrom(ctx context.Context, username, password string, client net.IP) (bool, error) {
+	// A passkey sign-in's token stands in for the password in the webmail, and
+	// nowhere else. The directory has never heard of it, so asking would only
+	// look like a wrong password.
+	if strings.HasPrefix(password, sessionTokenPrefix) {
+		if a.security == nil || !a.config.Enabled || !isWebmailSubmission(ctx) {
+			return false, nil
+		}
+		check, err := a.security.check(ctx, username, password)
+		if errors.Is(err, errSecurityRefused) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if allowed, set := check.Protocols[mailpolicy.Submission]; set && !allowed {
+			return false, nil
+		}
+		return check.Kind == "session", nil
+	}
 	ok, err := a.Authenticate(ctx, username, password)
 	if a.security == nil || !a.config.Enabled {
 		return ok, err
@@ -169,6 +188,9 @@ func (a *SMTPAuthenticator) AuthenticateFrom(ctx context.Context, username, pass
 	}
 	return true, nil
 }
+
+// sessionTokenPrefix marks a webmail session token (internal/mailbox/passkey.go).
+const sessionTokenPrefix = "elemta-session." // #nosec G101 -- public credential marker, not a credential
 
 type webmailSubmissionKey struct{}
 

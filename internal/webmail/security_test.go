@@ -89,6 +89,9 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		}
 		out := map[string]any{}
 		switch {
+		case r.URL.Path == "/v1/security/passkeys":
+			_ = json.NewEncoder(w).Encode([]passkeyInfo{})
+			return
 		case r.URL.Path == "/v1/resources":
 			_ = json.NewEncoder(w).Encode(f.resources)
 			return

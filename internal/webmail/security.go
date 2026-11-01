@@ -89,8 +89,10 @@ type appPassword struct {
 }
 
 type securityStatus struct {
-	TOTP        bool `json:"totp"`
-	AppRequired bool `json:"app_required"`
+	// Passkeys are read separately, for the settings page.
+	Passkeys    []passkeyInfo `json:"-"`
+	TOTP        bool          `json:"totp"`
+	AppRequired bool          `json:"app_required"`
 	// Required by the account's class of service, whatever the user picks.
 	AppRequiredByClass bool          `json:"app_required_by_class"`
 	TOTPRequired       bool          `json:"totp_required"`
@@ -98,6 +100,7 @@ type securityStatus struct {
 	AppPasswords       []appPassword `json:"app_passwords"`
 }
 
+// An empty user makes an unauthenticated call, which only a passkey sign-in does.
 func (c *securityClient) call(ctx context.Context, method, path, user, password string, in, out any) error {
 	var body io.Reader
 	if in != nil {
@@ -112,7 +115,9 @@ func (c *securityClient) call(ctx context.Context, method, path, user, password 
 	if err != nil {
 		return err
 	}
-	req.SetBasicAuth(user, password)
+	if user != "" {
+		req.SetBasicAuth(user, password)
+	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -396,6 +401,7 @@ func (s *Server) securityStatusFor(ctx context.Context, sess *Session) (*securit
 	if err := s.security.call(ctx, http.MethodGet, "/v1/security", sess.User, password, nil, &st); err != nil {
 		return nil, err
 	}
+	st.Passkeys = s.passkeysFor(ctx, sess)
 	return &st, nil
 }
 

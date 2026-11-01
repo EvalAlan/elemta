@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Passkeys.** Sign in to the webmail with a fingerprint, face, device PIN or
+  security key. Add one under Settings, Security. A passkey counts as both factors
+  and works only on the web address it was added on. An administrator's two-step
+  reset removes an account's passkeys too.
+
 - **A sound for new mail.** Settings has a choice of tones, with a Play button, and
   it's off until someone picks one. It plays while the webmail is open in a tab,
   once however many tabs are open.

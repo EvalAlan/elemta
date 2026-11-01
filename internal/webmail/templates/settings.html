@@ -292,6 +292,32 @@
     </div>
 
     {{with .Status}}
+    <div class="card" id="passkeys">
+      <div class="card-head">
+        <h2 class="card-title">Passkeys</h2>
+        <span class="badge{{if .Passkeys}} on{{end}}">{{if .Passkeys}}On{{else}}Off{{end}}</span>
+      </div>
+      {{if eq $.Settings.NoticeCard "passkeys"}}<p class="notice card-notice" role="status">{{$.Settings.Notice}}</p>{{end}}
+      <p class="small muted">Sign in with your fingerprint, face, device PIN or security key instead of a password and code. A passkey only works on the web address it was added on. Your password still works, and mail apps keep using app passwords.</p>
+      {{if .Passkeys}}
+      <table class="data-table">
+        <thead><tr><th scope="col">Name</th><th scope="col">Works on</th><th scope="col">Last used</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody>
+        {{range .Passkeys}}<tr>
+          <td>{{.Name}}</td><td class="mono">{{.Host}}</td><td>{{if .LastUsed}}{{.LastUsed.Format "2 Jan 2006"}}{{else}}Never{{end}}</td>
+          <td><form action="/settings/passkeys/delete" method="post" class="inline"><input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button danger" data-confirm="Remove the passkey {{.Name}}?">Remove</button></form></td>
+        </tr>{{end}}
+        </tbody>
+      </table>
+      {{end}}
+      <p class="small muted" data-passkey-unsupported>This browser can't use passkeys here.</p>
+      <form class="form-grid" data-passkey-add hidden>
+        <label for="passkey-name">Name</label><input id="passkey-name" name="name" type="text" maxlength="64" placeholder="Work laptop" required>
+        <label for="passkey-password">Your password</label><input id="passkey-password" name="password" type="password" autocomplete="current-password" required>
+        <p class="problem" role="alert" data-passkey-problem hidden></p>
+        <div class="form-actions"><button class="button primary" type="submit">Add a passkey</button></div>
+      </form>
+    </div>
     <div class="card" id="app-passwords">
       <div class="card-head">
         <h2 class="card-title">App passwords</h2>
