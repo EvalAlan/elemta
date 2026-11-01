@@ -376,3 +376,68 @@ func TestCalendarShareAPI(t *testing.T) {
 		t.Fatalf("that changed a grant on the owner's calendar: %q", got)
 	}
 }
+
+const testInvite = "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:u\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+func TestCalendarPart(t *testing.T) {
+	inline := "Subject: x\r\nContent-Type: text/calendar; method=cancel\r\n\r\n" + testInvite
+	if m, data := calendarPart([]byte(inline)); m != "CANCEL" || !strings.Contains(string(data), "UID:u") {
+		t.Errorf("inline: %q %q", m, data)
+	}
+	nested := "Subject: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nhi\r\n" +
+		"--b\r\nContent-Type: text/calendar\r\n\r\n" + testInvite + "--b--\r\n"
+	if m, _ := calendarPart([]byte(nested)); m != "REQUEST" {
+		t.Errorf("nested: %q", m)
+	}
+	if m, _ := calendarPart([]byte("Subject: plain\r\n\r\nno calendar\r\n")); m != "" {
+		t.Errorf("plain: %q", m)
+	}
+	if m, _ := calendarPart([]byte("\x00not a message")); m != "" {
+		t.Errorf("junk: %q", m)
+	}
+}
+
+// A delegate can't read the owner's inbox, so invitations reach them at
+// delivery, and only invitations do.
+func TestInvitationsReachDelegates(t *testing.T) {
+	r := newSieveRig(t)
+	ctx := context.Background()
+	domain := r.a.Address[strings.LastIndexByte(r.a.Address, '@'):]
+	member := Account{ID: uuid.NewString(), Address: "delegate-" + uuid.NewString()[:8] + domain}
+	t.Cleanup(func() {
+		_, _ = r.e.DB.Exec(`DELETE FROM mailbox_calendar_shares WHERE member=$1`, member.ID)
+		_, _ = r.e.DB.Exec(`DELETE FROM mailbox_deliveries WHERE account=$1`, member.ID)
+		_, _ = r.e.DB.Exec(`DELETE FROM mailbox_folders WHERE account=$1`, member.ID)
+		_, _ = r.e.DB.Exec(`DELETE FROM mailbox_accounts WHERE id=$1`, member.ID)
+	})
+	if _, err := r.e.GrantCalendar(ctx, r.a, member, CalendarDelegate); err != nil {
+		t.Fatal(err)
+	}
+	invite := "From: o@example.org\r\nSubject: Invitation\r\nContent-Type: text/calendar; method=REQUEST\r\n\r\n" + testInvite
+	if err := r.deliver("o@example.org", "", invite); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.deliver("o@example.org", "", "From: o@example.org\r\nSubject: plain\r\n\r\nhello\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	_, theirs, err := r.e.Snapshot(ctx, member.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(theirs) != 1 {
+		t.Fatalf("the delegate has %d messages", len(theirs))
+	}
+	_, own, err := r.e.Snapshot(ctx, r.a.ID, "INBOX")
+	if err != nil || len(own) != 2 {
+		t.Fatalf("the owner has %d messages, %v", len(own), err)
+	}
+	if _, err := r.e.GrantCalendar(ctx, r.a, member, CalendarEdit); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.deliver("o@example.org", "", invite); err != nil {
+		t.Fatal(err)
+	}
+	if _, theirs, _ = r.e.Snapshot(ctx, member.ID, "INBOX"); len(theirs) != 1 {
+		t.Fatalf("edit access got a copy: %d messages", len(theirs))
+	}
+}

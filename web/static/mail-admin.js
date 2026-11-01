@@ -311,12 +311,22 @@
         });
         if (!shares.length) list.appendChild(node('li', 'Not shared with anyone.'));
     }
+    function fillResource(resource) {
+        el('ma-resource-on').checked = !!resource;
+        el('ma-resource-name').value = resource ? resource.name : '';
+        el('ma-resource-kind').value = resource ? resource.kind : 'room';
+        el('ma-resource-location').value = (resource && resource.location) || '';
+        el('ma-resource-capacity').value = (resource && resource.capacity) || 0;
+        el('ma-resource-manual').checked = !!resource && resource.booking === 'manual';
+    }
     async function openAccount(account) {
         policyLoaded = false; policyDirty = false;
         fillAccount(account); el('ma-account-dialog').showModal();
         el('ma-calendar-section').hidden = !(account && mailboxAdmin);
+        el('ma-resource-section').hidden = !(account && mailboxAdmin);
         if (account && mailboxAdmin) {
             try { fillCalendarShares(await request(accountPath() + '/calendar-shares')); } catch (error) { message(error.message, true); }
+            try { fillResource(await request(accountPath() + '/resource')); } catch (error) { message(error.message, true); }
             try { fillPolicy(await request(accountPath() + '/policy')); } catch (error) { message(error.message, true); }
         }
     }
@@ -390,6 +400,20 @@
         el('ma-new-alias').value = ''; message('Delivery alias ' + alias + ' now delivers to ' + account + '.'); await refresh();
     }); });
     el('ma-alias-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => { const updated = await request(accountPath() + '/aliases', 'POST', { alias: el('ma-alias').value }); fillAccount(updated); el('ma-account-policy').hidden = !mailboxAdmin; message('Delivery alias added.'); await refresh(); }); });
+    el('ma-resource-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+        if (!el('ma-resource-on').checked) {
+            await request(accountPath() + '/resource', 'DELETE');
+            fillResource(null);
+            message('This account is no longer bookable. Its mail and calendar remain.');
+            return;
+        }
+        fillResource(await request(accountPath() + '/resource', 'PUT', {
+            address: '', name: el('ma-resource-name').value.trim(), kind: el('ma-resource-kind').value,
+            location: el('ma-resource-location').value.trim(), capacity: Number(el('ma-resource-capacity').value) || 0,
+            booking: el('ma-resource-manual').checked ? 'manual' : 'auto',
+        }));
+        message('Saved. People can book this account.');
+    }); });
     el('ma-calendar-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
         await request(accountPath() + '/calendar-shares/' + encodeURIComponent(el('ma-calendar-member').value.trim()), 'PUT', { level: el('ma-calendar-level').value });
         el('ma-calendar-member').value = '';

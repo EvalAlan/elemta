@@ -1,5 +1,10 @@
 # Calendar and contact sync (CalDAV and CardDAV)
 
+Calendars other people share with you appear as extra calendars, at
+`/dav/calendars/shared/<owner>/`, and follow your access: with View you can't
+change them and private events show as "Busy", and with Edit you can't touch
+anything with guests.
+
 The webmail serves CalDAV and CardDAV. Phones and desktop apps can then sync
 the same calendar, task list and address book that users see in the browser.
 Clients and webmail read and write the same ObjectStore, so a change made
@@ -16,9 +21,11 @@ copies existing objects on first login and keeps subsequent writes in SQL.
 | `/dav/calendars/events/` | events (`VEVENT`) |
 | `/dav/calendars/tasks/` | tasks (`VTODO`) |
 | `/dav/contacts/default/` | contacts (vCard 3.0 and 4.0) |
+| `/dav/calendars/shared/<owner>/` | a calendar someone shared with you |
 
-Paths never contain the user name. The credentials decide whose data a
-request reaches, so one user can't address another user's collections.
+Your own paths never contain your name. The credentials decide whose data a
+request reaches, and a shared path resolves only while that share exists, so one
+user can't address another user's collections.
 
 ## Setting up a client
 

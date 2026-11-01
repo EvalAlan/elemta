@@ -207,6 +207,26 @@ func newProvisionCommand(open func() (*provision.Service, error)) *cobra.Command
 		}
 		return map[string]string{"status": "calendar access removed"}, nil
 	})
+	var resourceDomain string
+	listResources := add("list-resources", nil, "List rooms and equipment people can book", 0, func(ctx context.Context, _ *cobra.Command, s *provision.Service, _ []string) (any, error) {
+		return s.Resources(ctx, resourceDomain)
+	})
+	listResources.Flags().StringVar(&resourceDomain, "domain", "", "Only this domain")
+	var resource mailpolicy.Resource
+	setResource := add("set-resource <email>", nil, "Make an account a bookable room or piece of equipment", 1, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
+		return s.PutResource(ctx, args[0], resource)
+	})
+	setResource.Flags().StringVar(&resource.Name, "name", "", "The name people see")
+	setResource.Flags().StringVar(&resource.Kind, "kind", mailpolicy.ResourceRoom, "room or equipment")
+	setResource.Flags().StringVar(&resource.Location, "location", "", "Where it is")
+	setResource.Flags().IntVar(&resource.Capacity, "capacity", 0, "How many people it holds")
+	setResource.Flags().StringVar(&resource.Booking, "booking", mailpolicy.BookingAuto, "auto, or manual for a delegate to answer")
+	add("remove-resource <email>", nil, "Make a room an ordinary account again", 1, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
+		if err := s.DeleteResource(ctx, args[0]); err != nil {
+			return nil, err
+		}
+		return map[string]string{"status": "resource removed; its mail and calendar remain"}, nil
+	})
 	var confirm string
 	var purgeToo bool
 	del := add("delete-account <email>", []string{"da"}, "Remove an account, retaining its mailbox unless --purge is given", 1, func(ctx context.Context, _ *cobra.Command, s *provision.Service, args []string) (any, error) {
@@ -297,6 +317,13 @@ func printProvision(cmd *cobra.Command, value any) error {
 		}
 	case mailpolicy.CalendarShare:
 		fmt.Fprintf(w, "Owner:\t%s\nMember:\t%s\nLevel:\t%s\n", v.Owner, v.Member, v.Level)
+	case []mailpolicy.Resource:
+		fmt.Fprintln(w, "ADDRESS\tNAME\tKIND\tCAPACITY\tBOOKING\tLOCATION")
+		for _, r := range v {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n", r.Address, r.Name, r.Kind, r.Capacity, r.Booking, r.Location)
+		}
+	case mailpolicy.Resource:
+		fmt.Fprintf(w, "Address:\t%s\nName:\t%s\nKind:\t%s\nCapacity:\t%d\nBooking:\t%s\nLocation:\t%s\n", v.Address, v.Name, v.Kind, v.Capacity, v.Booking, v.Location)
 	case map[string]string:
 		fmt.Fprintln(w, v["status"])
 	default:

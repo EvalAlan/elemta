@@ -250,6 +250,47 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		writeJSON(w, share)
 		return nil
 	})).Methods("PUT", "DELETE")
+	// Rooms and equipment are a domain's own business, like its assistants.
+	protected.HandleFunc("/accounts/{address}/resource", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+		address := mux.Vars(r)["address"]
+		if err := scopeOf(r).checkAddress(address); err != nil {
+			return err
+		}
+		domain := address[strings.LastIndexByte(address, '@')+1:]
+		switch r.Method {
+		case "GET":
+			all, err := s.provisioner.Resources(ctx, domain)
+			if err != nil {
+				return err
+			}
+			for _, resource := range all {
+				if strings.EqualFold(resource.Address, address) {
+					writeJSON(w, resource)
+					return nil
+				}
+			}
+			writeJSON(w, nil)
+			return nil
+		case "DELETE":
+			if err := s.provisioner.DeleteResource(ctx, address); err != nil {
+				return err
+			}
+			s.provisionAudit(r, "resource-remove", address, "")
+			writeJSON(w, map[string]bool{"ok": true})
+			return nil
+		}
+		var in mailpolicy.Resource
+		if !decodeJSONBody(w, r, &in) {
+			return nil
+		}
+		resource, err := s.provisioner.PutResource(ctx, address, in)
+		if err != nil {
+			return err
+		}
+		s.provisionAudit(r, "resource", address, resource.Name)
+		writeJSON(w, resource)
+		return nil
+	})).Methods("GET", "PUT", "DELETE")
 	protected.HandleFunc("/accounts/{address}/aliases", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		var in struct {
 			Alias string `json:"alias"`

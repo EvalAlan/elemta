@@ -85,7 +85,7 @@
 {{with .Calendar.Event}}
 <div class="toolbar" role="toolbar" aria-label="Event actions">
   {{if not .Event.ReadOnly}}
-  {{if not (and .Event.Owner .Event.HasAttendees)}}<a class="button" href="/calendar/event?uid={{.Event.UID}}&amp;occ={{.Occ.Start.Unix}}&amp;edit=1{{if .Event.Owner}}&amp;owner={{.Event.Owner}}{{end}}">Edit</a>{{end}}
+  {{if or (not (and .Event.Owner .Event.HasAttendees)) .Event.Delegated}}<a class="button" href="/calendar/event?uid={{.Event.UID}}&amp;occ={{.Occ.Start.Unix}}&amp;edit=1{{if .Event.Owner}}&amp;owner={{.Event.Owner}}{{end}}">Edit</a>{{end}}
   {{if not .Event.Owner}}<a class="button" href="{{.ICSURL}}">Download .ics</a>{{end}}
   {{if .Event.Recurring}}
   <form action="/calendar/event" method="post" class="inline">
@@ -128,7 +128,8 @@
   </dl>
   {{if .Event.Description}}<div class="text-body">{{linkify .Event.Description}}</div>{{end}}
   {{if .Event.HasAttendees}}{{if not .Organizer}}
-  <p class="small muted">You were invited to this event. Your answer: <span class="{{statusClass .MyStatus}}">{{statusLabel .MyStatus}}</span>. Answer from the invitation email to tell the organizer.</p>
+  {{if .Event.Owner}}<p class="small muted">{{.Event.Calendar}} was invited to this event. Their answer: <span class="{{statusClass .MyStatus}}">{{statusLabel .MyStatus}}</span>.{{if .Event.Delegated}} Answer from the invitation in your inbox to tell the organizer.{{end}}</p>
+  {{else}}<p class="small muted">You were invited to this event. Your answer: <span class="{{statusClass .MyStatus}}">{{statusLabel .MyStatus}}</span>. Answer from the invitation email to tell the organizer.</p>{{end}}
   {{end}}{{end}}
 </div>
 {{end}}
@@ -187,6 +188,9 @@
   <label for="ev-location">Location</label><input id="ev-location" name="location" type="text" value="{{.Location}}">
   <label for="ev-url">Link</label><input id="ev-url" name="url" type="url" value="{{.URL}}" placeholder="https://… (a video call, for example)">
   <label for="ev-guests">Guests</label><input id="ev-guests" name="attendees" type="text" value="{{.Attendees}}" autocomplete="off" data-addresses placeholder="Email addresses, separated by commas">
+  {{if .Rooms}}
+  <label for="ev-room">Add a room</label><select id="ev-room" data-room-picker><option value="">Choose a room or equipment</option>{{range .Rooms}}<option value="{{.Address}}">{{.Name}}{{if .Capacity}} ({{.Capacity}}){{end}}{{if .Location}}, {{.Location}}{{end}}</option>{{end}}</select>
+  {{end}}
   <span class="label" data-freebusy-label hidden>Availability</span>
   <div class="availability" data-freebusy aria-live="polite" hidden></div>
   <span></span>

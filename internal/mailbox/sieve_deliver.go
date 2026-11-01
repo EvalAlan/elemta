@@ -135,6 +135,10 @@ func (s *Service) deliver(ctx context.Context, d delivery) error {
 	} else if folder != "" {
 		return s.store(ctx, d, folder, nil, true, map[string]bool{})
 	}
+	if booked, err := s.bookResource(ctx, d); booked || err != nil {
+		return err
+	}
+	s.copyInvitationToDelegates(ctx, d)
 	if len(d.account.Forward) > 0 {
 		// Forwarding from the directory comes before the account's own
 		// filters, which then see only the copy kept here, if any.

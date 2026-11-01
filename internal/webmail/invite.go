@@ -20,6 +20,9 @@ import (
 // inviteView is an invitation, reply or cancellation found in a message,
 // as the reading pane shows it.
 type inviteView struct {
+	// For is the person this invitation is for, when the user is reading it
+	// as their delegate.
+	For        string
 	Method     string // REQUEST, REPLY, CANCEL (or PUBLISH)
 	Event      Event
 	When       string
@@ -65,19 +68,30 @@ func decorateInvite(s *Server, ctx context.Context, sess *Session, v *view) {
 		iv.Back = v.List.MessageURL(m.UID)
 	}
 	iv.When = describeWhen(e, loc, s.prefsCached(sess).Uses24h())
+	acting := sess.Address
+	if method == "REQUEST" || method == "CANCEL" {
+		if iv.For = s.delegatedAttendee(ctx, sess, e); iv.For != "" {
+			acting = iv.For
+		}
+	}
 	if method == "REPLY" {
 		for i := range e.Attendees {
 			iv.Reply = &e.Attendees[i]
 			break
 		}
 	}
-	events, err := s.events(ctx, sess, loc)
+	var events []Event
+	if iv.For == "" {
+		events, err = s.events(ctx, sess, loc)
+	} else {
+		events, err = s.sharedEventsOf(ctx, sess, calendarShare{Owner: iv.For, Level: accessDelegate}, loc)
+	}
 	if err == nil {
 		if stored := findEvent(events, e.UID); stored != nil {
 			iv.InCalendar = true
 			iv.Outdated = stored.Sequence > e.Sequence
 			for _, a := range stored.Attendees {
-				if strings.EqualFold(a.Email, sess.Address) {
+				if strings.EqualFold(a.Email, acting) {
 					iv.MyStatus = a.Status
 				}
 				if iv.Reply != nil && strings.EqualFold(a.Email, iv.Reply.Email) && a.Status == iv.Reply.Status {
@@ -94,6 +108,32 @@ func decorateInvite(s *Server, ctx context.Context, sess *Session, v *view) {
 		}
 	}
 	m.Invite = iv
+}
+
+// delegatedAttendee returns the guest this invitation is for when that is
+// someone the user is a delegate of, and not the user: the mailbox service
+// copies a person's invitations to their delegates.
+func (s *Server) delegatedAttendee(ctx context.Context, sess *Session, e Event) string {
+	for _, a := range e.Attendees {
+		if strings.EqualFold(a.Email, sess.Address) {
+			return ""
+		}
+	}
+	shares, err := s.calendarShareList(ctx, sess)
+	if err != nil {
+		return ""
+	}
+	for _, c := range shares.Received {
+		if !c.CanActFor() {
+			continue
+		}
+		for _, a := range e.Attendees {
+			if strings.EqualFold(a.Email, c.Owner) {
+				return c.Owner
+			}
+		}
+	}
+	return ""
 }
 
 // describeWhen is an event's time in words, in the user's zone.
@@ -130,12 +170,19 @@ func forWire(e Event) Event {
 }
 
 // sendInvites mails an iTIP message about e to the given attendees.
-func (s *Server) sendInvites(ctx context.Context, sess *Session, e Event, method string, to []Attendee) error {
+// With owner set, the user is acting for them as their delegate.
+func (s *Server) sendInvites(ctx context.Context, sess *Session, owner string, e Event, method string, to []Attendee) error {
 	if len(to) == 0 {
 		return nil
 	}
 	prefs := s.prefsCached(sess)
 	wire := forWire(e)
+	if owner != "" && wire.Organizer != nil {
+		// A copy: the stored event keeps the plain organizer.
+		organizer := *wire.Organizer
+		organizer.SentBy = sess.Address
+		wire.Organizer = &organizer
+	}
 	if method == "CANCEL" {
 		wire.Status = "CANCELLED"
 	}
@@ -145,7 +192,7 @@ func (s *Server) sendInvites(ctx context.Context, sess *Session, e Event, method
 	}
 	d := &Draft{From: prefs.fromAddress(sess.Address), Calendar: &CalendarPart{Method: method, Data: data}}
 	for _, a := range to {
-		if !strings.EqualFold(a.Email, sess.Address) {
+		if !strings.EqualFold(a.Email, sess.Address) && !strings.EqualFold(a.Email, owner) {
 			d.To = append(d.To, Address{Name: a.Name, Email: a.Email})
 		}
 	}
@@ -163,6 +210,11 @@ func (s *Server) sendInvites(ctx context.Context, sess *Session, e Event, method
 	default:
 		d.Subject = "Invitation: " + e.Summary
 		d.Text = inviteText(e, when)
+	}
+	if owner != "" {
+		// Answers belong to the organizer, not the person who sent this.
+		d.ReplyTo = []Address{{Email: owner}}
+		d.Text = "Sent by " + sess.Address + " on behalf of " + owner + ".\n\n" + d.Text
 	}
 	return s.submitDraft(ctx, sess, d)
 }
@@ -225,6 +277,7 @@ func (s *Server) rsvpSubmit(w http.ResponseWriter, r *http.Request, sess *Sessio
 	ctx := r.Context()
 	loc := s.loc(sess)
 	folder := r.PostFormValue("f")
+	owner := strings.ToLower(strings.TrimSpace(r.PostFormValue("owner")))
 	uid, ok := parseUID(r.PostFormValue("uid"))
 	back := localBack(r.PostFormValue("back"), folderURL(folder, 1, ""))
 	if folder == "" || !ok {
@@ -252,7 +305,20 @@ func (s *Server) rsvpSubmit(w http.ResponseWriter, r *http.Request, sess *Sessio
 		return
 	}
 	incoming := cal.Events[0]
-	events, err := s.events(ctx, sess, loc)
+	var events []Event
+	if owner == "" {
+		events, err = s.events(ctx, sess, loc)
+	} else {
+		var share *calendarShare
+		share, err = s.calendarShareFor(ctx, sess, owner)
+		if err == nil && (share == nil || !share.CanActFor()) {
+			http.Error(w, "You can't answer for this calendar.", http.StatusForbidden)
+			return
+		}
+		if err == nil {
+			events, err = s.sharedEventsOf(ctx, sess, *share, loc)
+		}
+	}
 	if err != nil {
 		s.fail(w, r, sess, err)
 		return
@@ -262,8 +328,12 @@ func (s *Server) rsvpSubmit(w http.ResponseWriter, r *http.Request, sess *Sessio
 	notice := ""
 	switch op := r.PostFormValue("op"); op {
 	case "ACCEPTED", "TENTATIVE", "DECLINED":
-		notice, err = s.answerInvite(ctx, sess, incoming, stored, op)
+		notice, err = s.answerInvite(ctx, sess, owner, incoming, stored, op)
 	case "apply-reply":
+		if owner != "" {
+			err = errors.New("webmail: unknown invitation action")
+			break
+		}
 		if stored == nil {
 			err = ErrNotFound
 			break
@@ -273,14 +343,14 @@ func (s *Server) rsvpSubmit(w http.ResponseWriter, r *http.Request, sess *Sessio
 		err = s.putEvent(ctx, sess, *stored)
 	case "apply-cancel", "remove":
 		if stored != nil {
-			err = s.deleteEvent(ctx, sess, "", stored.UID)
+			err = s.deleteEvent(ctx, sess, owner, stored.UID)
 		}
 		notice = "event-deleted"
 	case "add":
 		// A PUBLISH (an event someone shared, not a meeting) goes straight
 		// into the calendar.
 		notice = "event-saved"
-		err = s.putEvent(ctx, sess, incoming)
+		err = s.putEventIn(ctx, sess, owner, incoming)
 	default:
 		err = errors.New("webmail: unknown invitation action")
 	}
@@ -292,39 +362,48 @@ func (s *Server) rsvpSubmit(w http.ResponseWriter, r *http.Request, sess *Sessio
 }
 
 // answerInvite records the user's answer in their calendar and tells the
-// organizer. A declined invitation is removed from the calendar.
-func (s *Server) answerInvite(ctx context.Context, sess *Session, incoming Event, stored *Event, status string) (string, error) {
+// organizer. A declined invitation is removed from the calendar. With owner
+// set, the user is answering for them as their delegate.
+func (s *Server) answerInvite(ctx context.Context, sess *Session, owner string, incoming Event, stored *Event, status string) (string, error) {
 	e := incoming
+	acting := sess.Address
+	if owner != "" {
+		acting = owner
+	}
 	if stored != nil && stored.Sequence > incoming.Sequence {
 		e = *stored // answering an old copy of the invitation
 	}
 	found := false
 	for i := range e.Attendees {
-		if strings.EqualFold(e.Attendees[i].Email, sess.Address) {
+		if strings.EqualFold(e.Attendees[i].Email, acting) {
 			e.Attendees[i].Status = status
 			found = true
 		}
 	}
 	if !found {
 		// Invited through a list or an alias: answer as ourselves.
-		e.Attendees = append(e.Attendees, Attendee{Email: sess.Address, Name: s.prefsCached(sess).DisplayName, Status: status})
+		a := Attendee{Email: acting, Status: status}
+		if owner == "" {
+			a.Name = s.prefsCached(sess).DisplayName
+		}
+		e.Attendees = append(e.Attendees, a)
 	}
 	if stored != nil && stored.Calendar != "" {
 		e.Calendar = stored.Calendar
 	}
 	if status == "DECLINED" {
 		if stored != nil {
-			if err := s.deleteEvent(ctx, sess, "", e.UID); err != nil {
+			if err := s.deleteEvent(ctx, sess, owner, e.UID); err != nil {
 				return "", err
 			}
 		}
-	} else if err := s.putEvent(ctx, sess, e); err != nil {
+	} else if err := s.putEventIn(ctx, sess, owner, e); err != nil {
 		return "", err
 	}
-	if e.Organizer == nil || e.IsOrganizer(sess.Address) {
+	if e.Organizer == nil || e.IsOrganizer(acting) {
 		return "event-saved", nil
 	}
-	if err := s.sendReply(ctx, sess, e, status); err != nil {
+	if err := s.sendReply(ctx, sess, owner, e, status); err != nil {
 		s.log.Warn("webmail: send invitation reply", "user", sess.User, "error", err)
 		return "rsvp-saved", err
 	}
@@ -333,10 +412,13 @@ func (s *Server) answerInvite(ctx context.Context, sess *Session, incoming Event
 
 // sendReply tells the organizer the user's answer. The REPLY carries only
 // the user's own ATTENDEE line, as iTIP requires.
-func (s *Server) sendReply(ctx context.Context, sess *Session, e Event, status string) error {
+func (s *Server) sendReply(ctx context.Context, sess *Session, owner string, e Event, status string) error {
 	prefs := s.prefsCached(sess)
 	wire := forWire(e)
 	wire.Attendees = []Attendee{{Email: sess.Address, Name: prefs.DisplayName, Status: status}}
+	if owner != "" {
+		wire.Attendees = []Attendee{{Email: owner, Status: status, SentBy: sess.Address}}
+	}
 	wire.Description, wire.Location = "", e.Location
 	comp := wire.toComponent(s.now())
 	comp.Props.Del(ical.PropRecurrenceRule)
@@ -356,6 +438,9 @@ func (s *Server) sendReply(ctx context.Context, sess *Session, e Event, status s
 	who := prefs.DisplayName
 	if who == "" {
 		who = sess.Address
+	}
+	if owner != "" {
+		who = owner
 	}
 	d := &Draft{
 		From:     prefs.fromAddress(sess.Address),
@@ -495,11 +580,15 @@ func (s *Server) recordInboxReplies(ctx context.Context, st Mailstore, address s
 // answer counts: a reply speaks for the guest who sent it, and taking other
 // attendees' answers from it would let anyone set anyone's status. The
 // organizer's own "Record in my calendar" passes no sender, since they have
-// read the reply and chosen to trust it.
+// read the reply and chosen to trust it. A delegate's answer names them in
+// SENT-BY and counts only from the guest's own domain, because delegates are
+// colleagues and SENT-BY by itself is just a claim anyone could write.
 func applyReply(stored *Event, reply Event, sender string) bool {
 	changed := false
 	for _, a := range reply.Attendees {
-		if a.Status == "" || sender != "" && !strings.EqualFold(a.Email, sender) {
+		own := strings.EqualFold(a.Email, sender)
+		delegate := strings.EqualFold(a.SentBy, sender) && strings.EqualFold(domainOf(a.Email), domainOf(sender))
+		if a.Status == "" || sender != "" && !own && !delegate {
 			continue
 		}
 		for i := range stored.Attendees {

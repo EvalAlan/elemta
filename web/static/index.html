@@ -1300,6 +1300,19 @@
                         </section>
                         <h4>Delivery aliases</h4><ul id="ma-alias-list" class="ma-alias-list"></ul>
                         <form id="ma-alias-form" class="ma-inline"><label class="sr-only" for="ma-alias">Alias address</label><input id="ma-alias" type="email" placeholder="alias@example.com" required><button class="btn btn-secondary" type="submit">Add alias</button></form>
+                        <section id="ma-resource-section" hidden>
+                            <h4>Room or resource</h4>
+                            <p class="field-hint">Makes this account something people book. It accepts invitations by itself, first come first served, unless approval is on, when its delegate answers them.</p>
+                            <form id="ma-resource-form" class="ma-form">
+                                <label class="ma-check"><input id="ma-resource-on" type="checkbox"> People can book this account</label>
+                                <label for="ma-resource-name">Name</label><input id="ma-resource-name" type="text" maxlength="200">
+                                <label for="ma-resource-kind">Kind</label><select id="ma-resource-kind"><option value="room">Room</option><option value="equipment">Equipment</option></select>
+                                <label for="ma-resource-location">Location</label><input id="ma-resource-location" type="text" maxlength="200">
+                                <label for="ma-resource-capacity">Capacity</label><input id="ma-resource-capacity" type="number" min="0">
+                                <label class="ma-check"><input id="ma-resource-manual" type="checkbox"> Needs approval by a delegate</label>
+                                <button type="submit" class="button">Save</button>
+                            </form>
+                        </section>
                         <section id="ma-calendar-section" hidden>
                             <h4>Calendar sharing</h4><ul id="ma-calendar-list" class="ma-alias-list"></ul>
                             <form id="ma-calendar-form" class="ma-inline"><label class="sr-only" for="ma-calendar-member">Share this calendar with</label><input id="ma-calendar-member" type="email" placeholder="assistant@example.com" required><label class="sr-only" for="ma-calendar-level">Access</label><select id="ma-calendar-level"><option value="view">View</option><option value="edit">Edit</option></select><button class="btn btn-secondary" type="submit">Share calendar</button></form>

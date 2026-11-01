@@ -6,10 +6,12 @@ package webmail
 // here decide what to show and offer, and hide private events from view access,
 // which only this code can do because it's what reads the events.
 //
-// An editor's connection writes as the owner, so nothing here may send mail.
-// Invitations come from the organizer, and telling guests about a change needs
-// delegate access, so guests can't be added to or changed on someone else's
-// events from here.
+// An editor's connection writes as the owner, but telling guests about a change
+// is mail, so guests can't be added to or changed on someone else's events with
+// edit access. Delegate access can, and it still adds no right to send in the
+// owner's name: a delegate's mail comes from their own address, with SENT-BY
+// naming them in the iCalendar (RFC 5545), and calendar apps show that as "on
+// behalf of". The grant is to act on a calendar, not to send as a person.
 
 import (
 	"context"
@@ -40,6 +42,10 @@ type calendarShare struct {
 func (c calendarShare) CanEdit() bool {
 	return c.Level == accessEdit || c.Level == accessDelegate
 }
+
+// CanActFor reports whether the member may invite guests and answer
+// invitations for the owner.
+func (c calendarShare) CanActFor() bool { return c.Level == accessDelegate }
 
 type calendarShares struct {
 	Granted  []calendarShare `json:"granted"`
@@ -127,6 +133,33 @@ func (s *Server) withCalendarStore(ctx context.Context, sess *Session, owner str
 	return s.sessions.withStore(ctx, sess, s.dial, fn)
 }
 
+// bookable is a room or piece of equipment the user can book.
+type bookable struct {
+	Address  string `json:"address"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Location string `json:"location"`
+	Capacity int    `json:"capacity"`
+}
+
+// resourceList is what the event form offers. An empty list is an answer, not a
+// failure: without it the form still works, and a room can be typed as a guest.
+func (s *Server) resourceList(ctx context.Context, sess *Session) []bookable {
+	if s.security == nil || sess.AdminActor != "" {
+		return nil
+	}
+	pw, err := s.sessions.password(sess)
+	if err != nil {
+		return nil
+	}
+	var out []bookable
+	if err := s.security.call(ctx, http.MethodGet, "/v1/resources", sess.User, pw, nil, &out); err != nil {
+		s.log.Warn("webmail: rooms unavailable", "user", sess.User, "error", err)
+		return nil
+	}
+	return out
+}
+
 // sharedName is how an owner appears: the part of the address people recognise.
 func sharedName(owner string) string {
 	if local, _, ok := strings.Cut(owner, "@"); ok {
@@ -169,6 +202,7 @@ func sharedEvents(objs []Object, share calendarShare, loc *time.Location) []Even
 		e.Owner, e.OwnerCalendar = share.Owner, e.Calendar
 		e.Calendar = sharedName(share.Owner)
 		e.ReadOnly = !share.CanEdit()
+		e.Delegated = share.CanActFor()
 		out = append(out, e)
 	}
 	return out
@@ -270,7 +304,7 @@ func (s *Server) calendarShareSubmit(w http.ResponseWriter, r *http.Request, ses
 		notice = "calendar-unshared"
 	} else {
 		level := r.PostFormValue("level")
-		if level != accessView && level != accessEdit {
+		if level != accessView && level != accessEdit && level != accessDelegate {
 			back("calendar-share-invalid")
 			return
 		}
