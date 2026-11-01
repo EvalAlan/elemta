@@ -585,16 +585,16 @@ func (e *Engine) restoreBody(ctx context.Context, bodies BodyStore, m restoreMes
 	return raw, nil
 }
 
-// keyed gives a backup's store the same body keys as the live one, since a
-// backup holds bodies exactly as they were stored.
+// keyed reads a backup's store the way the live one is read, with the same body
+// keys, since a backup holds bodies exactly as they were stored.
 func (e *Engine) keyed(s BodyStore) BodyStore {
 	if s == nil {
 		return nil
 	}
-	if c, ok := e.Bodies.(*encryptedBodies); ok {
-		return &encryptedBodies{BodyStore: s, keys: c.keys}
+	if enc, _ := bodyLayers(e.Bodies); enc != nil {
+		s = &encryptedBodies{BodyStore: s, keys: enc.keys}
 	}
-	return s
+	return &compressedBodies{BodyStore: s}
 }
 
 // restoredFlags drops \Deleted: mail marked for removal when the backup was
@@ -664,14 +664,11 @@ func (e *Engine) ExportBodies(ctx context.Context, w io.Writer, progress func(do
 	if err := rows.Err(); err != nil {
 		return r, err
 	}
-	store := e.Bodies
-	if c, ok := store.(*encryptedBodies); ok {
-		store = c.BodyStore
-	}
+	_, store := bodyLayers(e.Bodies)
 	zipped := gzip.NewWriter(w)
 	archive := tar.NewWriter(zipped)
 	for _, x := range todo {
-		data, err := store.Get(ctx, x.key, x.size+bodyOverhead)
+		data, err := store.Get(ctx, x.key, bodyStoredLimit(x.size)+bodyOverhead)
 		if err != nil {
 			// Cleanup may have retired it since the query, and then nothing
 			// refers to it. Any other failure is a backup missing mail.

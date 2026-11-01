@@ -28,29 +28,15 @@ type EncryptReport struct {
 // rather than sealed in that state.
 func (e *Engine) EncryptBodies(ctx context.Context, progress func(done int)) (EncryptReport, error) {
 	var r EncryptReport
-	enc, ok := e.Bodies.(*encryptedBodies)
-	if !ok {
+	enc, raw := bodyLayers(e.Bodies)
+	if enc == nil {
 		return r, errors.New("ELEMTA_MAILBOX_BODY_KEYS is not set")
 	}
-	replace, ok := enc.BodyStore.(BodyReplacer)
+	replace, ok := raw.(BodyReplacer)
 	if !ok {
 		return r, errors.New("this body store can't replace bodies")
 	}
-	rows, err := e.DB.QueryContext(ctx, `SELECT key,size,checksum FROM mailbox_bodies WHERE store=$1 AND state='ready' ORDER BY key`, enc.Identity())
-	if err != nil {
-		return r, err
-	}
-	var todo []Message
-	for rows.Next() {
-		var m Message
-		if err := rows.Scan(&m.Body, &m.Size, &m.Checksum); err != nil {
-			_ = rows.Close()
-			return r, err
-		}
-		todo = append(todo, m)
-	}
-	err = rows.Err()
-	_ = rows.Close()
+	todo, err := e.readyBodies(ctx)
 	if err != nil {
 		return r, err
 	}
@@ -73,8 +59,26 @@ func (e *Engine) EncryptBodies(ctx context.Context, progress func(done int)) (En
 	return r, nil
 }
 
+// readyBodies lists the bodies in the current store.
+func (e *Engine) readyBodies(ctx context.Context) ([]Message, error) {
+	rows, err := e.DB.QueryContext(ctx, `SELECT key,size,checksum FROM mailbox_bodies WHERE store=$1 AND state='ready' ORDER BY key`, e.Bodies.Identity())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var todo []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.Body, &m.Size, &m.Checksum); err != nil {
+			return nil, err
+		}
+		todo = append(todo, m)
+	}
+	return todo, rows.Err()
+}
+
 func (e *Engine) encryptBody(ctx context.Context, enc *encryptedBodies, replace BodyReplacer, m Message) (bool, error) {
-	stored, err := enc.BodyStore.Get(ctx, m.Body, m.Size+bodyOverhead)
+	stored, err := enc.BodyStore.Get(ctx, m.Body, bodyStoredLimit(m.Size)+bodyOverhead)
 	if err != nil {
 		return false, err
 	}
@@ -85,14 +89,20 @@ func (e *Engine) encryptBody(ctx context.Context, enc *encryptedBodies, replace 
 	if sealed && version == enc.current() {
 		return false, nil
 	}
-	plain, err := enc.open(m.Body, stored)
+	// Compressed mail is resealed as it stands. The checksum describes the
+	// message, so that's what gets checked.
+	opened, err := enc.open(m.Body, stored)
+	if err != nil {
+		return false, err
+	}
+	plain, err := unpackBody(opened, m.Size)
 	if err != nil {
 		return false, err
 	}
 	if int64(len(plain)) != m.Size || checksumOf(plain) != m.Checksum {
 		return false, errors.New("doesn't match its recorded checksum")
 	}
-	next, err := enc.seal(m.Body, plain)
+	next, err := enc.seal(m.Body, opened)
 	if err != nil {
 		return false, err
 	}
@@ -108,7 +118,7 @@ func (e *Engine) encryptBody(ctx context.Context, enc *encryptedBodies, replace 
 	if err := replace.Replace(ctx, m.Body, next); err != nil {
 		return false, err
 	}
-	check, err := enc.Get(ctx, m.Body, m.Size)
+	check, err := e.Bodies.Get(ctx, m.Body, m.Size)
 	if err != nil {
 		return false, fmt.Errorf("reading it back: %w", err)
 	}

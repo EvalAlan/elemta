@@ -27,6 +27,8 @@ endpoint = "object-store:8333"
 bucket = "mailbox-dev"
 region = "us-east-1"
 secure = false
+# "zstd" compresses new message bodies. Mail already compressed stays readable.
+# compression = "none"
 
 [auth]
 ldap_url = "ldap://elemta-ldap:389"

@@ -90,6 +90,7 @@ func Open(ctx context.Context, c Config, log *slog.Logger) (*Service, error) {
 	if len(bodyKeys) > 0 {
 		bodies = &encryptedBodies{BodyStore: bodies, keys: bodyKeys}
 	}
+	bodies = &compressedBodies{BodyStore: bodies, compress: c.Bodies.Compression == CompressionZstd}
 	engine, err := NewEngine(ctx, db, bodies, c)
 	if err != nil {
 		_ = bodies.Close()

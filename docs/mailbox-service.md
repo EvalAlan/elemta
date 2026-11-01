@@ -220,6 +220,38 @@ lab; production needs verified fencing, TLS, replicated body storage,
 redundant directory/ingress and rehearsed backups. The normal SMTP queue also
 needs replicated durability before claiming zero loss of all accepted mail.
 
+## Compressing message bodies
+
+Mail is mostly text, so compression usually saves a lot, and it's worth having
+even on cheap storage. It's off by default:
+
+```toml
+[bodies]
+compression = "zstd"
+```
+
+With `scripts/cloud-deploy.sh`, set `MAILBOX_BODY_COMPRESSION=true` in `cloud.env`.
+
+New mail is compressed before it's encrypted, and stored that way only when that
+saves at least 5%, so attachments that are already compressed stay as they are.
+Quotas count the size of the message, so compression makes storage cheaper
+without giving anyone more room. Backups and `mailbox verify` work the same.
+
+To compress what's already stored, after turning it on:
+
+```sh
+docker exec elemta-mailbox-server-1 /app/elemta mailbox compress-bodies --config /etc/elemta/mailbox.toml
+```
+
+It's safe to run while the service runs, and to stop and run again. Each body is
+checked before it's replaced and read back after.
+
+Turning compression off stops new mail being compressed, and everything stays
+readable. There is no command to undo it, and none is needed, but versions from
+before this feature can't read compressed mail, so take that into account before
+rolling back across it. Size is visible to anyone who can see the store, and
+compressed size says a little more about a message's contents than its raw size.
+
 ## Publication, retries, cleanup and backups
 
 Each append registers a unique upload intent, durably writes the body, then
