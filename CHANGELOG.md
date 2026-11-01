@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A sound for new mail.** Settings has a choice of tones, with a Play button, and
+  it's off until someone picks one. It plays while the webmail is open in a tab,
+  once however many tabs are open.
+
 - **Compress message bodies.** `[bodies] compression = "zstd"` compresses new mail
   before it's encrypted, and `elemta mailbox compress-bodies` does what's already
   stored. See "Compressing message bodies" in

@@ -447,3 +447,63 @@ func TestBrowserHolidayCountryPicker(t *testing.T) {
 		t.Fatalf("saved countries = %q, want de,gb", got)
 	}
 }
+
+// stubAudio counts notes started, since a test browser has nothing to hear.
+const stubAudio = `(function () {
+  window.notes = 0;
+  window.AudioContext = function () { this.state = "running"; this.currentTime = 0; this.destination = {}; };
+  var param = function () { return { value: 0, setValueAtTime: function () {}, exponentialRampToValueAtTime: function () {} }; };
+  AudioContext.prototype.resume = function () {};
+  AudioContext.prototype.createGain = function () { return { gain: param(), connect: function () {} }; };
+  AudioContext.prototype.createOscillator = function () {
+    return { frequency: param(), connect: function () {}, start: function () { window.notes++; }, stop: function () {} };
+  };
+})()`
+
+func TestBrowserSettingsPreviewPlaysEachTone(t *testing.T) {
+	b := newBrowser(t)
+	b.login()
+	b.run(chromedp.Navigate(b.url("/settings")), chromedp.Evaluate[chromedp.Void](stubAudio, chromedp.EvalAsValue))
+	for _, tone := range mailSounds {
+		b.run(chromedp.Evaluate[chromedp.Void](`window.notes = 0; document.getElementById("mail_sound").value = "`+tone.Value+`"; document.querySelector("[data-sound-preview]").click()`, chromedp.EvalAsValue))
+		if n := evalAs[int](b, `window.notes`); n == 0 {
+			t.Errorf("%s has no recipe in app.js", tone.Value)
+		}
+	}
+}
+
+// Counted through the real page: a rise in the inbox rings once, and nothing
+// else does.
+func TestBrowserNewMailRings(t *testing.T) {
+	b := newBrowser(t)
+	if err := b.h.store.PutObject(context.Background(), CollSettings, Object{ID: settingsID, ContentType: "application/json", Data: []byte(`{"mail_sound":"chime"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	b.login()
+	counts := func(total, unread int) string {
+		return fmt.Sprintf(`window.fetch = function () { return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ unread: { INBOX: %d, Junk: 9 }, total: { INBOX: %d, Junk: 9 } }); } }); };
+			document.dispatchEvent(new Event("visibilitychange"));`, unread, total)
+	}
+	step := func(js string) int {
+		b.run(chromedp.Evaluate[chromedp.Void](js, chromedp.EvalAsValue), chromedp.Sleep(150*time.Millisecond))
+		return evalAs[int](b, `window.notes`)
+	}
+	b.run(chromedp.Navigate(b.url("/mail")), chromedp.Evaluate[chromedp.Void](stubAudio+`; try { localStorage.clear(); } catch (e) {}`, chromedp.EvalAsValue))
+	// Where things stand, however the page's own first check went.
+	step(counts(5, 2))
+	b.run(chromedp.Evaluate[chromedp.Void](`window.notes = 0; localStorage.clear()`, chromedp.EvalAsValue))
+	if n := step(counts(5, 2)); n != 0 {
+		t.Fatalf("rang with nothing new: %d", n)
+	}
+	if n := step(counts(5, 3)); n != 0 {
+		t.Fatalf("rang when something was marked unread: %d", n)
+	}
+	if n := step(counts(6, 4)); n == 0 {
+		t.Fatal("new mail didn't ring")
+	}
+	first := evalAs[int](b, `window.notes`)
+	b.run(chromedp.Evaluate[chromedp.Void](`localStorage.setItem("elemta-mail-sound", String(Date.now()))`, chromedp.EvalAsValue))
+	if n := step(counts(7, 5)); n != first {
+		t.Fatal("a second tab rang as well")
+	}
+}
