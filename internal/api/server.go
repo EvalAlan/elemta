@@ -382,6 +382,11 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 	}
 
 	// Initialize rate limiter
+	// From the environment too, because a deployment's runtime configuration is
+	// kept across upgrades, so a setting added later never reaches it. Behind a
+	// proxy without this, every visitor looks like the proxy: they share one
+	// login throttle, and audit entries name it.
+	config.RateLimit.TrustedProxies = append(config.RateLimit.TrustedProxies, strings.Fields(os.Getenv("ELEMTA_API_TRUSTED_PROXIES"))...)
 	server.rateLimiter = NewRateLimitMiddleware(config.RateLimit)
 
 	// Initialize CORS middleware
