@@ -2,6 +2,9 @@
 # Backs up the whole Compose stack while it runs:
 #
 #   mailbox/   Postgres metadata and message bodies (scripts/mailbox-backup.sh)
+#   objects/   webmail's calendars, contacts, tasks and settings, when they are
+#              in their own database (docs/webmail-object-storage.md). By
+#              default they are messages in the mailbox and need nothing here.
 #   ldap/      the directory: accounts, aliases, passwords (slapcat), and
 #              its configuration for reference (restores create a fresh one)
 #   mta/       the MTA's queue (mail accepted but not yet delivered) and the
@@ -40,7 +43,14 @@ trap 'rm -rf "$stage"' EXIT HUP INT TERM
 chmod 700 "$stage"
 
 echo "== Mailbox"
-MAILBOX_IMAGE=$image MAILBOX_BODIES_VOLUME=${volumes}_mailbox_bodies "$root/scripts/mailbox-backup.sh" "$stage/mailbox" >/dev/null
+MAILBOX_CONTAINER=$mailbox "$root/scripts/mailbox-backup.sh" "$stage/mailbox" >/dev/null
+
+objects=$(svc_containers webmail-objects | head -n 1)
+if [ -n "$objects" ]; then
+    echo "== Webmail objects"
+    mkdir "$stage/objects"
+    docker exec "$objects" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"$stage/objects/webmail-objects.dump"
+fi
 
 echo "== Directory"
 mkdir "$stage/ldap"

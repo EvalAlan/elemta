@@ -87,6 +87,10 @@ or cron, daily or more often), copy each backup off the host, and keep
 `[maintenance] body_grace_hours` in the mailbox configuration longer than
 the interval between backups.
 
+To get one person's mail back rather than restore the whole stack, use
+`scripts/mailbox-restore-account.sh`; see "Restoring one account" in
+[mailbox-service.md](mailbox-service.md).
+
 `restore-drill.sh` proves a backup restores without touching the stack:
 checksums, the mailbox restored into throwaway containers with every body
 verified, and the directory loaded into a throwaway server. Run it on every

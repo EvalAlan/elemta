@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Restore one mailbox.** `scripts/mailbox-restore-account.sh` puts one account's
+  lost mail back from a backup while the stack keeps running, under a
+  `Restored <date>` folder and without changing anything the account has now.
+  With `--data` it also restores missing calendar events, contacts, tasks,
+  settings, filters and sender rules. See
+  "Restoring one account" in [docs/mailbox-service.md](docs/mailbox-service.md).
+- **Backups now include message bodies stored in S3.** Until now
+  `scripts/mailbox-backup.sh` copied only the local volume, so a deployment on S3
+  got a backup with no bodies in it, and `scripts/restore-drill.sh` refused those
+  backups. Backups taken before this version on S3 hold metadata only.
+- **Backups now include webmail's own object database.** With
+  `object_store = "postgres"`, `scripts/backup.sh` left calendars, contacts, tasks
+  and settings out, and `scripts/restore.sh` didn't restore them. Both now do.
+
 - **Saving in the console can no longer break the configuration.** On a
   deployment whose DKIM domains were written as `[[plugins.dkim.domains]]`, which
   `cloud-deploy.sh` does, saving any plugin setting left an invalid file, and

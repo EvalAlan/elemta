@@ -60,6 +60,12 @@ step "Mailbox metadata"
 docker exec -i elemta-mailbox-db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --exit-on-error' <"$in/mailbox/metadata.dump"
 step "Message bodies"
 load mailbox_bodies "$in/mailbox/bodies.tar.gz" 1001:1001
+if [ -f "$in/objects/webmail-objects.dump" ]; then
+    step "Webmail objects"
+    objects=$(docker ps --filter label=com.docker.compose.service=webmail-objects --format '{{.Names}}' | head -n 1)
+    [ -n "$objects" ] || { echo "restore: the backup has webmail objects but webmail-objects isn't running; start it (docs/webmail-object-storage.md) and run this again" >&2; exit 1; }
+    docker exec -i "$objects" sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --exit-on-error' <"$in/objects/webmail-objects.dump"
+fi
 
 step "Directory"
 # Created afresh from the entries, as on a new install: the configuration

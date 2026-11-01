@@ -9,14 +9,22 @@
 # that already exist, and copying the bodies afterwards picks them all up.
 # Bodies removed by cleanup between the two steps are ones no message
 # referred to for [maintenance] body_grace_hours, so they can't be in the
-# dump. Keep body_grace_hours above how long you keep backups.
+# dump. Because the backup holds its own copy, it stays restorable however
+# long it is kept, even with a short grace period.
+#
+# Bodies come out through the running service, as they are stored, so this
+# works the same for a volume and for a bucket and needs no bucket keys here.
+# Every body is copied every time.
+#
+# Settings: MAILBOX_CONTAINER (default the first mailbox replica).
 set -eu
 out=${1:?usage: $0 <directory>}
 db=${MAILBOX_DB_CONTAINER:-elemta-mailbox-db}
 dbuser=${MAILBOX_DB_USER:-}
 dbname=${MAILBOX_DB_NAME:-}
-bodies=${MAILBOX_BODIES_VOLUME:-elemta_mailbox_bodies}
-image=${MAILBOX_IMAGE:-elemta-mailbox:dev}
+# shellcheck source=SCRIPTDIR/lib/compose.sh
+. "$(dirname "$0")/lib/compose.sh"
+mailbox=${MAILBOX_CONTAINER:-$(svc_container mailbox-server)}
 [ ! -e "$out" ] || { echo "Backup destination already exists: $out" >&2; exit 1; }
 parent=$(dirname "$out")
 mkdir -p "$parent"
@@ -31,12 +39,8 @@ docker exec -e ELEMTA_BACKUP_DB_USER="$dbuser" -e ELEMTA_BACKUP_DB_NAME="$dbname
     pg_dump -U "$user" -d "$database" -Fc
 ' >"$stage/metadata.dump"
 
-echo "Copying bodies from volume $bodies"
-# Mail keeps arriving, so tar may see the directory change and exit 1 with
-# a warning. That's expected: a body written after the dump isn't in it.
-# Real errors exit 2.
-docker run --rm --network none --entrypoint sh -v "$bodies:/bodies:ro" "$image" \
-    -c 'tar --warning=no-file-changed -C /bodies -czf - .; [ $? -le 1 ]' >"$stage/bodies.tar.gz"
+echo "Copying bodies from $mailbox"
+docker exec "$mailbox" /app/elemta mailbox export-bodies --config /etc/elemta/mailbox.toml >"$stage/bodies.tar.gz"
 
 docker run --rm -i --network none postgres:17-alpine pg_restore -l <"$stage/metadata.dump" >/dev/null
 tar -tzf "$stage/bodies.tar.gz" >/dev/null

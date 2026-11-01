@@ -26,6 +26,12 @@ done
 echo "== Mailbox"
 MAILBOX_IMAGE=$image "$root/scripts/mailbox-restore-drill.sh" "$in/mailbox"
 
+if [ -f "$in/objects/webmail-objects.dump" ]; then
+    echo "== Webmail objects"
+    docker run --rm -i --network none postgres:17-alpine pg_restore -l <"$in/objects/webmail-objects.dump" | grep -q 'TABLE DATA.* webmail_objects' ||
+        { echo "The webmail objects dump has no objects table" >&2; exit 1; }
+fi
+
 echo "== Directory"
 want=$(sed -n 's/^ldap_entries=//p' "$in/manifest")
 # Created the way restore.sh creates it, in a throwaway container.
