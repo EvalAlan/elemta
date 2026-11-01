@@ -48,9 +48,32 @@ type Settings struct {
 	// LoadImages shows remote images without asking, except in Junk. Off by
 	// default: loading an image tells its sender the message was opened.
 	LoadImages bool `json:"load_images,omitempty"`
+	// MailSound is the tone played when new mail reaches the inbox, or empty
+	// for none. The names are in mailSounds, and the sounds are in app.js.
+	MailSound string `json:"mail_sound,omitempty"`
 	// MailCalendar keeps messages at a reading width and shows the calendar
 	// panel beside them on wide screens. Off, a message uses the full pane.
 	MailCalendar bool `json:"mail_calendar,omitempty"`
+}
+
+// mailSounds are the new-mail tones, as Settings shows them. They're generated
+// in the browser, so a name here needs a recipe in app.js.
+var mailSounds = []mailSound{
+	{"chime", "Chime"}, {"bell", "Bell"}, {"ping", "Ping"}, {"marimba", "Marimba"}, {"drop", "Drop"},
+}
+
+type mailSound struct{ Value, Label string }
+
+// MailSoundOptions lists the tones for the settings form.
+func (p Settings) MailSoundOptions() []mailSound { return mailSounds }
+
+func validMailSound(v string) string {
+	for _, s := range mailSounds {
+		if s.Value == v {
+			return v
+		}
+	}
+	return ""
 }
 
 // GroupConversations reports whether lists are grouped by thread.
@@ -491,6 +514,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	p.Conversations = &conv
 	p.LoadImages = r.PostFormValue("load_images") == "1"
 	p.MailCalendar = r.PostFormValue("mail_calendar") == "1"
+	p.MailSound = validMailSound(r.PostFormValue("mail_sound"))
 	switch v := r.PostFormValue("calendar_view"); v {
 	case "month", "week", "day", "agenda":
 		p.CalendarView = v

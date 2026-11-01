@@ -754,7 +754,74 @@
       .catch(function () {});
   }
 
-  var checkingMail = false, pendingMailCheck = false;
+  // ---- new-mail sound --------------------------------------------------------
+  // Generated here, so there are no audio files to serve and the CSP needs no
+  // media source. Each note is [frequency, start, length, peak, partials], where
+  // partials are overtones as [multiple, level]; a bell is mostly overtones.
+  var BELL = [[2.76, 0.4], [5.4, 0.2]], WOOD = [[3.9, 0.25]];
+  var TONES = {
+    chime: [[659.25, 0, 0.5, 0.2], [987.77, 0.13, 0.7, 0.2]],
+    bell: [[880, 0, 1.3, 0.2, BELL]],
+    ping: [[1318.51, 0, 0.3, 0.16]],
+    marimba: [[523.25, 0, 0.35, 0.24, WOOD], [659.25, 0.1, 0.35, 0.24, WOOD], [783.99, 0.2, 0.5, 0.24, WOOD]],
+    drop: [[1046.5, 0, 0.16, 0.18], [523.25, 0.1, 0.4, 0.2]]
+  };
+  var audio = null;
+  function audioContext() {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!audio && Ctx) audio = new Ctx();
+    return audio;
+  }
+  function playTone(name) {
+    var notes = TONES[name], ctx = audioContext();
+    if (!notes || !ctx) return;
+    if (ctx.state === "suspended") ctx.resume();
+    notes.forEach(function (n) {
+      [[1, 1]].concat(n[4] || []).forEach(function (p) {
+        var at = ctx.currentTime + n[1], osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = n[0] * p[0];
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(n[3] * p[1], at + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + n[2] / p[0]);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(at);
+        osc.stop(at + n[2] / p[0] + 0.02);
+      });
+    });
+  }
+  var mailSound = doc.body.getAttribute("data-mail-sound");
+  // A browser only lets a page make sound once someone has used that page, and
+  // a tab left open and untouched must not save it all up for later.
+  if (mailSound) {
+    ["pointerdown", "keydown"].forEach(function (kind) {
+      doc.addEventListener(kind, function unlock() {
+        doc.removeEventListener(kind, unlock, true);
+        var ctx = audioContext();
+        if (ctx && ctx.state === "suspended") ctx.resume();
+      }, true);
+    });
+  }
+  // Every open tab hears about the same message, and only one should ring.
+  function chime() {
+    if (audio && audio.state !== "running") { try { audio.resume(); } catch (err) { /* no sound, then */ } }
+    try {
+      var now = Date.now(), last = Number(localStorage.getItem("elemta-mail-sound")) || 0;
+      if (now - last < 3000) return;
+      localStorage.setItem("elemta-mail-sound", String(now));
+    } catch (err) { /* private windows: every tab rings */ }
+    playTone(mailSound);
+  }
+  var preview = $("[data-sound-preview]");
+  if (preview) {
+    preview.addEventListener("click", function () {
+      var choice = $("#mail_sound");
+      if (choice) playTone(choice.value);
+    });
+  }
+
+  var checkingMail = false, pendingMailCheck = false, knownInbox = null;
   function checkMail() {
     if (checkingMail) { pendingMailCheck = true; return; }
     checkingMail = true;
@@ -778,6 +845,13 @@
         doc.title = (inbox > 0 ? "(" + inbox + ") " : "") + baseTitle;
         var ol = listEl(), folder = ol && ol.getAttribute("data-folder");
         var totals = data.total || {};
+        // New mail adds a message and an unread one. Marking something unread
+        // adds no message, and reading one while another arrives adds neither
+        // count on its own, so both have to rise. The first check only learns
+        // where things stand.
+        var inboxTotal = totals.INBOX;
+        if (mailSound && knownInbox && inboxTotal > knownInbox.total && inbox > knownInbox.unread) chime();
+        if (inboxTotal !== undefined) knownInbox = { total: inboxTotal, unread: inbox };
         if (folder && folder in totals && folder in knownTotals && totals[folder] > knownTotals[folder]) refreshList();
         Object.keys(totals).forEach(function (k) { knownTotals[k] = totals[k]; });
       })
@@ -787,7 +861,9 @@
         if (pendingMailCheck) { pendingMailCheck = false; checkMail(); }
       });
   }
-  if ($("a.folder[data-folder]")) {
+  // With a sound on, pages without a mail list watch too: the point is hearing
+  // about mail while doing something else.
+  if ($("a.folder[data-folder]") || mailSound) {
     var mailTimer = null, stream = null;
     function fallback() {
       if (!mailTimer) mailTimer = setInterval(checkMail, 60000);
@@ -804,6 +880,9 @@
         stream.onerror = fallback;
       }
       connectMail();
+      // The stream watches the open folder. Reading another one, only this
+      // notices the inbox.
+      if (mailSound && watchedFolder && watchedFolder !== "INBOX") setInterval(checkMail, 60000);
       window.addEventListener("pagehide", function () { stream.close(); });
       window.addEventListener("pageshow", function (event) { if (event.persisted) connectMail(); });
     } else { fallback(); }

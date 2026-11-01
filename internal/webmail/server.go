@@ -411,6 +411,8 @@ type view struct {
 	// Loc and Clock24 control how times are shown.
 	Loc     *time.Location
 	Clock24 bool
+	// MailSound is the new-mail tone, empty for none.
+	MailSound string
 	// TZSet is false until the user has a time zone, which tells the page
 	// to report the browser's.
 	TZSet bool
@@ -434,6 +436,11 @@ func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
 		pv.TZSet = cached.Timezone != ""
 		pv.Theme = cached.Theme
 		pv.Palette = cached.Palette
+		// An administrator looking at someone's mailbox isn't being told
+		// about their mail.
+		if pv.Session.AdminActor == "" {
+			pv.MailSound = cached.MailSound
+		}
 		if pv.App == "" {
 			pv.App = "mail"
 		}

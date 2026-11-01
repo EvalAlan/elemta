@@ -33,7 +33,7 @@ Sign in at your server's address with your full email address and password.
 
 | Section | What's there |
 |---|---|
-| General | Your name, reply-to address, signature, theme, time zone, list and calendar options |
+| General | Your name, reply-to address, signature, theme, new mail sound, time zone, list and calendar options |
 | Account | Change your password, set a recovery email |
 | Security | Two-step verification and app passwords |
 | Mail apps and sync | Settings for mail, calendar and contacts apps, exports |
