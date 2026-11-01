@@ -357,6 +357,10 @@ func (s *Service) collect(ctx context.Context) (int, error) {
 	}
 	return s.engine.GC(ctx)
 }
+
+// metadataDSN is the connection string of the service's own database.
+func (s *Service) metadataDSN() string { return os.Getenv(s.cfg.Metadata.DSNEnv) }
+
 func (s *Service) Close() error {
 	s.cancel()
 	return errors.Join(s.engine.DB.Close(), s.engine.Bodies.Close())

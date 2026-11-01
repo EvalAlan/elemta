@@ -240,8 +240,10 @@ and deletion is retried daily. The change journal is compacted after
 `journal_retention_hours`.
 
 Automatic body cleanup is **off by default**. Turn it on with
-`[maintenance] garbage_collection = true` once `body_grace_hours` is longer
-than your backup retention.
+`[maintenance] garbage_collection = true`. Backups from
+`scripts/mailbox-backup.sh` carry their own copy of the bodies, so they don't
+depend on `body_grace_hours`. It only has to outlast your retention if you back
+up the bodies some other way, such as bucket versioning.
 
 ### Backup and restore
 
@@ -254,8 +256,70 @@ scripts/mailbox-restore-drill.sh /path/to/backup # restore beside the stack and 
 
 Bodies are written before the metadata that refers to them and their
 contents never change, so a dump taken first refers only to bodies the copy
-that follows will include. On S3, bucket versioning or replication can stand in for the
-body copy.
+that follows will include. The bodies come out through the running service with
+`elemta mailbox export-bodies`, as they are stored, so file and S3 stores back up
+the same way and encrypted bodies stay encrypted. Every body is copied every
+time; there are no incremental backups, so on a large S3 store weigh that
+against bucket versioning or replication.
+
+`scripts/restore.sh` puts bodies back in the local volume. If a store on S3 lost
+its bucket as well as the server, the backup holds the bodies but nothing loads
+them back into a bucket yet.
+
+### Restoring one account
+
+To get one person's lost mail back while everyone else keeps working:
+
+```sh
+scripts/mailbox-restore-account.sh /path/to/backup alice@example.com --dry-run
+scripts/mailbox-restore-account.sh /path/to/backup alice@example.com
+```
+
+Add `--data` to bring back calendars, contacts and the rest as well.
+
+The path is a backup from either `scripts/backup.sh` or
+`scripts/mailbox-backup.sh`. Mail comes back under a folder named
+`Restored <backup date>`, keeping its dates and flags. Nothing the account has
+now changes.
+
+- **Only what is gone comes back.** A message the account still has in any
+  folder is skipped, so mail filed elsewhere since the backup isn't duplicated.
+  `--all` restores those too.
+- **It can be run again.** A second run skips what the first restored, and
+  after a quota stop it carries on. Raise the quota first. `--dry-run` reports
+  when the restore wouldn't fit.
+- **Junk and quarantine are left out**, and the output says so. Name one with
+  `--folder Junk` to include it. `--folder` also narrows a restore to one
+  folder, and can be repeated.
+- **`--data` restores what isn't mail.** Calendar events, contacts, tasks and
+  settings that are missing go straight back where webmail reads them. An item
+  the account still has is left alone, so edits made since the backup stay, and
+  an old version can't be brought back this way. Because they go straight back
+  into use, anything deleted on purpose since the backup returns too, which is
+  why this isn't the default: dry-run it first. `--folder Calendar` restores just
+  one of them.
+- **Filters and sender rules come back with `--data`.** A filter returns
+  switched off. If one of the same name now has different text, the backup's
+  version comes back beside it as `<name>-restored-<date>`. A sender the account
+  has allowed or blocked since keeps its current setting.
+- **Access doesn't come back.** Mailbox and calendar shares, app passwords and
+  two-step verification are not restored: an account may have lost them on
+  purpose, for example after a compromise.
+- **The account must already exist.** Restoring won't create one: recreate it,
+  sign in once, then restore. Restored mail counts against the quota.
+
+A message that can't be read from the backup or the live store is listed, the
+rest is restored, and the command exits non-zero. Each restore is recorded in
+the audit log as `mailbox-restore`.
+
+If webmail keeps its objects in their own database
+([webmail-object-storage.md](webmail-object-storage.md)), `--data` restores them
+there. That needs a backup from `scripts/backup.sh`, which includes that database;
+`scripts/mailbox-backup.sh` alone doesn't.
+
+The script loads the backup's metadata into a temporary database on the mailbox's
+Postgres server, so that server needs room for it for a few minutes. The database
+and the unpacked bodies are removed when it finishes.
 
 `elemta mailbox verify` checks that every body a message refers to exists
 with its recorded size and checksum, and that each account's quota usage
