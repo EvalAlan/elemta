@@ -516,6 +516,8 @@ type eventDetail struct {
 }
 
 type eventForm struct {
+	// Rooms are the resources the user can add as guests.
+	Rooms                                    []bookable
 	UID, Summary, Location, Description, URL string
 	StartDate, StartTime, EndDate, EndTime   string
 	AllDay                                   bool
@@ -635,6 +637,7 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 			f.AllDay = true
 		}
 		cv.Form = s.finishForm(f, events, start)
+		cv.Form.Rooms = s.resourceList(r.Context(), sess)
 		v.Title = "New event"
 		if share != nil {
 			cv.OwnerName = sharedName(share.Owner)
@@ -644,6 +647,7 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 		return
 	case q.Get("edit") == "1" && !ev.ReadOnly:
 		cv.Form = s.finishForm(formFromEvent(ev, occ, loc), events, ev.Start)
+		cv.Form.Rooms = s.resourceList(r.Context(), sess)
 		v.Title = "Edit " + ev.Summary
 	default:
 		o := Occurrence{Event: ev, Start: occ, End: occ.Add(ev.Duration())}
@@ -652,12 +656,12 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 			o.End = occ.AddDate(0, 0, days)
 		}
 		d := &eventDetail{
-			Event: ev, Occ: o, Repeat: ruleSummary(ev.RRule, ev.Start), Organizer: ev.IsOrganizer(sess.Address),
+			Event: ev, Occ: o, Repeat: ruleSummary(ev.RRule, ev.Start), Organizer: ev.IsOrganizer(actingFor(ev, sess)),
 			Class: calClass(ev.Calendar), ICSURL: "/calendar/export?uid=" + url.QueryEscape(ev.UID),
 			OccURL: occurrenceURL(ev, occ),
 		}
 		for _, a := range ev.Attendees {
-			if strings.EqualFold(a.Email, sess.Address) {
+			if strings.EqualFold(a.Email, actingFor(ev, sess)) {
 				d.MyStatus = a.Status
 			}
 		}
@@ -672,6 +676,35 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 		v.Title = ev.Summary
 	}
 	s.render(w, "calendar.html", http.StatusOK, v)
+}
+
+// markResources tells a room from a person, and gives an event with no location
+// the room's.
+func (s *Server) markResources(ctx context.Context, sess *Session, e *Event) {
+	rooms := s.resourceList(ctx, sess)
+	for i := range e.Attendees {
+		for _, r := range rooms {
+			if !strings.EqualFold(r.Address, e.Attendees[i].Email) {
+				continue
+			}
+			e.Attendees[i].Resource = true
+			if e.Attendees[i].Name == "" {
+				e.Attendees[i].Name = r.Name
+			}
+			if e.Location == "" && r.Kind == "room" {
+				e.Location = strings.TrimSpace(strings.Trim(r.Name+", "+r.Location, ", "))
+			}
+		}
+	}
+}
+
+// actingFor is the address an event's guests and organizer are compared with:
+// the owner's, on someone else's calendar.
+func actingFor(e *Event, sess *Session) string {
+	if e.Owner != "" {
+		return e.Owner
+	}
+	return sess.Address
 }
 
 func (s *Server) finishForm(f *eventForm, events []Event, start time.Time) *eventForm {
@@ -912,6 +945,8 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 	owner := strings.ToLower(strings.TrimSpace(r.PostFormValue("owner")))
 	var events []Event
 	var err error
+	acting := sess.Address
+	delegated := false
 	if owner == "" {
 		events, err = s.events(ctx, sess, loc)
 	} else {
@@ -923,6 +958,8 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 		}
 		if err == nil {
 			events, err = s.sharedEventsOf(ctx, sess, *share, loc)
+			delegated = share.CanActFor()
+			acting = share.Owner
 		}
 	}
 	if err != nil {
@@ -931,7 +968,7 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 	}
 	switch op {
 	case "delete", "delete-occurrence":
-		s.deleteEventSubmit(w, r, sess, owner, events, op == "delete-occurrence")
+		s.deleteEventSubmit(w, r, sess, owner, acting, delegated, events, op == "delete-occurrence")
 		return
 	case "save":
 	default:
@@ -950,7 +987,7 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 	}
 
 	existing := findEvent(events, f.UID)
-	if owner != "" && (len(e.Attendees) > 0 || (existing != nil && len(existing.Attendees) > 0)) {
+	if owner != "" && !delegated && (len(e.Attendees) > 0 || (existing != nil && len(existing.Attendees) > 0)) {
 		s.renderGuestsOnShared(w, sess)
 		return
 	}
@@ -991,16 +1028,21 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 			e.ExDates = nil
 		}
 	}
+	if len(e.Attendees) > 0 {
+		s.markResources(ctx, sess, &e)
+	}
 	if len(e.Attendees) > 0 && e.Organizer == nil {
-		prefs := s.prefsCached(sess)
-		e.Organizer = &Attendee{Email: sess.Address, Name: prefs.DisplayName}
+		e.Organizer = &Attendee{Email: acting}
+		if owner == "" {
+			e.Organizer.Name = s.prefsCached(sess).DisplayName
+		}
 	}
 	if err := s.putEventIn(ctx, sess, owner, e); err != nil {
 		s.fail(w, r, sess, err)
 		return
 	}
 	notice := "event-saved"
-	if owner == "" && f.Notify && len(e.Attendees) > 0 && e.IsOrganizer(sess.Address) {
+	if (owner == "" || delegated) && f.Notify && len(e.Attendees) > 0 && e.IsOrganizer(acting) {
 		var removed []Attendee
 		if existing != nil {
 			keep := map[string]bool{}
@@ -1014,12 +1056,12 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 			}
 		}
 		notice = "invites-sent"
-		if err := s.sendInvites(ctx, sess, e, "REQUEST", e.Attendees); err != nil {
+		if err := s.sendInvites(ctx, sess, owner, e, "REQUEST", e.Attendees); err != nil {
 			s.log.Warn("webmail: send invitations", "user", sess.User, "error", err)
 			notice = "invite-failed"
 		}
 		if len(removed) > 0 {
-			if err := s.sendInvites(ctx, sess, e, "CANCEL", removed); err != nil {
+			if err := s.sendInvites(ctx, sess, owner, e, "CANCEL", removed); err != nil {
 				s.log.Warn("webmail: send cancellations", "user", sess.User, "error", err)
 			}
 		}
@@ -1028,19 +1070,19 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 }
 
 // renderGuestsOnShared explains the refusal. Guests would have to hear about
-// the change, and that's mail in the owner's name.
+// the change, and that takes delegate access.
 func (s *Server) renderGuestsOnShared(w http.ResponseWriter, sess *Session) {
-	http.Error(w, "This event has guests, so only its organizer can change it.", http.StatusForbidden)
+	http.Error(w, "This event has guests, so changing it needs delegate access.", http.StatusForbidden)
 }
 
-func (s *Server) deleteEventSubmit(w http.ResponseWriter, r *http.Request, sess *Session, owner string, events []Event, oneOccurrence bool) {
+func (s *Server) deleteEventSubmit(w http.ResponseWriter, r *http.Request, sess *Session, owner, acting string, delegated bool, events []Event, oneOccurrence bool) {
 	ctx := r.Context()
 	ev := findEvent(events, r.PostFormValue("uid"))
 	if ev == nil {
 		s.fail(w, r, sess, ErrNotFound)
 		return
 	}
-	if owner != "" && len(ev.Attendees) > 0 {
+	if owner != "" && !delegated && len(ev.Attendees) > 0 {
 		s.renderGuestsOnShared(w, sess)
 		return
 	}
@@ -1063,11 +1105,11 @@ func (s *Server) deleteEventSubmit(w http.ResponseWriter, r *http.Request, sess 
 	}
 	// Guests hear about a cancelled meeting; a declined invitation that the
 	// user only removes from their own calendar tells nobody.
-	if owner == "" && len(ev.Attendees) > 0 && ev.IsOrganizer(sess.Address) && r.PostFormValue("notify") == "1" {
+	if (owner == "" || delegated) && len(ev.Attendees) > 0 && ev.IsOrganizer(acting) && r.PostFormValue("notify") == "1" {
 		cp := *ev
 		cp.Sequence++
 		cp.Status = "CANCELLED"
-		if err := s.sendInvites(ctx, sess, cp, "CANCEL", cp.Attendees); err != nil {
+		if err := s.sendInvites(ctx, sess, owner, cp, "CANCEL", cp.Attendees); err != nil {
 			s.log.Warn("webmail: send cancellations", "user", sess.User, "error", err)
 		}
 	}

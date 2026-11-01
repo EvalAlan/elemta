@@ -359,6 +359,27 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		}
 		return map[string]bool{"ok": true}, s.engine.RevokeCalendar(r.Context(), owner.ID, member.ID)
 	})
+	handle("GET /v1/admin/resources", func(r *http.Request) (any, error) {
+		return s.engine.Resources(r.Context(), r.URL.Query().Get("domain"))
+	})
+	handle("PUT /v1/admin/accounts/{address}/resource", func(r *http.Request) (any, error) {
+		account, err := s.directoryAccount(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		var request mailpolicy.Resource
+		if err := decode(r, &request); err != nil {
+			return nil, err
+		}
+		return s.engine.PutResource(r.Context(), account, request)
+	})
+	handle("DELETE /v1/admin/accounts/{address}/resource", func(r *http.Request) (any, error) {
+		account, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.DeleteResource(r.Context(), account.ID)
+	})
 	handle("POST /v1/admin/accounts/{address}/reset-two-factor", func(r *http.Request) (any, error) {
 		a, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
 		if err != nil {

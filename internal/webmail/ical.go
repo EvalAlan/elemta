@@ -42,6 +42,9 @@ type Event struct {
 	Modified time.Time
 	// URL is a link for the event, such as a video meeting.
 	URL string
+	// Delegated marks an event on someone else's calendar that the user may
+	// act on with guests: sending invitations and answering for the owner.
+	Delegated bool
 	// ReadOnly marks events made from other data (contact birthdays),
 	// which the calendar shows but can't edit.
 	ReadOnly bool
@@ -61,12 +64,20 @@ type Event struct {
 }
 
 // Attendee is a participant in a meeting.
+// paramSentBy names who acted for an organizer or attendee.
+const paramSentBy = "SENT-BY"
+
 type Attendee struct {
 	Email  string
 	Name   string
 	Status string // NEEDS-ACTION, ACCEPTED, DECLINED, TENTATIVE
 	// Optional marks an attendee whose presence isn't required.
 	Optional bool
+	// Resource marks a room or equipment rather than a person (CUTYPE).
+	Resource bool
+	// SentBy is who acted for this person (RFC 5545 SENT-BY): a delegate
+	// sending invitations for an organizer, or answering for a guest.
+	SentBy string
 }
 
 // Label is the attendee's name, or their address.
@@ -280,13 +291,15 @@ func eventFromComponent(comp *ical.Component, loc *time.Location) (Event, error)
 		}
 	}
 	if p := props.Get(ical.PropOrganizer); p != nil {
-		e.Organizer = &Attendee{Email: mailtoAddr(p.Value), Name: p.Params.Get(ical.ParamCommonName)}
+		e.Organizer = &Attendee{Email: mailtoAddr(p.Value), Name: p.Params.Get(ical.ParamCommonName), SentBy: mailtoAddr(p.Params.Get(paramSentBy))}
 	}
 	for _, p := range props.Values(ical.PropAttendee) {
 		a := Attendee{
 			Email: mailtoAddr(p.Value), Name: p.Params.Get(ical.ParamCommonName),
 			Status:   strings.ToUpper(p.Params.Get(ical.ParamParticipationStatus)),
 			Optional: strings.EqualFold(p.Params.Get(ical.ParamRole), "OPT-PARTICIPANT"),
+			SentBy:   mailtoAddr(p.Params.Get(paramSentBy)),
+			Resource: strings.EqualFold(p.Params.Get(ical.ParamCalendarUserType), "ROOM") || strings.EqualFold(p.Params.Get(ical.ParamCalendarUserType), "RESOURCE"),
 		}
 		if a.Status == "" {
 			a.Status = "NEEDS-ACTION"
@@ -378,6 +391,9 @@ func (e Event) toComponent(now time.Time) *ical.Component {
 		if e.Organizer.Name != "" {
 			op.Params.Set(ical.ParamCommonName, e.Organizer.Name)
 		}
+		if e.Organizer.SentBy != "" {
+			op.Params.Set(paramSentBy, "mailto:"+e.Organizer.SentBy)
+		}
 		p.Set(op)
 	}
 	for _, a := range e.Attendees {
@@ -385,6 +401,12 @@ func (e Event) toComponent(now time.Time) *ical.Component {
 		ap.Value = "mailto:" + a.Email
 		if a.Name != "" {
 			ap.Params.Set(ical.ParamCommonName, a.Name)
+		}
+		if a.SentBy != "" {
+			ap.Params.Set(paramSentBy, "mailto:"+a.SentBy)
+		}
+		if a.Resource {
+			ap.Params.Set(ical.ParamCalendarUserType, "ROOM")
 		}
 		role := "REQ-PARTICIPANT"
 		if a.Optional {

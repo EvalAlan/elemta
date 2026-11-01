@@ -549,20 +549,61 @@ provision revoke-calendar dana@example.com assistant@example.com
 |---|---|
 | View | See events. Private ones show as "Busy", with no details |
 | Edit | Also add, change and delete events, and see private ones |
+| Delegate | Also invite guests, change or cancel meetings, and answer invitations for the owner |
 
 Sharing works within a domain and covers the person's whole calendar, because
 the calendar field on an event is only a label. Shared calendars appear in the
-webmail beside the user's own, where each can be hidden. They don't appear in
-CalDAV apps yet.
+webmail beside the user's own, where each can be hidden, and in CalDAV apps as a
+separate calendar. Each level means the same in both.
 
 Someone with Edit can't add guests, or change or delete an event that has guests,
-because guests would have to be told and that's mail in the owner's name. The
-Delegate level will cover that. `--level delegate` is accepted now but gives only
-Edit's access until then.
+because guests would have to be told. That takes Delegate.
+
+A delegate's mail comes from their own address, never the owner's, so a grant adds
+no right to send as anyone. The invitation names the owner as organizer and the
+delegate as `SENT-BY`, and answers go to the owner. Invitations to the owner are
+also copied to each delegate's inbox, where they answer for the owner from the
+invitation itself. Saving a meeting from a CalDAV app sends nothing, on a shared
+calendar as on your own.
 
 A share gives the webmail one folder of the owner's account and nothing else.
 It can't be used from a mail app, and changing or removing it takes effect within
 30 seconds on connections already open.
+
+### Rooms and equipment
+
+A room is an ordinary account that people book by inviting it to a meeting:
+
+```
+provision create-account boardroom@example.com --name Boardroom
+provision set-resource boardroom@example.com --name Boardroom --capacity 8 --location 'Floor 3'
+provision list-resources --domain example.com
+provision remove-resource boardroom@example.com
+```
+
+Or open the account in Mail Administration, under **Room or resource**.
+`--kind equipment` is for things that aren't places. In the webmail, rooms appear
+under **Add a room** on the event form, which adds them as a guest, so the
+availability bar shows them too.
+
+Bookable accounts answer invitations as they're delivered, first come, first
+served. A free slot is booked and the organizer gets an acceptance; a taken one is
+declined. A recurring meeting is checked for a year ahead and declined whole if any
+occurrence clashes. Moving or cancelling a meeting moves or frees the room. Only
+the organizer can change a booking.
+
+For a room that needs approval, use `--booking manual` and make someone its
+delegate with `grant-calendar`. Invitations then wait in that person's inbox, like
+any delegate's, and they accept or decline for the room.
+
+Only colleagues can book: the organizer and the sender must both be in the room's
+domain. An invitation from anywhere else is kept in the room's inbox and not
+answered, as is any other mail, and an update to one occurrence of a series, which
+a person has to deal with.
+
+Answers go out through `[sieve] submit_addr`, so without it rooms book but stay
+silent. With `object_store = "postgres"`, bookings are made and enforced, but the
+room's calendar can't be seen in the webmail, including by a delegate.
 
 ## Checking a domain's DNS
 

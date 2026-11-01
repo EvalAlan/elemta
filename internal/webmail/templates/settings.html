@@ -152,7 +152,7 @@
     <form class="form-grid" action="/settings/calendar-shares" method="post">
       <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
       <label for="share-member">Share with</label><input id="share-member" name="member" type="email" placeholder="someone@{{domainOf $.Session.Address}}" required>
-      <label for="share-level">Access</label><select id="share-level" name="level"><option value="view">View</option><option value="edit">Edit</option></select>
+      <label for="share-level">Access</label><select id="share-level" name="level"><option value="view">View</option><option value="edit">Edit</option><option value="delegate">Delegate</option></select>
       <div class="form-actions"><button class="button primary" type="submit">Share calendar</button></div>
     </form>
   </section>

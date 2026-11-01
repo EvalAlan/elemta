@@ -169,7 +169,7 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 	})
 	// Calendar sharing. An app password can't change who sees the calendar:
 	// it's a credential a mail app holds, and these need the real sign-in.
-	handle("GET /v1/calendar-shares", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+	handle("GET /v1/calendar-shares", true, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		granted, err := s.engine.CalendarSharesOwned(r.Context(), a.account.ID)
 		if err != nil {
 			return nil, err
@@ -202,7 +202,7 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 	})
 	// An edit changes when the owner is busy, and only the webmail can work
 	// that out, so an editor publishes it for them.
-	handle("PUT /v1/calendar-shares/{owner}/freebusy", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+	handle("PUT /v1/calendar-shares/{owner}/freebusy", true, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		owner, err := s.directoryAccount(r.Context(), r.PathValue("owner"))
 		if err != nil {
 			return nil, err
@@ -219,6 +219,10 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			return nil, err
 		}
 		return map[string]bool{"ok": true}, s.engine.PublishFreeBusy(r.Context(), owner, fb)
+	})
+	// The rooms and equipment someone can book: those of their own domain.
+	handle("GET /v1/resources", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.Resources(r.Context(), a.account.Address[strings.LastIndexByte(a.account.Address, '@')+1:])
 	})
 	// Free/busy: the webmail publishes the user's own busy times and reads
 	// colleagues'.

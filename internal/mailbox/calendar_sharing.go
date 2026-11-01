@@ -155,6 +155,25 @@ func (s *Service) calendarLogin(ctx context.Context, user, password, client stri
 	return owner, level, nil
 }
 
+// calendarDelegates returns the accounts with delegate access to owner's
+// calendar.
+func (e *Engine) calendarDelegates(ctx context.Context, owner string) ([]string, error) {
+	rows, err := e.DB.QueryContext(ctx, `SELECT member FROM mailbox_calendar_shares WHERE owner=$1 AND level=$2 ORDER BY member`, owner, CalendarDelegate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func isCalendarLogin(user string) bool {
 	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(user)), calendarLoginSuffix)
 }

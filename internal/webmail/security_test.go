@@ -38,6 +38,7 @@ type fakeSecurity struct {
 	retention    map[string]int
 	// Calendar sharing: what the list returns, and what was changed.
 	calendars      calendarShares
+	resources      []bookable
 	calendarCalls  []string
 	calendarDenied bool
 }
@@ -88,6 +89,9 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		}
 		out := map[string]any{}
 		switch {
+		case r.URL.Path == "/v1/resources":
+			_ = json.NewEncoder(w).Encode(f.resources)
+			return
 		case r.URL.Path == "/v1/calendar-shares":
 			_ = json.NewEncoder(w).Encode(f.calendars)
 			return

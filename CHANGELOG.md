@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Calendar delegates.** The Delegate level now works: a delegate can invite
+  guests, change or cancel meetings and answer invitations for the owner, and gets
+  a copy of the owner's invitations. Their mail comes from their own address, with
+  `SENT-BY` naming them, so a grant gives no right to send as the owner.
+- **Shared calendars in CalDAV apps.** They appear beside your own, and each access
+  level means the same as in the webmail, with private events hidden from View.
+- **Rooms and equipment.** Mark an account as bookable, with `provision set-resource`
+  or in Mail Administration, and it accepts or declines invitations by itself. The
+  webmail's event form offers rooms, and a delegate can approve bookings instead.
+  See "Rooms and equipment" in [docs/mail-administration.md](docs/mail-administration.md).
+
 - **Restore one mailbox.** `scripts/mailbox-restore-account.sh` puts one account's
   lost mail back from a backup while the stack keeps running, under a
   `Restored <date>` folder and without changing anything the account has now.

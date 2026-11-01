@@ -256,3 +256,16 @@ CREATE TABLE IF NOT EXISTS mailbox_calendar_shares (
     PRIMARY KEY (owner, member)
 );
 CREATE INDEX IF NOT EXISTS mailbox_calendar_shares_member ON mailbox_calendar_shares(member);
+
+-- Rooms and equipment people book (booking.go). The account is an ordinary
+-- one, so removing this row leaves its mail and calendar in place.
+CREATE TABLE IF NOT EXISTS mailbox_resources (
+    account text PRIMARY KEY REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    address text NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('room', 'equipment')),
+    location text NOT NULL DEFAULT '',
+    capacity integer NOT NULL DEFAULT 0,
+    booking text NOT NULL CHECK (booking IN ('auto', 'manual'))
+);
+CREATE INDEX IF NOT EXISTS mailbox_resources_domain ON mailbox_resources(split_part(address, '@', 2));

@@ -580,6 +580,20 @@
     input.addEventListener("blur", function () { setTimeout(close, 150); });
   }
 
+  // ---- rooms on the event form ----------------------------------------------
+  // A room is a guest, so it goes in the guest list, where availability and
+  // invitations already work.
+  var roomPicker = $("[data-room-picker]");
+  if (roomPicker) {
+    roomPicker.addEventListener("change", function () {
+      var field = $("#ev-guests"), address = roomPicker.value;
+      roomPicker.value = "";
+      if (!field || !address || field.value.indexOf(address) >= 0) return;
+      field.value = field.value.trim() ? field.value.replace(/[,\s]*$/, "") + ", " + address : address;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
   // ---- availability on the event form --------------------------------------
   // Guests' busy times for the chosen day, from the free/busy they publish.
   // Hidden until there is someone to show, and if the server has none.

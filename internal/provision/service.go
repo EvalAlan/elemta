@@ -650,6 +650,41 @@ func (s *Service) CalendarShares(ctx context.Context, raw string) ([]mailpolicy.
 	return mailbox.CalendarShares(ctx, owner)
 }
 
+// Resources lists rooms and equipment, those of a domain if one is given.
+func (s *Service) Resources(ctx context.Context, domain string) ([]mailpolicy.Resource, error) {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return nil, err
+	}
+	return mailbox.Resources(ctx, strings.ToLower(strings.TrimSpace(domain)))
+}
+
+// PutResource makes an account bookable, or changes how it books.
+func (s *Service) PutResource(ctx context.Context, raw string, r mailpolicy.Resource) (mailpolicy.Resource, error) {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return r, err
+	}
+	address, err := Address(raw)
+	if err != nil {
+		return r, err
+	}
+	return mailbox.PutResource(ctx, address, r)
+}
+
+// DeleteResource makes an account an ordinary one again.
+func (s *Service) DeleteResource(ctx context.Context, raw string) error {
+	mailbox, err := s.MailboxAdmin()
+	if err != nil {
+		return err
+	}
+	address, err := Address(raw)
+	if err != nil {
+		return err
+	}
+	return mailbox.DeleteResource(ctx, address)
+}
+
 // GrantCalendar shares owner's calendar with member at level.
 func (s *Service) GrantCalendar(ctx context.Context, rawOwner, rawMember, level string) (mailpolicy.CalendarShare, error) {
 	mailbox, err := s.MailboxAdmin()
