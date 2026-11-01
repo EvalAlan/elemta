@@ -494,7 +494,7 @@ func (s *Server) renderProblem(w http.ResponseWriter, r *http.Request, sess *Ses
 
 // notices maps the codes redirects carry to their text, so a crafted link
 // can't put arbitrary words on the page.
-var notices = map[string]string{
+var notices = map[string]string{ // #nosec G101 -- messages shown on the page, not credentials
 	"sent":                   "Message sent.",
 	"sent-nocopy":            "Message sent, but a copy couldn't be saved to Sent.",
 	"saved":                  "Draft saved.",

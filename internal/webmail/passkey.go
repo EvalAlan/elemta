@@ -17,7 +17,7 @@ import (
 
 // passkeySessionPrefix marks a session opened with a passkey, whose stored
 // credential is a token rather than the user's password.
-const passkeySessionPrefix = "elemta-session."
+const passkeySessionPrefix = "elemta-session." // #nosec G101 -- public credential marker, not a credential
 
 // passkeySite is the host and origin a request came through. A passkey belongs
 // to its host. Only localhost may be plain HTTP, as browsers require.
