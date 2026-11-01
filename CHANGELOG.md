@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Turn off IMAP and POP3 for yourself.** Settings, Mail apps and sync, lets
+  someone switch off a protocol they don't use, when their class of service allows
+  it. Nobody can then sign in that way, even with an app password, and the webmail
+  is unaffected.
+
 - **Passkeys.** Sign in to the webmail with a fingerprint, face, device PIN or
   security key. Add one under Settings, Security. A passkey counts as both factors
   and works only on the web address it was added on. An administrator's two-step

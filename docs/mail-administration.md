@@ -143,6 +143,12 @@ deleted either.
 | Retention | `--retention-days 2555` | mailbox: hourly, mail in every mail folder older than this (by its date) is deleted |
 | Legal hold | `--legal-hold on` | mailbox: nothing the user deletes is lost (see below) |
 
+Users can also turn off IMAP and POP3 for themselves in the webmail, when their
+class allows them. A class can refuse a protocol outright, but it can't force one
+on against a user's choice. If someone's mail app suddenly can't sign in, check the
+audit log for `protocol-choice`. The app sees "access is turned off" rather than a
+wrong password, and it counts as no failed sign-in.
+
 Sizes accept the same suffixes as quotas; for every limit `0` means
 unlimited. Every flag also takes `inherit`, which unsets the value so the
 next layer decides. A quota set on the account itself (`--quota` on

@@ -410,3 +410,43 @@ func TestFolderRetentionAPI(t *testing.T) {
 		t.Fatalf("wrong password = %d", code)
 	}
 }
+
+// An owner's choice closes the protocol for every credential, says nothing to
+// someone with a wrong password, and leaves the webmail alone.
+func TestOwnerTurnsOffAProtocol(t *testing.T) {
+	r := newSieveRig(t)
+	ctx := context.Background()
+	if err := r.e.SetProtocol(ctx, r.a, mailpolicy.IMAP, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.login(ctx, r.a.Address, "testpass", true, mailpolicy.IMAP, ""); !errors.Is(err, ErrProtocolDisabled) {
+		t.Fatalf("IMAP with IMAP off: %v", err)
+	}
+	if _, err := r.svc.login(ctx, r.a.Address, "wrong", true, mailpolicy.IMAP, ""); !errors.Is(err, ErrCredentials) {
+		t.Fatalf("a wrong password learned the setting: %v", err)
+	}
+	if _, err := r.svc.login(ctx, r.a.Address, "testpass", true, mailpolicy.POP3, ""); err != nil {
+		t.Fatalf("POP3 went with it: %v", err)
+	}
+	if _, err := r.svc.login(ctx, r.a.Address, "testpass", false, "", ""); err != nil {
+		t.Fatalf("the webmail lost access: %v", err)
+	}
+	_, app, err := r.e.CreateAppPassword(ctx, r.a.ID, "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.login(ctx, r.a.Address, app, true, mailpolicy.IMAP, ""); !errors.Is(err, ErrProtocolDisabled) {
+		t.Fatalf("an app password got around it: %v", err)
+	}
+	if err := r.e.SetProtocol(ctx, r.a, mailpolicy.IMAP, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.login(ctx, r.a.Address, "testpass", true, mailpolicy.IMAP, ""); err != nil {
+		t.Fatalf("turning it back on: %v", err)
+	}
+	for _, other := range []string{mailpolicy.Webmail, mailpolicy.Submission, mailpolicy.DAV, "ftp"} {
+		if err := r.e.SetProtocol(ctx, r.a, other, false); err == nil {
+			t.Errorf("%s isn't the owner's to switch", other)
+		}
+	}
+}

@@ -37,10 +37,13 @@ type fakeSecurity struct {
 	maxForward   int
 	retention    map[string]int
 	// Calendar sharing: what the list returns, and what was changed.
-	calendars      calendarShares
-	resources      []bookable
-	calendarCalls  []string
-	calendarDenied bool
+	calendars calendarShares
+	resources []bookable
+	// Mail protocols the user can choose about, and what they chose.
+	protocolChoices []protocolChoice
+	protocolCalls   []map[string]any
+	calendarCalls   []string
+	calendarDenied  bool
 }
 
 func (f *fakeSecurity) handler(t *testing.T) http.Handler {
@@ -89,6 +92,10 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		}
 		out := map[string]any{}
 		switch {
+		case r.URL.Path == "/v1/security/protocols":
+			f.protocolCalls = append(f.protocolCalls, in)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
 		case r.URL.Path == "/v1/security/passkeys":
 			_ = json.NewEncoder(w).Encode([]passkeyInfo{})
 			return
@@ -160,7 +167,7 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 			f.totp = true
 			out = map[string]any{"recovery_codes": []string{"aaaa-bbbb", "cccc-dddd"}}
 		case "/v1/security":
-			out = map[string]any{"totp": f.totp, "app_required": f.appRequired, "recovery_left": 10, "app_passwords": []any{}}
+			out = map[string]any{"protocols": f.protocolChoices, "totp": f.totp, "app_required": f.appRequired, "recovery_left": 10, "app_passwords": []any{}}
 		case "/v1/security/verify":
 			if in["code"] != "123456" || f.codeUsed {
 				http.Error(w, "invalid code", http.StatusUnprocessableEntity)

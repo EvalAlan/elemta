@@ -225,6 +225,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/app-passwords", s.authed(s.appPasswordSubmit))
 	mux.HandleFunc("POST /settings/app-passwords/delete", s.authed(s.appPasswordDeleteSubmit))
 	mux.HandleFunc("POST /settings/app-required", s.authed(s.appRequiredSubmit))
+	mux.HandleFunc("POST /settings/protocols", s.authed(s.protocolSubmit))
 	mux.HandleFunc("POST /logout", s.authed(s.logout))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/mail", http.StatusFound) })
 	mux.HandleFunc("GET /mail", s.authed(s.mailPage))
@@ -510,6 +511,8 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"recovery-code-used":     "You signed in with a recovery code, which can't be used again. If you've lost your authenticator, turn two-step verification off and on again to get new codes.",
 	"2fa-off":                "Two-step verification is off.",
 	"app-password-deleted":   "App password deleted. Apps using it will be asked for a new one.",
+	"protocol-off":           "Turned off. Apps using it are disconnected within a minute.",
+	"protocol-on":            "Turned on. Mail apps can connect again.",
 	"app-required":           "Mail apps now need an app password; your account password works only in webmail.",
 	"app-optional":           "Mail apps can use your account password again.",
 	"folder-created":         "Folder created.",

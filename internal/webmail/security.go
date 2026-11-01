@@ -89,6 +89,8 @@ type appPassword struct {
 }
 
 type securityStatus struct {
+	// Protocols are the mail protocols the user can choose about.
+	Protocols []protocolChoice `json:"protocols"`
 	// Passkeys are read separately, for the settings page.
 	Passkeys    []passkeyInfo `json:"-"`
 	TOTP        bool          `json:"totp"`
@@ -360,6 +362,29 @@ func (s *Server) twoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 	s.finishLogin(ctx, w, r, p.user, p.password, store, next)
 }
 
+// protocolChoice is IMAP or POP3 as Settings shows it.
+type protocolChoice struct {
+	Protocol string `json:"protocol"`
+	Allowed  bool   `json:"allowed"`
+	On       bool   `json:"on"`
+}
+
+// Label is how the protocol is written.
+func (p protocolChoice) Label() string { return strings.ToUpper(p.Protocol) }
+
+// IMAPOn and POP3On say whether to list a protocol's server settings.
+func (st securityStatus) IMAPOn() bool { return st.protocolOn("imap") }
+func (st securityStatus) POP3On() bool { return st.protocolOn("pop3") }
+
+func (st securityStatus) protocolOn(name string) bool {
+	for _, p := range st.Protocols {
+		if p.Protocol == name {
+			return p.On
+		}
+	}
+	return true
+}
+
 // securityView is the Security part of the settings page. The one-time
 // fields are filled only on the response that creates them, and never put
 // in a URL.
@@ -568,6 +593,19 @@ func (s *Server) appPasswordDeleteSubmit(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	http.Redirect(w, r, "/settings/security?n=app-password-deleted#app-passwords", http.StatusSeeOther)
+}
+
+// protocolSubmit turns IMAP or POP3 on or off for the user's own account.
+func (s *Server) protocolSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
+	on := r.PostFormValue("on") == "1"
+	if !s.securityAction(w, r, sess, "/v1/security/protocols", map[string]any{"protocol": r.PostFormValue("protocol"), "on": on}, nil) {
+		return
+	}
+	n := "protocol-off"
+	if on {
+		n = "protocol-on"
+	}
+	http.Redirect(w, r, "/settings/devices?n="+n+"#mail-access", http.StatusSeeOther)
 }
 
 func (s *Server) appRequiredSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
