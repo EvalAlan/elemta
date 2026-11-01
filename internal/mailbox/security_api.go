@@ -17,6 +17,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -356,7 +357,29 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		if p := a.account.Policy; err == nil && p != nil {
 			st.AppRequiredByClass, st.TOTPRequired = p.RequireAppPasswords, p.RequireTwoFactor
 		}
+		if err != nil {
+			return st, err
+		}
+		off, err := s.engine.ProtocolsOff(r.Context(), a.account.ID)
+		for _, protocol := range userProtocols {
+			allowed := a.account.Policy == nil || a.account.Policy.Allows(protocol)
+			st.Protocols = append(st.Protocols, ProtocolChoice{Protocol: protocol, Allowed: allowed, On: allowed && !slices.Contains(off, protocol)})
+		}
 		return st, err
+	})
+	handle("POST /v1/security/protocols", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Protocol string `json:"protocol"`
+			On       bool   `json:"on"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		// A class's refusal isn't the owner's to lift.
+		if in.On && a.account.Policy != nil && !a.account.Policy.Allows(in.Protocol) {
+			return nil, errBadRequest
+		}
+		return map[string]bool{"ok": true}, s.engine.SetProtocol(r.Context(), a.account, in.Protocol, in.On)
 	})
 	handle("POST /v1/security/verify", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		var in struct{ Code string }

@@ -377,15 +377,42 @@
     <p class="muted">Use your mail, calendar and contacts in other apps.</p>
   </header>
   {{$app := and .Security .Security.Status .Security.Status.AppRequired}}
+  {{if and .Security .Security.Status .Security.Status.Protocols}}
+  <div class="card" id="mail-access">
+    <h2 class="card-title">Mail app access</h2>
+    {{if eq .NoticeCard "mail-access"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
+    <p class="muted">Turn off what you don't use, and nobody can reach your mail that way, even with your password or an app password. The webmail always keeps working.</p>
+    {{range .Security.Status.Protocols}}
+    {{if .Allowed}}
+    <form class="toggle-row" action="/settings/protocols#mail-access" method="post">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <input type="hidden" name="protocol" value="{{.Protocol}}">
+      <input type="hidden" name="on" value="{{if .On}}0{{else}}1{{end}}">
+      <div>
+        <strong>{{.Label}}</strong>
+        <p class="small muted">{{if .On}}Mail apps can connect with {{.Label}}.{{else}}Off. Mail apps can't connect with {{.Label}}.{{end}}</p>
+      </div>
+      <button class="button" type="submit"{{if .On}} data-confirm="Turn off {{.Label}}? Mail apps using it will stop getting mail."{{end}}>{{if .On}}Turn off{{else}}Turn on{{end}}</button>
+    </form>
+    {{else}}
+    <div class="toggle-row"><div><strong>{{.Label}}</strong><p class="small muted">Turned off by your administrator.</p></div></div>
+    {{end}}
+    {{end}}
+  </div>
+  {{end}}
+  {{$imap := or (not (and .Security .Security.Status)) .Security.Status.IMAPOn}}
+  {{$pop := or (not (and .Security .Security.Status)) .Security.Status.POP3On}}
   <div class="card" id="mail-apps">
     <h2 class="card-title">Mail apps</h2>
     <p class="muted">Thunderbird and other apps that support automatic setup only need your address. For others, use:</p>
     <div class="table-wrap"><table class="table settings-table">
       <thead><tr><th>Protocol</th><th>Server</th><th>Port</th><th>Security</th></tr></thead>
       <tbody>
+        {{if $imap}}
         <tr><td>IMAP <span class="muted small">(recommended)</span></td><td class="mono">{{.MailHost}}</td><td>993</td><td>SSL/TLS</td></tr>
         <tr><td>IMAP</td><td class="mono">{{.MailHost}}</td><td>143</td><td>STARTTLS</td></tr>
-        <tr><td>POP3</td><td class="mono">{{.MailHost}}</td><td>110</td><td>STARTTLS</td></tr>
+        {{end}}
+        {{if $pop}}        <tr><td>POP3</td><td class="mono">{{.MailHost}}</td><td>110</td><td>STARTTLS</td></tr>{{end}}
         <tr><td>SMTP (sending)</td><td class="mono">{{.MailHost}}</td><td>587</td><td>STARTTLS</td></tr>
       </tbody>
     </table></div>

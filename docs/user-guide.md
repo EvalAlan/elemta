@@ -63,6 +63,12 @@ address as the SMTP username; if your grant allows sending, set the From
 address in the app to `support@example.com`. When your account requires app
 passwords, use one of your app passwords for both connections.
 
+If you don't use IMAP or POP3, you can turn them off under **Settings → Mail apps
+and sync → Mail app access**. Nobody can then reach your mail that way, even with
+your password, and apps already connected are cut off within a minute. The webmail
+keeps working, and sending mail isn't affected. If your administrator has turned one
+off, it says so and you can't turn it on.
+
 ## Calendar and contacts on your phone
 
 Calendar, tasks and contacts sync over CalDAV and CardDAV:

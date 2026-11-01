@@ -27,8 +27,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"math/big"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -62,6 +64,60 @@ type SecurityState struct {
 	// API, so the settings page can say why a control is fixed.
 	AppRequiredByClass bool `json:"app_required_by_class"`
 	TOTPRequired       bool `json:"totp_required"`
+	// Protocols are the mail protocols the owner can choose about.
+	Protocols []ProtocolChoice `json:"protocols,omitempty"`
+}
+
+// ProtocolChoice is one protocol as Settings shows it. A class of service that
+// refuses a protocol settles the matter: On is false and there's no choice.
+type ProtocolChoice struct {
+	Protocol string `json:"protocol"`
+	Allowed  bool   `json:"allowed"` // the class of service allows it
+	On       bool   `json:"on"`
+}
+
+// userProtocols are what an owner may turn off. Both are for mail apps only, so
+// the webmail still works and nobody can lock themselves out. Sending and sync
+// aren't here, because other things depend on them.
+var userProtocols = []string{mailpolicy.IMAP, mailpolicy.POP3}
+
+// ProtocolsOff returns the protocols the owner turned off.
+func (e *Engine) ProtocolsOff(ctx context.Context, account string) ([]string, error) {
+	var off []string
+	err := e.DB.QueryRowContext(ctx, `SELECT protocols_off FROM mailbox_security WHERE account=$1`, account).Scan(pq.Array(&off))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return off, err
+}
+
+// SetProtocol records the owner's choice. It takes effect at the next sign-in,
+// and within 30 seconds on open connections, which recheck (watchCredentials).
+func (e *Engine) SetProtocol(ctx context.Context, a Account, protocol string, on bool) error {
+	if !slices.Contains(userProtocols, protocol) {
+		return errBadRequest
+	}
+	off, err := e.ProtocolsOff(ctx, a.ID)
+	if err != nil {
+		return err
+	}
+	off = slices.DeleteFunc(off, func(p string) bool { return p == protocol })
+	if !on {
+		off = append(off, protocol)
+	}
+	if off == nil {
+		off = []string{}
+	}
+	if _, err := e.DB.ExecContext(ctx, `INSERT INTO mailbox_security(account,protocols_off) VALUES($1,$2)
+ON CONFLICT(account) DO UPDATE SET protocols_off=excluded.protocols_off`, a.ID, pq.Array(off)); err != nil {
+		return err
+	}
+	detail := protocol + " off"
+	if on {
+		detail = protocol + " on"
+	}
+	_, err = e.Audit(ctx, mailpolicy.AuditEntry{Actor: a.Address, Source: "webmail", Action: "protocol-choice", Target: a.Address, Detail: detail})
+	return err
 }
 
 // AppPassword describes one app password; the password itself is shown once,

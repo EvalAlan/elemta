@@ -92,6 +92,8 @@ CREATE TABLE IF NOT EXISTS mailbox_security (
  recovery_codes text[] NOT NULL DEFAULT '{}'
 );
 ALTER TABLE mailbox_security ADD COLUMN IF NOT EXISTS totp_pending_at timestamptz;
+-- Protocols the account's owner turned off for themselves (security.go).
+ALTER TABLE mailbox_security ADD COLUMN IF NOT EXISTS protocols_off text[] NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS mailbox_app_passwords (
  id bigserial PRIMARY KEY,
  account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,

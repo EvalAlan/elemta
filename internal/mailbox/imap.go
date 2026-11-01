@@ -205,6 +205,17 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 		s.log.Info("mailbox: sign-in refused by class of service", "user", a.Address, "protocol", protocol)
 		return Account{}, ErrProtocolDisabled
 	}
+	// After the password, so this says nothing to someone guessing one.
+	if protocol != "" {
+		off, err := s.engine.ProtocolsOff(ctx, a.ID)
+		if err != nil {
+			return Account{}, err
+		}
+		if slices.Contains(off, protocol) {
+			s.log.Info("mailbox: sign-in refused; turned off by the account's owner", "user", a.Address, "protocol", protocol)
+			return Account{}, ErrProtocolDisabled
+		}
+	}
 	if app || !public {
 		return a, nil
 	}

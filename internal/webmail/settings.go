@@ -344,6 +344,8 @@ var noticeCards = map[string]string{
 	"app-password-deleted": "app-passwords",
 	"app-required":         "app-passwords",
 	"passkey-added":        "passkeys",
+	"protocol-off":         "mail-access",
+	"protocol-on":          "mail-access",
 	"passkey-removed":      "passkeys",
 	"app-optional":         "app-passwords",
 }
