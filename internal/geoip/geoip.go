@@ -45,6 +45,7 @@ func FromEnv() (*DB, error) {
 	if path == "" {
 		return nil, nil
 	}
+	// #nosec G703 -- the operator's own setting, read once at start; no request reaches it
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
