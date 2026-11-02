@@ -172,9 +172,17 @@ submission port (`listen_webmail_submission`, 2588), which replaces
 exempting its address from app passwords. The saved configuration is updated
 on the first start.
 
-**Rollback:** set `ELEMTA_TAG` back and do the same. A release that changed
-the schema keeps working with the previous one's code, because changes are
-additive; if a release says otherwise, restore the backup taken before it.
+**Rollback:** check out the previous tag, set `ELEMTA_TAG` back and run
+`scripts/cloud-deploy.sh`. Changing `ELEMTA_TAG` alone isn't enough: the newer
+scripts write configuration the older release refuses to load, and the mailbox
+service then won't start. A release that changed the schema keeps working with
+the previous one's code, because changes are additive; if a release says
+otherwise, restore the backup taken before it.
+
+Mail a newer release stored in a form the older one can't read stays that way
+after a rollback. v0.6.0 can't read bodies compressed by v0.7.0 or later, so
+leave `MAILBOX_BODY_COMPRESSION` off until you're sure you're staying, or restore
+the backup.
 
 Drilled on the development server: the stack was rolled from locally built
 images onto the release overlay one service at a time while an account sent

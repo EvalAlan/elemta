@@ -24,6 +24,10 @@ and backups that left out message bodies stored in S3.
   `scripts/mailbox-backup.sh` copied only the local volume, so a deployment on S3
   got a backup with no bodies in it, and `scripts/restore-drill.sh` refused those
   backups. Backups taken before this version on S3 hold metadata only.
+- **Rolling back needs the previous tag's checkout.** Setting `ELEMTA_TAG` back
+  alone stops the mailbox service starting. See "Upgrades" in
+  [docs/production-compose.md](docs/production-compose.md). v0.6.0 can't read
+  compressed bodies, so leave compression off until you're staying on this release.
 - **Spam filtering changes in production.** Rspamd's blocklists and fuzzy checks
   come on, with the terms and resolver checks described below. Quarantine stays
   off until you turn it on.
