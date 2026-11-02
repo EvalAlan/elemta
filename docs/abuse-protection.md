@@ -26,8 +26,8 @@ few seconds with no restart.
 ## What it deliberately doesn't do
 
 - **Accounts are never blocked.** That would let anyone lock a user out by
-  guessing wrong, so accounts are only counted, under *Accounts under attack*.
-  Many addresses guessing at one account are therefore shown, not stopped.
+  guessing wrong. Many addresses guessing at one account shield it instead (see
+  "Accounts under attack" below), which leaves its owner able to sign in.
 - **Port 25 stays open.** A block for guessing passwords shouldn't lose mail
   from every server sharing that address.
 - **It can't absorb a flood.** Traffic that fills the network link has to be
@@ -133,6 +133,27 @@ counts and records without refusing.
 
 Class-of-service sending limits (`messages_per_hour`, `recipients_per_day`) still
 apply on top, per class. Those are a quota; the hold is an alarm.
+
+## Accounts under attack
+
+When 20 different addresses (the default for new installs) fail to sign in to one
+account within the window, the account is shielded until the attack stops for one
+window:
+
+- Its password works only from networks (/24, or /48 for IPv6) it has signed in from
+  in the last 90 days. From anywhere else, a right password gets exactly the answer a
+  wrong one does, so a guess that happens to be right gets the attacker nothing.
+- App passwords and passkeys work from anywhere, since they're too random to guess.
+  The account is never locked, and its owner at home or work carries on.
+- An account with no sign-ins on record is never shielded, since there's nothing to
+  compare against. Networks are only recorded while the setting is on, so turn it on
+  before you need it.
+- It applies to IMAP, POP3, ManageSieve, SMTP submission and webmail, not to the admin
+  console. An alert, *Under attack*, appears under **Unusual sign-ins**.
+
+Someone travelling during an attack can't sign in with the account password until it
+ends: give them an app password or a passkey. Existing configurations have it off
+(`addresses_per_account = 0`) until set.
 
 ## Unusual sign-ins
 

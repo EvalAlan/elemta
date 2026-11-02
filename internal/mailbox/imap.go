@@ -204,6 +204,11 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 	if err != nil {
 		return a, err
 	}
+	// Answered as a wrong password, so a right guess looks like any other.
+	if !app && client != "" && s.abuse.Shielded(ctx, client, a.Address) {
+		s.recordLoginFailure(ctx, a.Address, client)
+		return Account{}, ErrCredentials
+	}
 	if protocol != "" && a.Policy != nil && !a.Policy.Allows(protocol) {
 		s.log.Info("mailbox: sign-in refused by class of service", "user", a.Address, "protocol", protocol)
 		return Account{}, ErrProtocolDisabled

@@ -50,6 +50,11 @@ type Policy struct {
 	// different accounts within WindowMinutes, however few times each:
 	// password spraying. 0 turns it off.
 	AccountsPerAddress int `toml:"accounts_per_address" json:"accounts_per_address"`
+	// AddressesPerAccount shields an account once this many different
+	// addresses fail against it within WindowMinutes: until the attack
+	// stops, its password works only from networks it has signed in from
+	// before (targeted.go). 0 turns it off.
+	AddressesPerAccount int `toml:"addresses_per_account" json:"addresses_per_account"`
 	// MessagesPerAddressPerHour caps mail from one outside address, including
 	// on port 25; 0 turns it off. Signed-in users and allowed relays aren't
 	// counted.
@@ -115,7 +120,7 @@ func (p Policy) ConnectionLimits(protocol string) (perAddress, perMinute int) {
 // mail senders, and is far below what one host needs to exhaust a service.
 func DefaultPolicy() Policy {
 	return Policy{Mode: ModeEnforce, ConnectionsPerAddress: 25, ConnectionsPerMinute: 120, FailuresPerAddress: 50,
-		FailuresPerNetwork: 200, AccountsPerAddress: 10, MessagesPerAddressPerHour: 1000, OutboundRecipientsPerHour: 500, WindowMinutes: 15, BlockMinutes: 15, MaxBlockHours: 24, Firewall: FirewallLog, Allowlist: []string{}}
+		FailuresPerNetwork: 200, AccountsPerAddress: 10, AddressesPerAccount: 20, MessagesPerAddressPerHour: 1000, OutboundRecipientsPerHour: 500, WindowMinutes: 15, BlockMinutes: 15, MaxBlockHours: 24, Firewall: FirewallLog, Allowlist: []string{}}
 }
 
 // Validate refuses a policy that couldn't be applied. A typo in an allowlist
@@ -143,6 +148,9 @@ func (p Policy) Validate() error {
 	}
 	if p.AccountsPerAddress < 0 || p.AccountsPerAddress > 100000 {
 		return errors.New("accounts per address must be between 0 and 100000")
+	}
+	if p.AddressesPerAccount < 0 || p.AddressesPerAccount > 100000 {
+		return errors.New("addresses per account must be between 0 and 100000")
 	}
 	if p.MessagesPerAddressPerHour < 0 || p.MessagesPerAddressPerHour > 10000000 {
 		return errors.New("messages per address must be between 0 and 10000000")

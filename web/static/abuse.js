@@ -55,6 +55,7 @@
         el('abuse-rate').value = p.connections_per_minute;
         el('abuse-network').value = p.failures_per_network;
         el('abuse-spray').value = p.accounts_per_address || 0;
+        el('abuse-targeted').value = p.addresses_per_account || 0;
         el('abuse-inbound').value = p.messages_per_address_per_hour || 0;
         el('abuse-outbound').value = p.outbound_recipients_per_hour || 0;
         el('abuse-domain').value = p.messages_per_domain_per_hour || 0;
@@ -107,6 +108,7 @@
             connections_per_minute: Number(el('abuse-rate').value),
             failures_per_network: Number(el('abuse-network').value),
             accounts_per_address: Number(el('abuse-spray').value),
+            addresses_per_account: Number(el('abuse-targeted').value),
             messages_per_address_per_hour: Number(el('abuse-inbound').value),
             outbound_recipients_per_hour: Number(el('abuse-outbound').value),
             messages_per_domain_per_hour: Number(el('abuse-domain').value),
@@ -153,7 +155,7 @@
             body.appendChild(row);
         });
     }
-    const ALERT_KINDS = { 'impossible-travel': 'Impossible travel', 'new-country': 'New country' };
+    const ALERT_KINDS = { 'impossible-travel': 'Impossible travel', 'new-country': 'New country', targeted: 'Under attack' };
     function fillAlerts(alerts, locations, policy) {
         const state = el('abuse-alerts-state');
         state.textContent = policy && policy.sign_in_alerts === 'off'
@@ -186,7 +188,9 @@
             });
             const actions = document.createElement('span');
             actions.className = 'abuse-actions';
-            actions.append(block, dismiss);
+            // An attack from many addresses isn't stopped by blocking the
+            // last one, so that alert offers only Dismiss.
+            if (a.kind === 'targeted') actions.append(dismiss); else actions.append(block, dismiss);
             cell(row, a.detail); row.lastChild.className = 'abuse-wrap';
             cell(row, a.address + ' (' + a.service + ')'); row.appendChild(document.createElement('td')).appendChild(actions);
             body.appendChild(row);

@@ -177,6 +177,7 @@ func (a *SMTPAuthenticator) AuthenticateFrom(ctx context.Context, username, pass
 	if check.Kind == "app" {
 		// Accepted by the mailbox service as an app password. The directory
 		// refused it, which is expected: it only knows the account password.
+		noteAppPassword(ctx)
 		return true, nil
 	}
 	if !ok {
@@ -205,4 +206,19 @@ func withWebmailSubmission(ctx context.Context) context.Context {
 func isWebmailSubmission(ctx context.Context) bool {
 	v, _ := ctx.Value(webmailSubmissionKey{}).(bool)
 	return v
+}
+
+type appPasswordKey struct{}
+
+// watchAppPassword returns a context in which an app password's success is
+// recorded in *used. An app password is too random to guess, so a shielded
+// account (internal/abuse) still accepts one from anywhere.
+func watchAppPassword(ctx context.Context, used *bool) context.Context {
+	return context.WithValue(ctx, appPasswordKey{}, used)
+}
+
+func noteAppPassword(ctx context.Context) {
+	if used, ok := ctx.Value(appPasswordKey{}).(*bool); ok {
+		*used = true
+	}
 }

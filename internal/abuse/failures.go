@@ -69,6 +69,9 @@ type local struct {
 	events   []Event
 	holds    map[string]Hold
 	sprays   map[string]*spraySet
+	targets  map[string]*spraySet
+	shields  map[string]time.Time
+	known    map[string]map[string]time.Time
 	// pending waits for the next flush; series holds what couldn't be sent.
 	pending map[string]int
 	series  map[int64]map[string]int
@@ -119,7 +122,8 @@ func (e *Engine) Blocked(addr string) (Block, bool) {
 
 // Failure records a failed sign-in, and blocks the address once it has failed
 // too often across all services. It never blocks by account: that would hand
-// anyone a way to lock a user out. Accounts are only counted, for the console.
+// anyone a way to lock a user out. An account failed against from many
+// addresses is shielded instead (targeted.go).
 func (e *Engine) Failure(ctx context.Context, addr, service, account string) {
 	if e == nil {
 		return
@@ -143,6 +147,9 @@ func (e *Engine) Failure(ctx context.Context, addr, service, account string) {
 		if n := e.spray(ctx, network, account, window); n >= p.AccountsPerAddress {
 			e.trip(ctx, p, network, service, failures)
 		}
+	}
+	if p.AddressesPerAccount > 0 {
+		e.noteTarget(ctx, p, network, service, account, window)
 	}
 	// Many addresses in one network add up to the network, which is how a
 	// rented block stays under the per-address limit.

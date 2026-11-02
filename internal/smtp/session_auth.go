@@ -371,17 +371,20 @@ func (ah *AuthHandler) performAuthentication(ctx context.Context, username, pass
 	}
 
 	// Perform authentication
-	var authenticated bool
+	var authenticated, appPassword bool
 	var err error
 	if ca, ok := ah.authenticator.(clientAuthenticator); ok {
 		if ah.session != nil && ah.session.webmailSubmission {
 			ctx = withWebmailSubmission(ctx)
 		}
-		authenticated, err = ca.AuthenticateFrom(ctx, username, password, ah.clientIP())
+		authenticated, err = ca.AuthenticateFrom(watchAppPassword(ctx, &appPassword), username, password, ah.clientIP())
 	} else {
 		authenticated, err = ah.authenticator.Authenticate(ctx, username, password)
 	}
 	duration := time.Since(startTime)
+	if authenticated && err == nil && ah.heldBack(ctx, username, appPassword) {
+		authenticated = false
+	}
 
 	if err != nil || !authenticated {
 		ah.logger.WarnContext(ctx, "Authentication failed",
@@ -824,4 +827,15 @@ func (ah *AuthHandler) clientIP() net.IP {
 		return nil
 	}
 	return net.ParseIP(host)
+}
+
+// heldBack reports whether a correct password must be answered as a wrong one:
+// an account under attack takes its password only from networks it has used,
+// so a right guess looks like any other (internal/abuse/targeted.go). App
+// passwords are exempt, and the webmail's port, which checks for itself.
+func (ah *AuthHandler) heldBack(ctx context.Context, username string, appPassword bool) bool {
+	if appPassword || (ah.session != nil && ah.session.webmailSubmission) {
+		return false
+	}
+	return ah.abuse.Shielded(ctx, ah.conn.RemoteAddr().String(), username)
 }
