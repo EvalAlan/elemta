@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/srs"
 )
 
 // CommandResult represents the result of a command execution
@@ -377,8 +379,15 @@ func (ch *CommandHandler) HandleRCPT(ctx context.Context, args string) error {
 		return fmt.Errorf("553 5.6.7 SMTPUTF8 is required for non-ASCII recipient address")
 	}
 
-	// Check relay permissions
-	if err := ch.checkRelayPermissions(ctx, rcptTo); err != nil {
+	bounceFor, err := ch.reverseSRS(ctx, rcptTo)
+	if err != nil {
+		return err
+	}
+	if bounceFor != "" {
+		rcptTo = bounceFor
+	} else if err := ch.checkRelayPermissions(ctx, rcptTo); err != nil {
+		// A valid SRS address skips this: it may lead outside the server, and
+		// the hash is what makes that safe.
 		return err
 	}
 
@@ -1298,6 +1307,25 @@ func (ch *CommandHandler) checkRelayPermissions(ctx context.Context, recipient s
 }
 
 // isLocalDomain checks if a recipient is in a local domain
+// reverseSRS returns the original sender when recipient is an SRS address of
+// ours, and "" for any other recipient. Only bounces are accepted: a replayed
+// address must not become a way to send ordinary mail to the person behind it.
+func (ch *CommandHandler) reverseSRS(ctx context.Context, recipient string) (string, error) {
+	if ch.config.SRS == nil || !srs.Is(recipient) || !ch.isLocalDomain(ctx, recipient) {
+		return "", nil
+	}
+	if ch.state.GetMailFrom() != "" {
+		return "", fmt.Errorf("550 5.7.1 This address accepts delivery notifications only")
+	}
+	sender, err := ch.config.SRS.Reverse(recipient)
+	if err != nil {
+		ch.logger.InfoContext(ctx, "Recipient refused: SRS address not valid",
+			"event_type", "rejection", "recipient", recipient, "reason", err)
+		return "", fmt.Errorf("550 5.1.1 <%s>: Recipient address rejected: User unknown", sanitizeEmailForHeader(recipient))
+	}
+	return sender, nil
+}
+
 func (ch *CommandHandler) isLocalDomain(ctx context.Context, recipient string) bool {
 	return inLocalDomains(ch.config.LocalDomains, recipient)
 }

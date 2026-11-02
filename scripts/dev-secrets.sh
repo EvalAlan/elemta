@@ -64,6 +64,13 @@ if [ -z "${RSPAMD_CONTROLLER_PASSWORD:-}" ]; then
     (umask 077; printf '%s\n' "RSPAMD_CONTROLLER_PASSWORD=$RSPAMD_CONTROLLER_PASSWORD" >>"$master")
 fi
 
+# Signs the addresses forwarded mail goes out from (internal/srs). The MTA and
+# the mailbox service share it. Upgrades add it in place.
+if [ -z "${SRS_SECRET:-}" ]; then
+    SRS_SECRET=$(gen)
+    (umask 077; printf '%s\n' "SRS_SECRET=$SRS_SECRET" >>"$master")
+fi
+
 # A generated bootstrap credential also covers fresh directories. Existing
 # volumes retain their old hash until ldap-admin-password.sh applies this.
 if [ -z "${LDAP_ADMIN_PASSWORD:-}" ]; then
@@ -90,13 +97,15 @@ recovery_smtp="ELEMTA_WEBMAIL_RECOVERY_SMTP_PASSWORD=$ELEMTA_WEBMAIL_RECOVERY_SM
 write ldap-admin.env "LDAP_ADMIN_PASSWORD=$LDAP_ADMIN_PASSWORD"
 
 write elemta.env "ELEMTA_AUTH_DATASOURCE_PASS=$LDAP_SMTP_PASSWORD" \
-    "ELEMTA_MAILBOX_ADMIN_TOKEN=$MAILBOX_ADMIN_TOKEN"
+    "ELEMTA_MAILBOX_ADMIN_TOKEN=$MAILBOX_ADMIN_TOKEN" \
+    "ELEMTA_SRS_SECRETS=$SRS_SECRET"
 write mailbox.env \
     "ELEMTA_MAILBOX_LDAP_DN=cn=mailbox,ou=services,dc=example,dc=com" \
     "ELEMTA_MAILBOX_LDAP_PASSWORD=$LDAP_MAILBOX_PASSWORD" \
     "ELEMTA_MAILBOX_TOTP_KEYS=v1:$MAILBOX_TOTP_KEY" \
     "ELEMTA_MAILBOX_ADMIN_TOKEN=$MAILBOX_ADMIN_TOKEN" \
-    "ELEMTA_RSPAMD_CONTROLLER_PASSWORD=$RSPAMD_CONTROLLER_PASSWORD"
+    "ELEMTA_RSPAMD_CONTROLLER_PASSWORD=$RSPAMD_CONTROLLER_PASSWORD" \
+    "ELEMTA_SRS_SECRETS=$SRS_SECRET"
 write rspamd.env "RSPAMD_CONTROLLER_PASSWORD=$RSPAMD_CONTROLLER_PASSWORD"
 
 storage="$dir/mailbox-storage.env"

@@ -183,6 +183,32 @@ which is open only to `lmtp_allowed_networks` and needs a shared token,
 port). Without the token the API is off and so are classes of service.
 `scripts/dev-secrets.sh` generates the token for the development stacks.
 
+## Forwarding and SPF
+
+Forwarded mail normally keeps its original sender, so the next server checks
+that sender's SPF record against this server's address and it fails. Elemta sends
+mail forwarded outside the server from an SRS address at the forwarding account's
+domain instead, such as `SRS0=hash=tt=example.org=alice@example.com`, so SPF passes.
+The message itself isn't changed, and people still see the original sender.
+
+A bounce sent to that address is passed to the original sender. Only bounces are
+accepted, the address must carry a valid signature, and it stops working after 21
+days, so it can't be used to relay mail.
+
+SRS is on once `ELEMTA_SRS_SECRETS` is set for both the MTA and the mailbox service,
+which `scripts/dev-secrets.sh` does. Without it, mail is forwarded as before.
+
+- **Domains need SPF.** Each account's domain has to list this server in its SPF
+  record, which **Check DNS** reports.
+- **Long addresses.** A sender too long to fit in the 64 characters an address may
+  have is forwarded unchanged, so SPF can still fail for it. Many mailing lists and
+  bulk senders use long addresses, but these usually pass on their DKIM signature.
+- **DMARC.** The rewritten address doesn't align with the visible From, so DMARC
+  relies on the sender's DKIM signature surviving, which it does because the
+  message isn't changed.
+- **Changing the secret.** Put the new one first, separated by a comma, and keep the
+  old one for 21 days: the first signs, and all of them verify.
+
 ## Distribution lists, domain aliases and catch-all
 
 Beyond accounts and their aliases, an address can be a distribution list, a

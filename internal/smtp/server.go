@@ -27,6 +27,7 @@ import (
 	deliverymetrics "github.com/EvalAlan/elemta/internal/metrics"
 	"github.com/EvalAlan/elemta/internal/plugin"
 	"github.com/EvalAlan/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/srs"
 	"github.com/EvalAlan/elemta/internal/suppression"
 	"github.com/EvalAlan/elemta/internal/tlsrpt"
 	"github.com/google/uuid"
@@ -563,6 +564,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 
 		// Set up bounce engine for DSN generation on permanent failures
 		bounceEngine := NewBounceEngine(queueManager, config.Hostname, slogger)
+		bounceEngine.srs = config.SRS
 		queueProcessor.SetBounceEngine(bounceEngine)
 
 		slogger.Info("Queue processor initialized successfully")
@@ -879,6 +881,9 @@ func logServerConfigSummary(config *Config, slogger *slog.Logger) {
 func NewServer(config *Config) (*Server, error) {
 	if err := prepareServerConfig(config); err != nil {
 		return nil, err
+	}
+	if config.SRS == nil {
+		config.SRS = srs.FromEnv()
 	}
 
 	slogger := slog.Default().With(

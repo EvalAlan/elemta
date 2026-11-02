@@ -310,11 +310,34 @@ func (s *Service) redirect(ctx context.Context, d delivery, to string) error {
 		return err
 	}
 	msg := append([]byte(redirectHeader+": "+d.rcpt+"\r\n"), d.raw...)
-	if err := s.submit(ctx, d.from, []string{target}, msg); err != nil {
+	if err := s.submit(ctx, s.forwardSender(ctx, d, target), []string{target}, msg); err != nil {
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 0}, Message: "Forwarding temporarily unavailable"}
 	}
 	_, err = s.engine.claimSent(ctx, d.account.ID, key, 7*24*time.Hour)
 	return err
+}
+
+// forwardSender returns the envelope sender for mail forwarded to target. Mail
+// leaving the server goes out from an SRS address at the forwarding account's
+// domain, or the next server's SPF check on the original sender fails. A bounce
+// has no sender to rewrite, and mail staying here passes through no SPF check.
+//
+// When the rewritten address would be too long the original sender stays:
+// the mail may still get through on its DKIM signature, whereas a sender the
+// MTA refuses would never leave.
+func (s *Service) forwardSender(ctx context.Context, d delivery, target string) string {
+	if s.srs == nil || d.from == "" {
+		return d.from
+	}
+	if _, err := s.auth.Resolve(ctx, target); err == nil {
+		return d.from
+	}
+	from, err := s.srs.Forward(d.from, domainOf(d.account.Address))
+	if err != nil {
+		s.log.Info("forwarding with the original sender", "account", d.account.ID, "reason", err)
+		return d.from
+	}
+	return from
 }
 
 // hasRedirectMark reports whether rcpt already forwarded this message: it
