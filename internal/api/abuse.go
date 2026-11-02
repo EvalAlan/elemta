@@ -14,12 +14,22 @@ import (
 
 	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/auth"
+	"github.com/EvalAlan/elemta/internal/geoip"
 	"github.com/gorilla/mux"
 )
 
 // SetAbuse connects the shared engine.
 func (s *Server) SetAbuse(e *abuse.Engine) {
 	s.abuse = e
+	// Sign-in alerts are placed here alone, so only the console needs the
+	// location database (internal/geoip). Without it nothing is placed and
+	// the page says so.
+	if db, err := geoip.FromEnv(); err != nil {
+		slog.Warn("Location database unavailable; sign-in alerts are off", "error", err)
+	} else if db != nil {
+		s.locations = db
+		go e.WatchSignIns(context.Background(), db)
+	}
 	if s.authMiddleware != nil {
 		s.authMiddleware.abuse = e
 	}
@@ -36,6 +46,7 @@ func (s *Server) abuseRoutes(api *mux.Router) {
 	api.Handle("/abuse/blocks", configure(http.HandlerFunc(s.handleAbuseBlock))).Methods("POST")
 	api.Handle("/abuse/blocks", configure(http.HandlerFunc(s.handleAbuseUnblock))).Methods("DELETE")
 	api.Handle("/abuse/holds", configure(http.HandlerFunc(s.handleAbuseRelease))).Methods("DELETE")
+	api.Handle("/abuse/alerts", configure(http.HandlerFunc(s.handleAbuseDismiss))).Methods("DELETE")
 }
 
 func (s *Server) handleAbuseStatus(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +60,7 @@ func (s *Server) handleAbuseStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"policy": s.abuse.Policy(), "shared": s.abuse.Shared(ctx),
 		"blocks": s.abuse.Blocks(), "events": s.abuse.Events(ctx), "accounts": s.abuse.Accounts(ctx),
-		"holds":     s.abuse.Holds(ctx),
+		"holds": s.abuse.Holds(ctx), "alerts": s.abuse.Alerts(ctx), "locations": s.locations != nil,
 		"enforcers": s.abuse.Enforcers(ctx),
 		// So the page can warn an administrator who could block themselves.
 		"you": addr, "you_exempt": s.abuse.Exempt(addr),
@@ -126,6 +137,21 @@ func (s *Server) handleAbuseUnblock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("Address unblocked", "address", abuse.Network(address), "by", abuseActor(r))
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleAbuseDismiss removes a sign-in alert an administrator has dealt with.
+func (s *Server) handleAbuseDismiss(w http.ResponseWriter, r *http.Request) {
+	if s.abuse == nil {
+		http.Error(w, "Abuse protection is not available", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := s.abuse.DismissAlert(ctx, r.URL.Query().Get("id"), abuseActor(r)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

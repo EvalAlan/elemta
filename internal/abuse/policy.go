@@ -70,6 +70,9 @@ type Policy struct {
 	// Allowlist holds addresses and networks that are never limited or
 	// blocked: an operator's own, monitoring, trusted relays.
 	Allowlist []string `toml:"allowlist" json:"allowlist"`
+	// SignInAlerts is "on" or "off": alerts for sign-ins from somewhere
+	// unexpected (signin.go). They never block.
+	SignInAlerts string `toml:"sign_in_alerts" json:"sign_in_alerts"`
 	// Rules are allow and deny decisions, by direction (rules.go).
 	Rules []Rule `toml:"rules" json:"rules"`
 }
@@ -131,6 +134,9 @@ func (p Policy) Validate() error {
 	if _, err := compileRules(p.Rules); err != nil {
 		return err
 	}
+	if p.SignInAlerts != "" && p.SignInAlerts != "on" && p.SignInAlerts != "off" {
+		return fmt.Errorf("sign-in alerts must be on or off, not %q", p.SignInAlerts)
+	}
 	return nil
 }
 
@@ -165,6 +171,9 @@ func (p Policy) WithDefaults() Policy {
 	}
 	if p.Allowlist == nil {
 		p.Allowlist = []string{}
+	}
+	if p.SignInAlerts == "" {
+		p.SignInAlerts = "on"
 	}
 	return p
 }

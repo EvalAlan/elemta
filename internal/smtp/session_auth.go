@@ -408,6 +408,11 @@ func (ah *AuthHandler) performAuthentication(ctx context.Context, username, pass
 
 	// Authentication successful
 	ah.state.SetAuthenticated(ctx, true, username)
+	// The webmail's port carries its users from inside; it reports their
+	// sign-ins itself, from their own addresses.
+	if ah.session == nil || !ah.session.webmailSubmission {
+		ah.abuse.RecordSignIn(ctx, ah.conn.RemoteAddr().String(), "smtp", username)
+	}
 	ah.recordAuthSuccess(ctx, username, method, duration)
 
 	// Update session state machine if available

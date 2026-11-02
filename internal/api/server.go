@@ -30,6 +30,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/config"
 	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/dnshealth"
+	"github.com/EvalAlan/elemta/internal/geoip"
 	"github.com/EvalAlan/elemta/internal/metrics"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/EvalAlan/elemta/internal/queue"
@@ -188,10 +189,12 @@ type ScannerStatus struct {
 
 // Server represents an API server for Elemta
 type Server struct {
-	config         *Config
-	mainConfig     *MainConfig // Main application configuration
-	configPath     string      // Path to config file for persistence
-	abuse          *abuse.Engine
+	config     *Config
+	mainConfig *MainConfig // Main application configuration
+	configPath string      // Path to config file for persistence
+	abuse      *abuse.Engine
+	// locations places sign-ins for alerts; nil without a database.
+	locations      *geoip.DB
 	httpServer     *http.Server
 	listener       net.Listener
 	restarting     atomic.Bool
@@ -1467,6 +1470,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.loginThrottle.recordSuccess(addr, loginReq.Username)
+	s.abuse.RecordSignIn(r.Context(), addr, "admin", loginReq.Username)
 
 	// A session cookie the browser already holds is replaced, not kept
 	// alongside: an attacker who planted one must not end up signed in.

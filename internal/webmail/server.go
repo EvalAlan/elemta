@@ -854,6 +854,9 @@ func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWrit
 	s.setCookie(w, sessionCookie, sess.ID, 0)
 	s.setAppearanceCookies(w, s.prefs(ctx, sess))
 	s.log.Info("webmail: login", "user", user, "ip", s.clientIP(r))
+	if actor == "" {
+		s.abuse.RecordSignIn(ctx, s.clientIP(r), "webmail", sess.Address)
+	}
 	// Catch calendar changes made elsewhere (another mail app over IMAP,
 	// or before free/busy existed).
 	if actor == "" {

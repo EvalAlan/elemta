@@ -56,6 +56,7 @@
         el('abuse-spray').value = p.accounts_per_address || 0;
         el('abuse-inbound').value = p.messages_per_address_per_hour || 0;
         el('abuse-outbound').value = p.outbound_recipients_per_hour || 0;
+        el('abuse-signin-alerts').value = p.sign_in_alerts === 'off' ? 'off' : 'on';
         el('abuse-firewall').value = p.firewall;
         el('abuse-failures').value = p.failures_per_address;
         el('abuse-window').value = p.window_minutes;
@@ -103,6 +104,7 @@
             accounts_per_address: Number(el('abuse-spray').value),
             messages_per_address_per_hour: Number(el('abuse-inbound').value),
             outbound_recipients_per_hour: Number(el('abuse-outbound').value),
+            sign_in_alerts: el('abuse-signin-alerts').value,
             firewall: el('abuse-firewall').value,
             failures_per_address: Number(el('abuse-failures').value),
             window_minutes: Number(el('abuse-window').value),
@@ -138,6 +140,29 @@
                 notice(b.network + ' unblocked.');
             }));
             cell(row, button);
+            body.appendChild(row);
+        });
+    }
+    const ALERT_KINDS = { 'impossible-travel': 'Impossible travel', 'new-country': 'New country' };
+    function fillAlerts(alerts, locations, policy) {
+        const state = el('abuse-alerts-state');
+        state.textContent = policy && policy.sign_in_alerts === 'off'
+            ? 'Sign-in alerts are off in the settings below.'
+            : locations ? '' : 'No location database is installed, so sign-ins aren\'t placed. scripts/cloud-deploy.sh installs one.';
+        state.hidden = !state.textContent;
+        const body = table('abuse-alerts', alerts, 6, 'No unusual sign-ins.');
+        alerts.forEach(a => {
+            const row = document.createElement('tr');
+            const dismiss = document.createElement('button');
+            dismiss.type = 'button'; dismiss.className = 'btn btn-secondary btn-sm'; dismiss.textContent = 'Dismiss';
+            dismiss.setAttribute('aria-label', 'Dismiss the alert for ' + a.account);
+            dismiss.addEventListener('click', async () => {
+                try { await call('/alerts?id=' + encodeURIComponent(a.id), 'DELETE'); refresh(); }
+                catch (e) { notice(e.message, true); }
+            });
+            cell(row, when(a.time)); cell(row, a.account); cell(row, ALERT_KINDS[a.kind] || a.kind);
+            cell(row, a.detail); row.lastChild.className = 'abuse-wrap';
+            cell(row, a.address + ' (' + a.service + ')'); cell(row, dismiss);
             body.appendChild(row);
         });
     }
@@ -348,7 +373,7 @@
         try {
             const [status, stats] = await Promise.all([call(''), call('/metrics?range=' + range)]);
             fillPolicy(status.policy); fillStatus(status); fillYou(status);
-            fillBlocks(status.blocks || []); fillHolds(status.holds || []); fillAccounts(status.accounts || []); fillEvents(status.events || []);
+            fillBlocks(status.blocks || []); fillHolds(status.holds || []); fillAlerts(status.alerts || [], status.locations, status.policy); fillAccounts(status.accounts || []); fillEvents(status.events || []);
             fillEnforcers(status.enforcers || [], status.policy);
             lastStats = stats; fillTiles(stats, (status.blocks || []).length); fillTop(stats.top || []); drawGraphs();
         } catch (error) { notice(error.message, true); }

@@ -42,6 +42,13 @@ and backups that left out message bodies stored in S3.
 
 ### What's new
 
+- **Unusual sign-in alerts.** The Abuse page lists successful sign-ins from somewhere
+  an account couldn't have reached in time (impossible travel) or from a country it
+  hasn't used before, across IMAP, POP3, ManageSieve, SMTP, webmail and the console.
+  They alert and never block. `scripts/cloud-deploy.sh` fetches DB-IP's free location
+  database monthly; see "Unusual sign-ins" in
+  [docs/abuse-protection.md](docs/abuse-protection.md).
+
 - **Volume limits and password spraying.** The Abuse page can now cap mail per hour
   from one outside address (deferred, including on port 25), and puts an account's
   outside mail on hold when it sends to more recipients than the hourly limit, until

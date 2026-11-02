@@ -121,6 +121,29 @@ counts and records without refusing.
 Class-of-service sending limits (`messages_per_hour`, `recipients_per_day`) still
 apply on top, per class. Those are a quota; the hold is an alarm.
 
+## Unusual sign-ins
+
+A stolen password works, so nothing above notices it being used. The Abuse page
+lists successful sign-ins that look wrong for their account:
+
+- **Impossible travel:** faster than 1,000 km/h from the account's last sign-in, and
+  over 500 km, so a free database guessing a neighbouring city doesn't count.
+- **New country:** a country the account hasn't signed in from in 90 days. The first
+  sign-in an account ever makes sets its baseline and raises nothing.
+
+They alert and never block: VPNs, mobile networks and satellite links all look like
+travel. One account raises each kind at most once an hour. If an alert isn't the
+account's owner, change the password and reset two-step sign-in under Mail
+Administration. Dismiss alerts you've dealt with.
+
+Every service reports sign-ins from public addresses to Valkey; the admin console
+places them with [DB-IP](https://db-ip.com)'s free City Lite database (CC BY 4.0,
+attribution on the page) and keeps the last location of each account for 30 days and
+its countries for 90. `scripts/cloud-deploy.sh` fetches the database when it's missing
+or a month old; set `GEOIP_DOWNLOAD=false` in `cloud.env` to skip it. Elsewhere, point
+`ELEMTA_GEOIP_DB` at the `.mmdb` file in the console's container. Turning the alerts off
+in the settings stops anything new being kept.
+
 ## Allow and deny rules
 
 The Abuse page's rule list holds your own decisions. A change reaches every service
