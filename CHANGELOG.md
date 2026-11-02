@@ -42,6 +42,14 @@ and backups that left out message bodies stored in S3.
 
 ### What's new
 
+- **Volume limits and password spraying.** The Abuse page can now cap mail per hour
+  from one outside address (deferred, including on port 25), and puts an account's
+  outside mail on hold when it sends to more recipients than the hourly limit, until
+  an administrator releases it. That's the usual sign of a taken-over account. One
+  address failing against many different accounts is blocked as password spraying.
+  New installs get 1000 messages, 500 recipients and 10 accounts; existing ones keep
+  these off until set.
+
 - **Allow and deny rules with direction.** The Abuse page now has one rule list for
   inbound and outbound, matching an address, network, domain or mail address, across
   SMTP, IMAP, POP3, ManageSieve, webmail and the console. Rules can expire, carry a

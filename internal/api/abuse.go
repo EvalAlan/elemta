@@ -35,6 +35,7 @@ func (s *Server) abuseRoutes(api *mux.Router) {
 	api.Handle("/abuse/policy", configure(http.HandlerFunc(s.handleAbusePolicy))).Methods("PUT")
 	api.Handle("/abuse/blocks", configure(http.HandlerFunc(s.handleAbuseBlock))).Methods("POST")
 	api.Handle("/abuse/blocks", configure(http.HandlerFunc(s.handleAbuseUnblock))).Methods("DELETE")
+	api.Handle("/abuse/holds", configure(http.HandlerFunc(s.handleAbuseRelease))).Methods("DELETE")
 }
 
 func (s *Server) handleAbuseStatus(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +49,7 @@ func (s *Server) handleAbuseStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"policy": s.abuse.Policy(), "shared": s.abuse.Shared(ctx),
 		"blocks": s.abuse.Blocks(), "events": s.abuse.Events(ctx), "accounts": s.abuse.Accounts(ctx),
+		"holds":     s.abuse.Holds(ctx),
 		"enforcers": s.abuse.Enforcers(ctx),
 		// So the page can warn an administrator who could block themselves.
 		"you": addr, "you_exempt": s.abuse.Exempt(addr),
@@ -124,6 +126,23 @@ func (s *Server) handleAbuseUnblock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("Address unblocked", "address", abuse.Network(address), "by", abuseActor(r))
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleAbuseRelease lets an account on hold send outside the server again.
+func (s *Server) handleAbuseRelease(w http.ResponseWriter, r *http.Request) {
+	if s.abuse == nil {
+		http.Error(w, "Abuse protection is not available", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	account := r.URL.Query().Get("account")
+	if err := s.abuse.Release(ctx, account, abuseActor(r)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	slog.Info("Account released from hold", "account", account, "by", abuseActor(r))
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

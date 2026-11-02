@@ -100,3 +100,54 @@ func TestOutboundRuleLeavesInboundMailAlone(t *testing.T) {
 		t.Errorf("inbound from an outbound-denied domain: %q", reply)
 	}
 }
+
+// Mail from one outside address past its hourly limit is deferred, so a real
+// server retries later; the deployment's own relays are left alone.
+func TestInboundMessageLimitDefersMail(t *testing.T) {
+	cfg := createTestConfig(t)
+	cfg.LocalDomains = []string{"example.com"}
+	cfg.AllowedRelays = []string{"203.0.113.50/32"}
+	cfg.DevMode = false
+	cfg.ProxyProtocolFrom = []string{"127.0.0.1/32", "::1/128"}
+	server, err := NewServer(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = server.Close() })
+	p := abuse.DefaultPolicy()
+	p.MessagesPerAddressPerHour = 2
+	engine := abuse.New("test", "", nil)
+	engine.Own(p)
+	server.SetAbuse(engine)
+	go func() { _ = server.Start() }()
+	require.Eventually(t, func() bool { return server.Addr() != nil }, 5*time.Second, 5*time.Millisecond)
+
+	dial := func(address string) *smtpProbe {
+		conn, err := net.DialTimeout("tcp", server.Addr().String(), 5*time.Second)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close() })
+		_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+		_, err = conn.Write([]byte("PROXY TCP4 " + address + " 198.51.100.1 40000 25\r\n"))
+		require.NoError(t, err)
+		p := &smtpProbe{t: t, conn: conn, r: bufio.NewReader(conn)}
+		p.expect("220")
+		p.cmd("EHLO remote.example")
+		return p
+	}
+	outside := dial("198.51.100.20")
+	for i := 0; i < 2; i++ {
+		if reply := outside.cmd("MAIL FROM:<x@remote.example>"); !strings.HasPrefix(reply, "250") {
+			t.Fatalf("message %d: %q", i+1, reply)
+		}
+		outside.cmd("RSET")
+	}
+	if reply := outside.cmd("MAIL FROM:<x@remote.example>"); !strings.HasPrefix(reply, "451 4.7.1") {
+		t.Fatalf("over the limit: %q", reply)
+	}
+	// An allowed relay is this deployment's own, and isn't counted.
+	relay := dial("203.0.113.50")
+	for i := 0; i < 4; i++ {
+		if reply := relay.cmd("MAIL FROM:<app@example.com>"); !strings.HasPrefix(reply, "250") {
+			t.Fatalf("allowed relay, message %d: %q", i+1, reply)
+		}
+		relay.cmd("RSET")
+	}
+}

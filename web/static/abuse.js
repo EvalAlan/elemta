@@ -14,7 +14,7 @@
     // while it has data.
     const SERVICES = [['imap', 'IMAP'], ['smtp', 'SMTP'], ['webmail', 'Webmail'], ['admin', 'Admin console'],
         ['pop3', 'POP3'], ['sieve', 'ManageSieve'], ['mailbox', 'IMAP and POP3, not separated']];
-    const REASONS = [['blocked', 'Blocked'], ['limit', 'Too many connections'], ['rate', 'Too fast'], ['rule', 'Denied by a rule']];
+    const REASONS = [['blocked', 'Blocked'], ['limit', 'Too many connections'], ['rate', 'Too fast'], ['rule', 'Denied by a rule'], ['messages', 'Too much mail'], ['held', 'Account on hold']];
 
     async function call(path, method = 'GET', body) {
         const options = { method, headers: { Accept: 'application/json' } };
@@ -53,6 +53,9 @@
         el('abuse-connections').value = p.connections_per_address;
         el('abuse-rate').value = p.connections_per_minute;
         el('abuse-network').value = p.failures_per_network;
+        el('abuse-spray').value = p.accounts_per_address || 0;
+        el('abuse-inbound').value = p.messages_per_address_per_hour || 0;
+        el('abuse-outbound').value = p.outbound_recipients_per_hour || 0;
         el('abuse-firewall').value = p.firewall;
         el('abuse-failures').value = p.failures_per_address;
         el('abuse-window').value = p.window_minutes;
@@ -97,6 +100,9 @@
             connections_per_address: Number(el('abuse-connections').value),
             connections_per_minute: Number(el('abuse-rate').value),
             failures_per_network: Number(el('abuse-network').value),
+            accounts_per_address: Number(el('abuse-spray').value),
+            messages_per_address_per_hour: Number(el('abuse-inbound').value),
+            outbound_recipients_per_hour: Number(el('abuse-outbound').value),
             firewall: el('abuse-firewall').value,
             failures_per_address: Number(el('abuse-failures').value),
             window_minutes: Number(el('abuse-window').value),
@@ -132,6 +138,25 @@
                 notice(b.network + ' unblocked.');
             }));
             cell(row, button);
+            body.appendChild(row);
+        });
+    }
+    function fillHolds(holds) {
+        const body = table('abuse-holds', holds, 4, 'No account is on hold.');
+        holds.forEach(h => {
+            const row = document.createElement('tr');
+            const release = document.createElement('button');
+            release.type = 'button'; release.className = 'btn btn-secondary btn-sm'; release.textContent = 'Release';
+            release.setAttribute('aria-label', 'Release ' + h.account);
+            release.addEventListener('click', async () => {
+                if (!confirm('Let ' + h.account + ' send outside the server again? Change its password first if it was taken over.')) return;
+                try {
+                    await call('/holds?account=' + encodeURIComponent(h.account), 'DELETE');
+                    notice(h.account + ' can send again.');
+                    refresh();
+                } catch (e) { notice(e.message, true); }
+            });
+            cell(row, h.account); cell(row, h.reason); cell(row, when(h.created)); cell(row, release);
             body.appendChild(row);
         });
     }
@@ -323,7 +348,7 @@
         try {
             const [status, stats] = await Promise.all([call(''), call('/metrics?range=' + range)]);
             fillPolicy(status.policy); fillStatus(status); fillYou(status);
-            fillBlocks(status.blocks || []); fillAccounts(status.accounts || []); fillEvents(status.events || []);
+            fillBlocks(status.blocks || []); fillHolds(status.holds || []); fillAccounts(status.accounts || []); fillEvents(status.events || []);
             fillEnforcers(status.enforcers || [], status.policy);
             lastStats = stats; fillTiles(stats, (status.blocks || []).length); fillTop(stats.top || []); drawGraphs();
         } catch (error) { notice(error.message, true); }
