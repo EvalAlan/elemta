@@ -49,6 +49,10 @@ and backups that left out message bodies stored in S3.
   database monthly; see "Unusual sign-ins" in
   [docs/abuse-protection.md](docs/abuse-protection.md).
 
+- **Abuse alerts by email.** Unusual sign-ins, accounts under attack and accounts put
+  on hold can be emailed to administrators as they happen, at most 20 an hour. Set
+  the addresses on the Abuse page.
+
 - **Accounts under attack keep working for their owners.** When many addresses fail
   against one account, its password works only from networks it has signed in from in
   the last 90 days, and a right password from anywhere else is answered like a wrong

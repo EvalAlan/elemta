@@ -65,6 +65,7 @@
             el('abuse-limit-' + name + '-rate').value = limit.connections_per_minute || '';
         });
         el('abuse-signin-alerts').value = p.sign_in_alerts === 'off' ? 'off' : 'on';
+        el('abuse-alert-email').value = (p.alert_email || []).join(', ');
         el('abuse-firewall').value = p.firewall;
         el('abuse-failures').value = p.failures_per_address;
         el('abuse-window').value = p.window_minutes;
@@ -118,6 +119,7 @@
                 connections_per_minute: Number(el('abuse-limit-' + name + '-rate').value) || 0,
             })).filter(l => l.connections_per_address || l.connections_per_minute),
             sign_in_alerts: el('abuse-signin-alerts').value,
+            alert_email: el('abuse-alert-email').value.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean),
             firewall: el('abuse-firewall').value,
             failures_per_address: Number(el('abuse-failures').value),
             window_minutes: Number(el('abuse-window').value),

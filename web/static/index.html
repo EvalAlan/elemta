@@ -689,6 +689,9 @@
                             <label for="abuse-signin-alerts">Unusual sign-in alerts</label>
                             <select id="abuse-signin-alerts"><option value="on">On</option><option value="off">Off</option></select>
                             <p class="field-hint">Keeps each account's last sign-in location for 30 days and its countries for 90, to compare against. Off keeps nothing new.</p>
+                            <label for="abuse-alert-email">Email alerts to</label>
+                            <input id="abuse-alert-email" type="text" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="security@example.com">
+                            <p class="field-hint">Unusual sign-ins, accounts under attack and accounts put on hold are emailed here as they happen, up to 20 an hour. Separate addresses with commas. Empty sends nothing.</p>
                             <label for="abuse-outbound">Recipients outside the server per hour, per account</label>
                             <input id="abuse-outbound" type="number" min="0" max="10000000" required>
                             <p class="field-hint">Over it, the account's outside mail is put on hold until you release it: a taken-over account sends far more than its owner. Mail inside the server still flows. 0 turns it off.</p>

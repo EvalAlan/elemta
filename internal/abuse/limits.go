@@ -118,6 +118,8 @@ func (e *Engine) OutboundRecipient(ctx context.Context, account string) bool {
 	}
 	h := Hold{Account: account, Reason: reason, Recipients: n, Created: time.Now().UTC()}
 	e.placeHold(ctx, h)
+	subject, body := holdSubjectBody(h)
+	e.notify(ctx, subject, body)
 	e.record(ctx, Event{Action: "held", Network: account, Service: "smtp", Detail: reason + "; sending stopped until released"})
 	e.log.Warn("Account's outside mail put on hold", "account", account, "recipients", n)
 	e.Refused(RefusedHeld)
