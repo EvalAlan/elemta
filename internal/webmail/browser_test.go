@@ -293,7 +293,29 @@ func seedLongInbox(b *browser, extra map[uint32]string) {
 func (b *browser) clickRow(n int) {
 	b.t.Helper()
 	evalAs[bool](b, fmt.Sprintf(`document.querySelectorAll("a.row")[%d].click(); true`, n))
-	b.run(chromedp.Sleep(400 * time.Millisecond))
+}
+
+// waitFor polls until expr is true. A busy CI runner takes many times longer
+// than a laptop, so a fixed sleep long enough for one is a flaky test on the
+// other. Errors count as not yet, because the page may be navigating.
+func (b *browser) waitFor(expr string) {
+	b.t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+		ok, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+		cancel()
+		if err == nil && ok {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	b.t.Fatalf("timed out waiting for %s", expr)
+}
+
+// The reader's subject, once the pane shows the given message.
+func readerShows(subject string) string {
+	return fmt.Sprintf(`(document.querySelector("[data-message-subject]") || {textContent: ""}).textContent.includes(%q)`, subject)
 }
 
 // Clicking through mail must leave the page alone: a full load repaints
@@ -307,14 +329,12 @@ func TestBrowserReadingPaneKeepsThePage(t *testing.T) {
 		t.Fatal("the list does not scroll by itself")
 	}
 	b.clickRow(35)
+	b.waitFor(`location.search.includes("uid=136") && document.querySelector("iframe.body-frame").classList.contains("autosized")`)
 	if !evalAs[bool](b, `window.__samePage === true`) {
 		t.Error("opening a message loaded a whole page")
 	}
-	if got := evalAs[string](b, `location.search`); !strings.Contains(got, "uid=136") {
-		t.Errorf("address = %q", got)
-	}
-	if got := evalAs[string](b, `document.querySelector("[data-message-subject]").textContent`); !strings.Contains(got, "Message 36") {
-		t.Errorf("reader shows %q", got)
+	if !evalAs[bool](b, readerShows("Message 36")) {
+		t.Error("the reader does not show the message")
 	}
 	if !evalAs[bool](b, `document.title.includes("Message 36")`) {
 		t.Errorf("title = %q", evalAs[string](b, `document.title`))
@@ -340,19 +360,16 @@ func TestBrowserReadingPaneKeepsThePage(t *testing.T) {
 	}
 
 	// The toolbar's arrows go through the pane as well, and the row follows.
-	b.run(chromedp.KeyEvent("j"), chromedp.Sleep(400*time.Millisecond))
-	if got := evalAs[string](b, `document.querySelector("[data-message-subject]").textContent`); !strings.Contains(got, "Message 37") {
-		t.Errorf("j opened %q", got)
-	}
+	b.run(chromedp.KeyEvent("j"))
+	b.waitFor(readerShows("Message 37"))
 
 	// Back and forward walk the messages without leaving the page.
-	b.run(chromedp.Evaluate[chromedp.Void](`history.back()`, chromedp.EvalAsValue), chromedp.Sleep(400*time.Millisecond))
-	if got := evalAs[string](b, `document.querySelector("[data-message-subject]").textContent`); !strings.Contains(got, "Message 36") {
-		t.Errorf("back showed %q", got)
-	}
-	b.run(chromedp.Evaluate[chromedp.Void](`history.back()`, chromedp.EvalAsValue), chromedp.Sleep(400*time.Millisecond))
-	if !evalAs[bool](b, `!!document.querySelector(".reader-empty") && !document.querySelector("li.selected") && window.__samePage === true`) {
-		t.Error("back to the list did not close the message")
+	b.run(chromedp.Evaluate[chromedp.Void](`history.back()`, chromedp.EvalAsValue))
+	b.waitFor(readerShows("Message 36"))
+	b.run(chromedp.Evaluate[chromedp.Void](`history.back()`, chromedp.EvalAsValue))
+	b.waitFor(`!!document.querySelector(".reader-empty") && !document.querySelector("li.selected")`)
+	if !evalAs[bool](b, `window.__samePage === true`) {
+		t.Error("back to the list loaded a whole page")
 	}
 }
 
@@ -365,9 +382,7 @@ func TestBrowserReadingPaneFallsBackToTheLink(t *testing.T) {
 	b.run(chromedp.Reload(), chromedp.WaitVisible(chromedp.CSS(`[data-ctx="message"]`)))
 	evalAs[bool](b, `window.__samePage = true; true`)
 	b.clickRow(3)
-	if evalAs[bool](b, `window.__samePage === true`) {
-		t.Error("a message that can't be fetched stayed on the old page")
-	}
+	b.waitFor(`window.__samePage !== true && document.readyState === "complete"`)
 	// The error page's failed request is the fallback working.
 	b.mu.Lock()
 	b.problems = nil
@@ -381,10 +396,11 @@ func TestBrowserReadingPaneSetsUpEncryptedMail(t *testing.T) {
 	seedLongInbox(b, map[uint32]string{102: "-----BEGIN PGP MESSAGE-----\r\n\r\nwcBMA0Uw\r\n=abcd\r\n-----END PGP MESSAGE-----"})
 	b.login()
 	b.clickRow(0)
+	b.waitFor(readerShows("Message 1"))
 	b.clickRow(1)
-	if !evalAs[bool](b, `!!document.querySelector("[data-pgp-message]") && !document.querySelector("[data-pgp-unlock]").hidden`) {
-		t.Error("encrypted message opened in the pane has no way to unlock it")
-	}
+	// The form appears when the worker answers, and the worker has a large
+	// library to load first.
+	b.waitFor(`(() => { const f = document.querySelector("[data-pgp-unlock]"); return !!f && !f.hidden })()`)
 }
 
 func TestBrowserRichCompose(t *testing.T) {
