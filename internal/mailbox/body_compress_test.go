@@ -131,7 +131,10 @@ func compressedEngine(t *testing.T) (*Engine, Account, *memBodies) {
 func TestCompressBodies(t *testing.T) {
 	e, a, inner := compressedEngine(t)
 	ctx := context.Background()
-	for _, body := range [][]byte{letter(), noise(t, 4096)} {
+	// The noise goes after headers: as a whole message, random bytes made a
+	// header line with a NUL in it often enough to fail the test now and then.
+	photo := append([]byte("Subject: photo\r\nContent-Type: application/octet-stream\r\n\r\n"), noise(t, 4096)...)
+	for _, body := range [][]byte{letter(), photo} {
 		if _, err := e.Append(ctx, a.ID, "INBOX", body, nil, time.Now(), ""); err != nil {
 			t.Fatal(err)
 		}

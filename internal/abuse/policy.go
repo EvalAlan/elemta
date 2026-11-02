@@ -86,6 +86,9 @@ type Policy struct {
 	// SignInAlerts is "on" or "off": alerts for sign-ins from somewhere
 	// unexpected (signin.go). They never block.
 	SignInAlerts string `toml:"sign_in_alerts" json:"sign_in_alerts"`
+	// AlertEmail is where sign-in alerts and holds are emailed (notify.go);
+	// empty sends nothing.
+	AlertEmail []string `toml:"alert_email" json:"alert_email"`
 	// Rules are allow and deny decisions, by direction (rules.go).
 	Rules []Rule `toml:"rules" json:"rules"`
 }
@@ -120,7 +123,7 @@ func (p Policy) ConnectionLimits(protocol string) (perAddress, perMinute int) {
 // mail senders, and is far below what one host needs to exhaust a service.
 func DefaultPolicy() Policy {
 	return Policy{Mode: ModeEnforce, ConnectionsPerAddress: 25, ConnectionsPerMinute: 120, FailuresPerAddress: 50,
-		FailuresPerNetwork: 200, AccountsPerAddress: 10, AddressesPerAccount: 20, MessagesPerAddressPerHour: 1000, OutboundRecipientsPerHour: 500, WindowMinutes: 15, BlockMinutes: 15, MaxBlockHours: 24, Firewall: FirewallLog, Allowlist: []string{}}
+		FailuresPerNetwork: 200, AccountsPerAddress: 10, AddressesPerAccount: 20, MessagesPerAddressPerHour: 1000, OutboundRecipientsPerHour: 500, WindowMinutes: 15, BlockMinutes: 15, MaxBlockHours: 24, Firewall: FirewallLog, Allowlist: []string{}, AlertEmail: []string{}}
 }
 
 // Validate refuses a policy that couldn't be applied. A typo in an allowlist
@@ -197,6 +200,9 @@ func (p Policy) Validate() error {
 	if _, err := compileRules(p.Rules); err != nil {
 		return err
 	}
+	if err := validAlertEmail(p.AlertEmail); err != nil {
+		return err
+	}
 	if p.SignInAlerts != "" && p.SignInAlerts != "on" && p.SignInAlerts != "off" {
 		return fmt.Errorf("sign-in alerts must be on or off, not %q", p.SignInAlerts)
 	}
@@ -237,6 +243,9 @@ func (p Policy) WithDefaults() Policy {
 	}
 	if p.SignInAlerts == "" {
 		p.SignInAlerts = "on"
+	}
+	if p.AlertEmail == nil {
+		p.AlertEmail = []string{}
 	}
 	p, _ = p.MoveAllowlist()
 	return p

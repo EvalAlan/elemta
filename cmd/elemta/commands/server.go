@@ -192,6 +192,7 @@ func startServer() {
 	abuseEngine := abuse.New("mta", os.Getenv("VALKEY_ADDR"), nil)
 	server.SetAbuse(abuseEngine)
 	go abuseEngine.Run(abuseCtx)
+	go server.SendAbuseNotices(abuseCtx)
 
 	// Start SMTP server
 	slog.Info("Starting SMTP server")

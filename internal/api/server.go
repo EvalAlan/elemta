@@ -2578,6 +2578,7 @@ func (s *Server) persistConfig() error {
 			edit{"abuse", "max_block_hours", p.MaxBlockHours},
 			edit{"abuse", "allowlist", p.Allowlist},
 			edit{"abuse", "sign_in_alerts", p.SignInAlerts},
+			edit{"abuse", "alert_email", p.AlertEmail},
 			edit{"abuse", "rules", ruleTables(p.Rules)},
 		)
 	}

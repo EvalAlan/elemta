@@ -247,6 +247,8 @@ func (e *Engine) raise(ctx context.Context, a Alert) {
 		_ = client.Do(ctx, client.B().Zrem().Key(keyAlertOrder).Member(old...).Build()).Error()
 	}
 	metricAlerts.WithLabelValues(a.Kind).Inc()
+	subject, body := alertSubjectBody(a)
+	e.notify(ctx, subject, body)
 	e.record(ctx, Event{Action: a.Kind, Network: a.Address, Service: a.Service, Detail: a.Account + ": " + a.Detail})
 	e.log.Warn("Sign-in alert", "kind", a.Kind, "account", a.Account, "address", a.Address, "detail", a.Detail)
 }

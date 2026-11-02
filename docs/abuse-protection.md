@@ -179,6 +179,16 @@ or a month old; set `GEOIP_DOWNLOAD=false` in `cloud.env` to skip it. Elsewhere,
 `ELEMTA_GEOIP_DB` at the `.mmdb` file in the console's container. Turning the alerts off
 in the settings stops anything new being kept.
 
+## Email alerts
+
+Set **Email alerts to** in the settings to have unusual sign-ins, accounts under
+attack and accounts put on hold emailed as they happen. They come from
+`postmaster@` the first local domain, go through the queue like any other mail
+(DKIM-signed, retried, and shown on the queue page), and are marked
+`Auto-Submitted` so vacation replies leave them alone. At most 20 are sent an hour;
+past that, one more says there are others on the Abuse page. Email alerts need
+Valkey, as the alerts themselves do.
+
 ## Allow and deny rules
 
 The Abuse page's rule list holds your own decisions. A change reaches every service
