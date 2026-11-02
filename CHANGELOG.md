@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Release tarballs can now be run as they are.** They unpack into one directory
+  and include the admin console's web files, which the console needs and which were
+  missing, along with a starter configuration, a README, the GPL license and the
+  license files of the Go dependencies. Releases also carry a `SHA256SUMS` file.
+  Anything that expected the binaries at the top of the archive needs a new path.
+
 - **Clicking through mail no longer reloads the page.** Opening a message replaces
   only the reading pane, and on wide screens the list and the message scroll
   separately, so a message opened from far down the list stays in view.
