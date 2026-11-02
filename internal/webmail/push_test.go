@@ -34,11 +34,20 @@ func TestIMAPIdleArrivalAndCancellation(t *testing.T) {
 		}
 	}
 drained:
-	appendTo(t, writer, "INBOX", testMessage(1, "Push delivery"))
-	select {
-	case <-changed:
-	case <-time.After(5 * time.Second):
-		t.Fatal("delivery did not trigger IDLE")
+	// The in-memory test server says it's idling just before it starts
+	// listening, and holds what arrives in that gap until the next update, so a
+	// second delivery may be needed. The real mailbox server polls and has no gap.
+	deadline := time.After(5 * time.Second)
+waiting:
+	for i := 1; ; i++ {
+		appendTo(t, writer, "INBOX", testMessage(i, "Push delivery"))
+		select {
+		case <-changed:
+			break waiting
+		case <-time.After(500 * time.Millisecond):
+		case <-deadline:
+			t.Fatal("delivery did not trigger IDLE")
+		}
 	}
 	cancel()
 	select {

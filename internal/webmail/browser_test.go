@@ -146,6 +146,10 @@ func (b *browser) login() {
 		chromedp.Submit(chromedp.ID("password")),
 		chromedp.WaitVisible(chromedp.CSS(`[data-ctx="message"]`)),
 	)
+	// A row shows before the deferred scripts run, and until they do a right
+	// click or a shortcut goes nowhere. The first page of a session then saves
+	// the time zone and reloads once, which would swallow whatever came next.
+	b.waitFor(`document.readyState === "complete" && !document.body.hasAttribute("data-detect-tz")`)
 }
 
 func evalAs[T any](b *browser, expr string) T {
@@ -183,7 +187,8 @@ func TestBrowserThemeToggle(t *testing.T) {
 	b := newBrowser(t)
 	b.login()
 	before := evalAs[string](b, `document.documentElement.getAttribute("data-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")`)
-	b.run(chromedp.Click(chromedp.CSS(`[data-theme-toggle]`), chromedp.NodeVisible), chromedp.Sleep(300*time.Millisecond))
+	b.run(chromedp.Click(chromedp.CSS(`[data-theme-toggle]`), chromedp.NodeVisible))
+	b.waitFor(`performance.getEntriesByType("resource").some(e => e.name.endsWith("/settings/theme") && e.responseEnd > 0)`)
 	after := evalAs[string](b, `document.documentElement.getAttribute("data-theme") || ""`)
 	if after == "" || after == before {
 		t.Fatalf("toggle went from %q to %q", before, after)
@@ -213,10 +218,8 @@ func TestBrowserContextMenu(t *testing.T) {
 		}
 	}
 	// Escape closes it.
-	b.run(chromedp.KeyEvent("\x1b"), chromedp.Sleep(100*time.Millisecond))
-	if evalAs[bool](b, `!!document.querySelector(".ctx-menu")`) {
-		t.Error("Escape left the context menu open")
-	}
+	b.run(chromedp.KeyEvent("\x1b"))
+	b.waitFor(`!document.querySelector(".ctx-menu")`)
 }
 
 // A conversation row's data-uid lists every message in it, which bulk actions
@@ -267,10 +270,8 @@ func TestBrowserKeyboardOpensMessage(t *testing.T) {
 	b := newBrowser(t)
 	b.login()
 	// j selects the first message, Enter opens it.
-	b.run(chromedp.KeyEvent("j"), chromedp.KeyEvent("\r"), chromedp.Sleep(500*time.Millisecond))
-	if path := evalAs[string](b, `location.pathname + location.search`); !strings.Contains(path, "uid=7") {
-		t.Fatalf("j then Enter went to %q", path)
-	}
+	b.run(chromedp.KeyEvent("j"), chromedp.KeyEvent("\r"))
+	b.waitFor(`location.search.includes("uid=7")`)
 }
 
 // A full list, so that opening a message from further down needs scrolling.
