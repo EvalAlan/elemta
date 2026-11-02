@@ -161,8 +161,24 @@
                 catch (e) { notice(e.message, true); }
             });
             cell(row, when(a.time)); cell(row, a.account); cell(row, ALERT_KINDS[a.kind] || a.kind);
+            // A block covers every client protocol for a day, which is room to
+            // reach the account's owner; port 25 stays open as for any block.
+            const block = document.createElement('button');
+            block.type = 'button'; block.className = 'btn btn-secondary btn-sm'; block.textContent = 'Block address';
+            block.setAttribute('aria-label', 'Block ' + a.address + ' for a day');
+            block.addEventListener('click', async () => {
+                if (!confirm('Block ' + a.address + ' for 24 hours on every client protocol?')) return;
+                try {
+                    await call('/blocks', 'POST', { address: a.address, minutes: 1440, reason: 'Unusual sign-in to ' + a.account });
+                    notice(a.address + ' is blocked for 24 hours. Change ' + a.account + "'s password if it wasn't them.");
+                    refresh();
+                } catch (e) { notice(e.message, true); }
+            });
+            const actions = document.createElement('span');
+            actions.className = 'abuse-actions';
+            actions.append(block, dismiss);
             cell(row, a.detail); row.lastChild.className = 'abuse-wrap';
-            cell(row, a.address + ' (' + a.service + ')'); cell(row, dismiss);
+            cell(row, a.address + ' (' + a.service + ')'); row.appendChild(document.createElement('td')).appendChild(actions);
             body.appendChild(row);
         });
     }
