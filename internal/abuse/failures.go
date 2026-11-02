@@ -67,6 +67,8 @@ type local struct {
 	accounts map[string]*tally
 	top      map[string]*tally
 	events   []Event
+	holds    map[string]Hold
+	sprays   map[string]*spraySet
 	// pending waits for the next flush; series holds what couldn't be sent.
 	pending map[string]int
 	series  map[int64]map[string]int
@@ -137,6 +139,10 @@ func (e *Engine) Failure(ctx context.Context, addr, service, account string) {
 	metricFailures.WithLabelValues(e.service, service).Inc()
 	if failures >= p.FailuresPerAddress {
 		e.trip(ctx, p, network, service, failures)
+	} else if p.AccountsPerAddress > 0 {
+		if n := e.spray(ctx, network, account, window); n >= p.AccountsPerAddress {
+			e.trip(ctx, p, network, service, failures)
+		}
 	}
 	// Many addresses in one network add up to the network, which is how a
 	// rented block stays under the per-address limit.

@@ -610,6 +610,16 @@
                     </div>
                 </div>
                 <div class="card">
+                    <div class="card-header"><h3>Accounts on hold</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">These accounts sent to more outside recipients than the hourly limit allows. They can't send outside the server until released. Check the account and change its password first if it was taken over.</p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Account</th><th>Why</th><th>Since</th><th aria-label="Release"></th></tr></thead>
+                            <tbody id="abuse-holds"></tbody>
+                        </table></div>
+                    </div>
+                </div>
+                <div class="card">
                     <div class="card-header"><h3>Firewall</h3></div>
                     <div class="card-body">
                         <p class="field-hint" id="abuse-firewall-note"></p>
@@ -640,6 +650,15 @@
                             <label for="abuse-network">Failed sign-ins before blocking a whole /24 or /48</label>
                             <input id="abuse-network" type="number" min="0" max="1000000" required>
                             <p class="field-hint">Catches attackers spread across a rented block. 0 turns it off.</p>
+                            <label for="abuse-spray">Different accounts one address may fail against</label>
+                            <input id="abuse-spray" type="number" min="0" max="100000" required>
+                            <p class="field-hint">Catches password spraying: one password tried on many accounts, too few times each to reach the limit above. 0 turns it off.</p>
+                            <label for="abuse-inbound">Messages per hour from one outside address</label>
+                            <input id="abuse-inbound" type="number" min="0" max="10000000" required>
+                            <p class="field-hint">Includes port 25. Over it, mail is deferred, so a real server retries later. Signed-in users and allowed relays don't count. 0 turns it off.</p>
+                            <label for="abuse-outbound">Recipients outside the server per hour, per account</label>
+                            <input id="abuse-outbound" type="number" min="0" max="10000000" required>
+                            <p class="field-hint">Over it, the account's outside mail is put on hold until you release it: a taken-over account sends far more than its owner. Mail inside the server still flows. 0 turns it off.</p>
                             <label for="abuse-window">Counted over (minutes)</label>
                             <input id="abuse-window" type="number" min="1" max="1440" required>
                             <p class="field-hint">Failures add up across every service and account.</p>
@@ -1552,7 +1571,7 @@
                         <div class="card-body">
                             <div id="rate-limiting-loading" class="loading-placeholder">Loading rate limiting configuration...</div>
                             <div id="rate-limiting-content" style="display: none;">
-                                <p class="field-hint" id="rate-limit-inert">These settings belong to the rate limiter plugin, which isn't loaded, so they change nothing. Connection limits are under <strong>Abuse</strong>.</p>
+                                <p class="field-hint" id="rate-limit-inert">These settings belong to the rate limiter plugin, which isn't loaded, so they change nothing. The limits that apply, on connections, sign-ins, mail per address and each account's outside mail, are under <strong>Abuse</strong>.</p>
                                 <div class="config-section">
                                     <h4>Connection Limits</h4>
                                     <div class="config-grid">
@@ -1810,7 +1829,7 @@
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
     <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
-    <script src="/static/abuse.js?v=20261102-rules"></script>
+    <script src="/static/abuse.js?v=20261102-limits"></script>
 </body>
 
 </html>

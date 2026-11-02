@@ -306,6 +306,13 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 					"event_type", "rejection", "mail_from", mailFrom, "rule", rule.Value)
 				return fmt.Errorf("550 5.7.1 Sender refused by policy")
 			}
+			// Allowed relays are this deployment's own services and apps:
+			// forwarding through them is someone else's mail, already counted.
+			if !ch.isRelayAllowed("") && !ch.session.abuse.InboundMessage(ctx, ch.session.remoteAddr) {
+				ch.logger.InfoContext(ctx, "Message refused: too much mail from this address",
+					"event_type", "rejection", "client_ip", ch.session.remoteAddr)
+				return fmt.Errorf("451 4.7.1 Too much mail from this address; try again later")
+			}
 		}
 
 		// DNS blocklists. Consulted here rather than at connect so that an
@@ -407,6 +414,15 @@ func (ch *CommandHandler) HandleRCPT(ctx context.Context, args string) error {
 			ch.logger.InfoContext(ctx, "Recipient refused by a rule",
 				"event_type", "rejection", "recipient", rcptTo, "rule", rule.Value)
 			return fmt.Errorf("550 5.7.1 <%s>: Recipient refused by policy", sanitizeEmailForHeader(rcptTo))
+		}
+		// Only a signed-in account's own mail: forwarding and apps on allowed
+		// relays have no account to hold.
+		if user := ch.state.GetUsername(); ch.state.IsAuthenticated() && user != "" {
+			if !ch.session.abuse.OutboundRecipient(ctx, user) {
+				ch.logger.WarnContext(ctx, "Recipient refused: account's outside mail is on hold",
+					"event_type", "rejection", "username", user, "recipient", rcptTo)
+				return fmt.Errorf("451 4.7.1 Sending outside the server from this account is on hold; contact your administrator")
+			}
 		}
 	}
 

@@ -100,6 +100,27 @@ three times the limit. Failed sign-ins count across all of them. Behind a load
 balancer the services need the client's real address: on Kubernetes that is the
 PROXY protocol, as `deployments/kubernetes/production/` sets up.
 
+## Volume limits
+
+Each is off at 0, and they apply in the same modes as everything else: log mode
+counts and records without refusing.
+
+- **Messages per hour from one outside address.** Past it, mail is deferred with a
+  4xx, so a real mail server tries again later. It covers port 25, because it limits
+  volume rather than punishing a mistake. Signed-in users and allowed relays aren't
+  counted: their mail is your own.
+- **Recipients outside the server per hour, per account.** Past it, the account's mail
+  to outside addresses is put on hold until an administrator releases it under
+  **Accounts on hold**. A hold doesn't expire, because a taken-over account would
+  resume where it stopped. Mail inside the server still flows. Releasing starts the
+  count again. Change the password first if the account was taken over.
+- **Different accounts one address may fail against.** One password tried on many
+  accounts, once each, stays below the failure limit; the number of accounts gives it
+  away, and the address is blocked like any other.
+
+Class-of-service sending limits (`messages_per_hour`, `recipients_per_day`) still
+apply on top, per class. Those are a quota; the hold is an alarm.
+
 ## Allow and deny rules
 
 The Abuse page's rule list holds your own decisions. A change reaches every service

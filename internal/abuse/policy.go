@@ -46,7 +46,18 @@ type Policy struct {
 	// FailuresPerNetwork does the same for a whole /24 or /48, for attackers
 	// spread across a rented block; 0 turns it off.
 	FailuresPerNetwork int `toml:"failures_per_network" json:"failures_per_network"`
-	WindowMinutes      int `toml:"window_minutes" json:"window_minutes"`
+	// AccountsPerAddress blocks an address that fails against this many
+	// different accounts within WindowMinutes, however few times each:
+	// password spraying. 0 turns it off.
+	AccountsPerAddress int `toml:"accounts_per_address" json:"accounts_per_address"`
+	// MessagesPerAddressPerHour caps mail from one outside address, including
+	// on port 25; 0 turns it off. Signed-in users and allowed relays aren't
+	// counted.
+	MessagesPerAddressPerHour int `toml:"messages_per_address_per_hour" json:"messages_per_address_per_hour"`
+	// OutboundRecipientsPerHour puts an account on hold when it sends to more
+	// recipients outside the server than this in an hour; 0 turns it off.
+	OutboundRecipientsPerHour int `toml:"outbound_recipients_per_hour" json:"outbound_recipients_per_hour"`
+	WindowMinutes             int `toml:"window_minutes" json:"window_minutes"`
 	// BlockMinutes is the first block; each repeat lasts four times longer,
 	// up to MaxBlockHours.
 	BlockMinutes  int `toml:"block_minutes" json:"block_minutes"`
@@ -67,7 +78,7 @@ type Policy struct {
 // mail senders, and is far below what one host needs to exhaust a service.
 func DefaultPolicy() Policy {
 	return Policy{Mode: ModeEnforce, ConnectionsPerAddress: 25, ConnectionsPerMinute: 120, FailuresPerAddress: 50,
-		FailuresPerNetwork: 200, WindowMinutes: 15, BlockMinutes: 15, MaxBlockHours: 24, Firewall: FirewallLog, Allowlist: []string{}}
+		FailuresPerNetwork: 200, AccountsPerAddress: 10, MessagesPerAddressPerHour: 1000, OutboundRecipientsPerHour: 500, WindowMinutes: 15, BlockMinutes: 15, MaxBlockHours: 24, Firewall: FirewallLog, Allowlist: []string{}}
 }
 
 // Validate refuses a policy that couldn't be applied. A typo in an allowlist
@@ -92,6 +103,15 @@ func (p Policy) Validate() error {
 	}
 	if p.FailuresPerNetwork < 0 || p.FailuresPerNetwork > 1000000 {
 		return errors.New("failures per network must be between 0 and 1000000")
+	}
+	if p.AccountsPerAddress < 0 || p.AccountsPerAddress > 100000 {
+		return errors.New("accounts per address must be between 0 and 100000")
+	}
+	if p.MessagesPerAddressPerHour < 0 || p.MessagesPerAddressPerHour > 10000000 {
+		return errors.New("messages per address must be between 0 and 10000000")
+	}
+	if p.OutboundRecipientsPerHour < 0 || p.OutboundRecipientsPerHour > 10000000 {
+		return errors.New("outside recipients per hour must be between 0 and 10000000")
 	}
 	if p.FailuresPerAddress < 1 || p.FailuresPerAddress > 100000 {
 		return errors.New("failures per address must be between 1 and 100000")
