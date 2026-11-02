@@ -61,7 +61,7 @@ and backups that left out message bodies stored in S3.
   inbound and outbound, matching an address, network, domain or mail address, across
   SMTP, IMAP, POP3, ManageSieve, webmail and the console. Rules can expire, carry a
   note, and apply within seconds with no restart. Outbound rules on a network stop
-  delivery to that mail server. See "Allow and deny rules" in
+  delivery to that mail server, and the message bounces at once. See "Allow and deny rules" in
   [docs/abuse-protection.md](docs/abuse-protection.md).
 
 - **Forwarded mail keeps passing SPF.** Mail an account forwards outside the server
