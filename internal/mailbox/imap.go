@@ -132,6 +132,9 @@ var ErrProtocolDisabled = errors.New("this account may not use this protocol")
 // passwords, or whose class does, refuses its account password
 // (security.go).
 func (s *Service) login(ctx context.Context, user, password string, public bool, protocol, client string) (Account, error) {
+	if protocol != "" {
+		ctx = withLoginSource(ctx, protocol)
+	}
 	if strings.Contains(user, "|") {
 		// An administrator access token opens the one mailbox it names,
 		// not the shared mailboxes its owner may open.
@@ -164,7 +167,7 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 			return Account{}, err
 		}
 		if !allowed {
-			s.recordLoginFailure(actor.Address, client)
+			s.recordLoginFailure(ctx, actor.Address, client)
 			return Account{}, ErrCredentials
 		}
 		if err := s.applyPolicy(ctx, &mailbox); err != nil {
@@ -224,7 +227,7 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 		return Account{}, err
 	}
 	if required || a.Policy != nil && a.Policy.RequireAppPasswords {
-		s.recordLoginFailure(a.Address, client)
+		s.recordLoginFailure(ctx, a.Address, client)
 		s.log.Info("mailbox: account password refused; app password required", "user", a.Address)
 		return Account{}, ErrCredentials
 	}
@@ -271,7 +274,7 @@ func (s *Service) authenticate(ctx context.Context, user, password, client strin
 		}
 		if err != nil {
 			if errors.Is(err, ErrCredentials) {
-				s.recordLoginFailure(user, client)
+				s.recordLoginFailure(ctx, user, client)
 			}
 			return Account{}, false, err
 		}
@@ -291,7 +294,7 @@ func (s *Service) authenticate(ctx context.Context, user, password, client strin
 	a, err := s.auth.Login(ctx, user, password)
 	if err != nil {
 		if errors.Is(err, ErrCredentials) {
-			s.recordLoginFailure(user, client)
+			s.recordLoginFailure(ctx, user, client)
 		}
 		return Account{}, false, err
 	}

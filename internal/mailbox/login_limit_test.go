@@ -107,3 +107,17 @@ func TestMailFailuresReachTheSharedEngine(t *testing.T) {
 		t.Fatalf("blocks = %+v", blocks)
 	}
 }
+
+// The console graphs each protocol apart, so a sign-in has to say which one it
+// came through, and anything that doesn't still lands somewhere.
+func TestLoginSourceNamesTheProtocol(t *testing.T) {
+	ctx := context.Background()
+	if got := loginSource(ctx); got != "mailbox" {
+		t.Fatalf("no source = %q", got)
+	}
+	for _, source := range []string{mailpolicy.IMAP, mailpolicy.POP3, "sieve"} {
+		if got := loginSource(withLoginSource(ctx, source)); got != source {
+			t.Fatalf("source = %q, want %q", got, source)
+		}
+	}
+}

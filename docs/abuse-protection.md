@@ -56,7 +56,7 @@ Each service also counts for Prometheus on its metrics endpoint:
 
 | Metric | Labels |
 |---|---|
-| `elemta_abuse_failed_logins_total` | `service`, `source` |
+| `elemta_abuse_failed_logins_total` | `service`, `source` (`imap`, `pop3`, `sieve`, `smtp`, `webmail`, `admin`) |
 | `elemta_abuse_refused_total` | `service`, `reason` (`blocked`, `limit`, `rate`) |
 | `elemta_abuse_blocks_total` | `service` |
 | `elemta_abuse_blocks_active` | `service` |

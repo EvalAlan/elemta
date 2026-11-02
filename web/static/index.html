@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261030-abuse">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261102-protocols">
 </head>
 
 <body>
@@ -549,7 +549,7 @@
                             <div class="abuse-chart" id="abuse-chart-failures"></div>
                             <details class="abuse-data"><summary>Show as a table</summary>
                                 <div class="ma-table-wrap"><table class="messages-table">
-                                    <thead><tr><th>When</th><th>IMAP and POP3</th><th>SMTP</th><th>Webmail</th><th>Admin console</th></tr></thead>
+                                    <thead><tr id="abuse-table-failures-head"></tr></thead>
                                     <tbody id="abuse-table-failures"></tbody>
                                 </table></div>
                             </details>
@@ -1780,11 +1780,11 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261031-certremove"></script>
+    <script src="/static/app.js?v=20261102-titles"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
     <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
-    <script src="/static/abuse.js?v=20261030-abuse"></script>
+    <script src="/static/abuse.js?v=20261102-protocols"></script>
 </body>
 
 </html>

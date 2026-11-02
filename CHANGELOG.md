@@ -39,6 +39,11 @@ and backups that left out message bodies stored in S3.
 
 ### What's new
 
+- **The Abuse page counts IMAP, POP3 and ManageSieve separately.** The failed
+  sign-ins graph had them as one series, so you couldn't tell which was under
+  attack. `elemta_abuse_failed_logins_total` now has `imap`, `pop3` and `sieve`
+  sources in place of `mailbox`, so update any dashboard that uses it.
+
 - **Clicking through mail no longer reloads the page.** Opening a message replaces
   only the reading pane, and on wide screens the list and the message scroll
   separately, so a message opened from far down the list stays in view.

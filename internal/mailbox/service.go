@@ -450,14 +450,31 @@ func (s *Service) failLogin(key string) int {
 	return attempts
 }
 
+// sourceKey marks a context with the protocol signing in.
+type sourceKey struct{}
+
+// withLoginSource names the protocol a sign-in came through, for the console's
+// graphs and metrics. It travels in the context so the many paths between a
+// protocol and recordLoginFailure needn't each carry it.
+func withLoginSource(ctx context.Context, source string) context.Context {
+	return context.WithValue(ctx, sourceKey{}, source)
+}
+
+func loginSource(ctx context.Context) string {
+	if source, _ := ctx.Value(sourceKey{}).(string); source != "" {
+		return source
+	}
+	return "mailbox"
+}
+
 // recordLoginFailure counts a failure against the client, which is what
 // blocks, and against the account, which only reports. Many clients guessing
 // at one account aren't stopped here, because stopping them by account is what
 // would hand them a way to lock the user out.
-func (s *Service) recordLoginFailure(user, client string) {
+func (s *Service) recordLoginFailure(ctx context.Context, user, client string) {
 	if client != "" {
 		s.failLogin(loginFailureKey(user, client))
-		s.abuse.Failure(s.ctx, client, "mailbox", user)
+		s.abuse.Failure(s.ctx, client, loginSource(ctx), user)
 	}
 	if s.failLogin(user) == loginFailureLimit {
 		s.log.Warn("mailbox: many failed sign-ins for one account", "user", user)

@@ -140,7 +140,7 @@ func (s *Service) calendarLogin(ctx context.Context, user, password, client stri
 		return Account{}, "", err
 	}
 	if level == "" {
-		s.recordLoginFailure(actor.Address, client)
+		s.recordLoginFailure(ctx, actor.Address, client)
 		return Account{}, "", ErrCredentials
 	}
 	if err := s.applyPolicy(ctx, &owner); err != nil {

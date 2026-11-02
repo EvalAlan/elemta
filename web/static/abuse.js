@@ -9,7 +9,11 @@
     let you = '', allowlist = [], range = '24h', timer = null;
 
     // Fixed order, so a service keeps its colour whichever ones have data.
-    const SERVICES = [['mailbox', 'IMAP and POP3'], ['smtp', 'SMTP'], ['webmail', 'Webmail'], ['admin', 'Admin console']];
+    // "mailbox" is what these protocols were counted as together; it only
+    // matters until those buckets age out, so it stays last and appears only
+    // while it has data.
+    const SERVICES = [['imap', 'IMAP'], ['smtp', 'SMTP'], ['webmail', 'Webmail'], ['admin', 'Admin console'],
+        ['pop3', 'POP3'], ['sieve', 'ManageSieve'], ['mailbox', 'IMAP and POP3, not separated']];
     const REASONS = [['blocked', 'Blocked'], ['limit', 'Too many connections'], ['rate', 'Too fast']];
 
     async function call(path, method = 'GET', body) {
@@ -274,9 +278,15 @@
     function drawGraphs() {
         if (!lastStats) return;
         const s = lastStats;
-        stacked('abuse-chart-failures', s.buckets, SERVICES, b => b.failures, s.step_seconds, 'Nothing failed in this range.');
+        const services = SERVICES.filter(([k]) => k !== 'mailbox' || s.buckets.some(b => b.failures[k]));
+        legend('abuse-legend-failures', services);
+        const head = el('abuse-table-failures-head'); head.replaceChildren();
+        ['When', ...services.map(([, name]) => name)].forEach(name => {
+            const th = document.createElement('th'); th.textContent = name; head.appendChild(th);
+        });
+        stacked('abuse-chart-failures', s.buckets, services, b => b.failures, s.step_seconds, 'Nothing failed in this range.');
         stacked('abuse-chart-refused', s.buckets, REASONS, b => b.refused, s.step_seconds, 'Nothing refused in this range.');
-        fillTable('abuse-table-failures', s.buckets, SERVICES, b => b.failures, s.step_seconds);
+        fillTable('abuse-table-failures', s.buckets, services, b => b.failures, s.step_seconds);
         fillTable('abuse-table-refused', s.buckets, REASONS, b => b.refused, s.step_seconds);
     }
     async function refresh() {
@@ -307,7 +317,6 @@
         view.querySelectorAll('[data-abuse-range]').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
         refresh();
     }));
-    legend('abuse-legend-failures', SERVICES);
     legend('abuse-legend-refused', REASONS);
     window.addEventListener('resize', drawGraphs);
 
