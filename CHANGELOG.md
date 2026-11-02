@@ -10,6 +10,9 @@ and backups that left out message bodies stored in S3.
 
 ### Upgrade notes
 
+- **SRS turns on with a new secret.** `scripts/cloud-deploy.sh` and
+  `scripts/dev-secrets.sh` add `ELEMTA_SRS_SECRETS` for the MTA and mailbox service.
+  Each account's domain needs an SPF record that lists this server.
 - **Rspamd needs a new secret.** Re-run `scripts/cloud-deploy.sh`, which creates Rspamd's
   controller password. By hand, run `scripts/dev-secrets.sh` before starting
   the new version: Compose needs `.secrets/rspamd.env`, and Kubernetes needs
@@ -38,6 +41,11 @@ and backups that left out message bodies stored in S3.
   Anything that expected the binaries at the top of the archive needs a new path.
 
 ### What's new
+
+- **Forwarded mail keeps passing SPF.** Mail an account forwards outside the server
+  now goes out from an SRS address at that account's domain, so the next server's
+  SPF check passes, and bounces still reach the original sender. See "Forwarding
+  and SPF" in [docs/mail-administration.md](docs/mail-administration.md).
 
 - **The Abuse page counts IMAP, POP3 and ManageSieve separately.** The failed
   sign-ins graph had them as one series, so you couldn't tell which was under

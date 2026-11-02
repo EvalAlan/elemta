@@ -12,6 +12,7 @@ import (
 
 	"github.com/EvalAlan/elemta/internal/logging"
 	"github.com/EvalAlan/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/srs"
 )
 
 // BounceEngine generates RFC 3462 DSN bounce messages from failed queue entries.
@@ -20,6 +21,9 @@ type BounceEngine struct {
 	queueManager queue.QueueManager
 	hostname     string
 	msgLogger    *logging.MessageLogger
+	// srs sends a bounce for forwarded mail to the original sender rather
+	// than to the address it went out from, which is nobody's mailbox.
+	srs *srs.Rewriter
 }
 
 // NewBounceEngine creates a new bounce engine.
@@ -105,6 +109,11 @@ func (be *BounceEngine) generateBounce(ctx context.Context, msg queue.Message, f
 		return &BounceResult{BounceGenerated: false}
 	}
 	msg.To = reported
+	if be.srs != nil && srs.Is(msg.From) {
+		if sender, err := be.srs.Reverse(msg.From); err == nil {
+			msg.From = sender
+		}
+	}
 	dsnReturn := strings.ToUpper(msg.Annotations["dsn_return"])
 	if dsnReturn == "" {
 		dsnReturn = "HDRS"

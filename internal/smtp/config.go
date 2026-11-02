@@ -11,6 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/srs"
 )
 
 // Config represents the main configuration for the SMTP server
@@ -106,6 +107,10 @@ type Config struct {
 
 	// Antispam configuration
 	Antispam *AntispamConfig `toml:"antispam" json:"antispam"`
+	// SRS reverses the addresses forwarded mail went out from, so bounces
+	// reach the original sender. It comes from the environment, not this file,
+	// because it holds a secret; nil is off (internal/srs).
+	SRS *srs.Rewriter `toml:"-" json:"-"`
 
 	// Plugin configuration
 	Plugins *PluginConfig `toml:"plugins" json:"plugins"`

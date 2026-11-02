@@ -20,6 +20,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/antispam"
 	"github.com/EvalAlan/elemta/internal/proxyproto"
+	"github.com/EvalAlan/elemta/internal/srs"
 	"github.com/EvalAlan/elemta/internal/tlssni"
 
 	"github.com/EvalAlan/elemta/internal/imapfork/imapserver"
@@ -32,7 +33,9 @@ type Service struct {
 	receiveSlots chan struct{}
 	// abuse limits and blocks clients on the public listeners, with the rest
 	// of the platform (internal/abuse).
-	abuse  *abuse.Engine
+	abuse *abuse.Engine
+	// srs rewrites the sender of forwarded mail; nil is off (internal/srs).
+	srs    *srs.Rewriter
 	cfg    Config
 	engine *Engine
 	// spamLearner teaches Rspamd from Junk moves; nil while that is off.
@@ -115,6 +118,7 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel, adminToken: os.Getenv(c.Admin.TokenEnv), abuse: abuse.New("mailbox", os.Getenv("VALKEY_ADDR"), log)}
+	s.srs = srs.FromEnv()
 	if s.mailDirectory() != nil {
 		e.directoryClasses = s.directoryClasses
 	}
