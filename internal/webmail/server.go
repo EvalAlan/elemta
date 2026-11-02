@@ -695,6 +695,16 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		s.renderLogin(w, r, http.StatusBadGateway, user, "", "The mail server didn't respond. Try again in a moment.")
 		return
 	}
+	// An account under attack takes its password only from networks it has
+	// used, answered as a wrong password so a right guess looks like any
+	// other. A passkey still signs in from anywhere.
+	if s.abuse.Shielded(ctx, ip, s.cfg.address(user)) {
+		_ = store.Close()
+		s.loginFailed(r, ip, userKey, user)
+		s.log.Info("webmail: login held back; account under attack", "user", user, "ip", ip)
+		s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
+		return
+	}
 	if s.security != nil {
 		check, err := s.security.check(ctx, user, password)
 		if err != nil {

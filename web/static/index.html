@@ -602,7 +602,7 @@
                 <div class="card">
                     <div class="card-header"><h3>Accounts under attack</h3></div>
                     <div class="card-body">
-                        <p class="field-hint">Failed sign-ins per account in this window, from any address. Accounts are never blocked, so nobody can lock a user out by guessing wrong.</p>
+                        <p class="field-hint">Failed sign-ins per account in this window, from any address. Accounts are never blocked, so nobody can lock a user out by guessing wrong. An account guessed at from many addresses is shielded instead: see the setting below.</p>
                         <div class="ma-table-wrap"><table class="messages-table">
                             <thead><tr><th>Account</th><th>Failures</th></tr></thead>
                             <tbody id="abuse-accounts"></tbody>
@@ -612,7 +612,7 @@
                 <div class="card">
                     <div class="card-header"><h3>Unusual sign-ins</h3></div>
                     <div class="card-body">
-                        <p class="field-hint">Successful sign-ins from somewhere the account couldn't have reached in time, or from a country it hasn't used before. Nothing is blocked: VPNs and mobile networks look like travel too. If one isn't its owner, change the password and reset two-step sign-in under Mail Administration.</p>
+                        <p class="field-hint">Successful sign-ins from somewhere the account couldn't have reached in time, or from a country it hasn't used before, and accounts under attack from many addresses. Nothing is blocked: VPNs and mobile networks look like travel too. If one isn't its owner, change the password and reset two-step sign-in under Mail Administration.</p>
                         <p class="field-hint abuse-error" id="abuse-alerts-state" hidden></p>
                         <div class="ma-table-wrap"><table class="messages-table">
                             <thead><tr><th>When</th><th>Account</th><th>What</th><th>Detail</th><th>From</th><th aria-label="Actions"></th></tr></thead>
@@ -677,6 +677,9 @@
                             <label for="abuse-spray">Different accounts one address may fail against</label>
                             <input id="abuse-spray" type="number" min="0" max="100000" required>
                             <p class="field-hint">Catches password spraying: one password tried on many accounts, too few times each to reach the limit above. 0 turns it off.</p>
+                            <label for="abuse-targeted">Different addresses failing against one account before it's shielded</label>
+                            <input id="abuse-targeted" type="number" min="0" max="100000" required>
+                            <p class="field-hint">While shielded, the account's password works only from networks it has signed in from in the last 90 days; elsewhere a right password is answered like a wrong one, so guessing gets nowhere. App passwords and passkeys work from anywhere, and the account is never locked. It lasts until the attack stops for one window. 0 turns it off.</p>
                             <label for="abuse-inbound">Messages per hour from one outside address</label>
                             <input id="abuse-inbound" type="number" min="0" max="10000000" required>
                             <p class="field-hint">Includes port 25. Over it, mail is deferred, so a real server retries later. Signed-in users and allowed relays don't count. 0 turns it off.</p>

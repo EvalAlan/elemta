@@ -85,14 +85,22 @@ type Alert struct {
 }
 
 // RecordSignIn reports a successful sign-in from addr for the console to
-// assess. It costs one Valkey write; without Valkey the sign-in isn't assessed.
+// assess, and keeps its network as one the account uses (targeted.go). It
+// costs a Valkey write or two; without Valkey the sign-in isn't assessed.
 func (e *Engine) RecordSignIn(ctx context.Context, addr, service, account string) {
 	if e == nil {
 		return
 	}
 	ip := hostIP(addr)
 	account = strings.ToLower(strings.TrimSpace(account))
-	if ip == nil || account == "" || len(account) > 320 || ip.IsPrivate() || ip.IsLoopback() || e.Policy().SignInAlerts == "off" {
+	if ip == nil || account == "" || len(account) > 320 || ip.IsPrivate() || ip.IsLoopback() {
+		return
+	}
+	p := e.Policy()
+	if p.AddressesPerAccount > 0 && p.Mode != ModeOff {
+		e.rememberNetwork(ctx, account, ip.String())
+	}
+	if p.SignInAlerts == "off" {
 		return
 	}
 	client := e.valkey()

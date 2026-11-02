@@ -49,6 +49,14 @@ and backups that left out message bodies stored in S3.
   database monthly; see "Unusual sign-ins" in
   [docs/abuse-protection.md](docs/abuse-protection.md).
 
+- **Accounts under attack keep working for their owners.** When many addresses fail
+  against one account, its password works only from networks it has signed in from in
+  the last 90 days, and a right password from anywhere else is answered like a wrong
+  one, so guessing gets nowhere. App passwords and passkeys work from anywhere, and the
+  account is never locked. New installs shield an account at 20 addresses; existing
+  ones keep it off until set. See "Accounts under attack" in
+  [docs/abuse-protection.md](docs/abuse-protection.md).
+
 - **Volume limits and password spraying.** The Abuse page can now cap mail per hour
   from one outside address (deferred, including on port 25), and puts an account's
   outside mail on hold when it sends to more recipients than the hourly limit, until
