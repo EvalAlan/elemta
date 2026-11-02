@@ -27,7 +27,7 @@ import (
 // SecretsEnv holds the secrets, newest first and comma separated. The first
 // signs; the rest still verify, so one can be replaced while bounces for
 // addresses it signed are on their way.
-const SecretsEnv = "ELEMTA_SRS_SECRETS"
+const SecretsEnv = "ELEMTA_SRS_SECRETS" // #nosec G101 -- the name of a variable, not a secret
 
 const (
 	// Lower case, because some servers change the case of an address and the
