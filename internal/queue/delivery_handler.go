@@ -59,6 +59,11 @@ func (e *PermanentError) Error() string   { return e.msg }
 func (e *PermanentError) Unwrap() error   { return e.err }
 func (e *PermanentError) Permanent() bool { return true }
 
+// errRefusedDestination marks a dial the destination guard refused. A rule is
+// the operator's own decision and doesn't lift by waiting, so retrying for days
+// before bouncing only hides from the sender that it was refused.
+var errRefusedDestination = errors.New("destination refused by a rule")
+
 // newRequireTLSError reports an RFC 8689 delivery failure as permanent so the
 // processor bounces it rather than retrying insecurely.
 func newRequireTLSError(format string, args ...interface{}) *PermanentError {
@@ -582,6 +587,7 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 
 	// Try each MX record in order of preference
 	var lastError error
+	refusedAll := true
 	for _, mx := range mxRecords {
 		ip, host, hostOutcomes, err := h.attemptDeliveryToHostWithMetadata(ctx, mx.Host, msg, recipients, content, requireTLS, domain)
 		if len(hostOutcomes) > 0 {
@@ -593,6 +599,7 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 				"priority", mx.Pref,
 				"error", err)
 			lastError = err
+			refusedAll = refusedAll && errors.Is(err, errRefusedDestination)
 			continue
 		}
 
@@ -600,6 +607,11 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 		return ip, host, nil, nil
 	}
 
+	if !refusedAll && errors.Is(lastError, errRefusedDestination) {
+		// Only some of the domain's servers are refused, and another may
+		// come back: the refusal mustn't turn its outage into a bounce.
+		return "", "", nil, &TemporaryError{msg: fmt.Sprintf("delivery failed to all MX hosts for domain %s: %v", domain, lastError)}
+	}
 	return "", "", nil, fmt.Errorf("delivery failed to all MX hosts for domain %s: %w", domain, lastError)
 }
 
@@ -1341,7 +1353,10 @@ func (h *SMTPDeliveryHandler) dialAndGreet(ctx context.Context, address string) 
 				if err != nil {
 					return err
 				}
-				return guard(net.ParseIP(host))
+				if err := guard(net.ParseIP(host)); err != nil {
+					return &PermanentError{msg: "550 5.7.1 " + err.Error(), err: errRefusedDestination}
+				}
+				return nil
 			}
 		}
 		dial = dialer.DialContext

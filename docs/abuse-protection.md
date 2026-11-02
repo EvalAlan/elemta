@@ -165,8 +165,9 @@ within seconds, with no restart.
 - **Signed-in users** aren't checked against inbound sender rules, because their mail
   is leaving. Outbound rules apply to them and to forwarding. Mail an account would
   forward to a denied address is kept in its inbox instead.
-- **Delivery to a denied mail server** counts as that server being unreachable, so
-  the message retries and then bounces. Prefer a domain rule, which refuses at once.
+- **Delivery to a denied mail server** bounces at once, with `550 5.7.1`, when every
+  mail server for the domain is denied. If only some are and another is merely down,
+  the message waits for that one, as it would without the rule.
 - **The allowlist** still protects its addresses, including from deny rules, and the
   console refuses a rule that would block the address you're using.
 - **Log mode** counts what rules would refuse and refuses nothing. **Off** ignores them.
