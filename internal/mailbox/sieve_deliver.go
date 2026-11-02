@@ -311,6 +311,13 @@ func (s *Service) redirect(ctx context.Context, d delivery, to string) error {
 	}
 	msg := append([]byte(redirectHeader+": "+d.rcpt+"\r\n"), d.raw...)
 	if err := s.submit(ctx, s.forwardSender(ctx, d, target), []string{target}, msg); err != nil {
+		// A rule refusing the destination won't change on a retry, and
+		// retrying would hold the mail back from everyone else. Keep it here.
+		var refused *smtp.SMTPError
+		if errors.As(err, &refused) && refused.Code == 550 && refused.EnhancedCode == (smtp.EnhancedCode{5, 7, 1}) {
+			s.log.Info("forwarding refused by a rule; keeping the mail", "account", d.account.ID)
+			return s.store(ctx, d, "INBOX", nil, false, map[string]bool{})
+		}
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 0}, Message: "Forwarding temporarily unavailable"}
 	}
 	_, err = s.engine.claimSent(ctx, d.account.ID, key, 7*24*time.Hour)

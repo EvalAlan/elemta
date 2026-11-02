@@ -99,3 +99,33 @@ Connection limits count per service instance, so three replicas allow an address
 three times the limit. Failed sign-ins count across all of them. Behind a load
 balancer the services need the client's real address: on Kubernetes that is the
 PROXY protocol, as `deployments/kubernetes/production/` sets up.
+
+## Allow and deny rules
+
+The Abuse page's rule list holds your own decisions. A change reaches every service
+within seconds, with no restart.
+
+| Rule on | Inbound | Outbound |
+|---|---|---|
+| Address or network | The client connecting, on the protocols you pick | The mail server delivery connects to |
+| Domain, subdomains included | Mail from that sender | Mail to that recipient |
+| Mail address | Mail from that sender | Mail to that recipient |
+
+- **Allow beats deny**, so one host can be let through a denied network. An inbound
+  allow on an address or network also exempts it from limits and blocks. Allow rules
+  never skip virus or spam scanning.
+- **Port 25 follows the rules.** Automatic blocks leave port 25 open, so that a guessed
+  password can't cost you mail, but a deny rule is your own decision and applies there.
+  Choose protocols to leave SMTP out.
+- **Signed-in users** aren't checked against inbound sender rules, because their mail
+  is leaving. Outbound rules apply to them and to forwarding. Mail an account would
+  forward to a denied address is kept in its inbox instead.
+- **Delivery to a denied mail server** counts as that server being unreachable, so
+  the message retries and then bounces. Prefer a domain rule, which refuses at once.
+- **The allowlist** still protects its addresses, including from deny rules, and the
+  console refuses a rule that would block the address you're using.
+- **Log mode** counts what rules would refuse and refuses nothing. **Off** ignores them.
+- **If Valkey is down** when a service starts, it has no rules until Valkey returns.
+  Services already running keep the rules they have.
+
+The older `[access_control]` lists, under Plugins, still apply to SMTP only.

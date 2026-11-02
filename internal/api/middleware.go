@@ -197,6 +197,9 @@ func (am *AuthMiddleware) authenticateBasicAuthThrottled(r *http.Request, userna
 	if am.throttle.retryAfter(addr, username) > 0 {
 		return nil, errLoginThrottled
 	}
+	if _, denied := am.abuse.DenyPeer(addr, abuse.ProtocolAdmin); denied {
+		return nil, errLoginThrottled
+	}
 	if _, blocked := am.abuse.Blocked(addr); blocked {
 		return nil, errLoginThrottled
 	}

@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261102-protocols">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261102-rules">
 </head>
 
 <body>
@@ -659,6 +659,32 @@
                             <textarea id="abuse-allowlist" rows="5" spellcheck="false" autocomplete="off" placeholder="203.0.113.9&#10;198.51.100.0/24"></textarea>
                             <p class="field-hint">Never limited or blocked. Add your own address and monitoring.</p>
                             <button class="btn btn-primary" type="submit">Save</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>Allow and deny rules</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">Inbound rules cover clients connecting here and mail from outside. Outbound rules cover where mail is going. An address or network matches the client or the destination mail server; a domain or mail address matches the sender or the recipient. Allow beats deny, and never skips virus or spam scanning.</p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Action</th><th>Direction</th><th>Matches</th><th>Protocols</th><th>Expires</th><th>Note</th><th aria-label="Remove"></th></tr></thead>
+                            <tbody id="abuse-rules"></tbody>
+                        </table></div>
+                        <form id="abuse-rule-form" class="abuse-inline abuse-rule-form">
+                            <select id="abuse-rule-action" aria-label="Action"><option value="deny">Deny</option><option value="allow">Allow</option></select>
+                            <select id="abuse-rule-direction" aria-label="Direction"><option value="inbound">Inbound</option><option value="outbound">Outbound</option><option value="both">Both</option></select>
+                            <input id="abuse-rule-value" type="text" required maxlength="320" placeholder="203.0.113.0/24, example.org or a@example.org" aria-label="Address, network, domain or mail address" autocomplete="off" spellcheck="false">
+                            <input id="abuse-rule-days" type="number" min="0" max="3650" placeholder="Days" aria-label="Expires after this many days, empty for never">
+                            <input id="abuse-rule-note" type="text" maxlength="200" placeholder="Note" aria-label="Note">
+                            <fieldset class="abuse-rule-protocols"><legend>Protocols, for an inbound address or network. None means all.</legend>
+                                <label><input type="checkbox" data-abuse-protocol value="smtp"> SMTP</label>
+                                <label><input type="checkbox" data-abuse-protocol value="imap"> IMAP</label>
+                                <label><input type="checkbox" data-abuse-protocol value="pop3"> POP3</label>
+                                <label><input type="checkbox" data-abuse-protocol value="sieve"> ManageSieve</label>
+                                <label><input type="checkbox" data-abuse-protocol value="webmail"> Webmail</label>
+                                <label><input type="checkbox" data-abuse-protocol value="admin"> Admin console</label>
+                            </fieldset>
+                            <button class="btn btn-primary" type="submit">Add rule</button>
                         </form>
                     </div>
                 </div>
@@ -1780,11 +1806,11 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261102-titles"></script>
+    <script src="/static/app.js?v=20261102-rules"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
     <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
-    <script src="/static/abuse.js?v=20261102-protocols"></script>
+    <script src="/static/abuse.js?v=20261102-rules"></script>
 </body>
 
 </html>

@@ -151,6 +151,12 @@ func (s *Server) handleAbusePolicy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// The check Validate can't make: only here is the administrator's own
+	// address known, and a rule covering it ends this session for good.
+	if rule, cut := rulesCutOff(p, s.loginAddr(r)); cut {
+		http.Error(w, "That rule would block the address you are using: "+rule.Value, http.StatusBadRequest)
+		return
+	}
 	if s.mainConfig != nil && s.configPath != "" {
 		previous := s.mainConfig.Abuse
 		slog.Info("Saving the abuse policy", "by", abuseActor(r))
@@ -167,4 +173,30 @@ func (s *Server) handleAbusePolicy(w http.ResponseWriter, r *http.Request) {
 	published := s.abuse.Publish(ctx, p) == nil
 	slog.Info("Abuse policy changed", "mode", p.Mode, "connections_per_address", p.ConnectionsPerAddress, "allowlist", len(p.Allowlist), "published", published)
 	writeJSON(w, map[string]any{"policy": p, "shared": s.abuse.Shared(ctx), "published": published})
+}
+
+// rulesCutOff finds a deny rule that would stop addr reaching the console.
+func rulesCutOff(p abuse.Policy, addr string) (abuse.Rule, bool) {
+	check := abuse.New("check", "", nil)
+	check.Own(p)
+	return check.WouldDenyPeer(addr, abuse.ProtocolAdmin)
+}
+
+// ruleTables is the form the configuration writer takes rules in.
+func ruleTables(rules []abuse.Rule) []map[string]interface{} {
+	tables := make([]map[string]interface{}, 0, len(rules))
+	for _, r := range rules {
+		table := map[string]interface{}{"action": r.Action, "direction": r.Direction, "value": r.Value}
+		if r.Protocols != "" {
+			table["protocols"] = r.Protocols
+		}
+		if r.Expires != "" {
+			table["expires"] = r.Expires
+		}
+		if r.Note != "" {
+			table["note"] = r.Note
+		}
+		tables = append(tables, table)
+	}
+	return tables
 }

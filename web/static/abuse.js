@@ -6,7 +6,7 @@
     const view = document.getElementById('view-abuse');
     if (!view) return;
     const el = id => document.getElementById(id);
-    let you = '', allowlist = [], range = '24h', timer = null;
+    let you = '', allowlist = [], rules = [], range = '24h', timer = null;
 
     // Fixed order, so a service keeps its colour whichever ones have data.
     // "mailbox" is what these protocols were counted as together; it only
@@ -14,7 +14,7 @@
     // while it has data.
     const SERVICES = [['imap', 'IMAP'], ['smtp', 'SMTP'], ['webmail', 'Webmail'], ['admin', 'Admin console'],
         ['pop3', 'POP3'], ['sieve', 'ManageSieve'], ['mailbox', 'IMAP and POP3, not separated']];
-    const REASONS = [['blocked', 'Blocked'], ['limit', 'Too many connections'], ['rate', 'Too fast']];
+    const REASONS = [['blocked', 'Blocked'], ['limit', 'Too many connections'], ['rate', 'Too fast'], ['rule', 'Denied by a rule']];
 
     async function call(path, method = 'GET', body) {
         const options = { method, headers: { Accept: 'application/json' } };
@@ -60,6 +60,36 @@
         el('abuse-max-block').value = p.max_block_hours;
         allowlist = p.allowlist || [];
         el('abuse-allowlist').value = allowlist.join('\n');
+        rules = p.rules || [];
+        fillRules();
+    }
+    function fillRules() {
+        const body = table('abuse-rules', rules, 7, 'No rules yet.');
+        rules.forEach((r, i) => {
+            const row = document.createElement('tr');
+            const remove = document.createElement('button');
+            remove.type = 'button'; remove.className = 'btn btn-secondary btn-sm'; remove.textContent = 'Remove';
+            remove.setAttribute('aria-label', 'Remove the rule on ' + r.value);
+            remove.addEventListener('click', () => saveRules(rules.filter((_, n) => n !== i), 'Rule removed.'));
+            const expired = r.expires && new Date(r.expires) <= new Date();
+            cell(row, r.action === 'allow' ? 'Allow' : 'Deny');
+            cell(row, { inbound: 'Inbound', outbound: 'Outbound', both: 'Both' }[r.direction] || r.direction);
+            cell(row, r.value);
+            cell(row, r.protocols ? r.protocols.split(',').join(', ') : 'All');
+            cell(row, r.expires ? (expired ? 'Expired ' : '') + when(r.expires) : 'Never');
+            cell(row, r.note || '');
+            cell(row, remove);
+            body.appendChild(row);
+        });
+    }
+    async function saveRules(next, message) {
+        try {
+            const saved = await call('/policy', 'PUT', { rules: next });
+            rules = saved.policy.rules || [];
+            fillRules();
+            notice(message);
+            return true;
+        } catch (e) { notice(e.message, true); return false; }
     }
     function readPolicy() {
         return {
@@ -319,6 +349,16 @@
     }));
     legend('abuse-legend-refused', REASONS);
     window.addEventListener('resize', drawGraphs);
+    el('abuse-rule-form').addEventListener('submit', async e => {
+        e.preventDefault();
+        const rule = { action: el('abuse-rule-action').value, direction: el('abuse-rule-direction').value,
+            value: el('abuse-rule-value').value.trim(), note: el('abuse-rule-note').value.trim() };
+        const protocols = [...view.querySelectorAll('[data-abuse-protocol]:checked')].map(b => b.value);
+        if (protocols.length) rule.protocols = protocols.join(',');
+        const days = Number(el('abuse-rule-days').value);
+        if (days > 0) rule.expires = new Date(Date.now() + days * 86400000).toISOString();
+        if (await saveRules([...rules, rule], 'Rule added. Every service applies it within a few seconds.')) e.target.reset();
+    });
 
     el('abuse-policy-form').addEventListener('submit', event => {
         event.preventDefault();
