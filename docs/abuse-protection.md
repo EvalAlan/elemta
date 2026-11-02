@@ -134,7 +134,8 @@ lists successful sign-ins that look wrong for their account:
 They alert and never block: VPNs, mobile networks and satellite links all look like
 travel. One account raises each kind at most once an hour. If an alert isn't the
 account's owner, change the password and reset two-step sign-in under Mail
-Administration. Dismiss alerts you've dealt with.
+Administration. **Block address** blocks where the sign-in came from for 24 hours on
+every client protocol, like a manual block. Dismiss alerts you've dealt with.
 
 Every service reports sign-ins from public addresses to Valkey; the admin console
 places them with [DB-IP](https://db-ip.com)'s free City Lite database (CC BY 4.0,

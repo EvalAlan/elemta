@@ -118,5 +118,7 @@
 .abuse-rule-protocols legend { padding: 0; margin-bottom: .25rem; font-size: .8rem; color: var(--text-secondary); }
 .abuse-rule-protocols label { display: inline-flex; gap: .3rem; align-items: center; color: var(--text-secondary); }
 .abuse-rule-protocols input { width: auto; padding: 0; }
-#view-abuse .messages-table td.abuse-wrap { white-space: normal; overflow: visible; text-overflow: clip; max-width: 32rem; min-width: 16rem; }
+#view-abuse .messages-table td.abuse-wrap { white-space: normal; overflow: visible; text-overflow: clip; max-width: 26rem; min-width: 14rem; }
 .abuse-attribution a { color: var(--accent-primary); }
+#view-abuse .messages-table td:has(> .abuse-actions) { max-width: none; overflow: visible; }
+.abuse-actions { display: inline-flex; gap: .4rem; }

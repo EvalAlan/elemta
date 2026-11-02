@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261102-signins">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261102-alertblock">
 </head>
 
 <body>
@@ -615,7 +615,7 @@
                         <p class="field-hint">Successful sign-ins from somewhere the account couldn't have reached in time, or from a country it hasn't used before. Nothing is blocked: VPNs and mobile networks look like travel too. If one isn't its owner, change the password and reset two-step sign-in under Mail Administration.</p>
                         <p class="field-hint abuse-error" id="abuse-alerts-state" hidden></p>
                         <div class="ma-table-wrap"><table class="messages-table">
-                            <thead><tr><th>When</th><th>Account</th><th>What</th><th>Detail</th><th>From</th><th aria-label="Dismiss"></th></tr></thead>
+                            <thead><tr><th>When</th><th>Account</th><th>What</th><th>Detail</th><th>From</th><th aria-label="Actions"></th></tr></thead>
                             <tbody id="abuse-alerts"></tbody>
                         </table></div>
                         <p class="field-hint abuse-attribution"><a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a></p>
@@ -1844,7 +1844,7 @@
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
     <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
-    <script src="/static/abuse.js?v=20261102-signins"></script>
+    <script src="/static/abuse.js?v=20261102-alertblock"></script>
 </body>
 
 </html>
