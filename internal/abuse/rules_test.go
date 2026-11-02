@@ -226,3 +226,22 @@ func TestAccessControlRules(t *testing.T) {
 		t.Errorf("domain rules %+v", rules[2:])
 	}
 }
+
+// A policy published in the old form reads as rules on every service, and
+// receiving it again isn't a change.
+func TestReceivedAllowlistReadsAsRules(t *testing.T) {
+	e := New("test", "", nil)
+	changes := 0
+	e.OnPolicy(func(Policy) { changes++ })
+	old := DefaultPolicy()
+	old.Allowlist = []string{"198.51.100.7"}
+	e.receive(old)
+	e.receive(old)
+	p := e.Policy()
+	if len(p.Allowlist) != 0 || len(p.Rules) != 1 || p.Rules[0].Value != "198.51.100.7" || !e.Exempt("198.51.100.7") {
+		t.Fatalf("policy %+v", p)
+	}
+	if changes != 1 {
+		t.Fatalf("%d changes for one policy", changes)
+	}
+}

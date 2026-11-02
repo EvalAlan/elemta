@@ -96,6 +96,7 @@ func (e *Engine) Shared(ctx context.Context) bool {
 }
 
 func (e *Engine) setPolicy(p Policy) {
+	p, _ = p.MoveAllowlist()
 	exempt, err := parseNetworks(p.Allowlist)
 	if err != nil {
 		e.log.Error("Ignoring an invalid abuse policy", "error", err)
@@ -229,6 +230,10 @@ func (e *Engine) syncPolicy(ctx context.Context, client valkey.Client) {
 }
 
 func (e *Engine) receive(p Policy) {
+	// A policy published before allow rules took over the allowlist reads
+	// as the rules it now is, so every page and service shows one list.
+	// Before comparing, or it would never match the one already in force.
+	p, _ = p.MoveAllowlist()
 	e.mu.RLock()
 	same := e.published && samePolicy(e.policy, p)
 	e.mu.RUnlock()
