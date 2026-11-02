@@ -67,8 +67,8 @@ type Policy struct {
 	// service, where it costs almost nothing, and is the one setting here that
 	// can cut off a whole network at the kernel, so it starts at log.
 	Firewall string `toml:"firewall" json:"firewall"`
-	// Allowlist holds addresses and networks that are never limited or
-	// blocked: an operator's own, monitoring, trusted relays.
+	// Allowlist is read from policies saved before allow rules existed, and
+	// moved into Rules (MoveAllowlist); nothing new is kept here.
 	Allowlist []string `toml:"allowlist" json:"allowlist"`
 	// SignInAlerts is "on" or "off": alerts for sign-ins from somewhere
 	// unexpected (signin.go). They never block.
@@ -175,6 +175,7 @@ func (p Policy) WithDefaults() Policy {
 	if p.SignInAlerts == "" {
 		p.SignInAlerts = "on"
 	}
+	p, _ = p.MoveAllowlist()
 	return p
 }
 

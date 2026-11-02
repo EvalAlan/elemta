@@ -527,7 +527,7 @@
             <section class="view" id="view-abuse">
                 <p id="abuse-notice" class="abuse-notice" role="status" hidden></p>
                 <p id="abuse-you" class="abuse-notice" hidden>
-                    You're working from <strong id="abuse-you-address"></strong>, which isn't on the allowlist, so too many mistyped passwords could block you too.
+                    You're working from <strong id="abuse-you-address"></strong>, which no allow rule covers, so too many mistyped passwords could block you too.
                     <button class="btn btn-secondary btn-sm" type="button" id="abuse-you-add">Add it</button>
                 </p>
                 <div class="abuse-range" role="group" aria-label="Time range">
@@ -688,10 +688,7 @@
                                 <option value="apply">Apply: drop blocked addresses at the host firewall</option>
                                 <option value="off">Off</option>
                             </select>
-                            <p class="field-hint">Covers client ports, never port 25. Check the allowlist before applying.</p>
-                            <label for="abuse-allowlist">Allowlist, one address or network per line</label>
-                            <textarea id="abuse-allowlist" rows="5" spellcheck="false" autocomplete="off" placeholder="203.0.113.9&#10;198.51.100.0/24"></textarea>
-                            <p class="field-hint">Never limited or blocked. Add your own address and monitoring.</p>
+                            <p class="field-hint">Covers client ports, never port 25. Check your allow rules before applying.</p>
                             <button class="btn btn-primary" type="submit">Save</button>
                         </form>
                     </div>
@@ -699,7 +696,7 @@
                 <div class="card">
                     <div class="card-header"><h3>Allow and deny rules</h3></div>
                     <div class="card-body">
-                        <p class="field-hint">Inbound rules cover clients connecting here and mail from outside. Outbound rules cover where mail is going. An address or network matches the client or the destination mail server; a domain or mail address matches the sender or the recipient. Allow beats deny, and never skips virus or spam scanning.</p>
+                        <p class="field-hint">Inbound rules cover clients connecting here and mail from outside. Outbound rules cover where mail is going. An address or network matches the client or the destination mail server; a domain or mail address matches the sender or the recipient. Allow beats deny, and never skips virus or spam scanning. An allow rule on an address or network for all protocols also means it's never limited or blocked: add your own address and monitoring.</p>
                         <div class="ma-table-wrap"><table class="messages-table">
                             <thead><tr><th>Action</th><th>Direction</th><th>Matches</th><th>Protocols</th><th>Expires</th><th>Note</th><th aria-label="Remove"></th></tr></thead>
                             <tbody id="abuse-rules"></tbody>

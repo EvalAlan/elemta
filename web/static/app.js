@@ -1945,7 +1945,7 @@ const PLUGIN_SETTINGS_SCHEMA = {
     access_control: {
         // The Abuse page's rules do this with directions and across every
         // protocol; these lists stay for configurations that already use them.
-        note: 'New rules belong on the Abuse page, which covers inbound and outbound mail and every protocol. Entries here still apply, to SMTP only.',
+        note: 'These lists have moved to the allow and deny rules on the Abuse page, which cover inbound and outbound mail and every protocol. Anything added here moves there when the console next starts, and applies to SMTP until then.',
         fields: [
             { key: 'allow_ips', label: 'Allowed addresses', type: 'list',
               hint: 'CIDR ranges or single addresses, one per line. An allow entry beats a deny entry.' },

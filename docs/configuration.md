@@ -187,6 +187,11 @@ and only if you understand that this re-opens the vector.
 
 ### Access control (allow / deny lists)
 
+> **Moving to rules.** Where Valkey is configured, the admin console turns these lists
+> into allow and deny rules on the Abuse page when it starts, and empties them here.
+> See "Allow and deny rules" in [abuse-protection.md](abuse-protection.md). The rest
+> of this section describes the lists for deployments without Valkey.
+
 `[access_control]` refuses connections and senders outright. It is distinct
 from `trusted_networks`, which only decides how strictly a peer's *content* is
 validated — this decides whether the peer may talk to the server at all.

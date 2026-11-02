@@ -1,6 +1,7 @@
 package abuse
 
 import (
+	"context"
 	"net"
 	"strings"
 	"testing"
@@ -168,5 +169,60 @@ func TestInvalidRulesAreRefused(t *testing.T) {
 		if err := p.Validate(); err == nil {
 			t.Errorf("%+v was accepted", r)
 		}
+	}
+}
+
+// The allowlist becomes allow rules that do everything it did, once.
+func TestMoveAllowlist(t *testing.T) {
+	p := Policy{Allowlist: []string{"198.51.100.7", " 2001:db8::/48 ", ""}}.WithDefaults()
+	if len(p.Allowlist) != 0 || len(p.Rules) != 2 {
+		t.Fatalf("allowlist %v rules %+v", p.Allowlist, p.Rules)
+	}
+	again, added := Policy{Allowlist: []string{"198.51.100.7"}, Rules: p.Rules}.MoveAllowlist()
+	if added != 0 || len(again.Rules) != 2 {
+		t.Fatalf("moved twice: added %d, %+v", added, again.Rules)
+	}
+	p.Rules = append(p.Rules, Rule{Action: ActionDeny, Direction: DirectionInbound, Value: "198.51.100.0/24"})
+	e := New("test", "", nil)
+	e.Own(p)
+	if !e.Exempt("198.51.100.7:25") || !e.Exempt("2001:db8::1") {
+		t.Error("a moved address lost its exemption")
+	}
+	if _, denied := e.DenyPeer("198.51.100.7", ProtocolIMAP); denied {
+		t.Error("a moved address was denied by a wider rule")
+	}
+	if _, err := e.BlockAddress(context.Background(), "198.51.100.7", "", "test", time.Hour); err == nil {
+		t.Error("a moved address could be blocked by hand")
+	}
+	if plan := e.Plan(); len(plan.Allow) != 2 {
+		t.Errorf("firewall allows %v", plan.Allow)
+	}
+}
+
+// An allow rule for one protocol lets the address through there, but isn't a
+// pass from limits on every other protocol.
+func TestProtocolAllowDoesNotExempt(t *testing.T) {
+	p := DefaultPolicy()
+	p.Rules = []Rule{{Action: ActionAllow, Direction: DirectionInbound, Value: "192.0.2.5", Protocols: "smtp"}}
+	e := New("test", "", nil)
+	e.Own(p)
+	if e.Exempt("192.0.2.5") {
+		t.Error("an SMTP-only allow exempted the address everywhere")
+	}
+}
+
+func TestAccessControlRules(t *testing.T) {
+	rules, skipped := AccessControlRules([]string{"192.0.2.1"}, []string{"203.0.113.0/24"}, []string{"partner.example"}, []string{"com", "spam.example"})
+	if len(skipped) != 1 || skipped[0] != "com" {
+		t.Errorf("skipped %v", skipped)
+	}
+	if len(rules) != 4 {
+		t.Fatalf("rules %+v", rules)
+	}
+	if rules[0].Action != ActionAllow || rules[0].Protocols != ProtocolSMTP || rules[1].Action != ActionDeny || rules[1].Protocols != ProtocolSMTP {
+		t.Errorf("address rules %+v", rules[:2])
+	}
+	if rules[2].Protocols != "" || rules[3].Value != "spam.example" {
+		t.Errorf("domain rules %+v", rules[2:])
 	}
 }

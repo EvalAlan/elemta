@@ -2574,9 +2574,11 @@ func (s *Server) persistConfig() error {
 			edit{"abuse", "block_minutes", p.BlockMinutes},
 			edit{"abuse", "max_block_hours", p.MaxBlockHours},
 			edit{"abuse", "allowlist", p.Allowlist},
+			edit{"abuse", "sign_in_alerts", p.SignInAlerts},
 			edit{"abuse", "rules", ruleTables(p.Rules)},
 		)
 	}
+
 	if p := s.mainConfig.DKIM; p != nil {
 		edits = append(edits,
 			edit{"plugins.dkim", "enabled", p.Enabled},

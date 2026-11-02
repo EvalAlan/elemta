@@ -265,17 +265,94 @@ func (e *Engine) DenyDestination(ip net.IP) (Rule, bool) {
 	return e.refusal(r, denied, ip.String())
 }
 
-// allowed reports whether a live allow rule covers ip, which exempts it from
-// limits the way the allowlist does.
-func (e *Engine) allowed(ip net.IP) bool {
-	now := time.Now()
+// exempts reports whether this allow rule exempts its network from limits and
+// blocks, as the allowlist did. A rule naming protocols doesn't: letting a
+// relay through on SMTP is no reason to stop counting its failed IMAP
+// passwords.
+func (c compiledRule) exempts(now time.Time) bool {
+	return c.Action == ActionAllow && c.network != nil && len(c.protocols) == 0 && c.covers(DirectionInbound) && c.live(now)
+}
+
+// exemptNetworks lists what is never limited or blocked. The caller holds e.mu.
+func (e *Engine) exemptNetworks(now time.Time) []*net.IPNet {
+	out := append([]*net.IPNet{}, e.exempt...)
 	for i := range e.rules {
-		r := &e.rules[i]
-		if r.Action == ActionAllow && r.network != nil && r.covers(DirectionInbound) && r.live(now) && r.network.Contains(ip) {
-			return true
+		if e.rules[i].exempts(now) {
+			out = append(out, e.rules[i].network)
 		}
 	}
-	return false
+	return out
+}
+
+// AccessControlRules turns the older [access_control] lists into rules. Those
+// lists only ever applied to SMTP, so the addresses keep to it. An entry no
+// rule can hold, such as a bare top-level domain the old lists ignored, is
+// returned in skipped rather than failing the rest.
+func AccessControlRules(allowIPs, denyIPs, allowDomains, denyDomains []string) (rules []Rule, skipped []string) {
+	add := func(action, protocols string, values []string) {
+		for _, value := range values {
+			r := Rule{Action: action, Direction: DirectionInbound, Value: strings.TrimSpace(value), Protocols: protocols, Note: "From [access_control]"}
+			if r.Value == "" {
+				continue
+			}
+			if _, err := compileRule(r); err != nil {
+				skipped = append(skipped, value)
+				continue
+			}
+			rules = append(rules, r)
+		}
+	}
+	add(ActionAllow, ProtocolSMTP, allowIPs)
+	add(ActionDeny, ProtocolSMTP, denyIPs)
+	add(ActionAllow, "", allowDomains)
+	add(ActionDeny, "", denyDomains)
+	return rules, skipped
+}
+
+// AddRules appends rules the policy doesn't already have, and reports how
+// many it added, so a migration run twice adds nothing the second time.
+func (p Policy) AddRules(extra []Rule) (Policy, int) {
+	have := map[string]bool{}
+	key := func(r Rule) string {
+		return r.Action + "|" + r.Direction + "|" + strings.ToLower(strings.TrimSpace(r.Value)) + "|" + r.Protocols
+	}
+	for _, r := range p.Rules {
+		have[key(r)] = true
+	}
+	added := 0
+	rules := append([]Rule{}, p.Rules...)
+	for _, r := range extra {
+		if have[key(r)] {
+			continue
+		}
+		have[key(r)] = true
+		rules = append(rules, r)
+		added++
+	}
+	p.Rules = rules
+	return p, added
+}
+
+// MoveAllowlist turns the allowlist into allow rules, which do everything it
+// did: an allow rule on all protocols exempts its network from limits and
+// blocks, and beats any deny. One list is easier to reason about than two
+// that overlap.
+func (p Policy) MoveAllowlist() (Policy, int) {
+	if len(p.Allowlist) == 0 {
+		if p.Allowlist == nil {
+			p.Allowlist = []string{}
+		}
+		return p, 0
+	}
+	extra := make([]Rule, 0, len(p.Allowlist))
+	for _, entry := range p.Allowlist {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			extra = append(extra, Rule{Action: ActionAllow, Direction: DirectionInbound, Value: entry, Note: "From the allowlist"})
+		}
+	}
+	p, added := p.AddRules(extra)
+	p.Allowlist = []string{}
+	return p, added
 }
 
 func (c compiledRule) matchesMail(address string) bool {

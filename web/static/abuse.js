@@ -6,7 +6,7 @@
     const view = document.getElementById('view-abuse');
     if (!view) return;
     const el = id => document.getElementById(id);
-    let you = '', allowlist = [], rules = [], range = '24h', timer = null;
+    let you = '', rules = [], range = '24h', timer = null;
 
     // Fixed order, so a service keeps its colour whichever ones have data.
     // "mailbox" is what these protocols were counted as together; it only
@@ -62,8 +62,6 @@
         el('abuse-window').value = p.window_minutes;
         el('abuse-block').value = p.block_minutes;
         el('abuse-max-block').value = p.max_block_hours;
-        allowlist = p.allowlist || [];
-        el('abuse-allowlist').value = allowlist.join('\n');
         rules = p.rules || [];
         fillRules();
     }
@@ -110,7 +108,6 @@
             window_minutes: Number(el('abuse-window').value),
             block_minutes: Number(el('abuse-block').value),
             max_block_hours: Number(el('abuse-max-block').value),
-            allowlist: el('abuse-allowlist').value.split(/[\s,]+/).map(x => x.trim()).filter(Boolean),
         };
     }
     function fillStatus(status) {
@@ -430,7 +427,8 @@
         event.preventDefault();
         const policy = readPolicy();
         if (policy.mode === 'off' && !window.confirm('Turn abuse protection off? Nothing is blocked, and connection limits fall back to the configuration file.')) return;
-        if (policy.firewall === 'apply' && !policy.allowlist.length && !window.confirm('Apply blocks at the firewall with an empty allowlist? A block could cut off your own network until it expires.')) return;
+        const exempt = rules.some(r => r.action === 'allow' && !r.protocols && r.direction !== 'outbound' && !r.value.includes('@') && /[:\d]/.test(r.value));
+        if (policy.firewall === 'apply' && !exempt && !window.confirm('Apply blocks at the firewall with no allow rule for an address? A block could cut off your own network until it expires.')) return;
         act(async () => {
             const saved = await call('/policy', 'PUT', policy);
             notice(saved.published
@@ -447,10 +445,8 @@
             notice(block.network + ' blocked. Every service applies it within a few seconds.');
         });
     });
-    el('abuse-you-add').addEventListener('click', () => act(async () => {
-        const policy = readPolicy();
-        policy.allowlist = allowlist.concat(you);
-        await call('/policy', 'PUT', policy);
-        notice(you + ' added to the allowlist.');
-    }));
+    el('abuse-you-add').addEventListener('click', async () => {
+        const rule = { action: 'allow', direction: 'inbound', value: you, note: 'Added from the warning' };
+        if (await saveRules([...rules, rule], 'Allow rule added for ' + you + '.')) refresh();
+    });
 })();
