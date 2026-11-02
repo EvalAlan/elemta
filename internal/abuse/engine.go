@@ -34,6 +34,7 @@ type Engine struct {
 	client    valkey.Client
 	policy    Policy
 	exempt    []*net.IPNet
+	rules     []compiledRule
 	published bool
 	source    *Policy // set on the service that owns the policy
 	onPolicy  []func(Policy)
@@ -100,8 +101,13 @@ func (e *Engine) setPolicy(p Policy) {
 		e.log.Error("Ignoring an invalid abuse policy", "error", err)
 		return
 	}
+	rules, err := compileRules(p.Rules)
+	if err != nil {
+		e.log.Error("Ignoring an invalid abuse policy", "error", err)
+		return
+	}
 	e.mu.Lock()
-	e.policy, e.exempt = p, exempt
+	e.policy, e.exempt, e.rules = p, exempt, rules
 	e.mu.Unlock()
 }
 
@@ -126,7 +132,7 @@ func (e *Engine) Exempt(host string) bool {
 			return true
 		}
 	}
-	return false
+	return e.allowed(ip)
 }
 
 // Run keeps the engine current until ctx ends.

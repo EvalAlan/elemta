@@ -42,6 +42,13 @@ and backups that left out message bodies stored in S3.
 
 ### What's new
 
+- **Allow and deny rules with direction.** The Abuse page now has one rule list for
+  inbound and outbound, matching an address, network, domain or mail address, across
+  SMTP, IMAP, POP3, ManageSieve, webmail and the console. Rules can expire, carry a
+  note, and apply within seconds with no restart. Outbound rules on a network stop
+  delivery to that mail server. See "Allow and deny rules" in
+  [docs/abuse-protection.md](docs/abuse-protection.md).
+
 - **Forwarded mail keeps passing SPF.** Mail an account forwards outside the server
   now goes out from an SRS address at that account's domain, so the next server's
   SPF check passes, and bounces still reach the original sender. See "Forwarding

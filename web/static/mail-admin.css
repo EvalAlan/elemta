@@ -57,7 +57,7 @@
 .abuse-form textarea { resize: vertical; font-family: var(--font-mono, monospace); }
 .abuse-form button { justify-self: start; margin-top: .75rem; }
 .abuse-inline { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0 .5rem; }
-.abuse-inline input { color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-strong); padding: .55rem .7rem; border-radius: var(--radius-sm); font: inherit; }
+.abuse-inline input, .abuse-inline select { color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-strong); padding: .55rem .7rem; border-radius: var(--radius-sm); font: inherit; }
 .abuse-inline input[type=number] { width: 6.5rem; }
 #view-abuse .card { margin-bottom: 1.25rem; }
 #view-abuse { --abuse-1: #3987e5; --abuse-2: #d95926; --abuse-3: #199e70; --abuse-4: #c98500; --abuse-5: #9b7ee8; --abuse-6: #d4619b; --abuse-7: #8b95a5; }
@@ -110,3 +110,11 @@
 .ma-health-info, .ma-health-unknown { color: var(--text-secondary); }
 .ma-health-warn { color: var(--warning, #b45309); }
 .ma-health-fail { color: var(--danger, #dc2626); }
+.abuse-rule-form { align-items: center; }
+.abuse-rule-form #abuse-rule-value { flex: 2 1 16rem; }
+.abuse-rule-form #abuse-rule-note { flex: 1 1 10rem; }
+.abuse-rule-form #abuse-rule-days { width: 5.5rem; }
+.abuse-rule-protocols { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: .75rem; border: 0; margin: 0; padding: 0; }
+.abuse-rule-protocols legend { padding: 0; margin-bottom: .25rem; font-size: .8rem; color: var(--text-secondary); }
+.abuse-rule-protocols label { display: inline-flex; gap: .3rem; align-items: center; color: var(--text-secondary); }
+.abuse-rule-protocols input { width: auto; padding: 0; }

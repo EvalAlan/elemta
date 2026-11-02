@@ -111,6 +111,9 @@ type Config struct {
 	// reach the original sender. It comes from the environment, not this file,
 	// because it holds a secret; nil is off (internal/srs).
 	SRS *srs.Rewriter `toml:"-" json:"-"`
+	// destinationGuard refuses delivery to a mail server by address. It comes
+	// with the abuse policy, which reaches the server after the queue is built.
+	destinationGuard func(net.IP) error
 
 	// Plugin configuration
 	Plugins *PluginConfig `toml:"plugins" json:"plugins"`

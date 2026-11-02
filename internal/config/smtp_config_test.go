@@ -13,6 +13,7 @@ import (
 // deliberately leaves to ApplyDefaults or to another subsystem. Adding a field
 // here is a conscious decision; forgetting a field is not.
 var fieldsIntentionallyUnmapped = map[string]string{
+	"destinationGuard":      "comes from the abuse policy, not the file",
 	"SRS":                   "built from the environment, because it holds a secret",
 	"Cache":                 "not exposed via TOML (json tags only)",
 	"Rules":                 "not exposed via TOML (json tags only)",

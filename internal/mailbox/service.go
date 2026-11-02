@@ -234,16 +234,17 @@ func (s *Service) Run(ctx context.Context) error {
 	start(func() error { return s.lmtp.Serve(&limitedListener{Listener: listeners[1], slots: slots}) })
 	start(func() error { return s.http.Serve(listeners[2]) })
 	for _, endpoint := range []struct {
-		addr  string
-		serve func(net.Listener) error
+		addr     string
+		serve    func(net.Listener) error
+		protocol string
 	}{
-		{s.cfg.Server.IMAPStartTLSListen, s.imapStartTLS.Serve},
-		{s.cfg.Server.POP3Listen, s.servePOP3},
+		{s.cfg.Server.IMAPStartTLSListen, s.imapStartTLS.Serve, abuse.ProtocolIMAP},
+		{s.cfg.Server.POP3Listen, s.servePOP3, abuse.ProtocolPOP3},
 	} {
 		if endpoint.addr == "" {
 			continue
 		}
-		ln, err := s.publicListen(endpoint.addr)
+		ln, err := s.publicListen(endpoint.addr, endpoint.protocol)
 		if err != nil {
 			s.cancel()
 			_ = s.imap.Close()
@@ -265,7 +266,7 @@ func (s *Service) Run(ctx context.Context) error {
 		// Implicit TLS (port 993), which most clients default to. TLS wraps
 		// the connection limiter, so the IMAP server sees a *tls.Conn and
 		// knows the session is encrypted.
-		ln, err := s.publicListen(s.cfg.Server.IMAPSListen)
+		ln, err := s.publicListen(s.cfg.Server.IMAPSListen, abuse.ProtocolIMAP)
 		if err != nil {
 			s.cancel()
 			for _, l := range listeners {
@@ -280,7 +281,7 @@ func (s *Service) Run(ctx context.Context) error {
 		})
 	}
 	if s.cfg.Sieve.Listen != "" {
-		ln, err := s.publicListen(s.cfg.Sieve.Listen)
+		ln, err := s.publicListen(s.cfg.Sieve.Listen, abuse.ProtocolSieve)
 		if err != nil {
 			s.cancel()
 			for _, l := range listeners {
@@ -682,7 +683,7 @@ var tls12Suites = []uint16{
 // sign-in throttling, logs and the security API's view of the client
 // (proxy_protocol_from). The internal listeners (the webmail's IMAP, LMTP,
 // HTTP) are reached directly and don't take it.
-func (s *Service) publicListen(addr string) (net.Listener, error) {
+func (s *Service) publicListen(addr, protocol string) (net.Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -692,7 +693,7 @@ func (s *Service) publicListen(addr string) (net.Listener, error) {
 		_ = ln.Close()
 		return nil, err
 	}
-	return &abuseListener{Listener: wrapped, abuse: s.abuse}, nil
+	return &abuseListener{Listener: wrapped, abuse: s.abuse, protocol: protocol}, nil
 }
 
 // abuseListener turns away clients over their limit before they cost a TLS
@@ -703,6 +704,8 @@ func (s *Service) publicListen(addr string) (net.Listener, error) {
 type abuseListener struct {
 	net.Listener
 	abuse *abuse.Engine
+	// protocol is what allow and deny rules know this listener as.
+	protocol string
 }
 
 func (l *abuseListener) Accept() (net.Conn, error) {
@@ -711,7 +714,7 @@ func (l *abuseListener) Accept() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		if l.abuse.Refuse(c.RemoteAddr().String()) {
+		if _, denied := l.abuse.DenyPeer(c.RemoteAddr().String(), l.protocol); denied || l.abuse.Refuse(c.RemoteAddr().String()) {
 			_ = c.Close()
 			continue
 		}

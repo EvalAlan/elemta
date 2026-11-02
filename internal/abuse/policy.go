@@ -59,6 +59,8 @@ type Policy struct {
 	// Allowlist holds addresses and networks that are never limited or
 	// blocked: an operator's own, monitoring, trusted relays.
 	Allowlist []string `toml:"allowlist" json:"allowlist"`
+	// Rules are allow and deny decisions, by direction (rules.go).
+	Rules []Rule `toml:"rules" json:"rules"`
 }
 
 // DefaultPolicy leaves room for a busy office behind one address and for large
@@ -104,6 +106,9 @@ func (p Policy) Validate() error {
 		return errors.New("the longest block must be between 1 hour and 30 days")
 	}
 	if _, err := parseNetworks(p.Allowlist); err != nil {
+		return err
+	}
+	if _, err := compileRules(p.Rules); err != nil {
 		return err
 	}
 	return nil

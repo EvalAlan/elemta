@@ -1943,6 +1943,9 @@ const PLUGIN_SETTINGS_SCHEMA = {
         ],
     },
     access_control: {
+        // The Abuse page's rules do this with directions and across every
+        // protocol; these lists stay for configurations that already use them.
+        note: 'New rules belong on the Abuse page, which covers inbound and outbound mail and every protocol. Entries here still apply, to SMTP only.',
         fields: [
             { key: 'allow_ips', label: 'Allowed addresses', type: 'list',
               hint: 'CIDR ranges or single addresses, one per line. An allow entry beats a deny entry.' },
@@ -2217,6 +2220,7 @@ function renderPluginPanel(plugin) {
     }
 
     const cfg = plugin.config || {};
+    const schemaNote = schema.note ? `<p class="field-hint">${escapeHtml(schema.note)}</p>` : '';
     const fields = (schema.fields || []).map(f => {
         const value = cfg[f.key];
         const id = `plugin-${plugin.name}-${f.key}`;
@@ -2305,6 +2309,7 @@ function renderPluginPanel(plugin) {
             </div>
             <div class="card-body">
                 <p class="panel-intro">${escapeHtml(plugin.description || '')}</p>
+                ${schemaNote}
                 ${enableOnSave ? `
                     <div class="restart-note">
                         This plugin is off until it is configured. Fill the settings in and

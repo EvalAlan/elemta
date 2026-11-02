@@ -298,6 +298,16 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 			return fmt.Errorf("550 5.7.1 %s", decision.Reason)
 		}
 
+		// A signed-in user's mail is leaving, not arriving, so this rule isn't
+		// about them: outbound rules apply at RCPT.
+		if !ch.state.IsAuthenticated() {
+			if rule, denied := ch.session.abuse.DenySender(mailFrom); denied {
+				ch.logger.WarnContext(ctx, "Sender refused by a rule",
+					"event_type", "rejection", "mail_from", mailFrom, "rule", rule.Value)
+				return fmt.Errorf("550 5.7.1 Sender refused by policy")
+			}
+		}
+
 		// DNS blocklists. Consulted here rather than at connect so that an
 		// authenticated client is already known to be one: a legitimate user
 		// sending from a hotel or mobile network whose address is listed would
@@ -389,6 +399,15 @@ func (ch *CommandHandler) HandleRCPT(ctx context.Context, args string) error {
 		// A valid SRS address skips this: it may lead outside the server, and
 		// the hash is what makes that safe.
 		return err
+	}
+
+	// Mail leaving the server, and not a bounce going home.
+	if bounceFor == "" && ch.session != nil && !ch.isLocalDomain(ctx, rcptTo) {
+		if rule, denied := ch.session.abuse.DenyRecipient(rcptTo); denied {
+			ch.logger.InfoContext(ctx, "Recipient refused by a rule",
+				"event_type", "rejection", "recipient", rcptTo, "rule", rule.Value)
+			return fmt.Errorf("550 5.7.1 <%s>: Recipient refused by policy", sanitizeEmailForHeader(rcptTo))
+		}
 	}
 
 	// A local mailbox that does not exist is refused now, not bounced later.

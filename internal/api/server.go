@@ -1425,6 +1425,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	addr := s.loginAddr(r)
+	if _, denied := s.abuse.DenyPeer(addr, abuse.ProtocolAdmin); denied {
+		http.Error(w, "Refused by policy", http.StatusForbidden)
+		return
+	}
 	if b, blocked := s.abuse.Blocked(addr); blocked {
 		writeThrottled(w, time.Until(b.Until))
 		return
@@ -2563,6 +2567,7 @@ func (s *Server) persistConfig() error {
 			edit{"abuse", "block_minutes", p.BlockMinutes},
 			edit{"abuse", "max_block_hours", p.MaxBlockHours},
 			edit{"abuse", "allowlist", p.Allowlist},
+			edit{"abuse", "rules", ruleTables(p.Rules)},
 		)
 	}
 	if p := s.mainConfig.DKIM; p != nil {

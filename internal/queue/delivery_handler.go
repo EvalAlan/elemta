@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/dane"
@@ -125,6 +126,8 @@ type SMTPDeliveryHandler struct {
 	mtastsManager             mtastsEnforcer
 	resolver                  mxResolver
 	dialContext               func(context.Context, string, string) (net.Conn, error)
+	// destinationGuard refuses mail servers by address; nil refuses none.
+	destinationGuard func(net.IP) error
 	// shaper applies per-destination connection and rate limits, and the
 	// backoff a destination asks for by deferring. Nil means unshaped.
 	shaper       *Shaper
@@ -521,6 +524,12 @@ func (h *SMTPDeliveryHandler) groupRecipientsByDomain(recipients []string) map[s
 }
 
 // deliverToDomainWithMetadata delivers messages to all recipients in a specific domain and returns delivery metadata
+// SetDestinationGuard sets a check on the address of each mail server this
+// handler connects to. A refusal counts as that server being unreachable.
+func (h *SMTPDeliveryHandler) SetDestinationGuard(guard func(net.IP) error) {
+	h.destinationGuard = guard
+}
+
 // SetShaper attaches per-destination traffic shaping.
 func (h *SMTPDeliveryHandler) SetShaper(shaper *Shaper) {
 	if h.shared != nil {
@@ -1323,6 +1332,17 @@ func (h *SMTPDeliveryHandler) dialAndGreet(ctx context.Context, address string) 
 			// addresses of the same family: an IPv4 pool address never
 			// tries to reach an IPv6-only MX it cannot route to.
 			dialer.LocalAddr = &net.TCPAddr{IP: src.ip}
+		}
+		if guard := h.destinationGuard; guard != nil {
+			// In the dialer, because only here is the name resolved: this
+			// sees the address actually about to be connected to.
+			dialer.Control = func(_, resolved string, _ syscall.RawConn) error {
+				host, _, err := net.SplitHostPort(resolved)
+				if err != nil {
+					return err
+				}
+				return guard(net.ParseIP(host))
+			}
 		}
 		dial = dialer.DialContext
 	}

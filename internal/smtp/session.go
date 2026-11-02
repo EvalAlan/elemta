@@ -51,13 +51,15 @@ type Session struct {
 	dataHandler    *DataHandler
 
 	// Configuration and dependencies
-	config          *Config
-	logger          *slog.Logger
-	authenticator   Authenticator
-	queueManager    queue.QueueManager
-	tlsManager      TLSHandler
-	scannerManager  *ScannerManager
-	accessControl   *AccessControl
+	config         *Config
+	logger         *slog.Logger
+	authenticator  Authenticator
+	queueManager   queue.QueueManager
+	tlsManager     TLSHandler
+	scannerManager *ScannerManager
+	accessControl  *AccessControl
+	// abuse holds the allow and deny rules; nil is none (internal/abuse).
+	abuse           *abuse.Engine
 	rblChecker      *RBLChecker
 	rblDecision     RBLDecision
 	authVerifier    *authresult.Verifier

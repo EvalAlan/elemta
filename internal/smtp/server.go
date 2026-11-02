@@ -440,6 +440,13 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		// Outbound EHLO announces this server's hostname, not "localhost".
 		if remoteSMTPHandler != nil {
 			remoteSMTPHandler.SetHeloHostname(config.Hostname)
+			// Read when dialling: the rules arrive after this is built.
+			remoteSMTPHandler.SetDestinationGuard(func(ip net.IP) error {
+				if config.destinationGuard == nil {
+					return nil
+				}
+				return config.destinationGuard(ip)
+			})
 		}
 
 		tlsReportHandler = remoteSMTPHandler
@@ -1080,6 +1087,14 @@ func (s *Server) refuseBlocked(conn net.Conn) bool {
 // leaves the limit from the configuration file.
 func (s *Server) SetAbuse(e *abuse.Engine) {
 	s.abuse = e
+	if s.config != nil {
+		s.config.destinationGuard = func(ip net.IP) error {
+			if rule, denied := e.DenyDestination(ip); denied {
+				return fmt.Errorf("delivery to %s refused by a rule on %s", ip, rule.Value)
+			}
+			return nil
+		}
+	}
 	if s.resourceManager == nil {
 		return
 	}
@@ -1446,6 +1461,17 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
+	// The webmail's submission port carries its users, not the webmail, so
+	// a rule on the webmail's own address must not stop them all.
+	if sc, ok := conn.(submissionConn); !ok || !sc.webmail {
+		if rule, denied := s.abuse.DenyPeer(clientIP, abuse.ProtocolSMTP); denied {
+			s.slogger.WarnContext(ctx, "Connection refused by a rule",
+				"event_type", "rejection", "client_ip", clientIP, "rule", rule.Value)
+			_, _ = conn.Write([]byte("554 5.7.1 Connection refused by policy\r\n"))
+			_ = conn.Close()
+			return
+		}
+	}
 
 	var sessionID string
 	var cleanupDone bool
@@ -1522,6 +1548,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	s.pluginMu.RUnlock()
 	session.SetScannerManager(scanners)
 	session.SetAccessControl(accessControl)
+	session.abuse = s.abuse
 	session.SetRBLChecker(rblChecker)
 	session.SetAuthVerifier(authVerifier)
 	session.SetDMARCReports(s.dmarcReports)
