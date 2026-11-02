@@ -168,3 +168,69 @@ func TestHoldsAndSprayingAreShared(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = one.Unblock(ctx, address, "test") })
 }
+
+// A forged domain arrives from many addresses, each under its own cap.
+func TestInboundMessagesPerSenderDomain(t *testing.T) {
+	p := DefaultPolicy()
+	p.MessagesPerDomainPerHour = 2
+	e := testEngine(t, p)
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if !e.InboundDomain(ctx, fmt.Sprintf("203.0.113.%d:25", i+1), "a@Forged.example") {
+			t.Fatalf("message %d refused under the limit", i+1)
+		}
+	}
+	if e.InboundDomain(ctx, "203.0.113.9:25", "b@forged.example") {
+		t.Fatal("a third address got past the domain's limit")
+	}
+	if !e.InboundDomain(ctx, "203.0.113.9:25", "b@other.example") {
+		t.Fatal("another domain shares the count")
+	}
+	if !e.InboundDomain(ctx, "203.0.113.9:25", "") {
+		t.Fatal("a bounce was counted")
+	}
+}
+
+// Each protocol can have its own connection limits; one not named keeps the
+// general ones, and so does a zero.
+func TestProtocolConnectionLimits(t *testing.T) {
+	p := DefaultPolicy()
+	p.ConnectionsPerAddress = 3
+	p.ProtocolLimits = []ProtocolLimit{{Protocol: ProtocolPOP3, ConnectionsPerAddress: 1}, {Protocol: ProtocolIMAP, ConnectionsPerMinute: 2}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if n, m := p.ConnectionLimits(ProtocolIMAP); n != 3 || m != 2 {
+		t.Fatalf("imap limits %d, %d", n, m)
+	}
+	e := testEngine(t, p)
+	if _, ok := e.Acquire("203.0.113.5:1", ProtocolPOP3); !ok {
+		t.Fatal("first POP3 connection refused")
+	}
+	if _, ok := e.Acquire("203.0.113.5:2", ProtocolPOP3); ok {
+		t.Fatal("second POP3 connection allowed over its own limit")
+	}
+	if _, ok := e.Acquire("203.0.113.5:3", ProtocolSieve); !ok {
+		t.Fatal("POP3's count spilled into ManageSieve")
+	}
+	for i := 0; i < 2; i++ {
+		if !e.AllowRate("203.0.113.6:1", ProtocolIMAP) {
+			t.Fatalf("IMAP connection %d refused under its rate", i+1)
+		}
+	}
+	if e.AllowRate("203.0.113.6:1", ProtocolIMAP) {
+		t.Fatal("IMAP over its own rate was allowed")
+	}
+
+	for name, bad := range map[string][]ProtocolLimit{
+		"protocol": {{Protocol: "webmail", ConnectionsPerAddress: 1}},
+		"twice":    {{Protocol: ProtocolIMAP}, {Protocol: ProtocolIMAP}},
+		"negative": {{Protocol: ProtocolIMAP, ConnectionsPerMinute: -1}},
+	} {
+		q := DefaultPolicy()
+		q.ProtocolLimits = bad
+		if q.Validate() == nil {
+			t.Errorf("%s: accepted %+v", name, bad)
+		}
+	}
+}

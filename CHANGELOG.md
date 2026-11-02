@@ -55,7 +55,9 @@ and backups that left out message bodies stored in S3.
   an administrator releases it. That's the usual sign of a taken-over account. One
   address failing against many different accounts is blocked as password spraying.
   New installs get 1000 messages, 500 recipients and 10 accounts; existing ones keep
-  these off until set.
+  these off until set. Mail per hour claiming one sender domain can be capped too (off
+  unless set), and each of SMTP submission, IMAP, POP3 and ManageSieve can have its
+  own connection limits, which are now counted per protocol.
 
 - **Allow and deny rules with direction.** The Abuse page now has one rule list for
   inbound and outbound, matching an address, network, domain or mail address, across

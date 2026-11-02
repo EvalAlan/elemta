@@ -54,6 +54,14 @@ type Policy struct {
 	// on port 25; 0 turns it off. Signed-in users and allowed relays aren't
 	// counted.
 	MessagesPerAddressPerHour int `toml:"messages_per_address_per_hour" json:"messages_per_address_per_hour"`
+	// MessagesPerDomainPerHour caps mail claiming one sender domain, from
+	// outside, whatever address it comes from: a run forging one domain from
+	// many hosts gets past the per-address cap. Large providers' domains
+	// carry a lot of real mail, so it's off (0) unless set.
+	MessagesPerDomainPerHour int `toml:"messages_per_domain_per_hour" json:"messages_per_domain_per_hour"`
+	// ProtocolLimits replace the two connection limits above for one
+	// protocol; a zero in one of them keeps the general value.
+	ProtocolLimits []ProtocolLimit `toml:"protocol_limits" json:"protocol_limits"`
 	// OutboundRecipientsPerHour puts an account on hold when it sends to more
 	// recipients outside the server than this in an hour; 0 turns it off.
 	OutboundRecipientsPerHour int `toml:"outbound_recipients_per_hour" json:"outbound_recipients_per_hour"`
@@ -75,6 +83,32 @@ type Policy struct {
 	SignInAlerts string `toml:"sign_in_alerts" json:"sign_in_alerts"`
 	// Rules are allow and deny decisions, by direction (rules.go).
 	Rules []Rule `toml:"rules" json:"rules"`
+}
+
+// ProtocolLimit is the connection limits for one protocol. SMTP means the
+// submission ports: port 25 is never limited by rate, and only by connections
+// per address.
+type ProtocolLimit struct {
+	Protocol              string `toml:"protocol" json:"protocol"`
+	ConnectionsPerAddress int    `toml:"connections_per_address,omitempty" json:"connections_per_address,omitempty"`
+	ConnectionsPerMinute  int    `toml:"connections_per_minute,omitempty" json:"connections_per_minute,omitempty"`
+}
+
+// ConnectionLimits returns the connection limits in force for protocol.
+func (p Policy) ConnectionLimits(protocol string) (perAddress, perMinute int) {
+	perAddress, perMinute = p.ConnectionsPerAddress, p.ConnectionsPerMinute
+	for _, l := range p.ProtocolLimits {
+		if l.Protocol != protocol {
+			continue
+		}
+		if l.ConnectionsPerAddress > 0 {
+			perAddress = l.ConnectionsPerAddress
+		}
+		if l.ConnectionsPerMinute > 0 {
+			perMinute = l.ConnectionsPerMinute
+		}
+	}
+	return perAddress, perMinute
 }
 
 // DefaultPolicy leaves room for a busy office behind one address and for large
@@ -112,6 +146,27 @@ func (p Policy) Validate() error {
 	}
 	if p.MessagesPerAddressPerHour < 0 || p.MessagesPerAddressPerHour > 10000000 {
 		return errors.New("messages per address must be between 0 and 10000000")
+	}
+	if p.MessagesPerDomainPerHour < 0 || p.MessagesPerDomainPerHour > 10000000 {
+		return errors.New("messages per sender domain must be between 0 and 10000000")
+	}
+	seen := map[string]bool{}
+	for _, l := range p.ProtocolLimits {
+		switch l.Protocol {
+		case ProtocolSMTP, ProtocolIMAP, ProtocolPOP3, ProtocolSieve:
+		default:
+			return fmt.Errorf("connection limits can be set for smtp, imap, pop3 or sieve, not %q", l.Protocol)
+		}
+		if seen[l.Protocol] {
+			return fmt.Errorf("connection limits for %s are set twice", l.Protocol)
+		}
+		seen[l.Protocol] = true
+		if l.ConnectionsPerAddress < 0 || l.ConnectionsPerAddress > 100000 {
+			return fmt.Errorf("connections per address for %s must be between 0 and 100000", l.Protocol)
+		}
+		if l.ConnectionsPerMinute < 0 || l.ConnectionsPerMinute > 1000000 {
+			return fmt.Errorf("connections per minute for %s must be between 0 and 1000000", l.Protocol)
+		}
 	}
 	if p.OutboundRecipientsPerHour < 0 || p.OutboundRecipientsPerHour > 10000000 {
 		return errors.New("outside recipients per hour must be between 0 and 10000000")

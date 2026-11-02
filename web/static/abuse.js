@@ -14,7 +14,8 @@
     // while it has data.
     const SERVICES = [['imap', 'IMAP'], ['smtp', 'SMTP'], ['webmail', 'Webmail'], ['admin', 'Admin console'],
         ['pop3', 'POP3'], ['sieve', 'ManageSieve'], ['mailbox', 'IMAP and POP3, not separated']];
-    const REASONS = [['blocked', 'Blocked'], ['limit', 'Too many connections'], ['rate', 'Too fast'], ['rule', 'Denied by a rule'], ['messages', 'Too much mail'], ['held', 'Account on hold']];
+    const REASONS = [['blocked', 'Blocked'], ['limit', 'Too many connections'], ['rate', 'Too fast'], ['rule', 'Denied by a rule'], ['messages', 'Too much mail'], ['held', 'Account on hold'], ['domain', 'Too much from one domain']];
+    const LIMIT_PROTOCOLS = ['smtp', 'imap', 'pop3', 'sieve'];
 
     async function call(path, method = 'GET', body) {
         const options = { method, headers: { Accept: 'application/json' } };
@@ -56,6 +57,12 @@
         el('abuse-spray').value = p.accounts_per_address || 0;
         el('abuse-inbound').value = p.messages_per_address_per_hour || 0;
         el('abuse-outbound').value = p.outbound_recipients_per_hour || 0;
+        el('abuse-domain').value = p.messages_per_domain_per_hour || 0;
+        LIMIT_PROTOCOLS.forEach(name => {
+            const limit = (p.protocol_limits || []).find(l => l.protocol === name) || {};
+            el('abuse-limit-' + name + '-connections').value = limit.connections_per_address || '';
+            el('abuse-limit-' + name + '-rate').value = limit.connections_per_minute || '';
+        });
         el('abuse-signin-alerts').value = p.sign_in_alerts === 'off' ? 'off' : 'on';
         el('abuse-firewall').value = p.firewall;
         el('abuse-failures').value = p.failures_per_address;
@@ -102,6 +109,12 @@
             accounts_per_address: Number(el('abuse-spray').value),
             messages_per_address_per_hour: Number(el('abuse-inbound').value),
             outbound_recipients_per_hour: Number(el('abuse-outbound').value),
+            messages_per_domain_per_hour: Number(el('abuse-domain').value),
+            protocol_limits: LIMIT_PROTOCOLS.map(name => ({
+                protocol: name,
+                connections_per_address: Number(el('abuse-limit-' + name + '-connections').value) || 0,
+                connections_per_minute: Number(el('abuse-limit-' + name + '-rate').value) || 0,
+            })).filter(l => l.connections_per_address || l.connections_per_minute),
             sign_in_alerts: el('abuse-signin-alerts').value,
             firewall: el('abuse-firewall').value,
             failures_per_address: Number(el('abuse-failures').value),

@@ -40,6 +40,14 @@ func TestConnectionLimitFollowsTheAbusePolicy(t *testing.T) {
 			t.Fatal("an allowlisted address was limited")
 		}
 	}
+	// SMTP's own limit, where set, replaces the general one.
+	policy.ProtocolLimits = []abuse.ProtocolLimit{{Protocol: abuse.ProtocolSMTP, ConnectionsPerAddress: 3}}
+	if err := e.Publish(context.Background(), policy); err != nil {
+		t.Fatal(err)
+	}
+	if !tracker.AddConnection("203.0.113.9") || tracker.AddConnection("203.0.113.9") {
+		t.Fatal("SMTP's own limit of 3 wasn't applied")
+	}
 	// Anything but enforcing goes back to the configuration file's limit.
 	policy.Mode = abuse.ModeOff
 	if err := e.Publish(context.Background(), policy); err != nil {

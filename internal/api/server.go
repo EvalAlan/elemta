@@ -2569,6 +2569,8 @@ func (s *Server) persistConfig() error {
 			edit{"abuse", "accounts_per_address", p.AccountsPerAddress},
 			edit{"abuse", "messages_per_address_per_hour", p.MessagesPerAddressPerHour},
 			edit{"abuse", "outbound_recipients_per_hour", p.OutboundRecipientsPerHour},
+			edit{"abuse", "messages_per_domain_per_hour", p.MessagesPerDomainPerHour},
+			edit{"abuse", "protocol_limits", protocolLimitTables(p.ProtocolLimits)},
 			edit{"abuse", "firewall", p.Firewall},
 			edit{"abuse", "window_minutes", p.WindowMinutes},
 			edit{"abuse", "block_minutes", p.BlockMinutes},

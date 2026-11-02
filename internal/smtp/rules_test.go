@@ -114,6 +114,7 @@ func TestInboundMessageLimitDefersMail(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close() })
 	p := abuse.DefaultPolicy()
 	p.MessagesPerAddressPerHour = 2
+	p.MessagesPerDomainPerHour = 3
 	engine := abuse.New("test", "", nil)
 	engine.Own(p)
 	server.SetAbuse(engine)
@@ -141,6 +142,16 @@ func TestInboundMessageLimitDefersMail(t *testing.T) {
 	}
 	if reply := outside.cmd("MAIL FROM:<x@remote.example>"); !strings.HasPrefix(reply, "451 4.7.1") {
 		t.Fatalf("over the limit: %q", reply)
+	}
+	// Another address claiming the same domain is under its own limit, but
+	// the domain's is shared.
+	other := dial("198.51.100.21")
+	if reply := other.cmd("MAIL FROM:<y@remote.example>"); !strings.HasPrefix(reply, "250") {
+		t.Fatalf("third from the domain: %q", reply)
+	}
+	other.cmd("RSET")
+	if reply := other.cmd("MAIL FROM:<y@remote.example>"); !strings.HasPrefix(reply, "451 4.7.1") || !strings.Contains(reply, "domain") {
+		t.Fatalf("fourth from the domain: %q", reply)
 	}
 	// An allowed relay is this deployment's own, and isn't counted.
 	relay := dial("203.0.113.50")

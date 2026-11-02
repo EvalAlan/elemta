@@ -1070,7 +1070,7 @@ func (s *Server) refuseBlocked(conn net.Conn) bool {
 	}
 	addr := conn.RemoteAddr().String()
 	if !s.abuse.Refuse(addr) {
-		if s.abuse.AllowRate(addr) {
+		if s.abuse.AllowRate(addr, abuse.ProtocolSMTP) {
 			return false
 		}
 		_ = conn.Close()
@@ -1104,7 +1104,7 @@ func (s *Server) SetAbuse(e *abuse.Engine) {
 	e.OnPolicy(func(p abuse.Policy) {
 		limit := configured
 		if p.Mode == abuse.ModeEnforce {
-			limit = p.ConnectionsPerAddress
+			limit, _ = p.ConnectionLimits(abuse.ProtocolSMTP)
 		}
 		tracker.SetLimit(limit)
 		s.slogger.Info("Connection limit per address changed", "limit", limit)

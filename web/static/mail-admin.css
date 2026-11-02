@@ -56,6 +56,10 @@
 .abuse-form input, .abuse-form select, .abuse-form textarea { color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-strong); padding: .65rem .8rem; border-radius: var(--radius-sm); font: inherit; }
 .abuse-form textarea { resize: vertical; font-family: var(--font-mono, monospace); }
 .abuse-form button { justify-self: start; margin-top: .75rem; }
+.abuse-protocol-limits { border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: .5rem .75rem; margin: .4rem 0 0; min-width: 0; }
+.abuse-protocol-limits legend { font-size: .8rem; color: var(--text-secondary); padding: 0 .25rem; }
+.abuse-protocol-limits table { width: 100%; }
+.abuse-protocol-limits input { width: 100%; min-width: 0; box-sizing: border-box; }
 .abuse-inline { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0 .5rem; }
 .abuse-inline input, .abuse-inline select { color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-strong); padding: .55rem .7rem; border-radius: var(--radius-sm); font: inherit; }
 .abuse-inline input[type=number] { width: 6.5rem; }
