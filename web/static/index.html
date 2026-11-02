@@ -657,6 +657,18 @@
                             <label for="abuse-rate">New connections per minute, per address</label>
                             <input id="abuse-rate" type="number" min="0" max="1000000" required>
                             <p class="field-hint">Catches clients that connect and disconnect as fast as they can. 0 turns it off. Port 25 isn't counted.</p>
+                            <fieldset class="abuse-protocol-limits"><legend>Per protocol</legend>
+                                <table class="messages-table">
+                                    <thead><tr><th scope="col">Protocol</th><th scope="col">Connections</th><th scope="col">Per minute</th></tr></thead>
+                                    <tbody>
+                                    <tr><th scope="row">SMTP submission</th><td><input id="abuse-limit-smtp-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="SMTP submission connections per address"></td><td><input id="abuse-limit-smtp-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="SMTP submission new connections per minute"></td></tr>
+                                    <tr><th scope="row">IMAP</th><td><input id="abuse-limit-imap-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="IMAP connections per address"></td><td><input id="abuse-limit-imap-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="IMAP new connections per minute"></td></tr>
+                                    <tr><th scope="row">POP3</th><td><input id="abuse-limit-pop3-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="POP3 connections per address"></td><td><input id="abuse-limit-pop3-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="POP3 new connections per minute"></td></tr>
+                                    <tr><th scope="row">ManageSieve</th><td><input id="abuse-limit-sieve-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="ManageSieve connections per address"></td><td><input id="abuse-limit-sieve-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="ManageSieve new connections per minute"></td></tr>
+                                    </tbody>
+                                </table>
+                                <p class="field-hint">Leave a box empty to use the limits above. Each protocol is counted on its own. POP3 clients usually need far fewer connections than IMAP.</p>
+                            </fieldset>
                             <label for="abuse-failures">Failed sign-ins before blocking</label>
                             <input id="abuse-failures" type="number" min="1" max="100000" required>
                             <label for="abuse-network">Failed sign-ins before blocking a whole /24 or /48</label>
@@ -668,6 +680,9 @@
                             <label for="abuse-inbound">Messages per hour from one outside address</label>
                             <input id="abuse-inbound" type="number" min="0" max="10000000" required>
                             <p class="field-hint">Includes port 25. Over it, mail is deferred, so a real server retries later. Signed-in users and allowed relays don't count. 0 turns it off.</p>
+                            <label for="abuse-domain">Messages per hour claiming one sender domain</label>
+                            <input id="abuse-domain" type="number" min="0" max="10000000" required>
+                            <p class="field-hint">Catches a run forging one domain from many addresses, each under the limit above. Over it, that domain's mail is deferred. Large providers send a lot of real mail, so set it well above what you receive from them. 0 turns it off.</p>
                             <label for="abuse-signin-alerts">Unusual sign-in alerts</label>
                             <select id="abuse-signin-alerts"><option value="on">On</option><option value="off">Off</option></select>
                             <p class="field-hint">Keeps each account's last sign-in location for 30 days and its countries for 90, to compare against. Off keeps nothing new.</p>

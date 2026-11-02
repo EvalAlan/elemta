@@ -57,25 +57,25 @@ func TestConnectionLimit(t *testing.T) {
 	p := DefaultPolicy()
 	p.ConnectionsPerAddress = 2
 	e := testEngine(t, p)
-	first, ok := e.Acquire("203.0.113.9:1000")
+	first, ok := e.Acquire("203.0.113.9:1000", "imap")
 	if !ok {
 		t.Fatal("first connection refused")
 	}
-	if _, ok = e.Acquire("203.0.113.9:1001"); !ok {
+	if _, ok = e.Acquire("203.0.113.9:1001", "imap"); !ok {
 		t.Fatal("second connection refused")
 	}
-	if _, ok = e.Acquire("203.0.113.9:1002"); ok {
+	if _, ok = e.Acquire("203.0.113.9:1002", "imap"); ok {
 		t.Fatal("third connection accepted")
 	}
-	if _, ok = e.Acquire("198.51.100.1:1000"); !ok {
+	if _, ok = e.Acquire("198.51.100.1:1000", "imap"); !ok {
 		t.Fatal("another address was refused")
 	}
 	first()
 	first() // releasing twice must not free two slots
-	if _, ok = e.Acquire("203.0.113.9:1003"); !ok {
+	if _, ok = e.Acquire("203.0.113.9:1003", "imap"); !ok {
 		t.Fatal("a released slot wasn't reusable")
 	}
-	if _, ok = e.Acquire("203.0.113.9:1004"); ok {
+	if _, ok = e.Acquire("203.0.113.9:1004", "imap"); ok {
 		t.Fatal("one release freed two slots")
 	}
 }
@@ -84,10 +84,10 @@ func TestIPv6CountsAsOneNetwork(t *testing.T) {
 	p := DefaultPolicy()
 	p.ConnectionsPerAddress = 1
 	e := testEngine(t, p)
-	if _, ok := e.Acquire("[2001:db8:1:2::1]:1000"); !ok {
+	if _, ok := e.Acquire("[2001:db8:1:2::1]:1000", "imap"); !ok {
 		t.Fatal("first refused")
 	}
-	if _, ok := e.Acquire("[2001:db8:1:2::2]:1000"); ok {
+	if _, ok := e.Acquire("[2001:db8:1:2::2]:1000", "imap"); ok {
 		t.Fatal("a second address in the /64 got its own limit")
 	}
 }
@@ -99,7 +99,7 @@ func TestExemptAddressesAreNeverLimited(t *testing.T) {
 	e := testEngine(t, p)
 	for i := 0; i < 5; i++ {
 		for _, addr := range []string{"198.51.100.7:1", "127.0.0.1:1", "[::1]:1"} {
-			if _, ok := e.Acquire(addr); !ok {
+			if _, ok := e.Acquire(addr, "imap"); !ok {
 				t.Fatalf("%s was limited", addr)
 			}
 		}
@@ -111,15 +111,15 @@ func TestModes(t *testing.T) {
 	p.ConnectionsPerAddress = 1
 	p.Mode = ModeLog
 	e := testEngine(t, p)
-	e.Acquire("203.0.113.9:1")
-	if _, ok := e.Acquire("203.0.113.9:2"); !ok {
+	e.Acquire("203.0.113.9:1", "imap")
+	if _, ok := e.Acquire("203.0.113.9:2", "imap"); !ok {
 		t.Fatal("log mode refused a connection")
 	}
 	p.Mode = ModeOff
 	if err := e.Publish(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := e.Acquire("203.0.113.9:3"); !ok {
+	if _, ok := e.Acquire("203.0.113.9:3", "imap"); !ok {
 		t.Fatal("off refused a connection")
 	}
 }
@@ -355,7 +355,7 @@ func TestUnreachableValkeyFailsOpen(t *testing.T) {
 	if _, blocked := e.Blocked("203.0.113.9"); !blocked {
 		t.Fatal("the local fallback didn't block")
 	}
-	if _, ok := e.Acquire("198.51.100.1:1"); !ok {
+	if _, ok := e.Acquire("198.51.100.1:1", "imap"); !ok {
 		t.Fatal("a connection was refused because Valkey was away")
 	}
 }
@@ -381,17 +381,17 @@ func TestConnectionRate(t *testing.T) {
 	p.ConnectionsPerMinute = 3
 	e := testEngine(t, p)
 	for i := 0; i < 3; i++ {
-		if !e.AllowRate("203.0.113.9") {
+		if !e.AllowRate("203.0.113.9", "imap") {
 			t.Fatalf("connection %d refused", i+1)
 		}
 	}
-	if e.AllowRate("203.0.113.9") {
+	if e.AllowRate("203.0.113.9", "imap") {
 		t.Fatal("over the rate")
 	}
-	if !e.AllowRate("198.51.100.1") {
+	if !e.AllowRate("198.51.100.1", "imap") {
 		t.Fatal("another address was limited")
 	}
-	if !e.AllowRate("127.0.0.1") {
+	if !e.AllowRate("127.0.0.1", "imap") {
 		t.Fatal("loopback was limited")
 	}
 }

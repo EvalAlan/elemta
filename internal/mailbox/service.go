@@ -718,7 +718,7 @@ func (l *abuseListener) Accept() (net.Conn, error) {
 			_ = c.Close()
 			continue
 		}
-		release, ok := l.abuse.Acquire(c.RemoteAddr().String())
+		release, ok := l.abuse.Acquire(c.RemoteAddr().String(), l.protocol)
 		if !ok {
 			_ = c.Close()
 			continue

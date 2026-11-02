@@ -264,3 +264,20 @@ func ruleTables(rules []abuse.Rule) []map[string]interface{} {
 	}
 	return tables
 }
+
+// protocolLimitTables is the form the configuration writer takes protocol
+// limits in. A zero keeps the general limit, so it isn't written.
+func protocolLimitTables(limits []abuse.ProtocolLimit) []map[string]interface{} {
+	tables := make([]map[string]interface{}, 0, len(limits))
+	for _, l := range limits {
+		table := map[string]interface{}{"protocol": l.Protocol}
+		if l.ConnectionsPerAddress > 0 {
+			table["connections_per_address"] = l.ConnectionsPerAddress
+		}
+		if l.ConnectionsPerMinute > 0 {
+			table["connections_per_minute"] = l.ConnectionsPerMinute
+		}
+		tables = append(tables, table)
+	}
+	return tables
+}

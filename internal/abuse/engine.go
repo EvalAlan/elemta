@@ -279,59 +279,63 @@ func (e *Engine) Publish(ctx context.Context, p Policy) error {
 	return nil
 }
 
-// AllowRate counts a new connection and reports whether the address is within
-// its rate. Held connections are capped by Acquire; this catches the client
-// that opens and closes as fast as it can, which never holds any. It counts per
-// instance, for the same reason.
-func (e *Engine) AllowRate(addr string) bool {
+// AllowRate counts a new connection on protocol and reports whether the
+// address is within its rate. Held connections are capped by Acquire; this
+// catches the client that opens and closes as fast as it can, which never
+// holds any. It counts per instance, for the same reason.
+func (e *Engine) AllowRate(addr, protocol string) bool {
 	if e == nil {
 		return true
 	}
 	p := e.Policy()
 	network := Network(addr)
-	if p.Mode == ModeOff || network == "" || p.ConnectionsPerMinute < 1 || e.Exempt(addr) {
+	_, perMinute := p.ConnectionLimits(protocol)
+	if p.Mode == ModeOff || network == "" || perMinute < 1 || e.Exempt(addr) {
 		return true
 	}
 	e.seen.mu.Lock()
-	n := e.seen.add(e.seen.counts, "rate:"+network, time.Minute, time.Now())
+	n := e.seen.add(e.seen.counts, "rate:"+protocol+":"+network, time.Minute, time.Now())
 	e.seen.mu.Unlock()
-	if n <= p.ConnectionsPerMinute {
+	if n <= perMinute {
 		return true
 	}
 	e.Refused(RefusedRate)
 	return p.Mode != ModeEnforce
 }
 
-// Acquire takes a connection slot for an address. It returns false when the
-// address has its limit, and otherwise a function that gives the slot back.
-// Counted per instance: it stops one host exhausting a service, and asking
-// Valkey on every connection would make accepting mail depend on it.
-func (e *Engine) Acquire(addr string) (func(), bool) {
+// Acquire takes a connection slot for an address on protocol. It returns false
+// when the address has its limit, and otherwise a function that gives the slot
+// back. Counted per instance and protocol: it stops one host exhausting a
+// service, and asking Valkey on every connection would make accepting mail
+// depend on it.
+func (e *Engine) Acquire(addr, protocol string) (func(), bool) {
 	p := e.Policy()
 	network := Network(addr)
 	if p.Mode == ModeOff || network == "" || e.Exempt(addr) {
 		return func() {}, true
 	}
-	if !e.AllowRate(addr) {
+	if !e.AllowRate(addr, protocol) {
 		return nil, false
 	}
+	perAddress, _ := p.ConnectionLimits(protocol)
+	key := protocol + "|" + network
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.conns[network] >= p.ConnectionsPerAddress {
+	if e.conns[key] >= perAddress {
 		e.Refused(RefusedLimit)
 		if p.Mode == ModeEnforce {
 			return nil, false
 		}
-		e.log.Info("Connection limit reached; logging only", "address", network)
+		e.log.Info("Connection limit reached; logging only", "address", network, "protocol", protocol)
 	}
-	e.conns[network]++
+	e.conns[key]++
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			e.mu.Lock()
 			defer e.mu.Unlock()
-			if e.conns[network]--; e.conns[network] <= 0 {
-				delete(e.conns, network)
+			if e.conns[key]--; e.conns[key] <= 0 {
+				delete(e.conns, key)
 			}
 		})
 	}, true

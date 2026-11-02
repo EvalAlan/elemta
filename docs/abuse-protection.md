@@ -16,6 +16,9 @@ few seconds with no restart.
 - **One address can't exhaust a service.** It may hold 25 connections to each
   SMTP or mailbox server, and open 120 a minute, which catches clients that
   connect and disconnect too fast to ever hold one. Port 25 isn't rate limited.
+  Each protocol can have its own pair under **Per protocol** in the settings, for
+  example a few connections for POP3 and more for IMAP. Each protocol is counted
+  separately.
 - **A whole network adds up.** 200 failures across a /24 or /48 block all of it,
   for attackers spread across a rented block.
 - **An IPv6 client counts as its /64,** since one network holds all of it.
@@ -114,6 +117,11 @@ counts and records without refusing.
   4xx, so a real mail server tries again later. It covers port 25, because it limits
   volume rather than punishing a mistake. Signed-in users and allowed relays aren't
   counted: their mail is your own.
+- **Messages per hour claiming one sender domain.** Past it, that domain's mail from
+  outside is deferred the same way. This catches a run forging one domain from many
+  addresses, each under the limit above. Large providers send a lot of real mail
+  under one domain, so set it well above what you receive from them, or leave it off.
+  Bounces, which have no sender, aren't counted.
 - **Recipients outside the server per hour, per account.** Past it, the account's mail
   to outside addresses is put on hold until an administrator releases it under
   **Accounts on hold**. A hold doesn't expire, because a taken-over account would

@@ -313,6 +313,11 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 					"event_type", "rejection", "client_ip", ch.session.remoteAddr)
 				return fmt.Errorf("451 4.7.1 Too much mail from this address; try again later")
 			}
+			if !ch.isRelayAllowed("") && !ch.session.abuse.InboundDomain(ctx, ch.session.remoteAddr, mailFrom) {
+				ch.logger.InfoContext(ctx, "Message refused: too much mail from this sender domain",
+					"event_type", "rejection", "client_ip", ch.session.remoteAddr, "mail_from", mailFrom)
+				return fmt.Errorf("451 4.7.1 Too much mail from this sender's domain; try again later")
+			}
 		}
 
 		// DNS blocklists. Consulted here rather than at connect so that an

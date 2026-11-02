@@ -18,12 +18,15 @@ import (
 
 const (
 	keyInbound  = "elemta:abuse:in:"
+	keyDomain   = "elemta:abuse:domain:"
 	keyOutbound = "elemta:abuse:out:"
 	keySpray    = "elemta:abuse:spray:"
 	keyHolds    = "elemta:abuse:holds"
 
 	// RefusedMessages counts mail turned away for its address's volume.
 	RefusedMessages = "messages"
+	// RefusedDomain counts mail turned away for its sender domain's volume.
+	RefusedDomain = "domain"
 	// RefusedHeld counts mail an account on hold tried to send.
 	RefusedHeld = "held"
 )
@@ -56,6 +59,28 @@ func (e *Engine) InboundMessage(ctx context.Context, addr string) bool {
 		return true
 	}
 	e.Refused(RefusedMessages)
+	return p.Mode != ModeEnforce
+}
+
+// InboundDomain counts a message whose sender is in domain, from outside, and
+// reports whether it may go on. Callers leave out signed-in users and allowed
+// relays, as for InboundMessage.
+func (e *Engine) InboundDomain(ctx context.Context, addr, sender string) bool {
+	if e == nil {
+		return true
+	}
+	p := e.Policy()
+	_, domain, ok := strings.Cut(strings.ToLower(strings.TrimSpace(sender)), "@")
+	// A bounce has no sender, and isn't anyone's to count.
+	if p.Mode == ModeOff || p.MessagesPerDomainPerHour < 1 || !ok || domain == "" || len(domain) > 253 || e.Exempt(addr) {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(ctx, valkeyTimeout)
+	defer cancel()
+	if e.count(ctx, keyDomain+domain, "domain:"+domain, time.Hour) <= p.MessagesPerDomainPerHour {
+		return true
+	}
+	e.Refused(RefusedDomain)
 	return p.Mode != ModeEnforce
 }
 

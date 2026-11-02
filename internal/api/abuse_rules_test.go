@@ -94,3 +94,20 @@ func TestAdoptAbusePolicyRewritesTheOldLists(t *testing.T) {
 		t.Fatalf("rules %+v, queue %q\n%s", got.Abuse.Rules, got.Queue.Backend, doc)
 	}
 }
+
+func TestProtocolLimitsSurviveTheConfigurationFile(t *testing.T) {
+	want := []abuse.ProtocolLimit{{Protocol: abuse.ProtocolPOP3, ConnectionsPerAddress: 2}, {Protocol: abuse.ProtocolIMAP, ConnectionsPerMinute: 30}}
+	doc, err := config.SetTOMLValue([]byte("[abuse]\nmode = \"enforce\"\n"), "abuse", "protocol_limits", protocolLimitTables(want))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Abuse abuse.Policy `toml:"abuse"`
+	}
+	if err := toml.Unmarshal(doc, &got); err != nil {
+		t.Fatalf("%v\n%s", err, doc)
+	}
+	if len(got.Abuse.ProtocolLimits) != 2 || got.Abuse.ProtocolLimits[0] != want[0] || got.Abuse.ProtocolLimits[1] != want[1] {
+		t.Fatalf("limits = %+v\n%s", got.Abuse.ProtocolLimits, doc)
+	}
+}
