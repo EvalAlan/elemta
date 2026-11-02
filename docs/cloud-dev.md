@@ -71,8 +71,8 @@ These steps were done once for Rocky Linux 10 on a 2 vCPU / 4 GB Linode.
 
 - **Firewall.** firewalld's public zone allows ssh, smtp, smtp-submission, imaps,
   http and https. Cockpit and rpcbind are disabled.
-- **SSH.** Keys only, set in `/etc/ssh/sshd_config.d/10-hardening.conf`; root
-  logs in by key only. fail2ban runs its sshd jail.
+- **SSH.** Keys only, set in `/etc/ssh/sshd_config.d/10-hardening.conf`, and root
+  can't log in. Use your own account and sudo. fail2ban runs its sshd jail.
 - **Updates.** `dnf-automatic` applies security updates daily.
 - **Docker.** Docker CE, with these settings in `/etc/docker/daemon.json`:
   - `"firewall-backend": "nftables"`, because the Linode kernel lacks the

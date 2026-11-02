@@ -1,12 +1,43 @@
 # Elemta Changelog
 
-## Unreleased
+## v0.7.0 (unreleased)
 
+Users gain encrypted mail with PGP, passkeys, a spam quarantine, shared calendars,
+delegates, and bookable rooms and equipment. Administrators gain a DNS check,
+single-mailbox restore, MTA-STS publishing and compressed message bodies. This
+release also fixes a console save that could stop every service from restarting,
+and backups that left out message bodies stored in S3.
+
+### Upgrade notes
+
+- **Rspamd needs a new secret.** Re-run `scripts/cloud-deploy.sh`, which creates Rspamd's
+  controller password. By hand, run `scripts/dev-secrets.sh` before starting
+  the new version: Compose needs `.secrets/rspamd.env`, and Kubernetes needs
+  `secrets/rspamd.env`.
+- **Saving in the console can no longer break the configuration.** On a
+  deployment whose DKIM domains were written as `[[plugins.dkim.domains]]`, which
+  `cloud-deploy.sh` does, saving any plugin setting left an invalid file, and
+  every service failed at its next restart. The save now works, and the console
+  refuses to write a file that wouldn't load. If yours has been saved since
+  `v0.6.0`, check it before restarting.
+- **Backups now include message bodies stored in S3.** Until now
+  `scripts/mailbox-backup.sh` copied only the local volume, so a deployment on S3
+  got a backup with no bodies in it, and `scripts/restore-drill.sh` refused those
+  backups. Backups taken before this version on S3 hold metadata only.
+- **Rolling back needs the previous tag's checkout.** Setting `ELEMTA_TAG` back
+  alone stops the mailbox service starting. See "Upgrades" in
+  [docs/production-compose.md](docs/production-compose.md). v0.6.0 can't read
+  compressed bodies, so leave compression off until you're staying on this release.
+- **Spam filtering changes in production.** Rspamd's blocklists and fuzzy checks
+  come on, with the terms and resolver checks described below. Quarantine stays
+  off until you turn it on.
 - **Release tarballs can now be run as they are.** They unpack into one directory
   and include the admin console's web files, which the console needs and which were
   missing, along with a starter configuration, a README, the GPL license and the
   license files of the Go dependencies. Releases also carry a `SHA256SUMS` file.
   Anything that expected the binaries at the top of the archive needs a new path.
+
+### What's new
 
 - **Clicking through mail no longer reloads the page.** Opening a message replaces
   only the reading pane, and on wide screens the list and the message scroll
@@ -66,20 +97,9 @@
   With `--data` it also restores missing calendar events, contacts, tasks,
   settings, filters and sender rules. See
   "Restoring one account" in [docs/mailbox-service.md](docs/mailbox-service.md).
-- **Backups now include message bodies stored in S3.** Until now
-  `scripts/mailbox-backup.sh` copied only the local volume, so a deployment on S3
-  got a backup with no bodies in it, and `scripts/restore-drill.sh` refused those
-  backups. Backups taken before this version on S3 hold metadata only.
 - **Backups now include webmail's own object database.** With
   `object_store = "postgres"`, `scripts/backup.sh` left calendars, contacts, tasks
   and settings out, and `scripts/restore.sh` didn't restore them. Both now do.
-
-- **Saving in the console can no longer break the configuration.** On a
-  deployment whose DKIM domains were written as `[[plugins.dkim.domains]]`, which
-  `cloud-deploy.sh` does, saving any plugin setting left an invalid file, and
-  every service failed at its next restart. The save now works, and the console
-  refuses to write a file that wouldn't load. If yours has been saved since
-  `v0.6.0`, check it before restarting.
 
 - **Calendar sharing.** Users can share their calendar with people in their
   domain, from Settings, Account, and administrators can set it up from the
@@ -119,10 +139,6 @@
   Compose and on Kubernetes. Scans take about 250 ms longer. Check the
   blocklists' terms and your resolver; see "Latency" in
   [docs/production-deployment.md](docs/production-deployment.md).
-- **Upgrade note:** re-run `scripts/cloud-deploy.sh`, which creates Rspamd's
-  controller password. By hand, run `scripts/dev-secrets.sh` before starting
-  the new version: Compose needs `.secrets/rspamd.env`, and Kubernetes needs
-  `secrets/rspamd.env`.
 
 ## v0.6.0 (2026-10-31)
 
