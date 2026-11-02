@@ -159,6 +159,8 @@ function switchView(viewName) {
     const titles = {
         dashboard: 'Dashboard',
         health: 'Health',
+        certificates: 'Certificates',
+        abuse: 'Abuse',
         queues: 'Mail Queues',
         reports: 'Reports',
         tracing: 'Tracing',
