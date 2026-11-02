@@ -30,6 +30,7 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/miekg/dns v1.1.73
 	github.com/minio/minio-go/v7 v7.4.1
+	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pires/go-proxyproto v0.16.0
 	github.com/prometheus/client_golang v1.25.0

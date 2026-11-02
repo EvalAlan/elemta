@@ -220,6 +220,7 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 		}
 	}
 	if app || !public {
+		s.recordSignIn(ctx, a, client)
 		return a, nil
 	}
 	required, err := s.engine.AppPasswordsRequired(ctx, a.ID)
@@ -231,7 +232,17 @@ func (s *Service) login(ctx context.Context, user, password string, public bool,
 		s.log.Info("mailbox: account password refused; app password required", "user", a.Address)
 		return Account{}, ErrCredentials
 	}
+	s.recordSignIn(ctx, a, client)
 	return a, nil
+}
+
+// recordSignIn reports a mail app's sign-in for sign-in alerts. Only a client
+// on a public listener has an address worth placing: the webmail's own
+// sign-ins arrive here from inside, and it reports them itself.
+func (s *Service) recordSignIn(ctx context.Context, a Account, client string) {
+	if client != "" {
+		s.abuse.RecordSignIn(ctx, client, loginSource(ctx), a.Address)
+	}
 }
 
 // authenticate checks an app password or the account password, with the

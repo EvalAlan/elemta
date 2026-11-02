@@ -67,11 +67,14 @@ services:
       # connecting. It's here rather than in the configuration because that is
       # kept across deploys.
       - ELEMTA_API_TRUSTED_PROXIES=${ELEMTA_CADDY_IP:-10.253.53.80}/32
+      # Places sign-ins for the Abuse page's alerts; cloud-deploy.sh fetches it.
+      - ELEMTA_GEOIP_DB=/app/geoip/dbip-city-lite.mmdb
     volumes:
       - ./.secrets/cloud/config:/app/config:ro
       - ./.secrets/mailbox-tls:/app/tls:ro
       - ./.secrets/cloud/dkim:/app/dkim:ro
       - ./.secrets/cert-sync:/app/cert-sync
+      - ./.secrets/geoip:/app/geoip:ro
 
   elemta-webmail:
     ports: !override

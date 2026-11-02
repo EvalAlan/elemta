@@ -24,6 +24,8 @@
 #   MTA_STS_DOMAINS="example.org"   optional: domains that publish an MTA-STS
 #                                   policy; see docs/cloud-dev.md, "MTA-STS"
 #   MTA_STS_MODE=testing            optional: testing (default), enforce or none
+#   GEOIP_DOWNLOAD=false            optional: don't fetch the location database
+#                                   for sign-in alerts (DB-IP City Lite)
 #   ELEMTA_TAG=v0.5.0               optional: run that release's images from
 #                                   ghcr.io, pinned and hardened
 #                                   (docker-compose.release.yml), instead of
@@ -99,6 +101,30 @@ fi
 # services start with until the real one is copied over it.
 step "Service credentials"
 "$root/scripts/dev-secrets.sh"
+
+# The location database for sign-in alerts (internal/geoip): DB-IP's free City
+# Lite, CC BY 4.0, published monthly. Fetched when missing or a month old.
+# Failing to fetch it never stops a deploy: without it the alerts that need a
+# location are off, and the Abuse page says so.
+geoip_dir=$root/deployments/compose/.secrets/geoip
+geoip_db=$geoip_dir/dbip-city-lite.mmdb
+mkdir -p "$geoip_dir"
+if [ "${GEOIP_DOWNLOAD:-true}" = true ] && { [ ! -s "$geoip_db" ] || [ -n "$(find "$geoip_db" -mtime +32 2>/dev/null)" ]; }; then
+    step "Location database"
+    fetched=
+    for month in "$(date -u +%Y-%m)" "$(date -u -d '-1 month' +%Y-%m 2>/dev/null)"; do
+        [ -n "$month" ] || continue
+        if curl -fsS --max-time 300 "https://download.db-ip.com/free/dbip-city-lite-$month.mmdb.gz" | gunzip >"$geoip_db.tmp" 2>/dev/null && [ -s "$geoip_db.tmp" ]; then
+            chmod 644 "$geoip_db.tmp"
+            mv "$geoip_db.tmp" "$geoip_db"
+            echo "cloud-deploy: location database for $month installed"
+            fetched=1
+            break
+        fi
+    done
+    rm -f "$geoip_db.tmp"
+    [ -n "$fetched" ] || echo "cloud-deploy: couldn't fetch the location database; sign-in alerts that need a location stay off" >&2
+fi
 
 # render template output sed-expression...
 # Every expression must change the file: a template that has drifted fails

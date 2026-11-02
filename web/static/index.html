@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261102-rules">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261102-signins">
 </head>
 
 <body>
@@ -610,6 +610,18 @@
                     </div>
                 </div>
                 <div class="card">
+                    <div class="card-header"><h3>Unusual sign-ins</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">Successful sign-ins from somewhere the account couldn't have reached in time, or from a country it hasn't used before. Nothing is blocked: VPNs and mobile networks look like travel too. If one isn't its owner, change the password and reset two-step sign-in under Mail Administration.</p>
+                        <p class="field-hint abuse-error" id="abuse-alerts-state" hidden></p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>When</th><th>Account</th><th>What</th><th>Detail</th><th>From</th><th aria-label="Dismiss"></th></tr></thead>
+                            <tbody id="abuse-alerts"></tbody>
+                        </table></div>
+                        <p class="field-hint abuse-attribution"><a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a></p>
+                    </div>
+                </div>
+                <div class="card">
                     <div class="card-header"><h3>Accounts on hold</h3></div>
                     <div class="card-body">
                         <p class="field-hint">These accounts sent to more outside recipients than the hourly limit allows. They can't send outside the server until released. Check the account and change its password first if it was taken over.</p>
@@ -656,6 +668,9 @@
                             <label for="abuse-inbound">Messages per hour from one outside address</label>
                             <input id="abuse-inbound" type="number" min="0" max="10000000" required>
                             <p class="field-hint">Includes port 25. Over it, mail is deferred, so a real server retries later. Signed-in users and allowed relays don't count. 0 turns it off.</p>
+                            <label for="abuse-signin-alerts">Unusual sign-in alerts</label>
+                            <select id="abuse-signin-alerts"><option value="on">On</option><option value="off">Off</option></select>
+                            <p class="field-hint">Keeps each account's last sign-in location for 30 days and its countries for 90, to compare against. Off keeps nothing new.</p>
                             <label for="abuse-outbound">Recipients outside the server per hour, per account</label>
                             <input id="abuse-outbound" type="number" min="0" max="10000000" required>
                             <p class="field-hint">Over it, the account's outside mail is put on hold until you release it: a taken-over account sends far more than its owner. Mail inside the server still flows. 0 turns it off.</p>
@@ -1829,7 +1844,7 @@
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
     <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
-    <script src="/static/abuse.js?v=20261102-limits"></script>
+    <script src="/static/abuse.js?v=20261102-signins"></script>
 </body>
 
 </html>

@@ -48,6 +48,9 @@ var (
 	metricBlocks = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "elemta_abuse_blocks_total", Help: "Addresses and networks blocked.",
 	}, []string{"service"})
+	metricAlerts = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "elemta_abuse_signin_alerts_total", Help: "Sign-in alerts raised, by kind.",
+	}, []string{"kind"})
 	metricActive = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "elemta_abuse_blocks_active", Help: "Blocks in force, as this service sees them.",
 	}, []string{"service"})
