@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/api"
@@ -390,6 +391,15 @@ func runWeb(cmd *cobra.Command, args []string) {
 			slog.Warn("Could not save the allowlist and access lists as rules; they apply anyway", "error", err)
 		} else {
 			slog.Info("Moved the allowlist and access lists into allow and deny rules", "rules", len(abusePolicy.Rules))
+			// The console publishes only when Valkey has no policy. Without
+			// this, the one there would lack the rules just made from
+			// [access_control], and the MTA, finding those lists empty at
+			// its next restart, would stop applying them altogether.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := abuseEngine.Publish(ctx, abusePolicy); err != nil {
+				slog.Warn("Saved the moved rules but couldn't publish them; the next save will", "error", err)
+			}
+			cancel()
 		}
 	}
 
