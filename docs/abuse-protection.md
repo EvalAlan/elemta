@@ -30,13 +30,18 @@ few seconds with no restart.
 - **It can't absorb a flood.** Traffic that fills the network link has to be
   stopped upstream, by the host or a filtering service.
 
-## Allowlist
+## Exempt addresses
 
-Addresses and networks on the allowlist are never limited or blocked, and loopback
-is always exempt. Add your own address, monitoring and trusted relays. Private
+An inbound allow rule on an address or network, for all protocols, means it's never
+limited or blocked, and loopback is always exempt. Add one for your own address,
+monitoring and trusted relays. An allow rule that names protocols only lets the
+address through on those, and doesn't exempt it from limits elsewhere. Private
 networks aren't exempt: on a shared network or behind a NAT they are ordinary
-clients. `scripts/cloud-deploy.sh` starts the list with
+clients. `scripts/cloud-deploy.sh` starts with an allow rule for
 `ELEMTA_ADMIN_ALLOWED_IP`.
+
+There used to be a separate allowlist. When the console starts it turns each entry
+into an allow rule, noted "From the allowlist", and saves the file without it.
 
 ## Modes
 
@@ -72,8 +77,8 @@ root every 15 seconds, and the **Firewall** setting decides what it does:
 - **Apply** drops blocked addresses, in the nftables table `inet elemta_abuse`.
 - **Off** removes that table.
 
-Try it in log mode first, and check the allowlist before applying. The firewall
-has its own copy of the allowlist and accepts those addresses first. It covers
+Try it in log mode first, and check your allow rules before applying. The firewall
+has its own copy of the exempt addresses and accepts them first. It covers
 ports 80, 110, 143, 443, 587, 993 and 8025, never port 25, and only traffic
 arriving on the public interface. The page shows each agent's state, entries and
 packets dropped, and says when one stops reporting.
@@ -157,8 +162,8 @@ within seconds, with no restart.
 | Mail address | Mail from that sender | Mail to that recipient |
 
 - **Allow beats deny**, so one host can be let through a denied network. An inbound
-  allow on an address or network also exempts it from limits and blocks. Allow rules
-  never skip virus or spam scanning.
+  allow on an address or network for all protocols also exempts it from limits and
+  blocks. Allow rules never skip virus or spam scanning.
 - **Port 25 follows the rules.** Automatic blocks leave port 25 open, so that a guessed
   password can't cost you mail, but a deny rule is your own decision and applies there.
   Choose protocols to leave SMTP out.
@@ -168,10 +173,13 @@ within seconds, with no restart.
 - **Delivery to a denied mail server** bounces at once, with `550 5.7.1`, when every
   mail server for the domain is denied. If only some are and another is merely down,
   the message waits for that one, as it would without the rule.
-- **The allowlist** still protects its addresses, including from deny rules, and the
-  console refuses a rule that would block the address you're using.
+- **The console refuses a rule that would block the address you're using.**
 - **Log mode** counts what rules would refuse and refuses nothing. **Off** ignores them.
 - **If Valkey is down** when a service starts, it has no rules until Valkey returns.
   Services already running keep the rules they have.
 
-The older `[access_control]` lists, under Plugins, still apply to SMTP only.
+The older `[access_control]` lists move into rules when the console starts, as
+inbound rules: addresses on SMTP only, as they always were, and sender domains. The
+console then empties the lists in the file. They stay where they are when Valkey
+isn't configured, since the MTA then has no rules to take their place, or when an
+entry can't be a rule (the console logs which).

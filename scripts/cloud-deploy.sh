@@ -204,7 +204,8 @@ private_key_path = "/app/dkim/$DKIM_SELECTOR.$x.key"
 EOF
 done
 # The operator's own address starts on the abuse allowlist, so a few mistyped
-# passwords can't lock them out of the server they run.
+# passwords can't lock them out of the server they run. The console turns it
+# into an allow rule when it starts.
 if [ -n "${ELEMTA_ADMIN_ALLOWED_IP:-}" ]; then
     sed -i -e "s|^allowlist = \\[\\]|allowlist = [\"$ELEMTA_ADMIN_ALLOWED_IP\"]|" "$secrets/cloud/config/elemta.toml"
 fi

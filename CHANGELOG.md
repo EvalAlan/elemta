@@ -63,6 +63,9 @@ and backups that left out message bodies stored in S3.
   note, and apply within seconds with no restart. Outbound rules on a network stop
   delivery to that mail server, and the message bounces at once. See "Allow and deny rules" in
   [docs/abuse-protection.md](docs/abuse-protection.md).
+  The abuse allowlist and the older `[access_control]` lists become rules when the
+  console starts, so one list decides who gets in. An allow rule limited to some
+  protocols no longer exempts an address from limits on the others.
 
 - **Forwarded mail keeps passing SPF.** Mail an account forwards outside the server
   now goes out from an SRS address at that account's domain, so the next server's

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/abuse"
@@ -107,7 +106,7 @@ func (s *Server) handleAbuseBlock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Keep the reason under 200 characters", http.StatusBadRequest)
 		return
 	}
-	// The check the allowlist can't make: an administrator not on it could
+	// The check an allow rule can't make: an administrator without one could
 	// otherwise cut off the address they're working from.
 	if abuse.Network(in.Address) != "" && abuse.Network(in.Address) == abuse.Network(s.loginAddr(r)) {
 		http.Error(w, "That is the address you are using", http.StatusBadRequest)
@@ -185,13 +184,8 @@ func (s *Server) handleAbusePolicy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Send the policy as JSON", http.StatusBadRequest)
 		return
 	}
-	entries := make([]string, 0, len(p.Allowlist))
-	for _, entry := range p.Allowlist {
-		if entry = strings.TrimSpace(entry); entry != "" {
-			entries = append(entries, entry)
-		}
-	}
-	p.Allowlist = entries
+	// A page from before allow rules may still send an allowlist.
+	p, _ = p.MoveAllowlist()
 	if err := p.Validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -216,8 +210,33 @@ func (s *Server) handleAbusePolicy(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	published := s.abuse.Publish(ctx, p) == nil
-	slog.Info("Abuse policy changed", "mode", p.Mode, "connections_per_address", p.ConnectionsPerAddress, "allowlist", len(p.Allowlist), "published", published)
+	slog.Info("Abuse policy changed", "mode", p.Mode, "connections_per_address", p.ConnectionsPerAddress, "rules", len(p.Rules), "published", published)
 	writeJSON(w, map[string]any{"policy": p, "shared": s.abuse.Shared(ctx), "published": published})
+}
+
+// AdoptAbusePolicy saves p, the policy in force after older settings were
+// moved into rules at startup, so the file says what the services do.
+// accessControl empties the [access_control] lists those rules came from: the
+// MTA still reads them, so keeping them would refuse twice, and go on refusing
+// in log mode, where rules only count.
+func (s *Server) AdoptAbusePolicy(p abuse.Policy, accessControl bool) error {
+	if s.mainConfig == nil || s.configPath == "" {
+		return nil
+	}
+	previousPolicy, previousLists := s.mainConfig.Abuse, s.mainConfig.AccessControl
+	s.mainConfig.Abuse = &p
+	if accessControl {
+		lists := AccessControlStatus{Enabled: true, AllowIPs: []string{}, DenyIPs: []string{}, AllowDomains: []string{}, DenyDomains: []string{}}
+		if previousLists != nil {
+			lists.Enabled = previousLists.Enabled
+		}
+		s.mainConfig.AccessControl = &lists
+	}
+	if err := s.persistConfig(); err != nil {
+		s.mainConfig.Abuse, s.mainConfig.AccessControl = previousPolicy, previousLists
+		return err
+	}
+	return nil
 }
 
 // rulesCutOff finds a deny rule that would stop addr reaching the console.

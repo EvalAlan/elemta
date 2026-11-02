@@ -112,7 +112,7 @@ func (e *Engine) setPolicy(p Policy) {
 }
 
 // Exempt reports whether an address is never limited: loopback, and anything
-// on the allowlist. Private networks aren't assumed safe: on a shared network,
+// an allow rule for all protocols covers. Private networks aren't assumed safe: on a shared network,
 // or behind a NAT, they are ordinary clients.
 func (e *Engine) Exempt(host string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -127,12 +127,12 @@ func (e *Engine) Exempt(host string) bool {
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	for _, n := range e.exempt {
+	for _, n := range e.exemptNetworks(time.Now()) {
 		if n.Contains(ip) {
 			return true
 		}
 	}
-	return e.allowed(ip)
+	return false
 }
 
 // Run keeps the engine current until ctx ends.

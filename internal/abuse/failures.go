@@ -278,14 +278,14 @@ func (e *Engine) record(ctx context.Context, ev Event) {
 }
 
 // BlockAddress blocks an address or /64 by hand. It refuses an exempt address:
-// the allowlist is what stands between an operator and locking themselves out.
+// an allow rule is what stands between an operator and locking themselves out.
 func (e *Engine) BlockAddress(ctx context.Context, addr, reason, by string, duration time.Duration) (Block, error) {
 	network := Target(addr)
 	if network == "" {
 		return Block{}, fmt.Errorf("%q is not an address or a network of /16 or smaller", addr)
 	}
 	if e.overlapsExempt(network) {
-		return Block{}, fmt.Errorf("%s is on the allowlist", network)
+		return Block{}, fmt.Errorf("an allow rule covers %s", network)
 	}
 	if duration <= 0 {
 		return Block{}, errors.New("a block needs a duration")
@@ -422,7 +422,7 @@ func (e *Engine) pruneLocal() {
 	}
 }
 
-// overlapsExempt reports whether a block target touches the allowlist.
+// overlapsExempt reports whether a block target touches an exempt network.
 func (e *Engine) overlapsExempt(target string) bool {
 	if !strings.Contains(target, "/") {
 		return e.Exempt(target)
@@ -436,7 +436,7 @@ func (e *Engine) overlapsExempt(target string) bool {
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	for _, n := range e.exempt {
+	for _, n := range e.exemptNetworks(time.Now()) {
 		if network.Contains(n.IP) || n.Contains(network.IP) {
 			return true
 		}

@@ -378,10 +378,20 @@ func runWeb(cmd *cobra.Command, args []string) {
 	if cfg.Abuse != nil {
 		abusePolicy = *cfg.Abuse
 	}
+	abusePolicy, accessControlMoved := moveOldAbuseLists(abusePolicy, cfg.AccessControl)
 	abuseEngine := abuse.New("admin", os.Getenv("VALKEY_ADDR"), nil)
 	abuseEngine.Own(abusePolicy)
 	go abuseEngine.Run(context.Background())
 	server.SetAbuse(abuseEngine)
+	if (cfg.Abuse != nil && len(cfg.Abuse.Allowlist) > 0) || accessControlMoved {
+		// Saved once, so the file says what the services do. Failing only
+		// means doing it again next start: the rules are already in force.
+		if err := server.AdoptAbusePolicy(abusePolicy, accessControlMoved); err != nil {
+			slog.Warn("Could not save the allowlist and access lists as rules; they apply anyway", "error", err)
+		} else {
+			slog.Info("Moved the allowlist and access lists into allow and deny rules", "rules", len(abusePolicy.Rules))
+		}
+	}
 
 	if err := server.Start(); err != nil {
 		slog.Error("Failed to start API server; the web interface cannot start",
@@ -432,4 +442,26 @@ func openAccountDirectory(auth *smtp.AuthConfig) api.DirectoryLister {
 
 	slog.Info("Campaign recipient import enabled", "datasource", auth.DataSourceName)
 	return ds
+}
+
+// moveOldAbuseLists brings the abuse allowlist and the [access_control] lists
+// into the rules, so the Abuse page shows everything that decides who gets
+// in. The access lists move only where Valkey carries rules to the MTA:
+// without it the MTA has no rules, and its own lists are all it has. They also
+// stay where an entry couldn't become a rule, rather than lose that entry.
+func moveOldAbuseLists(p abuse.Policy, ac *smtp.AccessControlConfig) (abuse.Policy, bool) {
+	p = p.WithDefaults() // moves the allowlist
+	if ac == nil || !ac.Enabled || os.Getenv("VALKEY_ADDR") == "" {
+		return p, false
+	}
+	rules, skipped := abuse.AccessControlRules(ac.AllowIPs, ac.DenyIPs, ac.AllowDomains, ac.DenyDomains)
+	if len(skipped) > 0 {
+		slog.Warn("Left [access_control] as it is: some entries can't be rules", "entries", skipped)
+		return p, false
+	}
+	if len(rules) == 0 {
+		return p, false
+	}
+	p, _ = p.AddRules(rules)
+	return p, true
 }

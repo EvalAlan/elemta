@@ -71,8 +71,8 @@ type FirewallPlan struct {
 	Entries []FirewallEntry
 }
 
-// Plan works out the firewall's contents. It leaves out anything touching the
-// allowlist, and addresses inside a blocked network: nftables refuses
+// Plan works out the firewall's contents. It leaves out anything an allow
+// rule exempts, and addresses inside a blocked network: nftables refuses
 // overlapping intervals, which would fail the whole update.
 func (e *Engine) Plan() FirewallPlan {
 	p := e.Policy()
@@ -80,10 +80,11 @@ func (e *Engine) Plan() FirewallPlan {
 	if p.Mode != ModeEnforce {
 		plan.Mode = FirewallOff
 	}
-	exempt, _ := parseNetworks(p.Allowlist)
-	for _, n := range exempt {
+	e.mu.RLock()
+	for _, n := range e.exemptNetworks(time.Now()) {
 		plan.Allow = append(plan.Allow, n.String())
 	}
+	e.mu.RUnlock()
 	blocks := e.Blocks()
 	networks := []*net.IPNet{}
 	for _, b := range blocks {
