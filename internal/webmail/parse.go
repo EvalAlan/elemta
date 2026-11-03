@@ -147,11 +147,15 @@ func parseMessage(raw []byte) (*Message, error) {
 				msg.PGPSignature = readLimited(p.Body)
 				continue
 			}
-			if ct == "text/plain" && msg.Text == "" && cid == "" {
+			// The first text and HTML parts are the body, Content-ID or not:
+			// some senders (LinkedIn among them) label their body parts
+			// "text-body" and "html-body". A cid: resource that follows the
+			// body still lands below as a part, since the body is set by then.
+			if ct == "text/plain" && msg.Text == "" {
 				msg.Text = readLimited(p.Body)
 				continue
 			}
-			if ct == "text/html" && msg.HTML == "" && cid == "" {
+			if ct == "text/html" && msg.HTML == "" {
 				msg.HTML = readLimited(p.Body)
 				continue
 			}
