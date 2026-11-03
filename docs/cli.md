@@ -79,8 +79,10 @@ Changes apply to a running server on its next request; no restart.
 ```
 
 Roles: `admin`, `operator` (queue management), `user` and `readonly` (view only),
-and `domain-admin` (mail administration of the `--domains` given; see
-[mail administration](mail-administration.md#domain-administrators)).
+`domain-admin` (mail administration of the `--domains` given; see
+[mail administration](mail-administration.md#domain-administrators)), and
+`compliance` (searching and exporting mail and nothing else; see
+[compliance search](mail-administration.md#compliance-search-and-export)).
 
 ### `elemta dkim` subcommands
 

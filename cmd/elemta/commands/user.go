@@ -30,7 +30,7 @@ func init() {
 		c.Flags().StringVar(&userFile, "file", "", "Path to the users file (defaults to [api].auth_file)")
 	}
 	userAddCmd.Flags().StringVar(&userRole, "role", "",
-		"Role: admin, operator, user, readonly or domain-admin (default: admin for names containing \"admin\", otherwise user)")
+		"Role: admin, operator, user, readonly, domain-admin or compliance (default: admin for names containing \"admin\", otherwise user)")
 	userCmd.AddCommand(userRoleCmd)
 	for _, c := range []*cobra.Command{userAddCmd, userRoleCmd} {
 		c.Flags().StringSliceVar(&userDomains, "domains", nil, "Domains a domain-admin manages, comma-separated")
@@ -50,7 +50,7 @@ var (
 )
 
 // userRoles are the built-in roles; see internal/auth/rbac.go.
-var userRoles = []string{"admin", "operator", "user", "readonly", "domain-admin"}
+var userRoles = []string{"admin", "operator", "user", "readonly", "domain-admin", "compliance"}
 
 // rolesFor checks a role and returns what to store for it: a domain-admin
 // also stores the domains it manages (--domains), and only it takes them.
@@ -216,7 +216,7 @@ var userListCmd = &cobra.Command{
 
 var userRoleCmd = &cobra.Command{
 	Use:   "role <username> <role>",
-	Short: "Set a user's role (admin, operator, user, readonly, or domain-admin with --domains)",
+	Short: "Set a user's role (admin, operator, user, readonly, compliance, or domain-admin with --domains)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		roles, err := rolesFor(args[1])

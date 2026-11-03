@@ -359,6 +359,50 @@ provision export-held dana@example.com > dana-held.mbox
 writes them as mbox for review tools, each with an `X-Elemta-Held` header
 naming the folder it was deleted from and when.
 
+## Compliance search and export
+
+For an investigation or a legal request, the console's **Compliance** page
+searches every mailbox at once: by account, sender, recipient (To, Cc or
+Bcc), subject, words in the message and the dates it arrived. Mail a legal
+hold kept after its owner deleted it is included, marked "(deleted, held)",
+unless you untick it. Words match the start of words in the readable text of
+the message, as the webmail's search does; attachments aren't searched.
+Calendar, contacts, tasks and settings folders hold the webmail's own data
+and are left out.
+
+The page shows the newest 500 matches with the total. **Download** saves one
+message as an `.eml` file, and **Export all as mbox** saves every match, up
+to 100,000 messages, as one mbox file for review tools. Each exported message
+starts with an `X-Elemta-Compliance` line naming its account and folder, and
+when a held message was deleted. Narrow a larger search, or export it in
+parts by date.
+
+Searches use the mailbox search index. Mail the index hasn't reached yet,
+such as a mailbox migrated moments ago, can't be found, so the page says how
+many messages in the searched mailboxes and dates weren't searched. The index
+catches up on its own; search again for a complete answer.
+
+**Who can use it.** System administrators, and dashboard users with the
+`compliance` role, which can do nothing else:
+
+```sh
+elemta user add legal --role compliance
+```
+
+Domain administrators can't. The role covers every domain.
+
+**Every search is recorded.** Each search, export and downloaded message is
+written to the [audit log](#audit-log) before any result is shown, with who
+did it, from where, and the search itself (`compliance-search`,
+`compliance-export`, `compliance-view`). If the entry can't be stored,
+nothing is shown. The entries are kept from domain administrators' view of
+the log, since they may be the people an investigation is about.
+
+The page needs the mailbox admin API (`ELEMTA_MAILBOX_ADMIN_TOKEN` on the web
+service). The mailbox admin API itself answers `POST /v1/admin/compliance/search`
+and `/export` with the same query as JSON, and
+`GET /v1/admin/compliance/message?ref=`.
+
 ## Purging a mailbox
 
 Deleting an account keeps its mail. To remove it permanently:

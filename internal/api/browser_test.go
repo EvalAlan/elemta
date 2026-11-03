@@ -126,3 +126,89 @@ func TestBrowserDomainDNSHealth(t *testing.T) {
 	defer mu.Unlock()
 	require.Empty(t, problems)
 }
+
+// A compliance officer sees their own section and nothing of the server's,
+// and found mail, written by anyone, is shown as text.
+func TestBrowserComplianceSearch(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	base, fake := startComplianceServer(t, webRoot)
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.WindowSize(1280, 1100), chromedp.NoSandbox)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+	ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	var problems []string
+	exceptions := chromedp.Events(browserCtx, runtime.ExceptionThrown)
+	go func() {
+		for ev, err := range exceptions {
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			problems = append(problems, (&chromedp.ExceptionError{ExceptionDetails: ev.ExceptionDetails}).Error())
+			mu.Unlock()
+		}
+	}()
+	require.NoError(t, chromedp.Do(ctx, chromedp.Func(func(ctx context.Context, tg *chromedp.Target) error {
+		_, err := cdp.Call(ctx, tg, runtime.Enable, cdp.Empty{})
+		return err
+	})))
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.Navigate(base+"/login"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "officer"),
+		chromedp.SendKeys(chromedp.ID("password"), testUserPassword),
+		chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+		// Confined to their section, the console opens on it.
+		chromedp.WaitVisible(chromedp.ID("compliance-form")),
+		chromedp.SendKeys(chromedp.ID("compliance-text"), "merger"),
+		chromedp.SendKeys(chromedp.ID("compliance-since"), "01012026"),
+		chromedp.Click(chromedp.CSS("#compliance-form button[type=submit]"), chromedp.NodeVisible),
+		chromedp.WaitVisible(chromedp.CSS("#compliance-hits a")),
+	))
+	eval := func(expr string) string {
+		t.Helper()
+		v, err := chromedp.Run(ctx, chromedp.Evaluate[string](expr))
+		require.NoError(t, err)
+		return v
+	}
+	nav := eval(`[...document.querySelectorAll(".nav-item[data-view]")].filter(a => a.offsetParent !== null).map(a => a.dataset.view).join(",")`)
+	require.Equal(t, "compliance,settings", nav)
+	rows := eval(`document.getElementById("compliance-hits").textContent`)
+	require.Contains(t, rows, "dana@example.com")
+	require.Contains(t, rows, "found <b>not markup</b>")
+	require.Contains(t, rows, "2 KB")
+	require.Equal(t, "0", eval(`String(document.querySelectorAll("#compliance-hits b").length)`))
+	require.Contains(t, eval(`document.getElementById("compliance-unindexed").textContent`), "2 messages")
+	require.Contains(t, eval(`document.querySelector("#compliance-hits a").href`), "/api/compliance/message?ref=m%3A7%3A3")
+	fake.mu.Lock()
+	require.Len(t, fake.queries, 1)
+	require.Equal(t, "merger", fake.queries[0].Text)
+	require.Equal(t, 2026, fake.queries[0].Since.Year())
+	fake.mu.Unlock()
+
+	// The export downloads in the background and leaves the console open.
+	require.NoError(t, chromedp.Do(ctx, chromedp.Click(chromedp.ID("compliance-export"), chromedp.NodeVisible)))
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		fake.mu.Lock()
+		n := len(fake.queries)
+		fake.mu.Unlock()
+		if n == 2 || time.Now().After(deadline) {
+			require.Equal(t, 2, n, "the export never reached the mailbox")
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.Equal(t, base+"/", eval(`location.origin + location.pathname`))
+	require.NotEmpty(t, eval(`document.getElementById("compliance-hits").textContent`))
+	mu.Lock()
+	defer mu.Unlock()
+	require.Empty(t, problems)
+}

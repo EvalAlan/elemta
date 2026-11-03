@@ -4,7 +4,8 @@
 
 Users gain encrypted mail with PGP, passkeys, a spam quarantine, shared calendars,
 delegates, and bookable rooms and equipment. Administrators gain a DNS check,
-single-mailbox restore, MTA-STS publishing and compressed message bodies. This
+single-mailbox restore, compliance search and export, MTA-STS publishing and
+compressed message bodies. This
 release also fixes a console save that could stop every service from restarting,
 and backups that left out message bodies stored in S3.
 
@@ -42,6 +43,13 @@ and backups that left out message bodies stored in S3.
 
 ### What's new
 
+- **Compliance search and export.** A new Compliance page searches every mailbox at
+  once, by account, sender, recipient, subject, words and dates, including mail a
+  legal hold kept after it was deleted. Matches download one at a time or export as
+  one mbox file. A new `compliance` role can use it and nothing else, and every
+  search, export and download is recorded in the audit log before anything is
+  shown. See "Compliance search and export" in
+  [docs/mail-administration.md](docs/mail-administration.md).
 - **Unusual sign-in alerts.** The Abuse page lists successful sign-ins from somewhere
   an account couldn't have reached in time (impossible travel) or from a country it
   hasn't used before, across IMAP, POP3, ManageSieve, SMTP, webmail and the console.

@@ -704,6 +704,7 @@ func (s *Server) Start() error {
 	// API routes
 	api := r.PathPrefix("/api").Subrouter()
 	s.provisionRoutes(api)
+	s.complianceRoutes(api)
 
 	// User management. Only meaningful with authentication on: without it
 	// there are no accounts to manage.
