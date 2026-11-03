@@ -2351,6 +2351,11 @@ func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, bod
 		}, nil
 	}
 
+	headerPrefix, signedFor, err := dh.signSubmission(ctx, headerPrefix, body, metadata.From)
+	if err != nil {
+		dh.logger.ErrorContext(ctx, "DKIM signing at submission failed", "error", err)
+		return fmt.Errorf("451 4.3.0 Message could not be signed; try again")
+	}
 	msgID, err := dh.queueManager.EnqueueMessageStream(
 		metadata.From,
 		metadata.To,
@@ -2370,6 +2375,11 @@ func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, bod
 	// SMTPDeliveryHandler, which mandates TLS and next-hop REQUIRETLS support
 	// before sending mail carrying the require_tls annotation.
 	dh.saveDSNAnnotations(ctx, msgID)
+	if signedFor != "" {
+		if err := dh.queueManager.SetAnnotation(msgID, queue.AnnotationDKIMSigned, signedFor); err != nil {
+			dh.logger.WarnContext(ctx, "Failed to record submission signature; delivery will sign again", "error", err)
+		}
+	}
 
 	// Log message reception with timing.
 	//

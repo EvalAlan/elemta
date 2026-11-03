@@ -205,7 +205,10 @@ which `scripts/dev-secrets.sh` does. Without it, mail is forwarded as before.
   bulk senders use long addresses, but these usually pass on their DKIM signature.
 - **DMARC.** The rewritten address doesn't align with the visible From, so DMARC
   relies on the sender's DKIM signature surviving, which it does because the
-  message isn't changed.
+  message isn't changed. Mail your own users send is signed as it's submitted,
+  even to someone on this server, so a forward of it carries their domain's
+  signature too; without that, a domain with `p=reject` has its own users' mail
+  refused once a colleague forwards it. Signing needs a DKIM key for the domain.
 - **Changing the secret.** Put the new one first, separated by a comma, and keep the
   old one for 21 days: the first signs, and all of them verify.
 

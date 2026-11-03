@@ -43,6 +43,11 @@ and backups that left out message bodies stored in S3.
 
 ### What's new
 
+- **Forwarded mail from your own users now passes DMARC.** Mail a signed-in user
+  sent to someone on the same server was stored unsigned, so when that person
+  forwarded it outside, nothing aligned with the author's domain, and Gmail refused
+  it for a domain with `p=reject`. Mail from signed-in users is now DKIM-signed as
+  it's submitted, for every recipient, and forwards carry the signature.
 - **Two-step sign-in for the admin console.** Each console user can add an
   authenticator app, with recovery codes, and passkeys, under Settings > Users. A
   passkey also signs in on its own. Accounts with two-step sign-in can't use HTTP

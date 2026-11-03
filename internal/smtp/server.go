@@ -37,6 +37,9 @@ import (
 
 // Server represents an SMTP server
 type Server struct {
+	// submitSigner DKIM-signs what signed-in users send as it arrives
+	// (submission_dkim.go); nil when signing is off. Swapped on reload.
+	submitSigner atomic.Pointer[dkim.Signer]
 	// abuse is the shared abuse policy; nil without one (SetAbuse).
 	abuse      *abuse.Engine
 	config     *Config
@@ -951,6 +954,11 @@ func NewServer(config *Config) (*Server, error) {
 		dmarcReports:    initDMARCReports(config, queueManager, queueProcessor, slogger),
 	}
 	server.poolsFingerprint = poolsFingerprint(poolsSettings(config))
+	// Already validated by initQueueSystem; this is the same keys, for the
+	// sessions rather than for delivery.
+	if signer, err := dkim.NewSigner(config.DKIM, slogger); err == nil {
+		server.submitSigner.Store(signer)
+	}
 
 	tlsManager, err := initTLSManager(config, slogger)
 	if err != nil {
@@ -1531,6 +1539,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	session.useAbuse(s.abuse)
 	session.rcptVerifier = s.rcptVerifier
 	session.senderPolicies = s.senderPolicies
+	session.dkimSigner = s.submitSigner.Load()
 	if sc, ok := conn.(submissionConn); ok {
 		session.submission = true
 		session.webmailSubmission = sc.webmail

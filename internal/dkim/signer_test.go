@@ -419,3 +419,59 @@ func countHeader(content []byte, prefix string) int {
 	}
 	return n
 }
+
+// A signature made as mail is submitted has to survive a forward: the
+// forwarding hops add their own headers above it, and the forwarder signs for
+// its own domain too. Both must verify, and the author's must stay intact.
+func TestSignatureForSurvivesForwarding(t *testing.T) {
+	dir := t.TempDir()
+	authorKey, authorPub := writeRSAKey(t, dir)
+	forwarderKey, forwarderPub := writeRSAKey(t, t.TempDir())
+	s := newTestSigner(t, &Config{
+		Enabled: true,
+		Domains: []DomainConfig{
+			{Domain: "example.com", Selector: "sel1", PrivateKeyPath: authorKey},
+			{Domain: "forwarder.example", Selector: "fwd", PrivateKeyPath: forwarderKey},
+		},
+	})
+	if sig, err := s.SignatureFor(strings.NewReader(testMessage), "nokey.example"); err != nil || sig != "" {
+		t.Fatalf("domain without a key: %q %v", sig, err)
+	}
+	sig, err := s.SignatureFor(strings.NewReader(testMessage), "Example.COM")
+	if err != nil || !strings.HasPrefix(sig, "DKIM-Signature:") || !strings.HasSuffix(sig, "\r\n") {
+		t.Fatalf("signature = %q, %v", sig, err)
+	}
+	submitted := sig + testMessage
+	if vs := verifyWithKey(t, []byte(submitted), "sel1", "example.com", rsaDNSRecord(t, authorPub)); len(vs) != 1 || vs[0].Err != nil {
+		t.Fatalf("as submitted: %+v", vs)
+	}
+
+	// What local delivery, a Sieve redirect and the next hop add.
+	forwarded := "Received: from mailbox by mx.forwarder.example with ESMTP\r\n" +
+		"X-Elemta-Sieve-Redirected-By: bob@forwarder.example\r\n" +
+		"X-Spam-Status: No, score=0.9/10.0\r\n" +
+		"Authentication-Results: mx.forwarder.example; dkim=pass header.d=example.com\r\n" +
+		submitted
+	signed, err := s.Sign([]byte(forwarded), "forwarder.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := &dkim.VerifyOptions{LookupTXT: func(name string) ([]string, error) {
+		switch name {
+		case "sel1._domainkey.example.com":
+			return []string{rsaDNSRecord(t, authorPub)}, nil
+		case "fwd._domainkey.forwarder.example":
+			return []string{rsaDNSRecord(t, forwarderPub)}, nil
+		}
+		return nil, fmt.Errorf("no record for %s", name)
+	}}
+	vs, err := dkim.VerifyWithOptions(bytes.NewReader(signed), opts)
+	if err != nil || len(vs) != 2 {
+		t.Fatalf("verifications = %+v, %v", vs, err)
+	}
+	for _, v := range vs {
+		if v.Err != nil {
+			t.Errorf("%s: %v", v.Domain, v.Err)
+		}
+	}
+}
