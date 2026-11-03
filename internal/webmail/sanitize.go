@@ -27,6 +27,10 @@ var safeStyleProperties = []string{
 	"border", "border-top", "border-right", "border-bottom", "border-left",
 	"border-color", "border-style", "border-width", "border-radius", "border-collapse",
 	"border-spacing", "display", "table-layout",
+	// Senders hide the preview line (the text an inbox shows beside the
+	// subject) with these. Without them it renders inside a zero-width box,
+	// one character per line.
+	"visibility", "opacity", "overflow", "overflow-x", "overflow-y",
 }
 
 // sanitizeOptions controls how message HTML is rewritten.
@@ -67,7 +71,11 @@ func sanitizeHTML(in string, opts sanitizeOptions) sanitizeResult {
 		return !strings.Contains(strings.ToLower(v), "url(") && !strings.ContainsAny(v, "\\<>")
 	}).Globally()
 	// Classes and IDs, so the message's own stylesheet (above) applies.
-	p.AllowAttrs("class").Matching(bluemonday.SpaceSeparatedTokens).Globally()
+	// Utility-class mail (Tailwind and similar) uses names like max-h-[0],
+	// md:w-1/2 and w-[552px]; refusing those drops the whole attribute and
+	// the stylesheet's rules for it. A class only selects CSS the message
+	// brought with it, so anything short of quotes and angle brackets is safe.
+	p.AllowAttrs("class").Matching(classTokens).Globally()
 	p.AllowAttrs("id").Matching(regexp.MustCompile(`^[A-Za-z][\w-]{0,63}$`)).Globally()
 	p.AllowAttrs("bgcolor", "align", "valign", "width", "height", "border", "cellpadding", "cellspacing").Globally()
 	p.AllowElements("center", "font")
@@ -104,6 +112,10 @@ func sanitizeHTML(in string, opts sanitizeOptions) sanitizeResult {
 	out = dataHrefRE.ReplaceAllString(out, `href="#"`)
 	return sanitizeResult{HTML: out, BlockedImages: int(blocked.Load()), CSS: css}
 }
+
+// classTokens matches a class attribute: space-separated names that may use
+// the punctuation utility-class frameworks put in them.
+var classTokens = regexp.MustCompile(`^[\p{L}\p{N}\s_\-\[\]:./%#!@,()=+]*$`)
 
 var (
 	styleBlockRE = regexp.MustCompile(`(?is)<style[^>]*>(.*?)</style\s*>`)
