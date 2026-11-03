@@ -116,6 +116,9 @@ type delivery struct {
 	rcpt    string // the address it was delivered to
 	raw     []byte
 	token   string // retry key, "" when the client gave none
+	// category is the inbox category keyword (categories.go), "" for
+	// Primary. It is set once spam has been ruled out.
+	category string
 }
 
 func storeToken(token, target string) string {
@@ -138,6 +141,7 @@ func (s *Service) deliver(ctx context.Context, d delivery) error {
 	if booked, err := s.bookResource(ctx, d); booked || err != nil {
 		return err
 	}
+	d.category = s.categoryKeyword(ctx, d)
 	s.copyInvitationToDelegates(ctx, d)
 	if len(d.account.Forward) > 0 {
 		// Forwarding from the directory comes before the account's own
@@ -150,12 +154,12 @@ func (s *Service) deliver(ctx context.Context, d delivery) error {
 	if p := d.account.Policy; p != nil && !p.Filters {
 		// Filters turned off by the class of service: stored scripts stay,
 		// unused, so turning filters back on restores them.
-		_, err := s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, nil, time.Now(), d.token)
+		_, err := s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, withCategory(nil, d.category), time.Now(), d.token)
 		return err
 	}
 	script, err := s.engine.ActiveScript(ctx, d.account.ID)
 	if errors.Is(err, ErrNotFound) {
-		_, err = s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, nil, time.Now(), d.token)
+		_, err = s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, withCategory(nil, d.category), time.Now(), d.token)
 		return err
 	}
 	if err != nil {
@@ -273,7 +277,7 @@ func (s *Service) store(ctx context.Context, d delivery, folder string, flags in
 		return nil
 	}
 	done[key] = true
-	_, err := s.engine.Append(ctx, d.account.ID, folder, d.raw, flags, time.Now(), storeToken(d.token, key))
+	_, err := s.engine.Append(ctx, d.account.ID, folder, d.raw, withCategory(flags, d.category), time.Now(), storeToken(d.token, key))
 	return err
 }
 

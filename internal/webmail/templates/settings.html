@@ -78,6 +78,8 @@
       <h2 class="card-title">Mail and calendar</h2>
       <span class="label">Message list</span>
       <label class="checkline"><input type="checkbox" name="conversations" value="1"{{if .Prefs.GroupConversations}} checked{{end}}> Group messages into conversations</label>
+      <span class="label">Inbox</span>
+      <label class="checkline"><input type="checkbox" name="inbox_tabs" value="1"{{if .Prefs.InboxTabs}} checked{{end}}> Sort the inbox into tabs: Primary, Social, Promotions, Updates and Forums</label>
       <span class="label">Reading pane</span>
       <label class="checkline"><input type="checkbox" name="mail_calendar" value="1"{{if .Prefs.MailCalendar}} checked{{end}}> Show a calendar beside messages on wide screens</label>
       <span class="label">Images</span>
@@ -134,6 +136,29 @@
     </div>
     <div class="save-bar"><button class="button primary" type="submit">Save changes</button></div>
   </form>
+  {{if or .Prefs.InboxTabs (eq .NoticeCard "tabs")}}
+  <section class="card" id="tabs">
+    <h2 class="card-title">Inbox tabs</h2>
+    {{if eq .NoticeCard "tabs"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
+    <p class="muted small">New mail is sorted as it arrives. To change where a sender's mail goes, open one of their messages and choose another tab; later mail from them follows. Sort now files existing inbox mail that has no tab yet.</p>
+    {{if .CanEditTabRules}}{{if .TabRules}}
+    <table class="data-table">
+      <thead><tr><th scope="col">Sender</th><th scope="col">Tab</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+      <tbody>
+      {{range .TabRules}}<tr>
+        <td class="mono">{{.Sender}}</td>
+        <td>{{.Label}}</td>
+        <td><form action="/settings/tab-rules/remove" method="post" class="inline"><input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="sender" value="{{.Sender}}"><button class="button danger" type="submit">Remove</button></form></td>
+      </tr>{{end}}
+      </tbody>
+    </table>
+    {{end}}{{end}}
+    <form action="/settings/categorize" method="post" class="form-actions">
+      <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+      <button class="button" type="submit">Sort now</button>
+    </form>
+  </section>
+  {{end}}
   <div class="card about" id="about">
     <h2 class="card-title">About</h2>
     <p class="small muted">Elemta Mail {{appVersion}}</p>

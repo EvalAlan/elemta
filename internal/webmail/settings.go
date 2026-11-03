@@ -54,6 +54,10 @@ type Settings struct {
 	// MailCalendar keeps messages at a reading width and shows the calendar
 	// panel beside them on wide screens. Off, a message uses the full pane.
 	MailCalendar bool `json:"mail_calendar,omitempty"`
+	// InboxTabs splits the inbox into Primary, Social, Promotions, Updates
+	// and Forums (categories.go). Off by default, so the inbox of someone
+	// who never asked doesn't suddenly hide mail behind tabs.
+	InboxTabs bool `json:"inbox_tabs,omitempty"`
 }
 
 // mailSounds are the new-mail tones, as Settings shows them. They're generated
@@ -325,12 +329,19 @@ type settingsView struct {
 	Senders              *senderRules
 	AllowText, BlockText string
 	Retention            []folderRetention
+	// TabRules are the senders the user put in an inbox tab. CanEditTabRules
+	// is false when the mailbox service isn't reachable from here.
+	TabRules        []categoryRule
+	CanEditTabRules bool
 }
 
 // noticeCards places each settings notice in the card it is about. The
 // cards' ids match the anchors their forms and redirects return to.
 var noticeCards = map[string]string{
 	"forwarding-saved":     "forwarding",
+	"inbox-sorted":         "tabs",
+	"categorize-failed":    "tabs",
+	"tab-rule-removed":     "tabs",
 	"senders-saved":        "senders",
 	"senders-failed":       "senders",
 	"forwarding-failed":    "forwarding",
@@ -415,6 +426,13 @@ func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view,
 	if card, ok := noticeCards[r.URL.Query().Get("n")]; ok {
 		v.Settings.Notice, v.Settings.NoticeCard, v.Notice = v.Notice, card, ""
 	}
+	if tab == "general" && s.security != nil && sess.AdminActor == "" {
+		if rules, err := s.categoryRules(r.Context(), sess); err != nil {
+			s.log.Warn("webmail: read category rules", "user", sess.User, "error", err)
+		} else {
+			v.Settings.TabRules, v.Settings.CanEditTabRules = rules, true
+		}
+	}
 	if tab == "general" {
 		v.Settings.HolidayRegions = holidayRegionChoices(false)
 		v.Settings.HolidayCountries = holidayRegionChoices(true)
@@ -485,6 +503,7 @@ func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view,
 func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
 	p := s.prefs(r.Context(), sess)
 	problem := ""
+	hadTabs := p.InboxTabs
 	p.DisplayName = strings.TrimSpace(r.PostFormValue("display_name"))
 	if strings.ContainsAny(p.DisplayName, "\r\n<>") || len(p.DisplayName) > 120 {
 		problem = "The display name can't contain line breaks or angle brackets."
@@ -522,6 +541,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	p.Conversations = &conv
 	p.LoadImages = r.PostFormValue("load_images") == "1"
 	p.MailCalendar = r.PostFormValue("mail_calendar") == "1"
+	p.InboxTabs = r.PostFormValue("inbox_tabs") == "1"
 	p.MailSound = validMailSound(r.PostFormValue("mail_sound"))
 	switch v := r.PostFormValue("calendar_view"); v {
 	case "month", "week", "day", "agenda":
@@ -573,6 +593,18 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		return
 	}
 	s.setAppearanceCookies(w, p)
+	if p.InboxTabs && !hadTabs {
+		// Mail delivered before categories existed has no tab yet. Sorting
+		// it now means the tabs aren't empty the first time they're opened.
+		if _, err := s.categorizeInbox(r.Context(), sess); err != nil {
+			s.log.Warn("webmail: sort inbox", "user", sess.User, "error", err)
+			http.Redirect(w, r, "/settings?n=categorize-failed#tabs", http.StatusSeeOther)
+			return
+		}
+		s.pages.forgetRaw(sess.ID)
+		http.Redirect(w, r, "/settings?n=inbox-sorted#tabs", http.StatusSeeOther)
+		return
+	}
 	if r.PostFormValue("holiday_extra_op") != "" || r.PostFormValue("holiday_extra_remove") != "" {
 		http.Redirect(w, r, "/settings?n=settings-saved#holidays", http.StatusSeeOther)
 		return

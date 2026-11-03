@@ -252,6 +252,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/theme", s.authed(s.themeSubmit))
 	mux.HandleFunc("POST /settings/conversations", s.authed(s.conversationsSubmit))
 	mux.HandleFunc("POST /settings/mail-calendar", s.authed(s.mailCalendarSubmit))
+	mux.HandleFunc("POST /settings/categorize", s.authed(s.categorizeSubmit))
+	mux.HandleFunc("POST /settings/tab-rules/remove", s.authed(s.categoryRuleRemove))
 	mux.HandleFunc("POST /settings/password", s.authed(s.passwordSubmit))
 	mux.HandleFunc("POST /settings/forwarding", s.authed(s.forwardingSubmit))
 	mux.HandleFunc("POST /settings/calendar-shares", s.authed(s.calendarShareSubmit))
@@ -405,7 +407,9 @@ type view struct {
 	Body            *sanitizeResult
 	Remote          bool
 	Tags            []string
-	Thread          []Related
+	// InboxTabs is the tab bar over the inbox, when tabs are on.
+	InboxTabs []InboxTab
+	Thread    []Related
 	// Conversations is the threaded list, when the list is grouped.
 	Conversations []Conversation
 	Threaded      bool
@@ -508,6 +512,10 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"saved":                  "Draft saved.",
 	"deleted":                "Message deleted.",
 	"deleted-many":           "Messages deleted.",
+	"categorized":            "Moved to the tab. Later mail from the same sender will go there too.",
+	"categorize-failed":      "Your inbox couldn't be sorted into tabs. Try again in a moment.",
+	"inbox-sorted":           "Your inbox is sorted into tabs.",
+	"tab-rule-removed":       "Tab rule removed.",
 	"moved":                  "Message moved.",
 	"moved-many":             "Messages moved.",
 	"archived":               "Message archived.",

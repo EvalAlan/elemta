@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/mailcategory"
 	"io"
 	"net"
 	"regexp"
@@ -337,6 +338,9 @@ func searchCriteria(q ListQuery) *imap.SearchCriteria {
 	}
 	if q.Tag != "" {
 		c.Flag = append(c.Flag, imap.Flag(q.Tag))
+	}
+	if cat, ok := mailcategory.Parse(q.Category); ok && q.Category != "" {
+		categoryCriteria(c, cat)
 	}
 	if q.HasAttachment {
 		// IMAP has no attachment criterion. A multipart/mixed top level is

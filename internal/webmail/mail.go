@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/mailcategory"
 	"mime"
 	"net/http"
 	"net/url"
@@ -36,10 +37,13 @@ type listState struct {
 	Sort    Sort
 	Reverse bool
 	Page    int
+	// Tab is the inbox tab (a mailcategory name), or "" when the list has
+	// no tabs: another folder, a search, or tabs turned off.
+	Tab string
 }
 
 func listStateFrom(v url.Values) listState {
-	st := listState{Folder: v.Get("f"), Query: strings.TrimSpace(v.Get("q")), Sort: Sort(v.Get("sort")), Reverse: v.Get("rev") == "1"}
+	st := listState{Folder: v.Get("f"), Query: strings.TrimSpace(v.Get("q")), Sort: Sort(v.Get("sort")), Reverse: v.Get("rev") == "1", Tab: v.Get("tab")}
 	if st.Folder == "" {
 		st.Folder = "INBOX"
 	}
@@ -68,6 +72,9 @@ func (l listState) values() url.Values {
 	}
 	if l.Reverse {
 		v.Set("rev", "1")
+	}
+	if l.Tab != "" {
+		v.Set("tab", l.Tab)
 	}
 	return v
 }
@@ -107,8 +114,17 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	remote := q.Get("remote") == "1"
 	loc := s.loc(sess)
 
+	// Tabs split the inbox only. A search looks across every tab, as the
+	// user is looking for something rather than browsing.
+	tabs := s.prefsCached(sess).InboxTabs && strings.EqualFold(ls.Folder, "INBOX") && ls.Query == ""
+	if tabs {
+		cat, _ := mailcategory.Parse(ls.Tab)
+		ls.Tab = cat.Name()
+	} else {
+		ls.Tab = ""
+	}
 	lq := parseSearch(ls.Query, loc)
-	lq.Sort, lq.Reverse, lq.Page, lq.PageSize = ls.Sort, ls.Reverse, ls.Page, s.pageSize(sess)
+	lq.Sort, lq.Reverse, lq.Page, lq.PageSize, lq.Category = ls.Sort, ls.Reverse, ls.Page, s.pageSize(sess), ls.Tab
 
 	v := view{Title: ls.Folder, Session: sess, Folder: ls.Folder, Query: ls.Query, List: &ls, Notice: notices[q.Get("n")], Remote: remote}
 	v.SharedMailboxes = s.sharedMailboxes(r.Context(), sess)
@@ -140,6 +156,9 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 			return err
 		}
 		v.Folders = folders
+		if tabs {
+			v.InboxTabs = s.inboxTabs(r.Context(), st, ls)
+		}
 		if v.Message != nil {
 			if !remote && s.autoImages(sess, ls.Folder, folders) {
 				remote = true
@@ -550,6 +569,8 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 		return
 	}
 	notice := ""
+	var learn []string // senders whose tab the user just chose
+	var learnCat mailcategory.Category
 	// leaves is true for operations after which the open message is no
 	// longer in this folder, so the redirect drops it.
 	leaves := false
@@ -571,6 +592,23 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 				return errBadTag
 			}
 			return st.SetFlags(ctx, folder, uids, []string{tag}, op == "tag")
+		case "category":
+			cat, ok := mailcategory.Parse(r.PostFormValue("category"))
+			if !ok {
+				return fmt.Errorf("webmail: unknown category %q", r.PostFormValue("category"))
+			}
+			senders, err := st.Senders(ctx, folder, uids)
+			if err != nil {
+				return err
+			}
+			if err := setCategory(ctx, st, folder, uids, cat); err != nil {
+				return err
+			}
+			learn, learnCat = uniqueSenders(senders, 20), cat
+			notice = "categorized"
+			// The message has left the tab being shown.
+			leaves = r.PostFormValue("tab") != "" && r.PostFormValue("tab") != cat.Name()
+			return nil
 		case "delete":
 			notice, leaves = plural("deleted", len(uids)), true
 			return st.Delete(ctx, folder, uids)
@@ -612,6 +650,11 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 	if err != nil {
 		s.fail(w, r, sess, err)
 		return
+	}
+	if len(learn) > 0 {
+		// After the IMAP work, outside the store lock: these are calls to
+		// the mailbox service.
+		s.learnCategory(r.Context(), sess, learn, learnCat)
 	}
 	if leaves {
 		back = dropParam(back, "uid")
