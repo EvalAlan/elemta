@@ -98,3 +98,20 @@ func TestStyleBlocksAreKeptAndCleaned(t *testing.T) {
 		t.Error("remote CSS image not restored when images are allowed")
 	}
 }
+
+// A hidden preview line keeps the styles that hide it, and utility class
+// names keep their class attribute, so the message's stylesheet applies.
+func TestSanitizeKeepsHiddenPreheaderAndUtilityClasses(t *testing.T) {
+	in := `<div class="h-0 invisible max-h-[0] md:w-1/2" style="visibility: hidden; height: 0px; max-height: 0; width: 0px; overflow: hidden; opacity: 0; mso-hide: all;">preview</div>`
+	out := sanitizeHTML(in, sanitizeOptions{}).HTML
+	for _, want := range []string{"visibility: hidden", "overflow: hidden", "opacity: 0", `class="h-0 invisible max-h-[0] md:w-1/2"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in %s", want, out)
+		}
+	}
+	// The newly allowed properties still load nothing.
+	out = sanitizeHTML(`<div style="opacity: url(https://t.example/p); overflow: url(https://t.example/q); visibility: expression(alert(1))">x</div>`, sanitizeOptions{}).HTML
+	if strings.Contains(out, "t.example") || strings.Contains(out, "expression") {
+		t.Errorf("unsafe value kept: %s", out)
+	}
+}
