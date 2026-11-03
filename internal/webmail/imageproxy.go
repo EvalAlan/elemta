@@ -328,13 +328,18 @@ func (p *imageProxy) image(ctx context.Context, user, raw string) (string, []byt
 }
 
 func (p *imageProxy) fetch(ctx context.Context, raw string) (string, []byte, error) {
+	// Fetching a URL from mail is this proxy's purpose. It is reached only for
+	// an address signed for this session (serveImage) that checkImageURL
+	// accepted, and p.client's dial control refuses any non-public address
+	// on every connection, redirects included.
+	// #nosec G704 -- signed, scheme/port checked, destination vetted per connection
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return "", nil, errImageRefused
 	}
 	req.Header.Set("User-Agent", imageUserAgent)
 	req.Header.Set("Accept", "image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8")
-	resp, err := p.client.Do(req)
+	resp, err := p.client.Do(req) // #nosec G704 -- see above: publicDialControl vets every connection
 	if err != nil {
 		return "", nil, err
 	}
@@ -413,6 +418,7 @@ func (s *Server) serveImage(w http.ResponseWriter, r *http.Request, sess *Sessio
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	h.Set("Content-Disposition", "inline")
 	h.Set("Cache-Control", "private, max-age=86400")
+	// #nosec G705 -- a raster image identified by its bytes (sniffImage), sent with its own type, nosniff and a sandbox CSP
 	_, _ = w.Write(body)
 }
 
