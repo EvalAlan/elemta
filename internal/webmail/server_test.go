@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/EvalAlan/elemta/internal/mailcategory"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -239,6 +240,28 @@ func (f *fakeStore) DeleteObject(_ context.Context, c Collection, id string) err
 	defer f.mu.Unlock()
 	delete(f.objects[c], id)
 	return nil
+}
+func (f *fakeStore) CategoryUnread(context.Context, string) (map[string]int, error) {
+	return map[string]int{"primary": 1, "promotions": 3}, nil
+}
+func (f *fakeStore) Senders(_ context.Context, folder string, uids []uint32) (map[uint32]string, error) {
+	out := map[uint32]string{}
+	for _, m := range f.listed(folder) {
+		if slices.Contains(uids, m.UID) && len(m.From) > 0 {
+			out[m.UID] = m.From[0].Email
+		}
+	}
+	return out, nil
+}
+func (f *fakeStore) Categorize(_ context.Context, folder string, _ int, overrides mailcategory.Overrides) (int, error) {
+	n := 0
+	for uid, raw := range f.raw {
+		if k := mailcategory.Classify(raw, overrides).Keyword(); k != "" {
+			_ = f.SetFlags(context.Background(), folder, []uint32{uid}, []string{k}, true)
+			n++
+		}
+	}
+	return n, nil
 }
 func (f *fakeStore) Close() error { return nil }
 

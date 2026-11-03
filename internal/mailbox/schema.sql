@@ -237,6 +237,15 @@ CREATE TABLE IF NOT EXISTS mailbox_sender_rules (
     created timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (account, entry)
 );
+-- Senders each user put in an inbox category (categories.go): an address,
+-- or @domain, which covers its subdomains too.
+CREATE TABLE IF NOT EXISTS mailbox_category_rules (
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    entry text NOT NULL,
+    category text NOT NULL CHECK (category IN ('primary', 'social', 'promotions', 'updates', 'forums')),
+    created timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (account, entry)
+);
 -- Mail people moved in or out of Junk, waiting for Rspamd to learn from it
 -- (spam_learn.go). Rows stay a day after learning, for the daily limit.
 CREATE TABLE IF NOT EXISTS mailbox_spam_feedback (

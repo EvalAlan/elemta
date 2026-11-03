@@ -45,6 +45,8 @@ type fakeSecurity struct {
 	protocolCalls   []map[string]any
 	calendarCalls   []string
 	calendarDenied  bool
+	// Inbox tab rules.
+	categories []categoryRule
 }
 
 func (f *fakeSecurity) handler(t *testing.T) http.Handler {
@@ -55,6 +57,24 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		kind := map[string]string{"secret": "password", "app-pass": "app"}[pw]
 		if user != "dana" || kind == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/v1/security/categories" {
+			switch r.Method {
+			case http.MethodPost:
+				var in categoryRule
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				f.categories = slices.DeleteFunc(f.categories, func(x categoryRule) bool { return x.Sender == in.Sender })
+				f.categories = append(f.categories, in)
+				_ = json.NewEncoder(w).Encode(in)
+			case http.MethodPut:
+				var in []categoryRule
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				f.categories = in
+				_ = json.NewEncoder(w).Encode(f.categories)
+			default:
+				_ = json.NewEncoder(w).Encode(f.categories)
+			}
 			return
 		}
 		if r.URL.Path == "/v1/security/retention" {

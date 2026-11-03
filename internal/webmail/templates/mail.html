@@ -23,6 +23,12 @@
           </div>
         </details>
       </div>
+      {{with .InboxTabs}}
+      <nav class="inbox-tabs" aria-label="Inbox tabs">
+        {{range .}}<a class="inbox-tab" href="{{.URL}}"{{if .Active}} aria-current="page"{{end}}>{{.Label}}{{if .Unread}} <span class="tab-count mono">{{.Unread}}</span>{{end}}</a>{{end}}
+      </nav>
+      <input type="hidden" name="tab" value="{{$.List.Tab}}">
+      {{end}}
       {{if isRole .Folder .Folders "quarantine"}}<p class="muted folder-note">Mail the spam check would have refused. Release anything you were expecting. The rest is deleted automatically.</p>{{end}}
       <div class="bulk-bar" role="toolbar" aria-label="Selected messages">
         <button class="button" name="op" value="read">Mark read</button>
@@ -37,6 +43,13 @@
           {{range $.Folders}}{{if and .Selectable (ne .Name $.Folder)}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
         </select>
         <button class="button" name="op" value="move">Move</button>
+        {{if .InboxTabs}}
+        <label class="visually-hidden" for="bulk-category">Move selected to tab</label>
+        <select id="bulk-category" name="category" class="compact">
+          {{range .CategoryOptions}}<option value="{{.Name}}"{{if eq .Name $.List.Tab}} selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+        <button class="button" name="op" value="category">Move to tab</button>
+        {{end}}
       </div>
     {{with .Page}}
       {{if and (not .Messages) (not $.Conversations)}}
@@ -137,6 +150,16 @@
           <button class="button" type="submit">Move</button>
         </form>
       </details>
+      {{if $.InboxTabs}}
+      <details class="menu">
+        <summary class="button">Tab</summary>
+        <form class="menu-body" action="/mail/action" method="post">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="category"><input type="hidden" name="tab" value="{{$.List.Tab}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+          <p class="small muted">Move to tab. Later mail from this sender goes there too.</p>
+          {{range $.CategoryOptions}}<button class="menu-item" name="category" value="{{.Name}}"{{if eq .Name $.List.Tab}} aria-current="true"{{end}}>{{if eq .Name $.List.Tab}}✓ {{end}}{{.Label}}</button>{{end}}
+        </form>
+      </details>
+      {{end}}
       <details class="menu">
         <summary class="button">More</summary>
         <div class="menu-body">

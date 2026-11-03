@@ -328,6 +328,25 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		}
 		return s.engine.SetSenderRules(r.Context(), a.account.ID, in.Allow, in.Block, senderMax(a))
 	})
+	// Senders the user put in an inbox category (categories.go). POST adds or
+	// changes one, which is what moving a message to another tab does.
+	handle("GET /v1/security/categories", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.CategoryRules(r.Context(), a.account.ID)
+	})
+	handle("PUT /v1/security/categories", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in []CategoryRule
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return s.engine.SetCategoryRules(r.Context(), a.account.ID, in)
+	})
+	handle("POST /v1/security/categories", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in CategoryRule
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return s.engine.PutCategoryRule(r.Context(), a.account.ID, in)
+	})
 	handle("GET /v1/security/retention", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		return s.engine.FolderRetentions(r.Context(), a.account.ID)
 	})

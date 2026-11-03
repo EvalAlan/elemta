@@ -3,6 +3,7 @@ package webmail
 import (
 	"context"
 	"errors"
+	"github.com/EvalAlan/elemta/internal/mailcategory"
 	"strconv"
 	"strings"
 	"time"
@@ -175,19 +176,22 @@ type ListQuery struct {
 	Answered      bool
 	HasAttachment bool
 	Tag           string
-	Since         time.Time // on or after this day
-	Before        time.Time // before this day
-	Sort          Sort
-	Reverse       bool // oldest first, or Z to A
-	Page          int  // 1-based
-	PageSize      int
+	// Category limits the list to one inbox tab, by mailcategory name
+	// ("primary", "social"...). Empty lists every tab.
+	Category string
+	Since    time.Time // on or after this day
+	Before   time.Time // before this day
+	Sort     Sort
+	Reverse  bool // oldest first, or Z to A
+	Page     int  // 1-based
+	PageSize int
 }
 
 // Filtered reports whether q restricts the folder at all, as opposed to
 // only paging and ordering it.
 func (q ListQuery) Filtered() bool {
 	return q.Text != "" || q.From != "" || q.To != "" || q.Subject != "" || q.Unread || q.Flagged ||
-		q.Answered || q.HasAttachment || q.Tag != "" || !q.Since.IsZero() || !q.Before.IsZero()
+		q.Answered || q.HasAttachment || q.Tag != "" || q.Category != "" || !q.Since.IsZero() || !q.Before.IsZero()
 }
 
 // Flags the UI sets and clears. Tags are stored as IMAP keywords alongside them.
@@ -250,6 +254,15 @@ type Mailstore interface {
 	// conversation as the given Message-IDs: those IDs themselves, and
 	// anything whose References or In-Reply-To name one of them.
 	Related(ctx context.Context, folders []string, ids []string) ([]Related, error)
+	// CategoryUnread counts the unread messages in each inbox tab of
+	// folder, keyed by mailcategory name.
+	CategoryUnread(ctx context.Context, folder string) (map[string]int, error)
+	// Senders returns the first From address of each message.
+	Senders(ctx context.Context, folder string, uids []uint32) (map[uint32]string, error)
+	// Categorize classifies up to limit of the most recent messages in
+	// folder that have no category yet, and returns how many it put in a
+	// tab other than Primary.
+	Categorize(ctx context.Context, folder string, limit int, overrides mailcategory.Overrides) (int, error)
 
 	ObjectStore
 	Close() error
