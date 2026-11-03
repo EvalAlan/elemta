@@ -978,11 +978,50 @@
   // sized to its content here, so a long message scrolls with the page
   // instead of inside a box; images that load later resize it again.
   // Conversation cards load their message when first opened.
+  // Expanding a card is reading that message, as opening it is. The frame
+  // only peeks, so a conversation read card by card stayed unread in the list
+  // however much of it had been read.
+  function readCard(card) {
+    var folder = card.getAttribute("data-unread-folder"), uid = card.getAttribute("data-unread-uid");
+    if (!folder || !uid || !csrf) return;
+    card.removeAttribute("data-unread-folder");
+    card.removeAttribute("data-unread-uid");
+    // Manual, so the action's redirect isn't fetched: it would render the
+    // whole mail page only to be thrown away.
+    fetch("/mail/action", {
+      method: "POST",
+      credentials: "same-origin",
+      redirect: "manual",
+      headers: { "X-CSRF-Token": csrf, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ f: folder, uid: uid, op: "read" }).toString()
+    }).then(function (r) {
+      if (!r.ok && r.type !== "opaqueredirect") throw new Error("not marked");
+      var dot = $(".unread-dot", card);
+      if (dot) dot.remove();
+      refreshRows();
+      checkMail();
+    }).catch(function () {
+      card.setAttribute("data-unread-folder", folder);
+      card.setAttribute("data-unread-uid", uid);
+    });
+  }
+
+  // refreshRows brings the list's read state and links up to date without
+  // replacing it, for a change made from the reader.
+  function refreshRows() {
+    if (!listEl()) return;
+    fetch(location.href, { credentials: "same-origin" })
+      .then(function (r) { return r.ok && !r.redirected ? r.text() : null; })
+      .then(function (html) { if (html) syncRows(new DOMParser().parseFromString(html, "text/html")); })
+      .catch(function () {});
+  }
+
   function setUpFrames(scope) {
     $$("details.thread-card", scope).forEach(function (card) {
       card.addEventListener("toggle", function () {
         var f = $("iframe[data-src]", card);
         if (card.open && f && !f.getAttribute("src")) f.setAttribute("src", f.getAttribute("data-src"));
+        if (card.open) readCard(card);
       });
     });
     $$("iframe[data-autosize]", scope).forEach(function (frame) {
@@ -1045,6 +1084,19 @@
       if (next) {
         li.classList.toggle("unread", next.classList.contains("unread"));
         li.toggleAttribute("data-seen", next.hasAttribute("data-seen"));
+        // A conversation row opens its oldest unread message, so reading
+        // one moves its link on to the next. Left as it was, the row kept
+        // reopening the message just read, and the last unread one in a
+        // conversation could never be reached from the list.
+        ["data-open", "data-latest", "data-count"].forEach(function (name) {
+          if (next.hasAttribute(name)) li.setAttribute(name, next.getAttribute(name));
+        });
+        var nextLink = $("a.row", next);
+        if (link && nextLink) {
+          link.setAttribute("href", nextLink.getAttribute("href"));
+          // The contents only, so a row the keyboard is on keeps focus.
+          link.replaceChildren.apply(link, Array.prototype.map.call(nextLink.childNodes, function (n) { return doc.importNode(n, true); }));
+        }
       }
     });
   }

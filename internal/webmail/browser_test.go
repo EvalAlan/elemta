@@ -374,6 +374,65 @@ func TestBrowserReadingPaneKeepsThePage(t *testing.T) {
 	}
 }
 
+// A conversation's row opens its oldest unread message. After each one is
+// read in the pane the row has to point at the next, or the last unread
+// message can't be reached and the conversation never stops being unread.
+func TestBrowserConversationRowReachesEachUnread(t *testing.T) {
+	b := newBrowser(t)
+	now := time.Now()
+	b.h.store.messages["INBOX"] = []Summary{
+		{UID: 31, Subject: "Budget", From: []Address{{Email: "dana@example.com"}}, Date: now.Add(-2 * time.Hour)},
+		{UID: 32, Subject: "Re: Budget", From: []Address{{Email: "lee@example.com"}}, Date: now.Add(-time.Hour)},
+		{UID: 33, Subject: "Re: Budget", From: []Address{{Email: "dana@example.com"}}, Date: now},
+	}
+	for _, u := range []uint32{31, 32, 33} {
+		b.h.store.raw[u] = []byte(fmt.Sprintf("From: dana@example.com\r\nSubject: Budget\r\n\r\nmessage %d\r\n", u))
+	}
+	b.login()
+	evalAs[bool](b, `window.__samePage = true; true`)
+	for _, uid := range []string{"31", "32", "33"} {
+		b.clickRow(0)
+		b.waitFor(`location.search.includes("uid=` + uid + `") && document.querySelector(".reader").textContent.includes("message ` + uid + `")`)
+	}
+	b.waitFor(`!document.querySelector("li.row-wrap").classList.contains("unread")`)
+	b.h.store.mu.Lock()
+	read := b.h.store.seen[31] && b.h.store.seen[32] && b.h.store.seen[33]
+	b.h.store.mu.Unlock()
+	if !read {
+		t.Errorf("seen = %v, want every message in the conversation read", b.h.store.seen)
+	}
+	if !evalAs[bool](b, `window.__samePage === true`) {
+		t.Error("reading the conversation loaded a whole page")
+	}
+}
+
+// Expanding a message in a conversation reads it, as opening it does.
+func TestBrowserExpandingACardMarksItRead(t *testing.T) {
+	b := newBrowser(t)
+	b.h.store.related = []Related{
+		{Folder: "INBOX", Summary: Summary{UID: 5, Subject: "MSA draft", From: []Address{{Email: "priya@northwind.example"}}, Date: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)}},
+	}
+	b.h.store.raw[5] = []byte("From: priya@northwind.example\r\nSubject: MSA draft\r\n\r\nearlier\r\n")
+	b.login()
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX&uid=7")), chromedp.WaitVisible(chromedp.CSS("details.thread-card summary")))
+	b.waitFor(`document.readyState === "complete"`)
+	if !evalAs[bool](b, `!!document.querySelector("details.thread-card .unread-dot")`) {
+		t.Fatal("the card does not show as unread")
+	}
+	b.run(chromedp.Click(chromedp.CSS("details.thread-card summary"), chromedp.NodeVisible))
+	b.waitFor(`!document.querySelector("details.thread-card .unread-dot")`)
+	b.h.store.mu.Lock()
+	read := b.h.store.seen[5]
+	b.h.store.mu.Unlock()
+	if !read {
+		t.Error("expanding the card did not mark its message read")
+	}
+	// Closing and opening it again sends nothing more.
+	if evalAs[bool](b, `document.querySelector("details.thread-card").hasAttribute("data-unread-uid")`) {
+		t.Error("the card still asks to be marked read")
+	}
+}
+
 // Whatever the pane can't show, the link still can.
 func TestBrowserReadingPaneFallsBackToTheLink(t *testing.T) {
 	b := newBrowser(t)
