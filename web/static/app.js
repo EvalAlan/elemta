@@ -161,6 +161,7 @@ function switchView(viewName) {
         health: 'Health',
         certificates: 'Certificates',
         abuse: 'Abuse',
+        compliance: 'Compliance',
         queues: 'Mail Queues',
         reports: 'Reports',
         tracing: 'Tracing',
@@ -199,6 +200,9 @@ function switchView(viewName) {
             break;
         case 'abuse':
             refreshAbuse();
+            break;
+        case 'compliance':
+            if (typeof openCompliance === 'function') openCompliance();
             break;
         case 'queues':
             refreshQueue();
@@ -1718,15 +1722,18 @@ function updateUserUI() {
     if (usersTab) usersTab.style.display = authState.isLoggedIn ? '' : 'none';
     const perms = authState.permissions || [];
     const mailAdminNav = document.getElementById('nav-mailadmin');
-    if (mailAdminNav) mailAdminNav.hidden = !authState.isLoggedIn || !(perms.includes('system:admin') || perms.includes('mail:domain-admin'));
-    // A domain administrator can't read the server's queues, logs or
-    // statistics (the API refuses them), so the dashboard shows only Mail
-    // Administration and Settings and stops polling the rest.
-    const confined = authState.isLoggedIn && perms.includes('mail:domain-admin') && !perms.includes('api:read');
+    const mailAdmin = perms.includes('system:admin') || perms.includes('mail:domain-admin');
+    if (mailAdminNav) mailAdminNav.hidden = !authState.isLoggedIn || !mailAdmin;
+    const complianceNav = document.getElementById('nav-compliance');
+    if (complianceNav) complianceNav.hidden = !authState.isLoggedIn || !perms.includes('mail:compliance');
+    // A domain administrator or compliance officer can't read the server's
+    // queues, logs or statistics (the API refuses them), so the dashboard
+    // shows only their own sections and Settings, and stops polling the rest.
+    const confined = authState.isLoggedIn && (perms.includes('mail:domain-admin') || perms.includes('mail:compliance')) && !perms.includes('api:read');
     if (confined !== !!authState.confined) {
         authState.confined = confined;
         document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-            if (!['mail-admin', 'settings'].includes(item.dataset.view)) item.style.display = confined ? 'none' : '';
+            if (!['mail-admin', 'compliance', 'settings'].includes(item.dataset.view)) item.style.display = confined ? 'none' : '';
         });
         document.querySelectorAll('.settings-tab[data-tab]').forEach(item => {
             if (!['ui', 'users'].includes(item.dataset.tab)) item.style.display = confined ? 'none' : '';
@@ -1734,7 +1741,7 @@ function updateUserUI() {
         if (confined) {
             state.autoRefreshPaused = true;
             if (state.refreshInterval) { clearTimeout(state.refreshInterval); state.refreshInterval = null; }
-            switchView('mail-admin');
+            switchView(mailAdmin ? 'mail-admin' : 'compliance');
         }
     }
 

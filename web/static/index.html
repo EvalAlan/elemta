@@ -97,6 +97,10 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
                     <span>Certificates</span>
                 </a>
+                <a href="#" class="nav-item" data-view="compliance" id="nav-compliance" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="6"/><path d="m21 21-6.5-6.5"/><path d="M7.5 10h5"/></svg>
+                    <span>Compliance</span>
+                </a>
                 <a href="#" class="nav-item" data-view="abuse">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>
                     <span>Abuse</span>
@@ -524,6 +528,52 @@
             </section>
 
             <!-- Certificates View -->
+            <section class="view" id="view-compliance">
+                <p id="compliance-notice" class="abuse-notice" role="status" hidden></p>
+                <div class="card">
+                    <div class="card-header"><h3>Search all mailboxes</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">For investigations and legal requests. Every search, export and message you open is recorded in the audit log with your name. Mail a legal hold kept after its owner deleted it is included.</p>
+                        <form id="compliance-form" class="abuse-form">
+                            <label for="compliance-accounts">Accounts</label>
+                            <textarea id="compliance-accounts" rows="2" spellcheck="false" autocomplete="off" placeholder="dana@example.com, lee@example.com"></textarea>
+                            <p class="field-hint">Primary addresses, separated by commas or lines. Empty searches every mailbox.</p>
+                            <label for="compliance-from">From</label>
+                            <input id="compliance-from" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Part of a name or address">
+                            <label for="compliance-to">To, Cc or Bcc</label>
+                            <input id="compliance-to" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Part of a name or address">
+                            <label for="compliance-subject">Subject contains</label>
+                            <input id="compliance-subject" type="text" maxlength="500" autocomplete="off">
+                            <label for="compliance-text">Words in the message</label>
+                            <input id="compliance-text" type="text" maxlength="500" autocomplete="off">
+                            <p class="field-hint">Every word must appear; each matches the start of a word, so "merg" finds "merger". Attachments aren't searched.</p>
+                            <label for="compliance-since">Received on or after</label>
+                            <input id="compliance-since" type="date">
+                            <label for="compliance-until">Received on or before</label>
+                            <input id="compliance-until" type="date">
+                            <label class="ma-check"><input id="compliance-held" type="checkbox" checked> Include mail kept by a legal hold</label>
+                            <button class="btn btn-primary" type="submit">Search</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="card" id="compliance-results-card" hidden>
+                    <div class="card-header">
+                        <h3 id="compliance-summary">Results</h3>
+                        <button class="btn btn-secondary btn-sm" type="button" id="compliance-export">Export all as mbox</button>
+                    </div>
+                    <div class="card-body">
+                        <p id="compliance-unindexed" class="abuse-notice" hidden></p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Received</th><th>Account</th><th>Folder</th><th>From</th><th>To</th><th>Subject</th><th>Size</th><th aria-label="Download"></th></tr></thead>
+                            <tbody id="compliance-hits"></tbody>
+                        </table></div>
+                        <p class="field-hint">The export has every match, not only those shown, as one mbox file for review tools. Each message carries an <code>X-Elemta-Compliance</code> line naming its account and folder.</p>
+                    </div>
+                </div>
+                <form id="compliance-export-form" method="post" action="/api/compliance/export" target="compliance-download" hidden><input type="hidden" name="query"></form>
+                <iframe name="compliance-download" id="compliance-download" title="Export download" hidden></iframe>
+            </section>
+
             <section class="view" id="view-abuse">
                 <p id="abuse-notice" class="abuse-notice" role="status" hidden></p>
                 <p id="abuse-you" class="abuse-notice" hidden>
@@ -1858,11 +1908,12 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261102-rules"></script>
+    <script src="/static/app.js?v=20261103-compliance"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261021-domainadmin"></script>
     <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
     <script src="/static/abuse.js?v=20261102-alertblock"></script>
+    <script src="/static/compliance.js?v=20261103-compliance"></script>
 </body>
 
 </html>
