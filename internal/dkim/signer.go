@@ -15,6 +15,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sort"
@@ -206,6 +207,43 @@ func (s *Signer) Sign(content []byte, signingDomain string) ([]byte, error) {
 
 	s.logger.Debug("Signed message with DKIM", "domain", domain, "selector", key.selector)
 	return buf.Bytes(), nil
+}
+
+// SignatureFor reads a whole message from r and returns the DKIM-Signature
+// header line (with its CRLF) to put in front of it, or "" when no key is
+// configured for signingDomain. The message isn't copied: a large one is
+// hashed as it streams, and the caller prepends the line.
+func (s *Signer) SignatureFor(r io.Reader, signingDomain string) (string, error) {
+	if s == nil {
+		return "", nil
+	}
+	domain := strings.ToLower(strings.TrimSpace(signingDomain))
+	s.mu.RLock()
+	key, ok := s.keys[domain]
+	s.mu.RUnlock()
+	if !ok {
+		return "", nil
+	}
+	w, err := dkim.NewSigner(&dkim.SignOptions{
+		Domain:                 domain,
+		Selector:               key.selector,
+		Signer:                 key.signer,
+		Hash:                   key.hash,
+		HeaderCanonicalization: key.headerCanon,
+		BodyCanonicalization:   key.bodyCanon,
+		HeaderKeys:             key.headerKeys,
+	})
+	if err != nil {
+		return "", fmt.Errorf("dkim: signing for domain %q failed: %w", domain, err)
+	}
+	if _, err := io.Copy(w, r); err != nil {
+		_ = w.Close()
+		return "", fmt.Errorf("dkim: signing for domain %q failed: %w", domain, err)
+	}
+	if err := w.Close(); err != nil {
+		return "", fmt.Errorf("dkim: signing for domain %q failed: %w", domain, err)
+	}
+	return w.Signature(), nil
 }
 
 // HasKeyFor reports whether a signing key is configured for the given domain.

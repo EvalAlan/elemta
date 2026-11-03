@@ -159,3 +159,19 @@ func TestDeliveryFailsWhenConfiguredDKIMSigningFails(t *testing.T) {
 		t.Fatalf("expected DKIM signing error, got: %v", err)
 	}
 }
+
+// Mail signed for its domain when it was submitted isn't signed for it again
+// on the way out; a different domain still is.
+func TestSignContentSkipsDomainSignedAtSubmission(t *testing.T) {
+	h := NewSMTPDeliveryHandler(0)
+	h.SetDKIMSigner(newTestSigner(t, "example.com"))
+	msg := Message{ID: "m1", From: "alice@example.com", Annotations: map[string]string{AnnotationDKIMSigned: "example.com"}}
+	out, err := h.signContent(msg, []byte(dkimTestMessage))
+	if err != nil || !bytes.Equal(out, []byte(dkimTestMessage)) {
+		t.Fatalf("re-signed a submission: %d signatures, %v", countSignatures(out), err)
+	}
+	msg.Annotations[AnnotationDKIMSigned] = "other.example"
+	if out, _ := h.signContent(msg, []byte(dkimTestMessage)); countSignatures(out) != 1 {
+		t.Fatalf("a different submission domain stopped delivery signing")
+	}
+}

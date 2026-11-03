@@ -24,6 +24,10 @@ import (
 	"github.com/EvalAlan/elemta/internal/tlsrpt"
 )
 
+// AnnotationDKIMSigned names the domain a message was DKIM-signed for when
+// it was submitted, so delivery doesn't sign it for that domain again.
+const AnnotationDKIMSigned = "dkim_signed"
+
 // messageSigner signs outbound message content for a given signing domain.
 // Satisfied by *dkim.Signer; abstracted so tests can inject a stub. A nil
 // signer means signing is disabled and content passes through unchanged.
@@ -291,6 +295,12 @@ func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) ([]byte, 
 	}
 	if signingDomain == "" {
 		h.logger.Debug("No signing domain resolved for message, delivering unsigned", "message_id", msg.ID)
+		return content, nil
+	}
+
+	// Signed at submission for this domain (internal/smtp/submission_dkim.go):
+	// a second signature from the same domain adds nothing.
+	if strings.EqualFold(msg.Annotations[AnnotationDKIMSigned], signingDomain) {
 		return content, nil
 	}
 
