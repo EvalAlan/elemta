@@ -13,6 +13,16 @@ It is on by default.
 
 ## What the reader sees
 
+Images reach a message three ways, and all three go through the proxy: `<img>`
+tags, `url()` in the message's `<style>` blocks, and `background-image` in
+inline styles. LinkedIn, for example, puts each post's photo on a table cell
+as a background, with a hidden `<img>` for Outlook. In inline styles, a
+`background` or `background-image` value is kept only when every `url()` in
+it names the proxy (or is a `data:` image) and the rest is plain colours,
+gradients and keywords; a sender can't write a proxy address in themselves,
+because only remote addresses are rewritten and anything else becomes
+`none`.
+
 Remote images are still blocked until the reader chooses Show images, or
 turns on Settings > General > Load remote images automatically. Mail in Junk
 never loads them automatically. Once images are allowed, they arrive through
