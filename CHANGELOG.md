@@ -43,6 +43,12 @@ and backups that left out message bodies stored in S3.
 
 ### What's new
 
+- **Two-step sign-in for the admin console.** Each console user can add an
+  authenticator app, with recovery codes, and passkeys, under Settings > Users. A
+  passkey also signs in on its own. Accounts with two-step sign-in can't use HTTP
+  Basic auth; scripts need an API key or an account of their own. A lost phone is
+  reset from the users list or with `elemta user reset-2fa`. See "Two-step
+  sign-in" in [docs/production-deployment.md](docs/production-deployment.md).
 - **Compliance search and export.** A new Compliance page searches every mailbox at
   once, by account, sender, recipient, subject, words and dates, including mail a
   legal hold kept after it was deleted. Matches download one at a time or export as

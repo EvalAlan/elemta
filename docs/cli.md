@@ -76,6 +76,7 @@ Changes apply to a running server on its next request; no restart.
 ./bin/elemta user passwd alice --file /etc/elemta/users.txt
 ./bin/elemta user list --file /etc/elemta/users.txt
 ./bin/elemta user remove alice --file /etc/elemta/users.txt
+./bin/elemta user reset-2fa alice --file /etc/elemta/users.txt   # lost phone; see production-deployment.md
 ```
 
 Roles: `admin`, `operator` (queue management), `user` and `readonly` (view only),

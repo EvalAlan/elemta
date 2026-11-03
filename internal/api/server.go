@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/abuse"
+	"github.com/EvalAlan/elemta/internal/adminmfa"
 	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/campaign"
 	"github.com/EvalAlan/elemta/internal/config"
@@ -206,6 +207,10 @@ type Server struct {
 	apiKeyManager  *auth.APIKeyManager
 	sessionManager *auth.SessionManager
 	loginThrottle  *loginThrottle
+	// mfa holds console users' second factors; nil when users don't come
+	// from a users file, which it sits beside.
+	mfa            *adminmfa.Store
+	mfaFlow        *mfaFlow
 	authMiddleware *AuthMiddleware
 	rateLimiter    *RateLimitMiddleware
 	corsMiddleware *CORSMiddleware
@@ -522,11 +527,13 @@ func (s *Server) initializeAuth() error {
 	// If an explicit auth file was provided, honor it before consulting environment defaults.
 	// This is especially important for container/web deployments that pass --auth-file
 	// while building without CGO (where the default SQLite path is unusable).
+	mfaFile := ""
 	if authFile != "" {
 		authSystem, err = auth.NewWithFile(authFile)
 		if err != nil {
 			return fmt.Errorf("failed to initialize file-based authentication from %s: %w", authFile, err)
 		}
+		mfaFile = authFile
 		logger.Info("Authentication initialized using explicit file-based datasource",
 			"datasource", authFile,
 		)
@@ -542,6 +549,7 @@ func (s *Server) initializeAuth() error {
 			if err != nil {
 				return fmt.Errorf("failed to initialize file-based authentication from %s: %w", authFile, err)
 			}
+			mfaFile = authFile
 			logger.Info("Authentication initialized using file-based datasource",
 				"datasource", authFile,
 			)
@@ -594,6 +602,11 @@ func (s *Server) initializeAuth() error {
 	}
 	authMiddleware.throttle = s.loginThrottle
 	authMiddleware.clientAddr = s.loginAddr
+	if mfaFile != "" {
+		s.mfa = adminmfa.Open(adminmfa.PathFor(mfaFile))
+		s.mfaFlow = newMFAFlow()
+		authMiddleware.mfa = s.mfa
+	}
 
 	s.authSystem = authSystem
 	s.rbac = rbac
@@ -689,6 +702,7 @@ func (s *Server) Start() error {
 		auth.HandleFunc("/login", s.handleLogin).Methods("POST")
 		auth.HandleFunc("/logout", s.handleLogout).Methods("POST", "GET")
 		auth.HandleFunc("/me", s.handleMe).Methods("GET")
+		s.mfaRoutes(r)
 
 		// API key management routes (require authentication)
 		apiKeys := r.PathPrefix("/auth/apikeys").Subrouter()
@@ -714,6 +728,7 @@ func (s *Server) Start() error {
 		api.Handle("/users", perm(auth.PermissionUserCreate)(http.HandlerFunc(s.handleCreateUser))).Methods("POST")
 		api.Handle("/users/{username}/role", perm(auth.PermissionUserUpdate)(http.HandlerFunc(s.handleSetUserRole))).Methods("PUT")
 		api.Handle("/users/{username}/password", perm(auth.PermissionUserUpdate)(http.HandlerFunc(s.handleResetUserPassword))).Methods("PUT")
+		api.Handle("/users/{username}/reset-2fa", perm(auth.PermissionUserUpdate)(http.HandlerFunc(s.handleResetSecondFactor))).Methods("POST")
 		api.Handle("/users/{username}", perm(auth.PermissionUserDelete)(http.HandlerFunc(s.handleDeleteUser))).Methods("DELETE")
 		api.Handle("/roles", perm(auth.PermissionUserView)(http.HandlerFunc(s.handleListRoles))).Methods("GET")
 		api.Handle("/account/password", s.authMiddleware.RequireAuth(http.HandlerFunc(s.handleChangeOwnPassword))).Methods("POST")
@@ -1470,38 +1485,36 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	s.loginThrottle.recordSuccess(addr, loginReq.Username)
-	s.abuse.RecordSignIn(r.Context(), addr, "admin", loginReq.Username)
+	if s.secondStep(w, loginReq.Username, addr) {
+		return
+	}
+	s.completeLogin(w, r, loginReq.Username, addr)
+}
+
+// completeLogin opens a session for a user who has proved who they are,
+// with a password and, if they have one, a second factor.
+func (s *Server) completeLogin(w http.ResponseWriter, r *http.Request, username, addr string) {
+	s.loginThrottle.recordSuccess(addr, username)
+	s.abuse.RecordSignIn(r.Context(), addr, "admin", username)
 
 	// A session cookie the browser already holds is replaced, not kept
 	// alongside: an attacker who planted one must not end up signed in.
 	if oldID := s.sessionManager.GetSessionFromRequest(r); oldID != "" {
 		_ = s.sessionManager.RevokeSession(oldID)
 	}
-
-	// Create session
-	log.Printf("Creating session for user: %s", loginReq.Username)
 	// The client's address, not a proxy's: the one the throttle used.
-	session, err := s.sessionManager.CreateSession(loginReq.Username, r.UserAgent(), addr)
+	session, err := s.sessionManager.CreateSession(username, r.UserAgent(), addr)
 	if err != nil {
-		log.Printf("Failed to create session: %v", err)
+		slog.Error("Failed to create session", "error", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
-
-	log.Printf("Session created successfully for user: %s", loginReq.Username)
-
-	// Set session cookie
-	log.Printf("Setting session cookie")
+	slog.Info("Console sign-in", "username", sanitizeForLog(username), "remote", addr)
 	s.sessionManager.SetCookie(w, r, session.ID)
-	log.Printf("Session cookie set")
-
-	// Get user permissions
-	permissions, _ := s.rbac.GetUserPermissions(ctx, loginReq.Username)
-
+	permissions, _ := s.rbac.GetUserPermissions(r.Context(), username)
 	writeJSON(w, map[string]interface{}{
 		"status":      "success",
-		"username":    loginReq.Username,
+		"username":    username,
 		"permissions": permissions,
 	})
 }

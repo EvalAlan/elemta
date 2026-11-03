@@ -10,16 +10,20 @@ package api
 
 import (
 	"context"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/dnshealth"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/runtime"
+	cdpwebauthn "github.com/chromedp/cdproto/webauthn"
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/require"
 )
@@ -208,6 +212,157 @@ func TestBrowserComplianceSearch(t *testing.T) {
 	}
 	require.Equal(t, base+"/", eval(`location.origin + location.pathname`))
 	require.NotEmpty(t, eval(`document.getElementById("compliance-hits").textContent`))
+	mu.Lock()
+	defer mu.Unlock()
+	require.Empty(t, problems)
+}
+
+// A passkey, end to end, with Chrome's virtual authenticator: added under
+// Settings > Users, then used alone to sign in, and as the second step after
+// the password.
+func TestBrowserConsolePasskey(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	hash, err := auth.HashPassword(testAdminPassword)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	users := filepath.Join(dir, "users")
+	require.NoError(t, os.WriteFile(users, []byte("root:"+hash+":admin\n"), 0o600))
+	s, err := NewServer(&Config{Enabled: true, ListenAddr: "127.0.0.1:0", WebRoot: webRoot, AuthEnabled: true, AuthFile: users}, nil, dir, 0, "")
+	require.NoError(t, err)
+	require.NoError(t, s.Start())
+	t.Cleanup(func() { _ = s.Stop() })
+	_, port, _ := net.SplitHostPort(waitReady(t, s))
+	// A passkey belongs to a host name, and only localhost may be plain HTTP.
+	base := "http://localhost:" + port
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.WindowSize(1280, 1100), chromedp.NoSandbox)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+	ctx, cancel := context.WithTimeout(browserCtx, 90*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	var problems []string
+	exceptions := chromedp.Events(browserCtx, runtime.ExceptionThrown)
+	go func() {
+		for ev, err := range exceptions {
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			problems = append(problems, (&chromedp.ExceptionError{ExceptionDetails: ev.ExceptionDetails}).Error())
+			mu.Unlock()
+		}
+	}()
+	require.NoError(t, chromedp.Do(ctx, chromedp.Func(func(ctx context.Context, tg *chromedp.Target) error {
+		if _, err := cdp.Call(ctx, tg, runtime.Enable, cdp.Empty{}); err != nil {
+			return err
+		}
+		if _, err := cdp.Call(ctx, tg, cdpwebauthn.Enable, cdpwebauthn.EnableParams{}); err != nil {
+			return err
+		}
+		_, err := cdp.Call(ctx, tg, cdpwebauthn.AddVirtualAuthenticator, cdpwebauthn.AddVirtualAuthenticatorParams{Options: &cdpwebauthn.VirtualAuthenticatorOptions{
+			Protocol: cdpwebauthn.AuthenticatorProtocolCtap2, Ctap2version: cdpwebauthn.Ctap2versionCtap21, Transport: cdpwebauthn.AuthenticatorTransportInternal,
+			HasResidentKey: true, HasUserVerification: true, IsUserVerified: true, AutomaticPresenceSimulation: true,
+		}})
+		return err
+	})))
+	eval := func(expr string) string {
+		t.Helper()
+		v, err := chromedp.Run(ctx, chromedp.Evaluate[string](expr))
+		require.NoError(t, err)
+		return v
+	}
+	waitFor := func(expr string) {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			if v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr)); err == nil && v {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for %s (page: %s)", expr, eval(`document.body ? document.body.innerText.slice(0, 400) : ""`))
+	}
+	click := func(selector string) chromedp.Action[chromedp.Void] {
+		return chromedp.Click(chromedp.CSS(selector), chromedp.NodeVisible)
+	}
+
+	// Sign in with the password, and add a passkey.
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.Navigate(base+"/login"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "root"),
+		chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+		click("#login-btn"),
+		chromedp.WaitVisible(chromedp.CSS(`.nav-item[data-view="settings"]`)),
+		click(`.nav-item[data-view="settings"]`),
+		click(`.settings-tab[data-tab="users"]`),
+		chromedp.WaitVisible(chromedp.ID("tf-card")),
+		chromedp.SendKeys(chromedp.ID("tf-password"), testAdminPassword),
+		chromedp.SendKeys(chromedp.ID("tf-passkey-name"), "Test laptop"),
+		click("#tf-passkey-add"),
+	))
+	waitFor(`document.getElementById("tf-passkeys").textContent.includes("Test laptop")`)
+	require.Contains(t, eval(`document.getElementById("tf-passkeys").textContent`), "localhost")
+	require.Contains(t, eval(`document.getElementById("tf-notice").textContent`), "added")
+	require.Contains(t, eval(`document.getElementById("users-list").textContent`), "On")
+
+	// Signed out, the passkey alone signs back in.
+	require.NoError(t, chromedp.Do(ctx, chromedp.Navigate(base+"/auth/logout"), chromedp.WaitVisible(chromedp.ID("passkey-btn")), click("#passkey-btn")))
+	waitFor(`location.pathname === "/" && !!document.querySelector('.nav-item[data-view="settings"]')`)
+
+	// The password alone no longer does: it asks for the passkey too.
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.Navigate(base+"/auth/logout"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "root"),
+		chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+		click("#login-btn"),
+		chromedp.WaitVisible(chromedp.ID("second-passkey-btn")),
+	))
+	require.Equal(t, "true", eval(`String(document.getElementById("code-group").hidden)`))
+	require.Equal(t, "Use my passkey", eval(`document.getElementById("second-passkey-btn").textContent`))
+	require.Equal(t, "/login", eval(`location.pathname`))
+	require.NoError(t, chromedp.Do(ctx, click("#second-passkey-btn")))
+	waitFor(`location.pathname === "/" && !!document.querySelector('.nav-item[data-view="settings"]')`)
+
+	// An authenticator app, set up from the page; then the code signs in.
+	require.NoError(t, chromedp.Do(ctx,
+		click(`.nav-item[data-view="settings"]`),
+		click(`.settings-tab[data-tab="users"]`),
+		chromedp.WaitVisible(chromedp.ID("tf-totp-on")),
+		chromedp.SendKeys(chromedp.ID("tf-password"), testAdminPassword),
+		click("#tf-totp-on"),
+		chromedp.WaitVisible(chromedp.ID("tf-qr")),
+	))
+	secret := eval(`document.getElementById("tf-secret").textContent`)
+	require.Equal(t, "image/png", eval(`document.getElementById("tf-qr").src.slice(5, 14)`))
+	step := time.Now().Unix() / 30
+	require.NoError(t, chromedp.Do(ctx, chromedp.SendKeys(chromedp.ID("tf-code"), totpAt(t, secret, step)), click("#tf-confirm")))
+	waitFor(`!document.getElementById("tf-codes").hidden`)
+	require.Len(t, strings.Split(eval(`document.getElementById("tf-codes-list").textContent`), "\n"), 10)
+	require.Contains(t, eval(`document.getElementById("tf-totp-state").textContent`), "10 recovery codes left")
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.Navigate(base+"/auth/logout"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "root"),
+		chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+		click("#login-btn"),
+		chromedp.WaitVisible(chromedp.ID("code")),
+	))
+	require.Equal(t, "Use a passkey instead", eval(`document.getElementById("second-passkey-btn").textContent`))
+	require.NoError(t, chromedp.Do(ctx, chromedp.SendKeys(chromedp.ID("code"), "000000"), click("#code-btn")))
+	waitFor(`document.getElementById("second-error").textContent.includes("isn't right")`)
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.SetValue(chromedp.ID("code"), totpAt(t, secret, step+1)),
+		click("#code-btn"),
+	))
+	waitFor(`location.pathname === "/" && !!document.querySelector('.nav-item[data-view="settings"]')`)
+
 	mu.Lock()
 	defer mu.Unlock()
 	require.Empty(t, problems)

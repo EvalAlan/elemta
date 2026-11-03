@@ -224,6 +224,42 @@ That last point matters if you terminate TLS at a proxy: **set
 `X-Forwarded-Proto`**, otherwise the cookie is issued without `Secure` and can
 be sent over a plaintext connection.
 
+### Two-step sign-in
+
+Each console user can add a second step under **Settings > Users > Two-step
+sign-in**:
+
+- **An authenticator app.** Scan the QR code, enter the code it shows, and keep
+  the ten recovery codes it gives you. Each recovery code signs you in once if
+  you lose your phone.
+- **Passkeys.** A passkey can be the second step after your password, or it
+  signs you in on its own, since it checks your fingerprint, face or PIN
+  itself. Each passkey belongs to the address you reached the console at, and
+  needs HTTPS there (or `localhost`).
+
+Turning either on, or changing them, asks for your password again. With
+either on, the password alone leads only to the second step, never to a
+session. **HTTP Basic auth is refused for that account**, since a password on
+every request can't carry a code: give scripts their own account without
+two-step sign-in, or an API key. API keys are kept in the console's memory
+today and end when it restarts.
+
+The second factors are kept beside the users file, in `<users file>.2fa`
+(`0600`, owned like the users file), and need a users file: with users in LDAP
+or SQL, the section doesn't appear. Five wrong codes end the attempt, and wrong
+codes count towards the login lockout above like wrong passwords.
+
+Someone who lost their phone and recovery codes can be let back in by another
+administrator, with **Reset** in the users list, or on the server:
+
+```bash
+elemta user reset-2fa alice --file /etc/elemta/users.txt
+```
+
+They then sign in with their password alone until they set it up again.
+Removing a user also removes their second factors. Every change is recorded in
+the audit log.
+
 ---
 
 ### Never run the admin API without authentication off-host
