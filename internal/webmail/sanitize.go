@@ -40,6 +40,9 @@ type sanitizeOptions struct {
 	AllowRemote bool
 	// CIDURL maps a cid: reference to the URL that serves that part.
 	CIDURL func(cid string) string
+	// ImageURL, when set, rewrites each remote image address that
+	// AllowRemote lets through, to the image proxy (imageproxy.go).
+	ImageURL func(raw string) string
 }
 
 // sanitizeResult is cleaned HTML plus what the cleaning removed.
@@ -59,7 +62,7 @@ var spacerImage = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAE
 // allowed, and links that open in a new tab without a referrer.
 func sanitizeHTML(in string, opts sanitizeOptions) sanitizeResult {
 	var blocked atomic.Int64
-	css, cssBlocked := extractCSS(in, opts.AllowRemote)
+	css, cssBlocked := extractCSS(in, opts.AllowRemote, opts.ImageURL)
 	blocked.Add(int64(cssBlocked))
 	in = wrapBody(in)
 	p := bluemonday.UGCPolicy()
@@ -98,9 +101,12 @@ func sanitizeHTML(in string, opts sanitizeOptions) sanitizeResult {
 				replaceURL(u, spacerImage)
 			}
 		case "http", "https":
-			if !opts.AllowRemote {
+			switch {
+			case !opts.AllowRemote:
 				blocked.Add(1)
 				replaceURL(u, spacerImage)
+			case opts.ImageURL != nil:
+				replaceURL(u, opts.ImageURL(u.String()))
 			}
 		default:
 			replaceURL(u, spacerImage)
@@ -135,7 +141,7 @@ const maxCSS = 256 << 10
 // close the style element, and no remote url() unless remote content is
 // allowed. The frame's CSP is the second line: it loads no remote style
 // sheets or fonts in any case, and remote images only when allowed.
-func extractCSS(in string, allowRemote bool) (string, int) {
+func extractCSS(in string, allowRemote bool, imageURL func(string) string) (string, int) {
 	var b strings.Builder
 	blocked := 0
 	for _, m := range styleBlockRE.FindAllStringSubmatch(in, -1) {
@@ -150,6 +156,11 @@ func extractCSS(in string, allowRemote bool) (string, int) {
 			case strings.HasPrefix(target, "data:image/"):
 				return u
 			case (strings.HasPrefix(target, "https:") || strings.HasPrefix(target, "http:")) && allowRemote:
+				if imageURL != nil {
+					// The original spelling, not the lower-cased target: paths
+					// and signed query strings are case-sensitive.
+					return `url("` + cssString(imageURL(strings.TrimSpace(cssURLRE.FindStringSubmatch(u)[2]))) + `")`
+				}
 				return u
 			case strings.HasPrefix(target, "http"):
 				blocked++
@@ -170,6 +181,12 @@ func extractCSS(in string, allowRemote bool) (string, int) {
 		out = out[:maxCSS]
 	}
 	return out, blocked
+}
+
+// cssString makes s safe inside a double-quoted CSS string. A proxy URL is
+// query-escaped already; this guards the quote and backslash regardless.
+func cssString(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", "", "\r", "").Replace(s)
 }
 
 // wrapBody keeps the <body> element's background and colours, which the
