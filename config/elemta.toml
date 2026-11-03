@@ -569,3 +569,11 @@ page_size = 50
 # the sender's address. Turn this on to also put it in X-Originating-IP on
 # outgoing mail, where every recipient sees it.
 # originating_ip_header = false
+# Remote images in mail are fetched by the webmail and served from its own
+# address, so senders don't see readers' IP addresses and tracker blockers
+# don't break mail. Only signed addresses from messages a user opened are
+# fetched, never internal ones; see docs/webmail-images.md.
+# image_proxy = true
+# image_cache_dir = "/tmp/elemta-webmail-images"
+# image_cache_mb = 512
+# image_max_mb = 5

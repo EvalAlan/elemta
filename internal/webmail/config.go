@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -150,6 +152,20 @@ type Config struct {
 	// base64 encoded. It is created if missing. Every pod must read the
 	// same file, and it must not be stored in Valkey.
 	SessionKeyFile string `toml:"session_key_file"`
+
+	// ImageProxy fetches remote images in mail on the server and serves them
+	// from the webmail's origin (imageproxy.go), so senders don't see the
+	// reader's address and tracker blockers don't break mail. On by default;
+	// false sends the browser straight to the sender's servers, as before.
+	ImageProxy *bool `toml:"image_proxy"`
+	// ImageCacheDir holds proxied images; it is created if missing. The
+	// default is under the system temporary directory, which is enough: a
+	// lost cache only means images are fetched again.
+	ImageCacheDir string `toml:"image_cache_dir"`
+	// ImageCacheMB caps the cache's size on disk.
+	ImageCacheMB int `toml:"image_cache_mb"`
+	// ImageMaxMB is the largest single image the proxy will pass on.
+	ImageMaxMB int `toml:"image_max_mb"`
 }
 
 // Defaults applied by WithDefaults.
@@ -159,6 +175,8 @@ const (
 	defaultMaxUploadMB  = 25
 	defaultPageSize     = 50
 	defaultMaxMessageMB = 50
+	defaultImageCacheMB = 512
+	defaultImageMaxMB   = 5
 )
 
 // WithDefaults returns a copy of c with every unset field filled in.
@@ -205,6 +223,19 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.MaxMessageMB <= 0 {
 		c.MaxMessageMB = defaultMaxMessageMB
+	}
+	if c.ImageProxy == nil {
+		on := true
+		c.ImageProxy = &on
+	}
+	if c.ImageCacheDir == "" {
+		c.ImageCacheDir = filepath.Join(os.TempDir(), "elemta-webmail-images")
+	}
+	if c.ImageCacheMB <= 0 {
+		c.ImageCacheMB = defaultImageCacheMB
+	}
+	if c.ImageMaxMB <= 0 {
+		c.ImageMaxMB = defaultImageMaxMB
 	}
 	c.IMAPTLS = strings.ToLower(c.IMAPTLS)
 	c.SubmissionTLS = strings.ToLower(c.SubmissionTLS)

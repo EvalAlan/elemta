@@ -26,6 +26,8 @@ const (
 
 // Server is the webmail HTTP application.
 type Server struct {
+	// images is the remote image proxy, nil when image_proxy is off.
+	images   *imageProxy
 	objectDB *sql.DB
 	cfg      Config
 	sessions *SessionManager
@@ -107,6 +109,13 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
 		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now, dav: newDAVPool(),
 		defaultLoc: cfg.location(),
+	}
+	if *cfg.ImageProxy {
+		images, err := newImageProxy(cfg.ImageCacheDir, int64(cfg.ImageCacheMB)<<20, int64(cfg.ImageMaxMB)<<20, log)
+		if err != nil {
+			return nil, err
+		}
+		server.images = images
 	}
 	if v, ok := sessions.shared.(*valkeySessions); ok {
 		server.pending.shared = v
@@ -232,6 +241,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /mail/body", s.authed(s.messageBody))
 	mux.HandleFunc("GET /mail/part", s.authed(s.messagePart))
 	mux.HandleFunc("GET /mail/raw", s.authed(s.messageRaw))
+	mux.HandleFunc("GET /mail/image", s.authed(s.serveImage))
 	mux.HandleFunc("GET /mail/print", s.authed(s.messagePrint))
 	mux.HandleFunc("GET /mail/source", s.authed(s.messageSource))
 	mux.HandleFunc("GET /api/reminders", s.authed(s.remindersAPI))

@@ -387,8 +387,13 @@ func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Sessi
 		// every message the same way, each in its own frame.
 		msg.HTML = `<pre style="white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0">` + string(linkify(msg.Text)) + `</pre>`
 	}
+	var imageURL func(string) string
+	if s.images != nil {
+		imageURL = newImageSigner(sess).url
+	}
 	res := sanitizeHTML(msg.HTML, sanitizeOptions{
 		AllowRemote: remote,
+		ImageURL:    imageURL,
 		CIDURL: func(cid string) string {
 			part, body, err := findPart(raw, 0, cid)
 			if err != nil || len(body) > maxInlineImage || !strings.HasPrefix(part.ContentType, "image/") {
@@ -398,7 +403,13 @@ func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Sessi
 		},
 	})
 	imgSrc := "data:"
-	if remote {
+	switch {
+	case remote && s.images != nil:
+		// Every remote image was rewritten to the proxy, so the frame may
+		// load images from this origin only. Anything the rewrite missed
+		// fails here rather than reaching the sender.
+		imgSrc = "data: 'self'"
+	case remote:
 		imgSrc = "data: https: http:"
 	}
 	h := w.Header()

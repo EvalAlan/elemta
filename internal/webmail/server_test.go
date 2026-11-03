@@ -295,7 +295,7 @@ func newHarness(t *testing.T) *harness {
 	store := newFakeStore()
 	sub := &fakeSubmitter{}
 	insecure := false
-	cfg := Config{IMAPAddr: "imap.test:143", SubmissionAddr: "smtp.test:587", SecureCookies: &insecure, DefaultDomain: "example.com"}
+	cfg := Config{IMAPAddr: "imap.test:143", SubmissionAddr: "smtp.test:587", SecureCookies: &insecure, DefaultDomain: "example.com", ImageCacheDir: t.TempDir()}
 	dial := func(_ context.Context, user, pw string) (Mailstore, error) {
 		if pw != "secret" {
 			return nil, ErrAuthFailed
