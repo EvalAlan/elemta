@@ -180,7 +180,10 @@ and backups that left out message bodies stored in S3.
   [docs/mail-administration.md](docs/mail-administration.md).
 - **Conversations no longer get stuck unread.** A conversation row always opened
   its latest message, so an older unread message could never be cleared by
-  clicking it. Rows now open the oldest unread message.
+  clicking it. Rows now open the oldest unread message, and after each one is
+  read the row moves on to the next, so the last can be reached without
+  reloading the page. Expanding a message within a conversation also marks it
+  read.
 
 - **Users' spam reports now train the filter.** Moving mail in or out of Junk,
   from the webmail or any mail app, teaches Rspamd's classifier. Nothing did
