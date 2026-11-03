@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/EvalAlan/elemta/internal/adminmfa"
 	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/datasource"
 	"github.com/spf13/cobra"
@@ -25,8 +26,9 @@ func init() {
 	userCmd.AddCommand(userListCmd)
 	userCmd.AddCommand(userPasswdCmd)
 	userCmd.AddCommand(userRemoveCmd)
+	userCmd.AddCommand(userResetTwoFactorCmd)
 
-	for _, c := range []*cobra.Command{userAddCmd, userListCmd, userPasswdCmd, userRemoveCmd} {
+	for _, c := range []*cobra.Command{userAddCmd, userListCmd, userPasswdCmd, userRemoveCmd, userResetTwoFactorCmd} {
 		c.Flags().StringVar(&userFile, "file", "", "Path to the users file (defaults to [api].auth_file)")
 	}
 	userAddCmd.Flags().StringVar(&userRole, "role", "",
@@ -180,7 +182,39 @@ var userRemoveCmd = &cobra.Command{
 		}); err != nil {
 			return err
 		}
+		// Someone given the name later mustn't inherit these.
+		if err := adminmfa.Open(adminmfa.PathFor(path)).Reset(args[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %q's two-step sign-in wasn't cleared: %v\n", args[0], err)
+		}
 		fmt.Printf("Removed %q\n", args[0])
+		return nil
+	},
+}
+
+var userResetTwoFactorCmd = &cobra.Command{
+	Use:   "reset-2fa <username>",
+	Short: "Turn off a user's two-step sign-in, for someone who lost their phone",
+	Long: `Remove a dashboard user's authenticator app, recovery codes and passkeys,
+so they sign in with their password alone until they set it up again. For
+someone locked out, run it on the server; another administrator can do the
+same from the dashboard's Users page.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		path, err := resolveUserFile()
+		if err != nil {
+			return err
+		}
+		users, err := datasource.ReadUsersFile(path)
+		if err != nil {
+			return err
+		}
+		if _, exists := users[args[0]]; !exists {
+			return fmt.Errorf("user %q does not exist in %s", args[0], path)
+		}
+		if err := adminmfa.Open(adminmfa.PathFor(path)).Reset(args[0]); err != nil {
+			return err
+		}
+		fmt.Printf("Two-step sign-in turned off for %q\n", args[0])
 		return nil
 	},
 }

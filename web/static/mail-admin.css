@@ -1,4 +1,4 @@
-#nav-mailadmin[hidden], .mail-admin [hidden] { display: none !important; }
+#nav-mailadmin[hidden], #nav-compliance[hidden], .mail-admin [hidden], #view-compliance [hidden], #tf-card[hidden], #tf-card [hidden] { display: none !important; }
 .ma-heading, .ma-dialog-heading, .ma-footer, .ma-form-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .ma-heading { margin-bottom: 1.5rem; }
 .ma-eyebrow { color: var(--accent-info); font-size: .7rem; letter-spacing: .12em; font-weight: 700; margin-bottom: .35rem; }

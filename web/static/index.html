@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261102-alertblock">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261103-2fa">
 </head>
 
 <body>
@@ -1744,6 +1744,46 @@
                             </div>
                         </div>
                     </div>
+                    <div class="card" id="tf-card" style="margin-bottom: 1.5rem;" hidden>
+                        <div class="card-header"><h3>Two-step sign-in</h3></div>
+                        <div class="card-body">
+                            <p class="panel-intro">After your password, the console asks for a code from an authenticator app or for a passkey. A passkey also signs you in on its own, since it checks your fingerprint, face or PIN. With two-step sign-in on, scripts can't use your password; give them an API key.</p>
+                            <p id="tf-notice" class="abuse-notice" role="status" hidden></p>
+                            <div class="send-row">
+                                <input type="password" id="tf-password" placeholder="Your password, to make changes" autocomplete="current-password" aria-label="Your password, to make changes">
+                            </div>
+                            <h4>Authenticator app</h4>
+                            <p id="tf-totp-state" class="field-hint"></p>
+                            <div class="send-row" id="tf-totp-actions">
+                                <button class="btn btn-secondary" type="button" id="tf-totp-on">Set up an authenticator app</button>
+                                <button class="btn btn-secondary" type="button" id="tf-totp-codes">New recovery codes</button>
+                                <button class="btn btn-danger" type="button" id="tf-totp-off">Turn off</button>
+                            </div>
+                            <div id="tf-setup" hidden>
+                                <p class="field-hint">Scan this with your authenticator app, or type the key into it. Then enter the six-digit code it shows.</p>
+                                <img id="tf-qr" alt="QR code for your authenticator app" width="200" height="200">
+                                <p><code id="tf-secret"></code></p>
+                                <div class="send-row">
+                                    <input type="text" id="tf-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456" aria-label="Code from the app">
+                                    <button class="btn btn-primary" type="button" id="tf-confirm">Turn on</button>
+                                </div>
+                            </div>
+                            <div id="tf-codes" hidden>
+                                <p><strong>Recovery codes.</strong> Each signs you in once if you lose your phone. Keep them somewhere safe: they aren't shown again.</p>
+                                <pre id="tf-codes-list"></pre>
+                            </div>
+                            <h4>Passkeys</h4>
+                            <div class="ma-table-wrap"><table class="messages-table">
+                                <thead><tr><th>Name</th><th>Console address</th><th>Added</th><th>Last used</th><th aria-label="Remove"></th></tr></thead>
+                                <tbody id="tf-passkeys"></tbody>
+                            </table></div>
+                            <div class="send-row" id="tf-passkey-form">
+                                <input type="text" id="tf-passkey-name" maxlength="64" placeholder="Name, e.g. Work laptop" aria-label="Passkey name" autocomplete="off">
+                                <button class="btn btn-secondary" type="button" id="tf-passkey-add">Add a passkey</button>
+                            </div>
+                            <p id="tf-passkey-unsupported" class="field-hint" hidden>This browser can't use passkeys here. They need the console on HTTPS, or localhost.</p>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- System Panel -->
@@ -1910,10 +1950,11 @@
 
     <script src="/static/app.js?v=20261103-compliance"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
-    <script src="/static/users.js?v=20261021-domainadmin"></script>
+    <script src="/static/users.js?v=20261103-2fa"></script>
     <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
     <script src="/static/abuse.js?v=20261102-alertblock"></script>
     <script src="/static/compliance.js?v=20261103-compliance"></script>
+    <script src="/static/security.js?v=20261103-2fa"></script>
 </body>
 
 </html>
