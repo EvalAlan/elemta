@@ -1,0 +1,21 @@
+# A small starting configuration for the release tarball. It runs from the
+# unpacked directory as an ordinary user, on unprivileged ports, without TLS,
+# so use it to try Elemta on one machine. It is not an internet-facing setup:
+# docs/cloud-dev.md and docs/production-compose.md cover that.
+#
+# Elemta refuses to read a configuration other users can read, so keep this
+# file at mode 600.
+
+hostname = "mail.example.com"
+listen_addr = "127.0.0.1:2525"
+local_domains = ["example.com"]
+
+[queue]
+dir = "./data/queue"
+
+[api]
+enabled = true
+listen_addr = "127.0.0.1:8025"
+web_root = "./web/static"
+auth_enabled = true
+auth_file = "./data/users.json"

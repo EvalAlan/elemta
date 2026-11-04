@@ -81,8 +81,6 @@ enable_starttls = true
 cert_file = "/app/runtime-config/test.crt"
 key_file = "/app/runtime-config/test.key"
 
-queue_dir = "/app/queue"
-
 [queue]
 dir = "/app/queue"
 # The file backend is the default while the SQLite one is being reworked.
@@ -456,9 +454,6 @@ cache_size = 10000
 cache_ttl = "1h"
 cleanup_interval = "5m"
 metrics_enabled = true
-timeout = 30
-max_retries = 3
-retry_delay = 60
 
 [memory]
 max_memory_usage = 2147483648  # 2GB total memory limit
@@ -480,8 +475,6 @@ idle_timeout = 120
 rate_limit_window = 60
 max_requests_per_window = 100000  # Very permissive for testing
 goroutine_pool_size = 100
-circuit_breaker_enabled = true
-resource_monitoring_enabled = true
 
 [metrics]
 enabled = true

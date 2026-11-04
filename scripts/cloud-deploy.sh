@@ -32,6 +32,9 @@
 #                                   building this checkout. Production uses
 #                                   this; see docs/production-compose.md.
 #
+# DEPLOY_HEALTH_TIMEOUT (environment, seconds, default 300) is how long the
+# deploy waits for every service to be running and healthy before it fails.
+#
 # The first run seeds the services from the rendered configuration. After
 # that the configuration belongs to the running system: domains, plugin
 # settings and anything else saved in the admin console stay when this runs
@@ -360,6 +363,36 @@ for x in $extra_domains; do
         echo "cloud-deploy: $x is in EXTRA_MAIL_DOMAINS but not in the running configuration; add it under Mail Administration, or re-run with --reseed" >&2
     fi
 done
+
+step "Waiting for every service to be healthy"
+# "up -d" returns once containers start, so a service that crash-loops or
+# fails its health check would still end in a deploy that looks successful.
+# Wait until each one is running and, if it has a health check, healthy; a
+# one-shot container that exited 0 is fine. On a new server ClamAV can take
+# longer than the default while it fetches its signatures; raise
+# DEPLOY_HEALTH_TIMEOUT (seconds) for that.
+health_timeout=${DEPLOY_HEALTH_TIMEOUT:-300}
+case $health_timeout in '' | *[!0-9]*) echo "cloud-deploy: DEPLOY_HEALTH_TIMEOUT must be a number of seconds" >&2; exit 2 ;; esac
+not_ready() {
+    dc ps -a --format '{{.Name}} {{.State}} {{.Health}} {{.ExitCode}}' |
+        awk '{ name = $1; state = $2; health = $3; code = $4
+               if (NF == 3) { code = health; health = "" }   # no health check
+               if (state == "exited" && code == "0") next
+               if (state != "running" || (health != "" && health != "healthy")) print }'
+}
+deadline=$((SECONDS + health_timeout))
+while :; do
+    waiting=$(not_ready)
+    [ -z "$waiting" ] && break
+    if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "cloud-deploy: not healthy after ${health_timeout}s (name, state, health, exit code):" >&2
+        echo "$waiting" | sed 's/^/  /' >&2
+        echo "cloud-deploy: see docker logs <name>; the previous images can be restored from their rollback tags" >&2
+        exit 1
+    fi
+    sleep 3
+done
+echo "All services are running and healthy."
 
 step "Certificate renewals"
 unit=/etc/systemd/system/elemta-cert-sync
