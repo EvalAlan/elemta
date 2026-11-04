@@ -1,29 +1,16 @@
-# Packaging Assets
+# Packaging
 
-This directory contains native packaging assets for Elemta.
+`release/` holds what the release tarball adds to the binaries:
 
-Current direction:
+- `elemta.toml`: the starter configuration, for trying Elemta on one machine
+- `README.md`: the tarball's README
 
-- RPM and DEB packages
-- standard FHS layout
-- no `/opt`
-- native installs are first-class
+`scripts/package-release.sh` builds the tarball, and the Release workflow runs
+it for each architecture (see `docs/releasing.md`). A test,
+`internal/config/shipped_configs_test.go`, loads `release/elemta.toml` with
+unknown keys treated as errors, so a renamed setting or a missing file fails
+CI rather than the release.
 
-Planned initial toolchain:
-
-- GoReleaser
-- nfpm
-
-## Layout
-
-- `systemd/` - service unit, sysusers, and tmpfiles assets
-- `config/` - packaged default configuration skeletons
-- `config/conf.d/` - example drop-in configuration fragments
-- `scripts/` - package/install smoke test helpers
-- `docker/` - Docker-based package validation helpers
-
-## Notes
-
-These assets are intentionally early-stage scaffolding. The canonical layout and service model are defined in:
-
-- `docs/native-install-spec-v1.md`
+Native RPM and DEB packages aren't built. The design for them is
+`docs/native-install-spec-v1.md`; the earlier GoReleaser scaffolding was
+removed because nothing built it and it had drifted from the code.
