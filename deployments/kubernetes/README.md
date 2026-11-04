@@ -67,7 +67,7 @@ sudo ufw route allow to 10.42.0.0/16
 
 ```bash
 make k8s-install-dev          # minimal
-make k8s-install-dev-full     # + ClamAV, Rspamd, Roundcube
+make k8s-install-dev-full     # + ClamAV, Rspamd
 make k8s-install-dev-bench    # + ClamAV, Rspamd, delivery discarded
 make k8s-install-dev-postgres # + Postgres as the queue backend
 make k8s-help                 # everything else

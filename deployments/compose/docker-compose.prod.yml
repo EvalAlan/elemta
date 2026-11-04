@@ -4,7 +4,7 @@
 # This is not the dev stack (docker-compose.yml) with the dev bits switched
 # off. It is a separate file so nothing development-only can leak in by
 # default: no image build (it runs the image CI built and pushed), no
-# self-issued certificates, no demo data, no LDAP/Dovecot/Roundcube/sink,
+# self-issued certificates, no demo data, no directory, mailbox service or sink,
 # and the dashboard and metrics bound to loopback for a reverse proxy.
 #
 # Settings come from .env next to this file. The deploy script owns
