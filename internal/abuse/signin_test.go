@@ -144,10 +144,13 @@ func TestSignInAlertsThroughValkey(t *testing.T) {
 		}
 	}
 	account := fmt.Sprintf("travel-%d@example.com", time.Now().UnixNano())
-	places := fixedPlaces{"192.0.2.1": paris, "198.51.100.1": sydney, "203.0.113.1": sydney}
+	places := fixedPlaces{"192.0.2.1": paris, "198.51.100.1": sydney, "203.0.113.1": sydney, "203.0.113.2": berlin}
 	mailbox.RecordSignIn(ctx, "192.0.2.1:5000", "imap", account)
 	mailbox.RecordSignIn(ctx, "198.51.100.1:5000", "pop3", account)
 	mailbox.RecordSignIn(ctx, "203.0.113.1:5000", "imap", account) // the same trip again
+	// Another impossible jump, to a place the account hasn't used, within the
+	// hour: it qualifies, but one travel alert per account per hour is enough.
+	mailbox.RecordSignIn(ctx, "203.0.113.2:5000", "imap", account)
 	console.assessQueued(ctx, places)
 
 	var mine []Alert

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/valkey-io/valkey-go"
 	"math"
 	"net"
 	"sort"
@@ -248,8 +249,13 @@ func (e *Engine) raise(ctx context.Context, a Alert) {
 	if client == nil {
 		return
 	}
+	// SET NX answers nil, which the client reports as an error, when the key
+	// is already there: that is the "raised within the hour" case. Reading it
+	// with AsBool treated it as a failure to check and raised again, so every
+	// qualifying sign-in alerted. Any other error still raises: an alert too
+	// many beats one lost while Valkey hiccups.
 	once := keyAlertOnce + a.Kind + ":" + a.Account
-	if ok, err := client.Do(ctx, client.B().Set().Key(once).Value("1").Nx().Ex(alertQuiet).Build()).AsBool(); err == nil && !ok {
+	if err := client.Do(ctx, client.B().Set().Key(once).Value("1").Nx().Ex(alertQuiet).Build()).Error(); valkey.IsValkeyNil(err) {
 		return
 	}
 	id := make([]byte, 8)
