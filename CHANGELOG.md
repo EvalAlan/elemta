@@ -32,6 +32,13 @@ and backups that left out message bodies stored in S3.
   alone stops the mailbox service starting. See "Upgrades" in
   [docs/production-compose.md](docs/production-compose.md). v0.6.0 can't read
   compressed bodies, so leave compression off until you're staying on this release.
+- **The abuse allowlist and `[access_control]` lists become rules.** On first
+  start the console moves their entries into the Abuse page's rules and empties
+  the old lists. v0.6.0 doesn't know rules, so after a rollback to it those
+  allows and denies stop applying, without an error. Restore the runtime
+  configuration from the backup taken before upgrading (see "Rollback" in
+  [docs/production-compose.md](docs/production-compose.md)), or enter the entries
+  again.
 - **Spam filtering changes in production.** Rspamd's blocklists and fuzzy checks
   come on, with the terms and resolver checks described below. Quarantine stays
   off until you turn it on.
