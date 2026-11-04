@@ -422,7 +422,7 @@ func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Sessi
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Cache-Control", "private, no-store")
-	_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>body{margin:0;padding:16px 20px;font:15px/1.6 system-ui,sans-serif;color:#0E1726;background:#FFFFFF;word-wrap:break-word}img{max-width:100%%;height:auto}</style><style>%s</style></head><body>%s</body></html>`, res.CSS, res.HTML)
+	_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><base target="_blank"><style>:root{color-scheme:light}body{margin:0;padding:16px 20px;font:15px/1.6 system-ui,sans-serif;color:#0E1726;background:#FFFFFF;word-wrap:break-word}img{max-width:100%%;height:auto}</style><style>%s</style></head><body>%s</body></html>`, res.CSS, res.HTML)
 }
 
 // messagePart downloads one attachment. It is always served as an

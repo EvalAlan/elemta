@@ -2,6 +2,7 @@ package webmail
 
 import (
 	"html"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -191,5 +192,20 @@ func TestBackgroundShorthandValues(t *testing.T) {
 		if got := onlyProxyURLs(v); got != want {
 			t.Errorf("onlyProxyURLs(%s) = %v, want %v", v, got, want)
 		}
+	}
+}
+
+// A message's dark-mode rules never apply: mail is shown on a light page,
+// and they would turn its text near-white over its own white background.
+func TestSanitizeDropsDarkSchemeRules(t *testing.T) {
+	in := `<style>@media (prefers-color-scheme: dark ) { .main { color: #eeeeee !important; } }` +
+		`@media screen and (PREFERS-COLOR-SCHEME:dark) { a { color: #fff } }` +
+		`@media (prefers-color-scheme: light) { .logo-light { display: block } }</style><p class="main">x</p>`
+	css := sanitizeHTML(in, sanitizeOptions{}).CSS
+	if regexp.MustCompile(`(?i)prefers-color-scheme\s*:\s*dark`).MatchString(css) {
+		t.Fatalf("a dark-scheme query survived:\n%s", css)
+	}
+	if !strings.Contains(css, "prefers-color-scheme: light") {
+		t.Fatalf("the light-scheme query was changed:\n%s", css)
 	}
 }
