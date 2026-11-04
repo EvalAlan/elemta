@@ -2,8 +2,8 @@
 
 ## v0.7.0 (unreleased)
 
-Users gain encrypted mail with PGP, passkeys, a spam quarantine, shared calendars,
-delegates, and bookable rooms and equipment. Administrators gain a DNS check,
+Users gain encrypted mail with PGP, passkeys, a spam quarantine, inbox tabs, shared
+calendars, delegates, and bookable rooms and equipment. Administrators gain a DNS check,
 single-mailbox restore, compliance search and export, MTA-STS publishing and
 compressed message bodies. This
 release also fixes a console save that could stop every service from restarting,
@@ -47,8 +47,39 @@ and backups that left out message bodies stored in S3.
   missing, along with a starter configuration, a README, the GPL license and the
   license files of the Go dependencies. Releases also carry a `SHA256SUMS` file.
   Anything that expected the binaries at the top of the archive needs a new path.
+- **Remote images now come through the webmail.** With images shown, the webmail
+  fetches them itself and serves them from its own address, so it needs outbound
+  HTTP and HTTPS. Without that, images don't load and messages are otherwise
+  unaffected. `image_proxy = false` under `[webmail]` goes back to loading them
+  from senders.
+- **`scripts/cloud-deploy.sh` fails when a service isn't healthy.** It used to
+  finish once containers started. It now waits for each to be running and
+  healthy, 300 seconds by default; set `DEPLOY_HEALTH_TIMEOUT` for longer, as on
+  a new server where ClamAV is still fetching its signatures.
+- **`config/elemta.toml.example` and the unused GoReleaser setup are gone.**
+  Start from the release tarball's `elemta.toml` or `config/elemta.toml`.
 
 ### What's new
+
+- **Inbox tabs.** Settings, General can sort the inbox into Primary, Social,
+  Promotions, Updates and Forums, as Gmail does. Mail is sorted as it arrives, from
+  its headers, so it works for mail forwarded from another provider too, and
+  turning tabs on sorts existing mail. Moving a message to another tab teaches it
+  the sender. Tabs are off until a user turns them on.
+- **Remote images load through the webmail.** Senders no longer see a reader's
+  address or browser, and images that tracker blockers such as Brave's refused
+  now load. Only images in a message the reader opened can be fetched, never an
+  address inside the network. See [docs/webmail-images.md](docs/webmail-images.md).
+- **Mail looks as the sender designed it.** Messages from LinkedIn and others no
+  longer show their text as attachments named `part-1` and `part-2`, their hidden
+  preview line as a column of single letters, or blank boxes where photos go.
+  Messages always use their light design, so dark mode can't turn their text
+  white on white.
+- **DKIM accepts signatures whose identity differs only in case.** A signature
+  from `rocketmortgage.com` naming `@t.RocketMortgage.com` was refused, failing
+  DMARC for a domain with `p=reject`; with DMARC enforced, that mail would have
+  been rejected. Domain names are compared case-insensitively now, as the
+  standard requires. Reported upstream as emersion/go-msgauth#87.
 
 - **Forwarded mail from your own users now passes DMARC.** Mail a signed-in user
   sent to someone on the same server was stored unsigned, so when that person
