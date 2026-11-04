@@ -115,6 +115,19 @@
     });
   }
 
+  // ---- appearance preview --------------------------------------------------
+  // Settings' theme and colour scheme repaint the page as they're chosen, so
+  // a scheme can be seen before it's saved. Nothing is stored until the form
+  // is submitted; leaving the page shows the saved choice again.
+  [["#palette", "data-palette"], ["#theme", "data-theme"]].forEach(function (pair) {
+    var select = $(pair[0]);
+    if (!select || !select.form || select.form.id !== "general") return;
+    select.addEventListener("change", function () {
+      if (select.value) root.setAttribute(pair[1], select.value);
+      else root.removeAttribute(pair[1]);
+    });
+  });
+
   // ---- menus -------------------------------------------------------------
   // Menus are <details>, so they open without script; this closes them on
   // a click elsewhere or Escape, as menus are expected to behave.

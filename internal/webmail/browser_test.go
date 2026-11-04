@@ -200,6 +200,28 @@ func TestBrowserThemeToggle(t *testing.T) {
 	}
 }
 
+// Choosing a colour scheme in Settings repaints the page at once, without
+// saving: a reload shows the saved choice again.
+func TestBrowserSchemePreview(t *testing.T) {
+	b := newBrowser(t)
+	b.login()
+	b.run(chromedp.Navigate(b.url("/settings")), chromedp.WaitVisible(chromedp.ID("palette")))
+	b.waitFor(`document.readyState === "complete"`)
+	b.run(chromedp.SetValue(chromedp.ID("palette"), "ember"),
+		chromedp.Evaluate[chromedp.Void](`document.getElementById("palette").dispatchEvent(new Event("change"))`))
+	if got := evalAs[string](b, `document.documentElement.getAttribute("data-palette") || ""`); got != "ember" {
+		t.Fatalf("preview palette = %q, want ember", got)
+	}
+	accent := evalAs[string](b, `getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()`)
+	if accent == "" || strings.EqualFold(accent, "#2563EB") {
+		t.Fatalf("the scheme's colours didn't apply: --accent = %q", accent)
+	}
+	b.run(chromedp.Reload(), chromedp.WaitVisible(chromedp.ID("palette")))
+	if got := evalAs[string](b, `document.documentElement.getAttribute("data-palette") || ""`); got == "ember" {
+		t.Fatal("an unsaved preview survived a reload")
+	}
+}
+
 func TestBrowserContextMenu(t *testing.T) {
 	b := newBrowser(t)
 	b.login()
