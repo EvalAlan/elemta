@@ -26,7 +26,7 @@
 #     mount keeps showing the replaced inode forever.
 #   - Configuration is rendered for MAIL_DOMAIN into .secrets/cloud/ instead
 #     of the repository's config/, which names example.com test domains.
-#   - No demo data, dev certificate, debug or test mode, and no Roundcube.
+#   - No demo data, dev certificate, debug or test mode.
 #
 # Paths are relative to docker-compose.yml's directory, as compose resolves
 # every file's paths against the first one.

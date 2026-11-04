@@ -1471,7 +1471,7 @@ func (dh *DataHandler) validateMessageHeaders(ctx context.Context, metadata *Mes
 	if mode == "off" {
 		return nil
 	}
-	// Skip strict header requirements for internal connections (like Roundcube) or if auth is not required
+	// Skip strict header requirements for internal connections (such as the webmail's submission) or if auth is not required
 	isInternal := dh.isInternalConnection()
 	authNotRequired := dh.config.Auth != nil && dh.config.Auth.Enabled && !dh.config.Auth.Required
 

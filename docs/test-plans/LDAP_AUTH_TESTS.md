@@ -72,7 +72,7 @@ Switch to a different LDAP Docker image with better bootstrap support.
 ## Impact
 
 - **SMTP functionality**: ✅ Fully working
-- **Roundcube webmail**: ✅ Authentication works
+- **Roundcube webmail** (since replaced by Elemta's own webmail): ✅ Authentication worked
 - **E2E email delivery**: ✅ All passing
 - **Auth with full email**: ✅ Working perfectly
 - **Auth with bare username**: ⚠️ Tests fail (but test suite considers optional)

@@ -7,7 +7,7 @@ targets set the environment the files expect.
 
 | File | What it is | How to run |
 |---|---|---|
-| `docker-compose.yml` | Dev stack: Elemta, admin console, mailbox service (two replicas, HAProxy, Postgres), webmail, caching resolver, LDAP, Valkey, and optionally ClamAV, Rspamd, Roundcube and an LMTP sink | `make install-dev`, `make install-dev-full` |
+| `docker-compose.yml` | Dev stack: Elemta, admin console, mailbox service (two replicas, HAProxy, Postgres), webmail, caching resolver, LDAP, Valkey, and optionally ClamAV, Rspamd and an LMTP sink | `make install-dev`, `make install-dev-full` |
 | `docker-compose.cloud.yml` | Overlay: the dev stack on one internet-facing server, with Let's Encrypt and only the public mail ports | `scripts/cloud-deploy.sh`; see [Cloud dev server](../../docs/cloud-dev.md) |
 | `docker-compose.prod.yml` | Production MTA and admin console, run from the ghcr.io image | Deploy workflow; see [Production Deployment](../../docs/production-deployment.md) |
 | `docker-compose-mailauth.yml` | Overlay: DKIM signing / ARC sealing lab with its own DNS zone | `make install-dev-mailauth` |
@@ -24,7 +24,6 @@ targets set the environment the files expect.
 | 2525 | SMTP (MX) |
 | 2587 | Submission |
 | 8025 | Dashboard and API |
-| 8026 | Roundcube (full stack) |
 | 8027 | Webmail |
 | 9080 | Prometheus metrics (container port 8080) |
 | 11334 | Rspamd web UI (full stack) |

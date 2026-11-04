@@ -67,7 +67,7 @@ it's ready:
 | SMTP / submission | `localhost:2525` / `localhost:2587` |
 | IMAP | `localhost:993` (TLS, self-signed development certificate) |
 
-`make install-dev-full` adds ClamAV, Rspamd and Roundcube. Day to day:
+`make install-dev-full` adds ClamAV and Rspamd. Day to day:
 `make status`, `make logs-elemta`, `make test`.
 
 Other ways to run it:

@@ -1,5 +1,5 @@
-# make install-dev-bench: everything that scans, nothing that stores. No
-# Roundcube, because delivery goes to the sink and there is nothing to read.
+# make k8s-install-dev-bench: everything that scans, nothing that stores.
+# Delivery goes to the sink, so there is no mail to read.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 

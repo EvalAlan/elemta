@@ -146,7 +146,7 @@ spec:
             sizeLimit: 64Mi
 ---
 # Named after the compose service so everything that already addresses the SMTP
-# server as "elemta" (Roundcube's SMTP host, the dev config) keeps working.
+# server as "elemta" (the dev config, scripts and tests) keeps working.
 # ClusterIP here; the overlays decide how it is exposed.
 apiVersion: v1
 kind: Service

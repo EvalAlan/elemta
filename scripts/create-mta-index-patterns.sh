@@ -67,7 +67,7 @@ create_index_pattern "elemta-bounce-pattern" \
 # 6. System Monitoring Index Pattern
 create_index_pattern "elemta-system-pattern" \
   "elemta-system-*" \
-  "System monitoring logs - infrastructure services, LDAP, RSpamd, Dovecot, and monitoring stack"
+  "System monitoring logs - infrastructure services, LDAP, Rspamd, the mailbox service, and monitoring stack"
 
 echo ""
 echo "📈 Index Pattern Creation Complete!"

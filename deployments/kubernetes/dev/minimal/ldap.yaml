@@ -1,4 +1,4 @@
-# elemta-ldap: the directory behind SMTP AUTH, mailbox and webmail logins, and Roundcube.
+# elemta-ldap: the directory behind SMTP AUTH and mailbox and webmail logins.
 #
 # The LDIF files are mounted where the compose stack mounted them. The image
 # does not load them on its own; scripts/init-ldap-if-needed.sh does, through

@@ -1,16 +1,16 @@
 # The development stack, the Kubernetes equivalent of what
 # deployments/compose/docker-compose.yml used to run for `make install-dev`.
 #
-# Driven by the Makefile, not applied by hand: it reads config/elemta.toml and
-# the LDAP, Rspamd and Roundcube files from where they live in the repository,
+# Driven by the Makefile, not applied by hand: it reads config/elemta.toml, the
+# resolver configuration and the LDAP files from where they live in the repository,
 # which kustomize only allows with --load-restrictor LoadRestrictionsNone, and
 # it runs images the Makefile builds and loads into the cluster.
 #
-#   make install-dev           this directory: Elemta, DNS, LDAP, the mailbox
-#                              service and its Postgres, webmail, Valkey, sink
-#   make install-dev-full      ../full:     + ClamAV, Rspamd, Roundcube
-#   make install-dev-bench     ../bench:    + ClamAV, Rspamd; delivery to the sink
-#   make install-dev-postgres  ../postgres: + Postgres for the queue
+#   make k8s-install-dev           this directory: Elemta, DNS, LDAP, the mailbox
+#                                  service and its Postgres, webmail, Valkey, sink
+#   make k8s-install-dev-full      ../full:     + ClamAV, Rspamd
+#   make k8s-install-dev-bench     ../bench:    + ClamAV, Rspamd; delivery to the sink
+#   make k8s-install-dev-postgres  ../postgres: + Postgres for the queue
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
