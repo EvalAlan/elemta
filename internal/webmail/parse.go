@@ -78,11 +78,87 @@ type Part struct {
 	Size        int64
 }
 
+// ErrUnreadable is a message too malformed to show. Retrying won't help, so
+// it is reported as such, not as the mail server failing.
+var ErrUnreadable = errors.New("webmail: message can't be parsed")
+
+// tolerable reports parse errors that still leave a readable part: an
+// unknown charset (the text is shown undecoded) or an unknown transfer
+// encoding (the body is shown raw, as mail apps treat it).
+func tolerable(err error) bool {
+	return message.IsUnknownCharset(err) || message.IsUnknownEncoding(err)
+}
+
+// mailReader walks a message's parts like go-message's mail.Reader, except
+// that a part with an unknown Content-Transfer-Encoding is returned with its
+// raw body instead of failing the message. mail.Reader drops such a part
+// even though go-message hands it over; spam in particular carries values
+// like "0000007bit", and one bad part made the whole message unreadable.
+type mailReader struct {
+	Header  mail.Header
+	readers []message.MultipartReader
+}
+
+func readMail(raw []byte) (*mailReader, error) {
+	e, err := message.Read(bytes.NewReader(raw))
+	if err != nil && !tolerable(err) {
+		return nil, err
+	}
+	mr := e.MultipartReader()
+	if mr == nil {
+		// One part: wrap it as mail.NewReader does.
+		var h message.Header
+		h.Set("Content-Type", "multipart/mixed")
+		me, _ := message.NewMultipart(h, []*message.Entity{e})
+		mr = me.MultipartReader()
+	}
+	return &mailReader{Header: mail.Header{Header: e.Header}, readers: []message.MultipartReader{mr}}, nil
+}
+
+// NextPart returns the next leaf part, or io.EOF.
+func (r *mailReader) NextPart() (*mail.Part, error) {
+	for len(r.readers) > 0 {
+		mr := r.readers[len(r.readers)-1]
+		p, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			r.readers = r.readers[:len(r.readers)-1]
+			continue
+		}
+		if err != nil && !tolerable(err) {
+			return nil, err
+		}
+		if pmr := p.MultipartReader(); pmr != nil {
+			r.readers = append(r.readers, pmr)
+			continue
+		}
+		part := &mail.Part{Body: p.Body}
+		t, _, _ := p.Header.ContentType()
+		disp, _, _ := p.Header.ContentDisposition()
+		if disp == "inline" || (disp != "attachment" && strings.HasPrefix(t, "text/")) {
+			part.Header = &mail.InlineHeader{Header: p.Header}
+		} else {
+			part.Header = &mail.AttachmentHeader{Header: p.Header}
+		}
+		return part, nil
+	}
+	return nil, io.EOF
+}
+
+func (r *mailReader) Close() error {
+	for len(r.readers) > 0 {
+		if err := r.readers[len(r.readers)-1].Close(); err != nil {
+			return err
+		}
+		r.readers = r.readers[:len(r.readers)-1]
+	}
+	return nil
+}
+
 // parseMessage walks raw and returns the displayable message.
 func parseMessage(raw []byte) (*Message, error) {
-	r, err := mail.CreateReader(bytes.NewReader(raw))
-	if err != nil && !message.IsUnknownCharset(err) {
-		return nil, fmt.Errorf("webmail: parse message: %w", err)
+	r, err := readMail(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
 	defer func() { _ = r.Close() }()
 
@@ -125,13 +201,13 @@ func parseMessage(raw []byte) (*Message, error) {
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if err != nil && !message.IsUnknownCharset(err) {
+		if err != nil {
 			// A malformed part late in the message shouldn't hide the body
 			// we already have. Show what parsed.
 			if msg.Text != "" || msg.HTML != "" {
 				break
 			}
-			return nil, fmt.Errorf("webmail: parse part: %w", err)
+			return nil, fmt.Errorf("%w: part: %w", ErrUnreadable, err)
 		}
 		index++
 		switch ph := p.Header.(type) {
@@ -220,9 +296,9 @@ func (m *Message) Attachments() []Part {
 // findPart returns the body and metadata of the part at index, or the part
 // with the given Content-ID when cid is set.
 func findPart(raw []byte, index int, cid string) (Part, []byte, error) {
-	r, err := mail.CreateReader(bytes.NewReader(raw))
-	if err != nil && !message.IsUnknownCharset(err) {
-		return Part{}, nil, fmt.Errorf("webmail: parse message: %w", err)
+	r, err := readMail(raw)
+	if err != nil {
+		return Part{}, nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
 	defer func() { _ = r.Close() }()
 	i := 0
@@ -231,8 +307,8 @@ func findPart(raw []byte, index int, cid string) (Part, []byte, error) {
 		if errors.Is(err, io.EOF) {
 			return Part{}, nil, ErrNotFound
 		}
-		if err != nil && !message.IsUnknownCharset(err) {
-			return Part{}, nil, fmt.Errorf("webmail: parse part: %w", err)
+		if err != nil {
+			return Part{}, nil, fmt.Errorf("%w: part: %w", ErrUnreadable, err)
 		}
 		i++
 		var ct, name, id string

@@ -503,6 +503,11 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, sess *Session, err
 		return
 	case errors.Is(err, ErrTooLarge):
 		status, msg = http.StatusRequestEntityTooLarge, "This message is too large to show here. Download it instead."
+	case errors.Is(err, ErrUnreadable):
+		// Logged: a pattern of these is worth knowing about. The page says what
+		// happened rather than blaming the server, since trying again won't help.
+		s.log.Warn("webmail: message can't be parsed", "path", r.URL.Path, "user", sess.User, "error", err)
+		status, msg = http.StatusUnprocessableEntity, "This message is malformed and can't be shown here. You can still move or delete it from the message list."
 	default:
 		s.log.Warn("webmail: request failed", "path", r.URL.Path, "user", sess.User, "error", err)
 	}
