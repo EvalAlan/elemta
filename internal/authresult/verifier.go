@@ -27,7 +27,7 @@ import (
 
 	"blitiri.com.ar/go/spf"
 	arcplugin "github.com/EvalAlan/elemta/internal/arc"
-	"github.com/emersion/go-msgauth/dkim"
+	dkim "github.com/EvalAlan/elemta/internal/dkimfork"
 	"github.com/emersion/go-msgauth/dmarc"
 	"golang.org/x/net/publicsuffix"
 )
