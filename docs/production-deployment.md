@@ -24,7 +24,7 @@ first step and says which settings are missing. See
 Production uses `deployments/compose/docker-compose.prod.yml`, not the dev
 stack in `docker-compose.yml`. It runs the image from ghcr.io rather than
 building one, and leaves out everything development-only: self-issued
-certificates, demo data, Roundcube and the sink. It runs the MTA and admin
+certificates, demo data and the sink. It runs the MTA and admin
 console only: it does not yet include the directory, the mailbox service or
 the webmail. To run the whole stack on one host, use the
 [cloud deployment](cloud-dev.md). The

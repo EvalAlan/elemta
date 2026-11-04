@@ -22,7 +22,7 @@ make install
 are setting up:
 
 1. **A development stack on this machine.** It runs `make install-dev`, or
-   `make install-dev-full` if you also want the scanners and Roundcube.
+   `make install-dev-full` if you also want the scanners.
 2. **A mail server for a real domain, on an internet-facing host.** It:
    - checks the prerequisites, memory and disk;
    - checks that the domain's A record points at this host, and checks the MX
@@ -57,7 +57,7 @@ Starts the core services and bootstraps local dev defaults: the Elemta MTA, the 
 make install-dev-full
 ```
 
-Adds ClamAV and Rspamd scanning, and Roundcube on http://localhost:8026 as a second webmail client reading the same mailboxes.
+Adds ClamAV virus scanning and Rspamd spam filtering. Rspamd's web UI is on http://localhost:11334.
 
 Other variants: `make install-dev-postgres` (Postgres queue), `make install-dev-mailauth` (outbound DKIM signing and ARC sealing lab, delivering to a local sink), and `make install-dev-bench` (delivers to a discarding LMTP sink, for benchmarks only).
 

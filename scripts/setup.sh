@@ -109,7 +109,7 @@ setup_dev() {
     section "Development stack"
     note "Runs on this machine with test domains (example.com) and test accounts."
     note "Nothing is exposed beyond this machine's network."
-    if [ "$full" = 0 ] && confirm "Include ClamAV, Rspamd and Roundcube? They need about 2 GB more memory." n; then
+    if [ "$full" = 0 ] && confirm "Include ClamAV and Rspamd? They need about 2 GB more memory." n; then
         full=1
     fi
     local target=install-dev
