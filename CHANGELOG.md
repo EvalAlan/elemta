@@ -1,6 +1,6 @@
 # Elemta Changelog
 
-## v0.7.0 (unreleased)
+## v0.7.0 (2026-11-03)
 
 Users gain encrypted mail with PGP, passkeys, a spam quarantine, inbox tabs, shared
 calendars, delegates, and bookable rooms and equipment. Administrators gain a DNS check,
