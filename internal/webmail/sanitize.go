@@ -131,6 +131,9 @@ func sanitizeHTML(in string, opts sanitizeOptions) sanitizeResult {
 // the punctuation utility-class frameworks put in them.
 var classTokens = regexp.MustCompile(`^[\p{L}\p{N}\s_\-\[\]:./%#!@,()=+]*$`)
 
+// darkSchemeRE finds a media query's dark colour scheme condition.
+var darkSchemeRE = regexp.MustCompile(`(?i)prefers-color-scheme\s*:\s*dark\b`)
+
 var (
 	styleBlockRE = regexp.MustCompile(`(?is)<style[^>]*>(.*?)</style\s*>`)
 	cssCommentRE = regexp.MustCompile(`(?s)/\*.*?\*/`)
@@ -158,6 +161,11 @@ func extractCSS(in string, allowRemote bool, imageURL func(string) string) (stri
 		css = cssCommentRE.ReplaceAllString(css, "")
 		css = cssImportRE.ReplaceAllString(css, "")
 		css = cssDangerRE.ReplaceAllString(css, "")
+		// Mail is shown on a light page, as large webmail services do, but
+		// the frame inherits the reader's dark preference. A message's dark
+		// rules then turn its text near-white over its own white background.
+		// An unknown value makes the query false, so they never apply.
+		css = darkSchemeRE.ReplaceAllString(css, "prefers-color-scheme: elemta-light")
 		css = cssURLRE.ReplaceAllStringFunc(css, func(u string) string {
 			target := strings.ToLower(strings.TrimSpace(cssURLRE.FindStringSubmatch(u)[2]))
 			switch {

@@ -958,7 +958,10 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--warn-bg); color: var(--warn-fg); }
 .chip.pass { background: var(--pass-bg); color: var(--pass-fg); }
-.body-frame { width: 100%; height: 70vh; min-height: 360px; border: 1px solid var(--line); border-radius: var(--radius); background: #FFFFFF; }
+/* color-scheme sets the frame's preferred scheme for the message inside it, so
+   mail written with light and dark variants shows its light one, as on a
+   light page. */
+.body-frame { color-scheme: light; width: 100%; height: 70vh; min-height: 360px; border: 1px solid var(--line); border-radius: var(--radius); background: #FFFFFF; }
 .text-body { margin: 0; white-space: pre-wrap; word-wrap: break-word; font: 15px/1.6 var(--font); }
 .attachments { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; }
 .attachment { display: flex; align-items: center; gap: 10px; min-width: 220px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); text-decoration: none; }
