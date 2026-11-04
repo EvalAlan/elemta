@@ -572,7 +572,7 @@ func TestPalettesOfferedAndStyled(t *testing.T) {
 	}
 	h := newHarness(t)
 	csrf := h.login()
-	for _, name := range []string{"tidewater", "forest", "plum", "sand", "graphite"} {
+	for _, name := range []string{"tidewater", "forest", "plum", "sand", "graphite", "ocean", "rose", "ember", "arctic", "contrast"} {
 		h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "palette": {name}})
 		if _, page := h.get("/mail"); !strings.Contains(page, `data-palette="`+name+`"`) {
 			t.Errorf("%s not applied", name)
