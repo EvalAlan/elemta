@@ -33,7 +33,7 @@ Sign in at your server's address with your full email address and password.
 
 | Section | What's there |
 |---|---|
-| General | Your name, reply-to address, signature, theme, time zone, list and calendar options |
+| General | Your name, reply-to address, signature, theme, new mail sound, time zone, list and calendar options |
 | Account | Change your password, set a recovery email |
 | Security | Two-step verification and app passwords |
 | Mail apps and sync | Settings for mail, calendar and contacts apps, exports |
@@ -62,6 +62,12 @@ To open a shared mailbox in a mail app, use IMAP with a username such as
 address as the SMTP username; if your grant allows sending, set the From
 address in the app to `support@example.com`. When your account requires app
 passwords, use one of your app passwords for both connections.
+
+If you don't use IMAP or POP3, you can turn them off under **Settings → Mail apps
+and sync → Mail app access**. Nobody can then reach your mail that way, even with
+your password, and apps already connected are cut off within a minute. The webmail
+keeps working, and sending mail isn't affected. If your administrator has turned one
+off, it says so and you can't turn it on.
 
 ## Calendar and contacts on your phone
 
@@ -99,6 +105,21 @@ your new phone to get a fresh set. If you have lost both the phone and the
 recovery codes, ask your administrator to turn two-step verification off for
 your account.
 
+
+## Passkeys
+
+A passkey signs you in to the webmail with your fingerprint, face, device PIN or
+security key, with no password or code. Add one under Settings, Security. You'll
+be asked for your password first, and you can add one for each device.
+
+- A passkey only works on the web address you added it on. If you use the webmail
+  at more than one address, add one on each.
+- Your password keeps working, so keep it, and keep your recovery codes.
+- Mail, calendar and contacts apps don't use passkeys. They keep using your
+  password or an app password.
+- If you lose a device, remove its passkey from another signed-in device. If you
+  can't, your administrator can remove all of them.
+
 ## App passwords
 
 An app password is a separate password for one mail, calendar or contacts app.
@@ -124,6 +145,40 @@ passwords for your apps before turning it on, or they will stop connecting.
 
 App passwords can't sign in to the webmail. The webmail always needs your
 account password, and your code if two-step verification is on.
+
+## Encrypted mail
+
+With PGP, a message can only be read by you and the people you send it to, not by
+this server or anyone who runs it. Create a key under **Settings → Security →
+Encrypted mail**, or import one you already have. Then tick **Encrypt (PGP)** when
+writing a message.
+
+- **Your passphrase can't be recovered.** It never leaves your browser. If you forget
+  it, nobody can get encrypted mail back, and resetting your account password won't
+  help. Download your private key and keep it somewhere safe.
+- Your key is published so people outside can find it and write to you encrypted. To
+  stop that, choose **Stop publishing** in the same place. Colleagues can still find
+  it, and anyone else needs it from you directly.
+- Everyone you write to needs a key. Elemta finds your colleagues' keys, and outside
+  keys if their domain publishes them. If it can't find one, it won't send, rather
+  than send in the clear.
+- If someone's key changes, you're asked before sending. That's usually a new device,
+  but it's worth checking with them.
+- The subject is hidden too, and shows as "..." to anyone without the key. To, From
+  and the date stay visible, because mail servers need them.
+- Attachments are encrypted with the message. Encrypted messages can't be saved as
+  drafts, and when you forward one, attach its files again.
+- A reply to encrypted mail is encrypted too, and quotes the original once you've
+  opened it. If you haven't, it starts without the quote.
+- Search, spam filtering and virus scanning can't see inside encrypted mail.
+- Once unlocked, your key stays open in that browser for 30 minutes unused, or until
+  you sign out. Sign out on shared computers.
+- In Thunderbird or another PGP program, import the private key you downloaded. The
+  mail reads the same there.
+
+The webmail's code comes from the server, so this protects mail that's stored, and
+against someone reading the server's disks. It can't protect you from the server
+itself being changed to steal your passphrase.
 
 ## Filters and out-of-office
 

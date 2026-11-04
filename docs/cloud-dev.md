@@ -71,8 +71,8 @@ These steps were done once for Rocky Linux 10 on a 2 vCPU / 4 GB Linode.
 
 - **Firewall.** firewalld's public zone allows ssh, smtp, smtp-submission, imaps,
   http and https. Cockpit and rpcbind are disabled.
-- **SSH.** Keys only, set in `/etc/ssh/sshd_config.d/10-hardening.conf`; root
-  logs in by key only. fail2ban runs its sshd jail.
+- **SSH.** Keys only, set in `/etc/ssh/sshd_config.d/10-hardening.conf`, and root
+  can't log in. Use your own account and sudo. fail2ban runs its sshd jail.
 - **Updates.** `dnf-automatic` applies security updates daily.
 - **Docker.** Docker CE, with these settings in `/etc/docker/daemon.json`:
   - `"firewall-backend": "nftables"`, because the Linode kernel lacks the
@@ -231,6 +231,34 @@ then runs `scripts/cloud-sync-certs.sh`, which checks every request again
 updates Caddy's site names, installs the certificates, removes ones no longer
 wanted, and reports in `.secrets/cert-sync/status.json`. The twice-daily
 timer runs the same script, so renewals are copied without anyone asking.
+
+## MTA-STS
+
+MTA-STS tells other mail servers to refuse unencrypted delivery to your domain,
+which stops an attacker downgrading the connection. To publish a policy, list
+the domains in `.secrets/cloud.env`:
+
+```
+MTA_STS_DOMAINS="example.org example.net"
+MTA_STS_MODE=testing
+```
+
+Run `scripts/cloud-deploy.sh`, then publish the records it prints: an A record
+for `mta-sts.<domain>`, which Caddy needs for the certificate, and a TXT record
+at `_mta-sts.<domain>`. Check DNS in Mail Administration shows the result.
+
+- The policy lists every mail host on this server, so any MX pointing here is
+  covered. It's the same for every domain.
+- The TXT record's `id` comes from the policy. When the deploy prints a new one,
+  publish it, because senders only refetch the policy when it changes. That
+  happens when you change the mode or add a mail host.
+- Stay on `testing` until the TLS reports at `_smtp._tls.<domain>` come back
+  clean, for a week or so. In `testing`, senders report failures but still
+  deliver. In `enforce` they refuse, and they remember the policy for a week, so
+  a mistake can't be undone quickly.
+- To back out of `enforce`, change the mode to `none` and publish the new `id`.
+  Keep it up for at least a week before removing the records, or senders go on
+  following the old policy.
 
 ## Accounts
 

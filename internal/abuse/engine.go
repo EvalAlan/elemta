@@ -34,6 +34,7 @@ type Engine struct {
 	client    valkey.Client
 	policy    Policy
 	exempt    []*net.IPNet
+	rules     []compiledRule
 	published bool
 	source    *Policy // set on the service that owns the policy
 	onPolicy  []func(Policy)
@@ -95,18 +96,24 @@ func (e *Engine) Shared(ctx context.Context) bool {
 }
 
 func (e *Engine) setPolicy(p Policy) {
+	p, _ = p.MoveAllowlist()
 	exempt, err := parseNetworks(p.Allowlist)
 	if err != nil {
 		e.log.Error("Ignoring an invalid abuse policy", "error", err)
 		return
 	}
+	rules, err := compileRules(p.Rules)
+	if err != nil {
+		e.log.Error("Ignoring an invalid abuse policy", "error", err)
+		return
+	}
 	e.mu.Lock()
-	e.policy, e.exempt = p, exempt
+	e.policy, e.exempt, e.rules = p, exempt, rules
 	e.mu.Unlock()
 }
 
 // Exempt reports whether an address is never limited: loopback, and anything
-// on the allowlist. Private networks aren't assumed safe: on a shared network,
+// an allow rule for all protocols covers. Private networks aren't assumed safe: on a shared network,
 // or behind a NAT, they are ordinary clients.
 func (e *Engine) Exempt(host string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -121,7 +128,7 @@ func (e *Engine) Exempt(host string) bool {
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	for _, n := range e.exempt {
+	for _, n := range e.exemptNetworks(time.Now()) {
 		if n.Contains(ip) {
 			return true
 		}
@@ -223,6 +230,10 @@ func (e *Engine) syncPolicy(ctx context.Context, client valkey.Client) {
 }
 
 func (e *Engine) receive(p Policy) {
+	// A policy published before allow rules took over the allowlist reads
+	// as the rules it now is, so every page and service shows one list.
+	// Before comparing, or it would never match the one already in force.
+	p, _ = p.MoveAllowlist()
 	e.mu.RLock()
 	same := e.published && samePolicy(e.policy, p)
 	e.mu.RUnlock()
@@ -273,59 +284,63 @@ func (e *Engine) Publish(ctx context.Context, p Policy) error {
 	return nil
 }
 
-// AllowRate counts a new connection and reports whether the address is within
-// its rate. Held connections are capped by Acquire; this catches the client
-// that opens and closes as fast as it can, which never holds any. It counts per
-// instance, for the same reason.
-func (e *Engine) AllowRate(addr string) bool {
+// AllowRate counts a new connection on protocol and reports whether the
+// address is within its rate. Held connections are capped by Acquire; this
+// catches the client that opens and closes as fast as it can, which never
+// holds any. It counts per instance, for the same reason.
+func (e *Engine) AllowRate(addr, protocol string) bool {
 	if e == nil {
 		return true
 	}
 	p := e.Policy()
 	network := Network(addr)
-	if p.Mode == ModeOff || network == "" || p.ConnectionsPerMinute < 1 || e.Exempt(addr) {
+	_, perMinute := p.ConnectionLimits(protocol)
+	if p.Mode == ModeOff || network == "" || perMinute < 1 || e.Exempt(addr) {
 		return true
 	}
 	e.seen.mu.Lock()
-	n := e.seen.add(e.seen.counts, "rate:"+network, time.Minute, time.Now())
+	n := e.seen.add(e.seen.counts, "rate:"+protocol+":"+network, time.Minute, time.Now())
 	e.seen.mu.Unlock()
-	if n <= p.ConnectionsPerMinute {
+	if n <= perMinute {
 		return true
 	}
 	e.Refused(RefusedRate)
 	return p.Mode != ModeEnforce
 }
 
-// Acquire takes a connection slot for an address. It returns false when the
-// address has its limit, and otherwise a function that gives the slot back.
-// Counted per instance: it stops one host exhausting a service, and asking
-// Valkey on every connection would make accepting mail depend on it.
-func (e *Engine) Acquire(addr string) (func(), bool) {
+// Acquire takes a connection slot for an address on protocol. It returns false
+// when the address has its limit, and otherwise a function that gives the slot
+// back. Counted per instance and protocol: it stops one host exhausting a
+// service, and asking Valkey on every connection would make accepting mail
+// depend on it.
+func (e *Engine) Acquire(addr, protocol string) (func(), bool) {
 	p := e.Policy()
 	network := Network(addr)
 	if p.Mode == ModeOff || network == "" || e.Exempt(addr) {
 		return func() {}, true
 	}
-	if !e.AllowRate(addr) {
+	if !e.AllowRate(addr, protocol) {
 		return nil, false
 	}
+	perAddress, _ := p.ConnectionLimits(protocol)
+	key := protocol + "|" + network
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.conns[network] >= p.ConnectionsPerAddress {
+	if e.conns[key] >= perAddress {
 		e.Refused(RefusedLimit)
 		if p.Mode == ModeEnforce {
 			return nil, false
 		}
-		e.log.Info("Connection limit reached; logging only", "address", network)
+		e.log.Info("Connection limit reached; logging only", "address", network, "protocol", protocol)
 	}
-	e.conns[network]++
+	e.conns[key]++
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			e.mu.Lock()
 			defer e.mu.Unlock()
-			if e.conns[network]--; e.conns[network] <= 0 {
-				delete(e.conns, network)
+			if e.conns[key]--; e.conns[key] <= 0 {
+				delete(e.conns, key)
 			}
 		})
 	}, true

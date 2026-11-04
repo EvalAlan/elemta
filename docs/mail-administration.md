@@ -76,9 +76,11 @@ disabling ends its webmail sessions immediately. A suspended account stays in
 the company address book and can still be opened by an administrator ("Open
 mailbox"); a disabled one can't, and it can't be opened as a shared mailbox.
 
-`reset-two-factor` removes an account's authenticator enrollment, pending setup
-and recovery codes. An administrator should verify the user's identity before
-running it. The CLI records the reset in the audit log. If the account's class
+`reset-two-factor` removes an account's authenticator enrollment, pending setup,
+recovery codes and passkeys, and any session a passkey started is ended at once. Use
+it for someone locked out, and when recovering a compromised account: changing the
+password alone leaves any passkey an intruder added in place. An administrator
+should verify the user's identity before running it. The CLI records the reset in the audit log. If the account's class
 requires two-step verification, the next webmail sign-in requires fresh setup.
 
 Quota sizes accept integer bytes or suffixes such as `K`, `M`, `G`, `MiB`, and
@@ -141,6 +143,12 @@ deleted either.
 | Retention | `--retention-days 2555` | mailbox: hourly, mail in every mail folder older than this (by its date) is deleted |
 | Legal hold | `--legal-hold on` | mailbox: nothing the user deletes is lost (see below) |
 
+Users can also turn off IMAP and POP3 for themselves in the webmail, when their
+class allows them. A class can refuse a protocol outright, but it can't force one
+on against a user's choice. If someone's mail app suddenly can't sign in, check the
+audit log for `protocol-choice`. The app sees "access is turned off" rather than a
+wrong password, and it counts as no failed sign-in.
+
 Sizes accept the same suffixes as quotas; for every limit `0` means
 unlimited. Every flag also takes `inherit`, which unsets the value so the
 next layer decides. A quota set on the account itself (`--quota` on
@@ -174,6 +182,35 @@ which is open only to `lmtp_allowed_networks` and needs a shared token,
 `ELEMTA_MAILBOX_ADMIN_URL`, or at `[auth] mailbox_security_url` (the same
 port). Without the token the API is off and so are classes of service.
 `scripts/dev-secrets.sh` generates the token for the development stacks.
+
+## Forwarding and SPF
+
+Forwarded mail normally keeps its original sender, so the next server checks
+that sender's SPF record against this server's address and it fails. Elemta sends
+mail forwarded outside the server from an SRS address at the forwarding account's
+domain instead, such as `SRS0=hash=tt=example.org=alice@example.com`, so SPF passes.
+The message itself isn't changed, and people still see the original sender.
+
+A bounce sent to that address is passed to the original sender. Only bounces are
+accepted, the address must carry a valid signature, and it stops working after 21
+days, so it can't be used to relay mail.
+
+SRS is on once `ELEMTA_SRS_SECRETS` is set for both the MTA and the mailbox service,
+which `scripts/dev-secrets.sh` does. Without it, mail is forwarded as before.
+
+- **Domains need SPF.** Each account's domain has to list this server in its SPF
+  record, which **Check DNS** reports.
+- **Long addresses.** A sender too long to fit in the 64 characters an address may
+  have is forwarded unchanged, so SPF can still fail for it. Many mailing lists and
+  bulk senders use long addresses, but these usually pass on their DKIM signature.
+- **DMARC.** The rewritten address doesn't align with the visible From, so DMARC
+  relies on the sender's DKIM signature surviving, which it does because the
+  message isn't changed. Mail your own users send is signed as it's submitted,
+  even to someone on this server, so a forward of it carries their domain's
+  signature too; without that, a domain with `p=reject` has its own users' mail
+  refused once a colleague forwards it. Signing needs a DKIM key for the domain.
+- **Changing the secret.** Put the new one first, separated by a comma, and keep the
+  old one for 21 days: the first signs, and all of them verify.
 
 ## Distribution lists, domain aliases and catch-all
 
@@ -324,6 +361,50 @@ provision export-held dana@example.com > dana-held.mbox
 
 writes them as mbox for review tools, each with an `X-Elemta-Held` header
 naming the folder it was deleted from and when.
+
+## Compliance search and export
+
+For an investigation or a legal request, the console's **Compliance** page
+searches every mailbox at once: by account, sender, recipient (To, Cc or
+Bcc), subject, words in the message and the dates it arrived. Mail a legal
+hold kept after its owner deleted it is included, marked "(deleted, held)",
+unless you untick it. Words match the start of words in the readable text of
+the message, as the webmail's search does; attachments aren't searched.
+Calendar, contacts, tasks and settings folders hold the webmail's own data
+and are left out.
+
+The page shows the newest 500 matches with the total. **Download** saves one
+message as an `.eml` file, and **Export all as mbox** saves every match, up
+to 100,000 messages, as one mbox file for review tools. Each exported message
+starts with an `X-Elemta-Compliance` line naming its account and folder, and
+when a held message was deleted. Narrow a larger search, or export it in
+parts by date.
+
+Searches use the mailbox search index. Mail the index hasn't reached yet,
+such as a mailbox migrated moments ago, can't be found, so the page says how
+many messages in the searched mailboxes and dates weren't searched. The index
+catches up on its own; search again for a complete answer.
+
+**Who can use it.** System administrators, and dashboard users with the
+`compliance` role, which can do nothing else:
+
+```sh
+elemta user add legal --role compliance
+```
+
+Domain administrators can't. The role covers every domain.
+
+**Every search is recorded.** Each search, export and downloaded message is
+written to the [audit log](#audit-log) before any result is shown, with who
+did it, from where, and the search itself (`compliance-search`,
+`compliance-export`, `compliance-view`). If the entry can't be stored,
+nothing is shown. The entries are kept from domain administrators' view of
+the log, since they may be the people an investigation is about.
+
+The page needs the mailbox admin API (`ELEMTA_MAILBOX_ADMIN_TOKEN` on the web
+service). The mailbox admin API itself answers `POST /v1/admin/compliance/search`
+and `/export` with the same query as JSON, and
+`GET /v1/admin/compliance/message?ref=`.
 
 ## Purging a mailbox
 
@@ -533,6 +614,104 @@ Verification includes service validation and configuration-lock tests, admin
 API permissions and lifecycle tests, CLI output/alias tests, SMTP cache tests,
 and real LDAP/IMAP/SMTP checks against the development stack.
 
+## Sharing calendars
+
+Colleagues in a domain can always see when someone is busy, never why. To show
+the details, a user shares their calendar under Settings, Account. An
+administrator can do it for them in the account dialog, or with:
+
+```sh
+provision grant-calendar dana@example.com assistant@example.com --level edit
+provision list-calendar-shares dana@example.com
+provision revoke-calendar dana@example.com assistant@example.com
+```
+
+| Level | Can |
+|---|---|
+| View | See events. Private ones show as "Busy", with no details |
+| Edit | Also add, change and delete events, and see private ones |
+| Delegate | Also invite guests, change or cancel meetings, and answer invitations for the owner |
+
+Sharing works within a domain and covers the person's whole calendar, because
+the calendar field on an event is only a label. Shared calendars appear in the
+webmail beside the user's own, where each can be hidden, and in CalDAV apps as a
+separate calendar. Each level means the same in both.
+
+Someone with Edit can't add guests, or change or delete an event that has guests,
+because guests would have to be told. That takes Delegate.
+
+A delegate's mail comes from their own address, never the owner's, so a grant adds
+no right to send as anyone. The invitation names the owner as organizer and the
+delegate as `SENT-BY`, and answers go to the owner. Invitations to the owner are
+also copied to each delegate's inbox, where they answer for the owner from the
+invitation itself. Saving a meeting from a CalDAV app sends nothing, on a shared
+calendar as on your own.
+
+A share gives the webmail one folder of the owner's account and nothing else.
+It can't be used from a mail app, and changing or removing it takes effect within
+30 seconds on connections already open.
+
+### Rooms and equipment
+
+A room is an ordinary account that people book by inviting it to a meeting:
+
+```
+provision create-account boardroom@example.com --name Boardroom
+provision set-resource boardroom@example.com --name Boardroom --capacity 8 --location 'Floor 3'
+provision list-resources --domain example.com
+provision remove-resource boardroom@example.com
+```
+
+Or open the account in Mail Administration, under **Room or resource**.
+`--kind equipment` is for things that aren't places. In the webmail, rooms appear
+under **Add a room** on the event form, which adds them as a guest, so the
+availability bar shows them too.
+
+Bookable accounts answer invitations as they're delivered, first come, first
+served. A free slot is booked and the organizer gets an acceptance; a taken one is
+declined. A recurring meeting is checked for a year ahead and declined whole if any
+occurrence clashes. Moving or cancelling a meeting moves or frees the room. Only
+the organizer can change a booking.
+
+For a room that needs approval, use `--booking manual` and make someone its
+delegate with `grant-calendar`. Invitations then wait in that person's inbox, like
+any delegate's, and they accept or decline for the room.
+
+Only colleagues can book: the organizer and the sender must both be in the room's
+domain. An invitation from anywhere else is kept in the room's inbox and not
+answered, as is any other mail, and an update to one occurrence of a series, which
+a person has to deal with.
+
+Answers go out through `[sieve] submit_addr`, so without it rooms book but stay
+silent. With `object_store = "postgres"`, bookings are made and enforced, but the
+room's calendar can't be seen in the webmail, including by a delegate.
+
+## Checking a domain's DNS
+
+Open a domain under Mail Administration and choose **Check DNS**. Anyone who
+administers the domain can run it. It reports what's wrong, and when there's one
+right answer, the record to publish.
+
+| Check | Looks at |
+|---|---|
+| Incoming mail (MX) | The MX exists and reaches this server, by comparing addresses, so any name for the server counts |
+| Reverse DNS | This server's address names a host that leads back to it, and that host is its `hostname` |
+| Sending permission (SPF) | One record, and evaluating it for this server's address passes |
+| Signatures (DKIM) | The key in DNS is the one this server signs with |
+| Forgery policy (DMARC) | One record with a policy that acts on forgery. A subdomain inherits its parent's |
+| Encryption policy (MTA-STS) | If advertised: the policy can be fetched and lists every MX |
+| Encryption reports (TLS-RPT), mail app setup (SRV) | Optional. Leaving these out doesn't count against a domain |
+
+"Couldn't check" means DNS didn't answer. It says nothing about the record, so
+try again rather than publishing anything. This server's identity comes from
+`hostname`, so that name has to resolve. Answers come through the stack's own
+resolver, so a record you just changed can take until its TTL runs out to show.
+
+An MTA-STS failure deserves quick attention. A policy in `enforce` mode that
+doesn't list your MX makes senders that honour it refuse to deliver, and senders
+that saved a policy keep following it until its `max_age` runs out, even after
+you remove the record.
+
 ## Junk mail and users' allowed and blocked senders
 
 The MTA's spam check refuses mail over its reject threshold and marks mail it
@@ -545,9 +724,87 @@ Account, "Junk mail"): addresses, or `@example.com` for a whole domain,
 matched against the envelope sender and the message's From. Mail from an
 allowed sender stays in the INBOX even when flagged; mail from a blocked
 sender goes to Junk even when it isn't. A blocked envelope sender wins over
-an allowed From, so a forged From can't lift a block. Mail the MTA refused
-outright never reaches the mailbox, so allowing a sender can't bring that
-back; raise the reject threshold or allow the sender in Rspamd for that.
+an allowed From, so a forged From can't lift a block.
+
+### Quarantine
+
+Mail the spam check would refuse goes to the recipient's **Quarantine** folder
+instead, when `quarantine = true` under `[antispam]` (Plugins, Rspamd, in the
+console). Users can open it in the webmail, or see it as an ordinary folder in a
+mail app, and choose **Release** to move a message to the Inbox. Releasing also
+teaches the classifier that it was good mail.
+
+The folder appears the first time something is held. Held mail is deleted after
+30 days. To change that, set `quarantine_days` on a class of service, or use
+`set-policy --quarantine-days`; 0 keeps it. Legal hold keeps it, as it does all
+mail.
+
+Some mail is still refused at SMTP:
+
+- Viruses, always.
+- Spam addressed to anyone outside this server's local domains, since they have
+  no Quarantine folder here. One outside recipient is enough.
+- Spam from a logged-in user, who is there to see the error.
+
+The sender of held mail gets no bounce, so they can't tell it wasn't read. An
+allowed sender doesn't skip Quarantine, because an allow entry can match the From
+header and anyone can forge that. A blocked sender goes to Junk as usual. Held
+mail counts towards the user's quota, and isn't forwarded or filtered.
 
 How many entries a user may keep is the class of service's
 `max_sender_rules` (100 by default).
+
+### Learning from users
+
+Moving mail into Junk teaches Rspamd's classifier that it's spam, and moving it
+out teaches that it's good mail. This works from the webmail's buttons and from
+any mail app, and takes effect within about a minute. Moving a message back
+corrects what was learned. Some moves teach nothing:
+
+- Junk to Trash, because deleting spam doesn't make it good mail.
+- Anything into Junk from Sent or Drafts.
+- Mail that delivery filed in Junk or Quarantine, because only a person's
+  decision counts.
+
+The classifier is shared by every account, so a user's reports affect everyone
+on the server. `[spam_learning]` in the mailbox configuration limits each
+account with `max_per_day` (500 by default); corrections don't count against
+it. Reports wait in the database while Rspamd is down, for up to a week.
+
+The classifier does nothing until it has learned 200 messages of **each** kind.
+A new server can get there faster with `make rspamd-train`. To see the real
+totals, ask its Valkey rather than `rspamc stat`, whose per-class figures can
+read 0 and whose "Messages learned" resets on restart:
+
+```
+docker exec elemta-rspamd-valkey valkey-cli hgetall RS
+```
+
+The mailbox logs `spam feedback learned` as it works and `spam learning failed`
+when it can't reach Rspamd or the password is wrong.
+
+## Encrypted mail
+
+Users' PGP keys are held by the mailbox service: the public key, and the private key
+locked with a passphrase only the user knows. A private key that isn't locked is
+refused. Administrators can't read this mail or recover it. Replacing or removing a
+key needs the account password, and is in the audit log as `pgp-key-set` and
+`pgp-key-remove`.
+
+Spam filtering and virus scanning can't see inside encrypted mail, so its only checks
+are its sender and headers. An administrator's "Open mailbox" shows it as encrypted.
+
+The webmail answers Web Key Directory requests, so that other mail systems can find
+users' public keys. To publish a domain's, list it in `cloud.env` and add the DNS
+record that `cloud-deploy.sh` prints:
+
+```
+PGP_WKD_DOMAINS="example.org"
+```
+
+That serves `openpgpkey.<domain>`, on a site of its own that answers nothing else.
+Each user can stop publishing their own key in Settings, which is in the audit log as
+`pgp-key-publish`. Colleagues on the server find a key either way.
+
+OpenPGP.js is included unchanged in `internal/webmail/static`, under the LGPL (see
+`openpgp.LICENSE` beside it).

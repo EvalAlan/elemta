@@ -2,6 +2,7 @@ package mailbox
 
 import (
 	"bufio"
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"net"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ func TestPublicListenerTakesProxyProtocol(t *testing.T) {
 	cfg.Server.AllowPlaintextAuth = true
 	cfg.Server.ProxyProtocolFrom = []string{"127.0.0.1"}
 	s, _, _ := startTestService(t, e, a, cfg)
-	ln, err := s.publicListen("127.0.0.1:0")
+	ln, err := s.publicListen("127.0.0.1:0", abuse.ProtocolIMAP)
 	if err != nil {
 		t.Fatal(err)
 	}

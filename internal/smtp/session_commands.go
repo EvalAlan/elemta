@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/EvalAlan/elemta/internal/srs"
 )
 
 // CommandResult represents the result of a command execution
@@ -296,6 +298,28 @@ func (ch *CommandHandler) HandleMAIL(ctx context.Context, args string) error {
 			return fmt.Errorf("550 5.7.1 %s", decision.Reason)
 		}
 
+		// A signed-in user's mail is leaving, not arriving, so this rule isn't
+		// about them: outbound rules apply at RCPT.
+		if !ch.state.IsAuthenticated() {
+			if rule, denied := ch.session.abuse.DenySender(mailFrom); denied {
+				ch.logger.WarnContext(ctx, "Sender refused by a rule",
+					"event_type", "rejection", "mail_from", mailFrom, "rule", rule.Value)
+				return fmt.Errorf("550 5.7.1 Sender refused by policy")
+			}
+			// Allowed relays are this deployment's own services and apps:
+			// forwarding through them is someone else's mail, already counted.
+			if !ch.isRelayAllowed("") && !ch.session.abuse.InboundMessage(ctx, ch.session.remoteAddr) {
+				ch.logger.InfoContext(ctx, "Message refused: too much mail from this address",
+					"event_type", "rejection", "client_ip", ch.session.remoteAddr)
+				return fmt.Errorf("451 4.7.1 Too much mail from this address; try again later")
+			}
+			if !ch.isRelayAllowed("") && !ch.session.abuse.InboundDomain(ctx, ch.session.remoteAddr, mailFrom) {
+				ch.logger.InfoContext(ctx, "Message refused: too much mail from this sender domain",
+					"event_type", "rejection", "client_ip", ch.session.remoteAddr, "mail_from", mailFrom)
+				return fmt.Errorf("451 4.7.1 Too much mail from this sender's domain; try again later")
+			}
+		}
+
 		// DNS blocklists. Consulted here rather than at connect so that an
 		// authenticated client is already known to be one: a legitimate user
 		// sending from a hotel or mobile network whose address is listed would
@@ -377,9 +401,34 @@ func (ch *CommandHandler) HandleRCPT(ctx context.Context, args string) error {
 		return fmt.Errorf("553 5.6.7 SMTPUTF8 is required for non-ASCII recipient address")
 	}
 
-	// Check relay permissions
-	if err := ch.checkRelayPermissions(ctx, rcptTo); err != nil {
+	bounceFor, err := ch.reverseSRS(ctx, rcptTo)
+	if err != nil {
 		return err
+	}
+	if bounceFor != "" {
+		rcptTo = bounceFor
+	} else if err := ch.checkRelayPermissions(ctx, rcptTo); err != nil {
+		// A valid SRS address skips this: it may lead outside the server, and
+		// the hash is what makes that safe.
+		return err
+	}
+
+	// Mail leaving the server, and not a bounce going home.
+	if bounceFor == "" && ch.session != nil && !ch.isLocalDomain(ctx, rcptTo) {
+		if rule, denied := ch.session.abuse.DenyRecipient(rcptTo); denied {
+			ch.logger.InfoContext(ctx, "Recipient refused by a rule",
+				"event_type", "rejection", "recipient", rcptTo, "rule", rule.Value)
+			return fmt.Errorf("550 5.7.1 <%s>: Recipient refused by policy", sanitizeEmailForHeader(rcptTo))
+		}
+		// Only a signed-in account's own mail: forwarding and apps on allowed
+		// relays have no account to hold.
+		if user := ch.state.GetUsername(); ch.state.IsAuthenticated() && user != "" {
+			if !ch.session.abuse.OutboundRecipient(ctx, user) {
+				ch.logger.WarnContext(ctx, "Recipient refused: account's outside mail is on hold",
+					"event_type", "rejection", "username", user, "recipient", rcptTo)
+				return fmt.Errorf("451 4.7.1 Sending outside the server from this account is on hold; contact your administrator")
+			}
+		}
 	}
 
 	// A local mailbox that does not exist is refused now, not bounced later.
@@ -1298,23 +1347,40 @@ func (ch *CommandHandler) checkRelayPermissions(ctx context.Context, recipient s
 }
 
 // isLocalDomain checks if a recipient is in a local domain
-func (ch *CommandHandler) isLocalDomain(ctx context.Context, recipient string) bool {
-	if ch.config.LocalDomains == nil {
-		return false
+// reverseSRS returns the original sender when recipient is an SRS address of
+// ours, and "" for any other recipient. Only bounces are accepted: a replayed
+// address must not become a way to send ordinary mail to the person behind it.
+func (ch *CommandHandler) reverseSRS(ctx context.Context, recipient string) (string, error) {
+	if ch.config.SRS == nil || !srs.Is(recipient) || !ch.isLocalDomain(ctx, recipient) {
+		return "", nil
 	}
+	if ch.state.GetMailFrom() != "" {
+		return "", fmt.Errorf("550 5.7.1 This address accepts delivery notifications only")
+	}
+	sender, err := ch.config.SRS.Reverse(recipient)
+	if err != nil {
+		ch.logger.InfoContext(ctx, "Recipient refused: SRS address not valid",
+			"event_type", "rejection", "recipient", recipient, "reason", err)
+		return "", fmt.Errorf("550 5.1.1 <%s>: Recipient address rejected: User unknown", sanitizeEmailForHeader(recipient))
+	}
+	return sender, nil
+}
 
+func (ch *CommandHandler) isLocalDomain(ctx context.Context, recipient string) bool {
+	return inLocalDomains(ch.config.LocalDomains, recipient)
+}
+
+func inLocalDomains(domains []string, recipient string) bool {
 	parts := strings.Split(recipient, "@")
 	if len(parts) != 2 {
 		return false
 	}
-
 	domain := strings.ToLower(parts[1])
-	for _, localDomain := range ch.config.LocalDomains {
+	for _, localDomain := range domains {
 		if strings.ToLower(localDomain) == domain {
 			return true
 		}
 	}
-
 	return false
 }
 

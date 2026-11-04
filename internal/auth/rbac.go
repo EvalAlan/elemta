@@ -53,6 +53,13 @@ const (
 	// deliberately not api:read, so a domain administrator sees nothing of
 	// the server's queues, logs or other domains' traffic.
 	PermissionMailDomainAdmin Permission = "mail:domain-admin"
+
+	// PermissionMailCompliance is searching and exporting anyone's mail for
+	// an investigation or a legal request. It reads every mailbox, so it is
+	// its own permission rather than part of administration: the people
+	// who answer legal requests are often not the people who run the
+	// server, and a domain administrator doesn't get it.
+	PermissionMailCompliance Permission = "mail:compliance"
 )
 
 // Role represents a collection of permissions
@@ -99,6 +106,7 @@ func (r *RBAC) initializeDefaultRoles() {
 			PermissionUserView, PermissionUserCreate, PermissionUserUpdate, PermissionUserDelete,
 			PermissionSystemView, PermissionSystemAdmin, PermissionSystemConfig,
 			PermissionAPIRead, PermissionAPIWrite, PermissionAPIAdmin,
+			PermissionMailCompliance,
 		},
 		IsSystem:  true,
 		CreatedAt: now,
@@ -139,6 +147,17 @@ func (r *RBAC) initializeDefaultRoles() {
 		Name:        "domain-admin",
 		Description: "Domain Administrator - Mail administration for assigned domains only",
 		Permissions: []Permission{PermissionMailDomainAdmin},
+		IsSystem:    true,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	// Compliance officer - searches and exports every domain's mail, and
+	// nothing else.
+	r.roles["compliance"] = &Role{
+		Name:        "compliance",
+		Description: "Compliance - Search and export mail for investigations",
+		Permissions: []Permission{PermissionMailCompliance},
 		IsSystem:    true,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -435,7 +454,7 @@ func (r *RBAC) isValidPermission(permission Permission) bool {
 		PermissionUserView, PermissionUserCreate, PermissionUserUpdate, PermissionUserDelete,
 		PermissionSystemView, PermissionSystemAdmin, PermissionSystemConfig,
 		PermissionAPIRead, PermissionAPIWrite, PermissionAPIAdmin,
-		PermissionMailDomainAdmin,
+		PermissionMailDomainAdmin, PermissionMailCompliance,
 	}
 
 	for _, valid := range validPermissions {
@@ -455,7 +474,7 @@ func (r *RBAC) getAllPermissions() []Permission {
 		PermissionUserView, PermissionUserCreate, PermissionUserUpdate, PermissionUserDelete,
 		PermissionSystemView, PermissionSystemAdmin, PermissionSystemConfig,
 		PermissionAPIRead, PermissionAPIWrite, PermissionAPIAdmin,
-		PermissionMailDomainAdmin,
+		PermissionMailDomainAdmin, PermissionMailCompliance,
 	}
 }
 
@@ -481,6 +500,7 @@ func PermissionString(permission Permission) string {
 		PermissionAPIAdmin:     "API Administration",
 
 		PermissionMailDomainAdmin: "Mail Administration of Assigned Domains",
+		PermissionMailCompliance:  "Search and Export Mail for Compliance",
 	}
 
 	if desc, exists := descriptions[permission]; exists {

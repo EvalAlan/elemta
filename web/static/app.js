@@ -159,6 +159,9 @@ function switchView(viewName) {
     const titles = {
         dashboard: 'Dashboard',
         health: 'Health',
+        certificates: 'Certificates',
+        abuse: 'Abuse',
+        compliance: 'Compliance',
         queues: 'Mail Queues',
         reports: 'Reports',
         tracing: 'Tracing',
@@ -197,6 +200,9 @@ function switchView(viewName) {
             break;
         case 'abuse':
             refreshAbuse();
+            break;
+        case 'compliance':
+            if (typeof openCompliance === 'function') openCompliance();
             break;
         case 'queues':
             refreshQueue();
@@ -1716,15 +1722,18 @@ function updateUserUI() {
     if (usersTab) usersTab.style.display = authState.isLoggedIn ? '' : 'none';
     const perms = authState.permissions || [];
     const mailAdminNav = document.getElementById('nav-mailadmin');
-    if (mailAdminNav) mailAdminNav.hidden = !authState.isLoggedIn || !(perms.includes('system:admin') || perms.includes('mail:domain-admin'));
-    // A domain administrator can't read the server's queues, logs or
-    // statistics (the API refuses them), so the dashboard shows only Mail
-    // Administration and Settings and stops polling the rest.
-    const confined = authState.isLoggedIn && perms.includes('mail:domain-admin') && !perms.includes('api:read');
+    const mailAdmin = perms.includes('system:admin') || perms.includes('mail:domain-admin');
+    if (mailAdminNav) mailAdminNav.hidden = !authState.isLoggedIn || !mailAdmin;
+    const complianceNav = document.getElementById('nav-compliance');
+    if (complianceNav) complianceNav.hidden = !authState.isLoggedIn || !perms.includes('mail:compliance');
+    // A domain administrator or compliance officer can't read the server's
+    // queues, logs or statistics (the API refuses them), so the dashboard
+    // shows only their own sections and Settings, and stops polling the rest.
+    const confined = authState.isLoggedIn && (perms.includes('mail:domain-admin') || perms.includes('mail:compliance')) && !perms.includes('api:read');
     if (confined !== !!authState.confined) {
         authState.confined = confined;
         document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-            if (!['mail-admin', 'settings'].includes(item.dataset.view)) item.style.display = confined ? 'none' : '';
+            if (!['mail-admin', 'compliance', 'settings'].includes(item.dataset.view)) item.style.display = confined ? 'none' : '';
         });
         document.querySelectorAll('.settings-tab[data-tab]').forEach(item => {
             if (!['ui', 'users'].includes(item.dataset.tab)) item.style.display = confined ? 'none' : '';
@@ -1732,7 +1741,7 @@ function updateUserUI() {
         if (confined) {
             state.autoRefreshPaused = true;
             if (state.refreshInterval) { clearTimeout(state.refreshInterval); state.refreshInterval = null; }
-            switchView('mail-admin');
+            switchView(mailAdmin ? 'mail-admin' : 'compliance');
         }
     }
 
@@ -1941,6 +1950,9 @@ const PLUGIN_SETTINGS_SCHEMA = {
         ],
     },
     access_control: {
+        // The Abuse page's rules do this with directions and across every
+        // protocol; these lists stay for configurations that already use them.
+        note: 'These lists have moved to the allow and deny rules on the Abuse page, which cover inbound and outbound mail and every protocol. Anything added here moves there when the console next starts, and applies to SMTP until then.',
         fields: [
             { key: 'allow_ips', label: 'Allowed addresses', type: 'list',
               hint: 'CIDR ranges or single addresses, one per line. An allow entry beats a deny entry.' },
@@ -1961,6 +1973,8 @@ const PLUGIN_SETTINGS_SCHEMA = {
               hint: 'Only used when rspamd reports no action of its own' },
             { key: 'reject_on_spam', label: 'Reject spam at SMTP', type: 'checkbox',
               hint: 'Off delivers spam tagged with X-Spam headers for downstream filtering' },
+            { key: 'quarantine', label: 'Quarantine instead of rejecting', type: 'checkbox',
+              hint: "Holds mail for local mailboxes in each user's Quarantine folder, where they can release it. Viruses are always refused, and mail for outside addresses is still rejected." },
         ],
     },
     rbl: {
@@ -2091,7 +2105,7 @@ function pluginSummary(plugin) {
     const bits = [];
     if (c.address) bits.push(escapeHtml(String(c.address)));
     if (typeof c.threshold === 'number' && c.threshold > 0) bits.push(`threshold ${c.threshold}`);
-    if (c.reject_on_spam) bits.push('rejects spam');
+    if (c.reject_on_spam) bits.push(c.quarantine ? 'quarantines spam' : 'rejects spam');
     if (c.reject_on_failure) bits.push('rejects on scan failure');
     if (typeof c.max_messages_per_minute === 'number') bits.push(`${c.max_messages_per_minute}/min`);
     if (c.verify) bits.push('verifies inbound');
@@ -2213,6 +2227,7 @@ function renderPluginPanel(plugin) {
     }
 
     const cfg = plugin.config || {};
+    const schemaNote = schema.note ? `<p class="field-hint">${escapeHtml(schema.note)}</p>` : '';
     const fields = (schema.fields || []).map(f => {
         const value = cfg[f.key];
         const id = `plugin-${plugin.name}-${f.key}`;
@@ -2301,6 +2316,7 @@ function renderPluginPanel(plugin) {
             </div>
             <div class="card-body">
                 <p class="panel-intro">${escapeHtml(plugin.description || '')}</p>
+                ${schemaNote}
                 ${enableOnSave ? `
                     <div class="restart-note">
                         This plugin is off until it is configured. Fill the settings in and

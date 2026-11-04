@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
+	"github.com/EvalAlan/elemta/internal/srs"
 )
 
 // mailDirAuth is directoryAuth with the lists and domains a directory can
@@ -58,6 +59,49 @@ func (r *addressingRig) setAccount(local string, change func(*Account)) {
 	a := r.dir.accounts[r.addr(local)]
 	change(&a)
 	r.dir.accounts[r.addr(local)] = a
+}
+
+// Forwarded mail leaves from an address at the account's domain, or the next
+// server's SPF check on the original sender fails. Mail staying here doesn't
+// need it, and a bounce has no sender to rewrite.
+func TestForwardingOutsideRewritesTheSender(t *testing.T) {
+	r, _ := newMailDirRig(t, nil)
+	r.svc.srs = srs.New([]string{"secret"})
+	r.setAccount("ana", func(a *Account) { a.Forward = []string{"far@remote.example"} })
+	r.setAccount("ben", func(a *Account) { a.Forward = []string{r.addr("ana")}; a.ForwardKeepCopy = true })
+
+	r.send("x@example.org", "srs-1", []string{r.addr("ana")}, msgWith("outside"))
+	sent := r.submit.messages()
+	if len(sent) != 1 || !srs.Is(sent[0].from) || !strings.HasSuffix(sent[0].from, "@"+domainOf(r.addr("ana"))) {
+		t.Fatalf("forwarded = %+v", sent)
+	}
+	if back, err := r.svc.srs.Reverse(sent[0].from); err != nil || back != "x@example.org" {
+		t.Fatalf("reversed %q to %q, %v", sent[0].from, back, err)
+	}
+
+	r.send("", "srs-2", []string{r.addr("ana")}, msgWith("a bounce"))
+	if sent = r.submit.messages(); len(sent) != 2 || sent[1].from != "" {
+		t.Fatalf("a forwarded bounce = %+v", sent)
+	}
+
+	r.send("x@example.org", "srs-3", []string{r.addr("benny")}, msgWith("inside"))
+	if sent = r.submit.messages(); len(sent) != 3 || sent[2].from != "x@example.org" {
+		t.Fatalf("mail staying here = %+v", sent)
+	}
+}
+
+// Longer than an address may be: it goes out as it did before SRS, because a
+// sender the MTA refuses would never leave at all.
+func TestForwardingKeepsASenderTooLongToRewrite(t *testing.T) {
+	r, _ := newMailDirRig(t, nil)
+	r.svc.srs = srs.New([]string{"secret"})
+	r.setAccount("ana", func(a *Account) { a.Forward = []string{"far@remote.example"} })
+	long := strings.Repeat("a", 60) + "@example.org"
+
+	r.send(long, "srs-long", []string{r.addr("ana")}, msgWith("long"))
+	if sent := r.submit.messages(); len(sent) != 1 || sent[0].from != long {
+		t.Fatalf("forwarded = %+v", sent)
+	}
 }
 
 func TestDirectoryForwarding(t *testing.T) {

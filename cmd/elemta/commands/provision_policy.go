@@ -23,12 +23,12 @@ type addCommand func(use string, aliases []string, short string, argc int, fn fu
 // settingsFlags are the flags that set one layer of policy. Every flag
 // takes "inherit" to unset the value, so the next layer down decides.
 type settingsFlags struct {
-	quota, maxMessage, maxAttachment                        string
-	messagesPerHour, recipientsPerMessage, recipientsPerDay string
-	maxForward, maxSenderRules, addressBook                 string
-	protocols                                               string
-	forwarding, filters, appPasswords, twoFactor            string
-	trashDays, junkDays, sentDays, retentionDays, legalHold string
+	quota, maxMessage, maxAttachment                                        string
+	messagesPerHour, recipientsPerMessage, recipientsPerDay                 string
+	maxForward, maxSenderRules, addressBook                                 string
+	protocols                                                               string
+	forwarding, filters, appPasswords, twoFactor                            string
+	trashDays, junkDays, quarantineDays, sentDays, retentionDays, legalHold string
 }
 
 func (f *settingsFlags) register(c *cobra.Command) {
@@ -49,6 +49,7 @@ func (f *settingsFlags) register(c *cobra.Command) {
 	fl.StringVar(&f.twoFactor, "require-two-factor", "", "Webmail users must set up two-step verification: on, off or inherit")
 	fl.StringVar(&f.trashDays, "trash-days", "", "Empty Trash of mail older than this many days there; 0 keeps it")
 	fl.StringVar(&f.junkDays, "junk-days", "", "Empty Junk of mail older than this many days there; 0 keeps it")
+	fl.StringVar(&f.quarantineDays, "quarantine-days", "", "Delete held mail from Quarantine after this many days (30 by default; 0 keeps it, \"inherit\" clears)")
 	fl.StringVar(&f.sentDays, "sent-days", "", "Empty Sent of mail older than this many days there; 0 keeps it")
 	fl.StringVar(&f.retentionDays, "retention-days", "", "Delete mail in every folder older than this many days; 0 keeps it")
 	fl.StringVar(&f.legalHold, "legal-hold", "", "Keep everything, even what the user deletes: on, off or inherit")
@@ -118,6 +119,7 @@ func (f *settingsFlags) apply(c *cobra.Command, s *mailpolicy.Settings) error {
 		toggle("require-two-factor", f.twoFactor, &s.RequireTwoFactor),
 		count("trash-days", f.trashDays, &s.TrashDays),
 		count("junk-days", f.junkDays, &s.JunkDays),
+		count("quarantine-days", f.quarantineDays, &s.QuarantineDays),
 		count("sent-days", f.sentDays, &s.SentDays),
 		count("retention-days", f.retentionDays, &s.RetentionDays),
 		toggle("legal-hold", f.legalHold, &s.LegalHold),
@@ -379,6 +381,7 @@ func printSettings(w *tabwriter.Writer, s mailpolicy.Settings) {
 	toggle("require two-step verification", s.RequireTwoFactor)
 	days("empty Trash after", s.TrashDays)
 	days("empty Junk after", s.JunkDays)
+	days("empty Quarantine after", s.QuarantineDays)
 	days("empty Sent after", s.SentDays)
 	days("delete mail older than", s.RetentionDays)
 	toggle("legal hold", s.LegalHold)
@@ -412,6 +415,7 @@ func printEffective(w *tabwriter.Writer, e mailpolicy.Effective) {
 	fmt.Fprintf(w, "  require two-step verification:\t%s\t(%s)\n", onOff(e.RequireTwoFactor), src("require_two_factor"))
 	fmt.Fprintf(w, "  empty Trash after:\t%s\t(%s)\n", formatDays(e.TrashDays), src("trash_days"))
 	fmt.Fprintf(w, "  empty Junk after:\t%s\t(%s)\n", formatDays(e.JunkDays), src("junk_days"))
+	fmt.Fprintf(w, "  empty Quarantine after:\t%s\t(%s)\n", formatDays(e.QuarantineDays), src("quarantine_days"))
 	fmt.Fprintf(w, "  empty Sent after:\t%s\t(%s)\n", formatDays(e.SentDays), src("sent_days"))
 	fmt.Fprintf(w, "  delete mail older than:\t%s\t(%s)\n", formatDays(e.RetentionDays), src("retention_days"))
 	fmt.Fprintf(w, "  legal hold:\t%s\t(%s)\n", onOff(e.LegalHold), src("legal_hold"))

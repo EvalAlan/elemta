@@ -92,6 +92,8 @@ CREATE TABLE IF NOT EXISTS mailbox_security (
  recovery_codes text[] NOT NULL DEFAULT '{}'
 );
 ALTER TABLE mailbox_security ADD COLUMN IF NOT EXISTS totp_pending_at timestamptz;
+-- Protocols the account's owner turned off for themselves (security.go).
+ALTER TABLE mailbox_security ADD COLUMN IF NOT EXISTS protocols_off text[] NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS mailbox_app_passwords (
  id bigserial PRIMARY KEY,
  account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
@@ -234,4 +236,101 @@ CREATE TABLE IF NOT EXISTS mailbox_sender_rules (
     kind text NOT NULL CHECK (kind IN ('allow', 'block')),
     created timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (account, entry)
+);
+-- Senders each user put in an inbox category (categories.go): an address,
+-- or @domain, which covers its subdomains too.
+CREATE TABLE IF NOT EXISTS mailbox_category_rules (
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    entry text NOT NULL,
+    category text NOT NULL CHECK (category IN ('primary', 'social', 'promotions', 'updates', 'forums')),
+    created timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (account, entry)
+);
+-- Mail people moved in or out of Junk, waiting for Rspamd to learn from it
+-- (spam_learn.go). Rows stay a day after learning, for the daily limit.
+CREATE TABLE IF NOT EXISTS mailbox_spam_feedback (
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    body text NOT NULL,
+    class text NOT NULL CHECK (class IN ('spam', 'ham')),
+    created timestamptz NOT NULL DEFAULT now(),
+    not_before timestamptz NOT NULL DEFAULT now(),
+    learned timestamptz,
+    PRIMARY KEY (account, body)
+);
+CREATE INDEX IF NOT EXISTS mailbox_spam_feedback_due ON mailbox_spam_feedback(not_before) WHERE learned IS NULL;
+-- Who can see whose calendar (calendar_sharing.go).
+CREATE TABLE IF NOT EXISTS mailbox_calendar_shares (
+    owner text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    member text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    level text NOT NULL CHECK (level IN ('view', 'edit', 'delegate')),
+    created timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (owner, member)
+);
+CREATE INDEX IF NOT EXISTS mailbox_calendar_shares_member ON mailbox_calendar_shares(member);
+
+-- Rooms and equipment people book (booking.go). The account is an ordinary
+-- one, so removing this row leaves its mail and calendar in place.
+CREATE TABLE IF NOT EXISTS mailbox_resources (
+    account text PRIMARY KEY REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    address text NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('room', 'equipment')),
+    location text NOT NULL DEFAULT '',
+    capacity integer NOT NULL DEFAULT 0,
+    booking text NOT NULL CHECK (booking IN ('auto', 'manual'))
+);
+CREATE INDEX IF NOT EXISTS mailbox_resources_domain ON mailbox_resources(split_part(address, '@', 2));
+
+-- Passkeys (passkey.go). The credential is the WebAuthn library's own record:
+-- public key, counters and flags, and nothing that can sign.
+CREATE TABLE IF NOT EXISTS mailbox_passkeys (
+    id bigserial PRIMARY KEY,
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    credential_id bytea NOT NULL UNIQUE,
+    credential jsonb NOT NULL,
+    name text NOT NULL,
+    host text NOT NULL,
+    created timestamptz NOT NULL DEFAULT now(),
+    last_used timestamptz
+);
+CREATE INDEX IF NOT EXISTS mailbox_passkeys_account ON mailbox_passkeys(account);
+-- A ceremony between its two requests, which may reach different replicas. The
+-- account is empty for a sign-in, which doesn't know whose it is yet.
+CREATE TABLE IF NOT EXISTS mailbox_passkey_challenges (
+    id text PRIMARY KEY,
+    account text NOT NULL,
+    session jsonb NOT NULL,
+    expires timestamptz NOT NULL
+);
+-- What a passkey sign-in presents in place of a password. Only the hash is kept.
+CREATE TABLE IF NOT EXISTS mailbox_session_tokens (
+    token_hash text PRIMARY KEY,
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    passkey bigint NOT NULL REFERENCES mailbox_passkeys(id) ON DELETE CASCADE,
+    expires timestamptz NOT NULL,
+    absolute_expires timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mailbox_session_tokens_account ON mailbox_session_tokens(account);
+
+-- PGP keys (pgp.go). The private key is locked with a passphrase that never
+-- reaches this server.
+CREATE TABLE IF NOT EXISTS mailbox_pgp_keys (
+    account text PRIMARY KEY REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    address text NOT NULL,
+    domain text NOT NULL,
+    wkd_hash text NOT NULL,
+    fingerprint text NOT NULL,
+    public_key text NOT NULL,
+    private_key text NOT NULL,
+    created timestamptz NOT NULL DEFAULT now()
+);
+-- Whether the key is in the public Web Key Directory. Colleagues find it either way.
+ALTER TABLE mailbox_pgp_keys ADD COLUMN IF NOT EXISTS published boolean NOT NULL DEFAULT true;
+CREATE INDEX IF NOT EXISTS mailbox_pgp_keys_address ON mailbox_pgp_keys(address);
+CREATE INDEX IF NOT EXISTS mailbox_pgp_keys_wkd ON mailbox_pgp_keys(domain, wkd_hash);
+CREATE TABLE IF NOT EXISTS mailbox_pgp_pins (
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    address text NOT NULL,
+    fingerprint text NOT NULL,
+    PRIMARY KEY (account, address)
 );

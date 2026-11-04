@@ -247,3 +247,66 @@ backend = "sqlite"
 func decodeTOMLForTest(doc []byte, v interface{}) error {
 	return toml.Unmarshal(doc, v)
 }
+
+// A deployment can write a list as array tables, and SetTOMLValue only looked
+// for "key =". It added an assignment beside them, which is invalid TOML, so one
+// save in the console left every service unable to start at the next restart.
+func TestSetTOMLValueReplacesArrayTables(t *testing.T) {
+	doc := `[plugins.dkim]
+enabled = true
+
+[webmail]
+url = "x"
+
+[[plugins.dkim.domains]]
+domain = "a.example"
+selector = "s1"
+
+[[plugins.dkim.domains]]
+domain = "b.example"
+selector = "s1"
+
+[abuse]
+mode = "enforce"
+`
+	got, err := SetTOMLValue([]byte(doc), "plugins.dkim", "domains", []map[string]any{
+		{"domain": "a.example", "selector": "s2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTOML(got); err != nil {
+		t.Fatalf("the edit broke the file: %v\n%s", err, got)
+	}
+	var parsed struct {
+		Plugins struct {
+			DKIM struct {
+				Enabled bool
+				Domains []struct{ Domain, Selector string }
+			}
+		}
+		Abuse struct{ Mode string }
+	}
+	if err := toml.Unmarshal(got, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	d := parsed.Plugins.DKIM.Domains
+	if len(d) != 1 || d[0].Selector != "s2" || !parsed.Plugins.DKIM.Enabled || parsed.Abuse.Mode != "enforce" {
+		t.Fatalf("parsed %+v", parsed)
+	}
+}
+
+func TestValidateTOMLCatchesWhatStopsTheServices(t *testing.T) {
+	broken := `[plugins.dkim]
+domains = [{ domain = "a.example" }]
+
+[[plugins.dkim.domains]]
+domain = "a.example"
+`
+	if err := ValidateTOML([]byte(broken)); err == nil {
+		t.Fatal("this exact file took the server down")
+	}
+	if err := ValidateTOML([]byte(sampleTOML)); err != nil {
+		t.Fatalf("valid file refused: %v", err)
+	}
+}

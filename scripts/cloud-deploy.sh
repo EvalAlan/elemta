@@ -14,11 +14,26 @@
 #                                   created in .secrets/mailbox-body-keys.env.
 #                                   Keep a copy off the server; see
 #                                   docs/mailbox-service.md
+#   MAILBOX_BODY_COMPRESSION=true   optional: compress new message bodies. Once
+#                                   on, images older than this feature can't
+#                                   read that mail, so a rollback across it
+#                                   needs care; see docs/mailbox-service.md
+#   PGP_WKD_DOMAINS="example.org"   optional: domains that publish users' PGP
+#                                   keys, at openpgpkey.<domain>; each needs the
+#                                   DNS record printed at the end
+#   MTA_STS_DOMAINS="example.org"   optional: domains that publish an MTA-STS
+#                                   policy; see docs/cloud-dev.md, "MTA-STS"
+#   MTA_STS_MODE=testing            optional: testing (default), enforce or none
+#   GEOIP_DOWNLOAD=false            optional: don't fetch the location database
+#                                   for sign-in alerts (DB-IP City Lite)
 #   ELEMTA_TAG=v0.5.0               optional: run that release's images from
 #                                   ghcr.io, pinned and hardened
 #                                   (docker-compose.release.yml), instead of
 #                                   building this checkout. Production uses
 #                                   this; see docs/production-compose.md.
+#
+# DEPLOY_HEALTH_TIMEOUT (environment, seconds, default 300) is how long the
+# deploy waits for every service to be running and healthy before it fails.
 #
 # The first run seeds the services from the rendered configuration. After
 # that the configuration belongs to the running system: domains, plugin
@@ -89,6 +104,30 @@ fi
 # services start with until the real one is copied over it.
 step "Service credentials"
 "$root/scripts/dev-secrets.sh"
+
+# The location database for sign-in alerts (internal/geoip): DB-IP's free City
+# Lite, CC BY 4.0, published monthly. Fetched when missing or a month old.
+# Failing to fetch it never stops a deploy: without it the alerts that need a
+# location are off, and the Abuse page says so.
+geoip_dir=$root/deployments/compose/.secrets/geoip
+geoip_db=$geoip_dir/dbip-city-lite.mmdb
+mkdir -p "$geoip_dir"
+if [ "${GEOIP_DOWNLOAD:-true}" = true ] && { [ ! -s "$geoip_db" ] || [ -n "$(find "$geoip_db" -mtime +32 2>/dev/null)" ]; }; then
+    step "Location database"
+    fetched=
+    for month in "$(date -u +%Y-%m)" "$(date -u -d '-1 month' +%Y-%m 2>/dev/null)"; do
+        [ -n "$month" ] || continue
+        if curl -fsS --max-time 300 "https://download.db-ip.com/free/dbip-city-lite-$month.mmdb.gz" | gunzip >"$geoip_db.tmp" 2>/dev/null && [ -s "$geoip_db.tmp" ]; then
+            chmod 644 "$geoip_db.tmp"
+            mv "$geoip_db.tmp" "$geoip_db"
+            echo "cloud-deploy: location database for $month installed"
+            fetched=1
+            break
+        fi
+    done
+    rm -f "$geoip_db.tmp"
+    [ -n "$fetched" ] || echo "cloud-deploy: couldn't fetch the location database; sign-in alerts that need a location stay off" >&2
+fi
 
 # render template output sed-expression...
 # Every expression must change the file: a template that has drifted fails
@@ -168,7 +207,8 @@ private_key_path = "/app/dkim/$DKIM_SELECTOR.$x.key"
 EOF
 done
 # The operator's own address starts on the abuse allowlist, so a few mistyped
-# passwords can't lock them out of the server they run.
+# passwords can't lock them out of the server they run. The console turns it
+# into an allow rule when it starts.
 if [ -n "${ELEMTA_ADMIN_ALLOWED_IP:-}" ]; then
     sed -i -e "s|^allowlist = \\[\\]|allowlist = [\"$ELEMTA_ADMIN_ALLOWED_IP\"]|" "$secrets/cloud/config/elemta.toml"
 fi
@@ -212,6 +252,9 @@ if [ "${MAILBOX_BODY_ENCRYPTION:-}" = true ] && [ ! -f "$body_keys" ]; then
         printf 'ELEMTA_MAILBOX_BODY_KEYS=v1:%s\n' "$(openssl rand -base64 32)" >"$body_keys"
     )
     echo "cloud-deploy: created $body_keys. Copy it somewhere off this server NOW: without it encrypted mail can't be read." >&2
+fi
+if [ "${MAILBOX_BODY_COMPRESSION:-}" = true ]; then
+    mailbox_edits+=('/^\[bodies\]/a compression = "zstd"')
 fi
 render "$root/config/mailbox-main.toml" "$secrets/cloud/mailbox.toml" "${mailbox_edits[@]}"
 # Without collection a deleted message's body stays in storage forever. The
@@ -321,6 +364,36 @@ for x in $extra_domains; do
     fi
 done
 
+step "Waiting for every service to be healthy"
+# "up -d" returns once containers start, so a service that crash-loops or
+# fails its health check would still end in a deploy that looks successful.
+# Wait until each one is running and, if it has a health check, healthy; a
+# one-shot container that exited 0 is fine. On a new server ClamAV can take
+# longer than the default while it fetches its signatures; raise
+# DEPLOY_HEALTH_TIMEOUT (seconds) for that.
+health_timeout=${DEPLOY_HEALTH_TIMEOUT:-300}
+case $health_timeout in '' | *[!0-9]*) echo "cloud-deploy: DEPLOY_HEALTH_TIMEOUT must be a number of seconds" >&2; exit 2 ;; esac
+not_ready() {
+    dc ps -a --format '{{.Name}} {{.State}} {{.Health}} {{.ExitCode}}' |
+        awk '{ name = $1; state = $2; health = $3; code = $4
+               if (NF == 3) { code = health; health = "" }   # no health check
+               if (state == "exited" && code == "0") next
+               if (state != "running" || (health != "" && health != "healthy")) print }'
+}
+deadline=$((SECONDS + health_timeout))
+while :; do
+    waiting=$(not_ready)
+    [ -z "$waiting" ] && break
+    if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "cloud-deploy: not healthy after ${health_timeout}s (name, state, health, exit code):" >&2
+        echo "$waiting" | sed 's/^/  /' >&2
+        echo "cloud-deploy: see docker logs <name>; the previous images can be restored from their rollback tags" >&2
+        exit 1
+    fi
+    sleep 3
+done
+echo "All services are running and healthy."
+
 step "Certificate renewals"
 unit=/etc/systemd/system/elemta-cert-sync
 sudo tee "$unit.service" >/dev/null <<EOF
@@ -416,6 +489,17 @@ mail.$x, before moving the MX: a strict DMARC policy rejects unsigned mail.
   $x.                     MX   10 mail.$x.   (last)
 EOF
 done
+# A build leaves its layers in the cache for good, and on this machine that
+# filled the disk at 20 GB a day. Enough stays to keep the next build quick.
+docker builder prune -af --keep-storage 5GB >/dev/null || true
+if [ -n "${MTA_STS_DOMAINS:-}" ]; then
+    printf '\nMTA-STS records. Publish the A records first; the certificate needs them.\n'
+    "$root/scripts/cloud-sync-certs.sh" --mta-sts-records "$ip4"
+fi
+if [ -n "${PGP_WKD_DOMAINS:-}" ]; then
+    printf '\nWeb Key Directory records. The certificate needs them.\n'
+    "$root/scripts/cloud-sync-certs.sh" --wkd-records "$ip4"
+fi
 cat <<EOF
 
 Next: create the domain's first account (docs/cloud-dev.md, "Accounts").

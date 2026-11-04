@@ -36,6 +36,17 @@ type fakeSecurity struct {
 	maxSenders   int
 	maxForward   int
 	retention    map[string]int
+	// Calendar sharing: what the list returns, and what was changed.
+	calendars    calendarShares
+	resources    []bookable
+	pgpPublished []bool
+	// Mail protocols the user can choose about, and what they chose.
+	protocolChoices []protocolChoice
+	protocolCalls   []map[string]any
+	calendarCalls   []string
+	calendarDenied  bool
+	// Inbox tab rules.
+	categories []categoryRule
 }
 
 func (f *fakeSecurity) handler(t *testing.T) http.Handler {
@@ -46,6 +57,24 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		kind := map[string]string{"secret": "password", "app-pass": "app"}[pw]
 		if user != "dana" || kind == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/v1/security/categories" {
+			switch r.Method {
+			case http.MethodPost:
+				var in categoryRule
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				f.categories = slices.DeleteFunc(f.categories, func(x categoryRule) bool { return x.Sender == in.Sender })
+				f.categories = append(f.categories, in)
+				_ = json.NewEncoder(w).Encode(in)
+			case http.MethodPut:
+				var in []categoryRule
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				f.categories = in
+				_ = json.NewEncoder(w).Encode(f.categories)
+			default:
+				_ = json.NewEncoder(w).Encode(f.categories)
+			}
 			return
 		}
 		if r.URL.Path == "/v1/security/retention" {
@@ -84,6 +113,36 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		}
 		out := map[string]any{}
 		switch {
+		case r.URL.Path == "/v1/security/protocols":
+			f.protocolCalls = append(f.protocolCalls, in)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		case r.URL.Path == "/v1/security/pgp/publish":
+			on, _ := in["published"].(bool)
+			f.pgpPublished = append(f.pgpPublished, on)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		case r.URL.Path == "/v1/security/pgp":
+			_, _ = w.Write([]byte("null"))
+			return
+		case r.URL.Path == "/v1/security/passkeys":
+			_ = json.NewEncoder(w).Encode([]passkeyInfo{})
+			return
+		case r.URL.Path == "/v1/resources":
+			_ = json.NewEncoder(w).Encode(f.resources)
+			return
+		case r.URL.Path == "/v1/calendar-shares":
+			_ = json.NewEncoder(w).Encode(f.calendars)
+			return
+		case strings.HasPrefix(r.URL.Path, "/v1/calendar-shares/"):
+			level, _ := in["level"].(string)
+			f.calendarCalls = append(f.calendarCalls, strings.TrimSpace(r.Method+" "+r.URL.Path+" "+level))
+			if f.calendarDenied {
+				http.Error(w, "no such account", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+			return
 		case r.URL.Path == "/v1/security/shares":
 			_ = json.NewEncoder(w).Encode(f.shares)
 			return
@@ -137,7 +196,7 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 			f.totp = true
 			out = map[string]any{"recovery_codes": []string{"aaaa-bbbb", "cccc-dddd"}}
 		case "/v1/security":
-			out = map[string]any{"totp": f.totp, "app_required": f.appRequired, "recovery_left": 10, "app_passwords": []any{}}
+			out = map[string]any{"protocols": f.protocolChoices, "totp": f.totp, "app_required": f.appRequired, "recovery_left": 10, "app_passwords": []any{}}
 		case "/v1/security/verify":
 			if in["code"] != "123456" || f.codeUsed {
 				http.Error(w, "invalid code", http.StatusUnprocessableEntity)

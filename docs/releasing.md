@@ -69,15 +69,19 @@ else in CI creates GitHub Releases.
    stamps `internal/version.Version` (see
    [`internal/version/version.go`](../internal/version/version.go)) so both
    binaries report the correct release version at runtime instead of the
-   `-dev` placeholder baked into source (`0.5.0-dev`; bump it to the next
+   `-dev` placeholder baked into source (bump it to the next
    minor after tagging).
 
-2. **Package** — each arch's pair of binaries is packaged into
-   `elemta-<version>-linux-<arch>.tar.gz`.
+2. **Package** — [`scripts/package-release.sh`](../scripts/package-release.sh)
+   packages each arch into `elemta-<version>-linux-<arch>.tar.gz`, with one
+   top-level directory holding the binaries, the admin console's web files, a
+   starter configuration, a short README, the GPL license and
+   `third-party/`, the license files of every Go module in the binaries.
 
 3. **Release** — a GitHub Release is created for the tag using
    [`softprops/action-gh-release`](https://github.com/softprops/action-gh-release)
-   with the tarballs attached and GitHub-generated release notes
+   with the tarballs and a `SHA256SUMS` file attached and GitHub-generated
+   release notes
    (`generate_release_notes: true`, i.e. the auto-generated "Full Changelog"
    + merged-PR list based on the previous tag).
 
@@ -108,8 +112,9 @@ in `release.yml` if/when other platforms are needed.
    is skipped — the release is published directly (`draft: false`) as
    `prerelease: false` unless you edit `release.yml` for a pre-release
    cadence (e.g. `v0.2.0-rc.1`, which would still match `v*.*.*`).
-6. Sanity-check the published release: download at least one tarball and
-   confirm `elemta-cli` (or `elemta`) reports the expected version.
+6. Sanity-check the published release: download at least one tarball, run
+   `sha256sum -c --ignore-missing SHA256SUMS`, and confirm `elemta-cli` (or
+   `elemta`) reports the expected version.
 
 ## Container images
 

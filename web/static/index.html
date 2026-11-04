@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261030-abuse">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261103-2fa">
 </head>
 
 <body>
@@ -96,6 +96,10 @@
                 <a href="#" class="nav-item" data-view="certificates">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
                     <span>Certificates</span>
+                </a>
+                <a href="#" class="nav-item" data-view="compliance" id="nav-compliance" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="6"/><path d="m21 21-6.5-6.5"/><path d="M7.5 10h5"/></svg>
+                    <span>Compliance</span>
                 </a>
                 <a href="#" class="nav-item" data-view="abuse">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>
@@ -524,10 +528,56 @@
             </section>
 
             <!-- Certificates View -->
+            <section class="view" id="view-compliance">
+                <p id="compliance-notice" class="abuse-notice" role="status" hidden></p>
+                <div class="card">
+                    <div class="card-header"><h3>Search all mailboxes</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">For investigations and legal requests. Every search, export and message you open is recorded in the audit log with your name. Mail a legal hold kept after its owner deleted it is included.</p>
+                        <form id="compliance-form" class="abuse-form">
+                            <label for="compliance-accounts">Accounts</label>
+                            <textarea id="compliance-accounts" rows="2" spellcheck="false" autocomplete="off" placeholder="dana@example.com, lee@example.com"></textarea>
+                            <p class="field-hint">Primary addresses, separated by commas or lines. Empty searches every mailbox.</p>
+                            <label for="compliance-from">From</label>
+                            <input id="compliance-from" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Part of a name or address">
+                            <label for="compliance-to">To, Cc or Bcc</label>
+                            <input id="compliance-to" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Part of a name or address">
+                            <label for="compliance-subject">Subject contains</label>
+                            <input id="compliance-subject" type="text" maxlength="500" autocomplete="off">
+                            <label for="compliance-text">Words in the message</label>
+                            <input id="compliance-text" type="text" maxlength="500" autocomplete="off">
+                            <p class="field-hint">Every word must appear; each matches the start of a word, so "merg" finds "merger". Attachments aren't searched.</p>
+                            <label for="compliance-since">Received on or after</label>
+                            <input id="compliance-since" type="date">
+                            <label for="compliance-until">Received on or before</label>
+                            <input id="compliance-until" type="date">
+                            <label class="ma-check"><input id="compliance-held" type="checkbox" checked> Include mail kept by a legal hold</label>
+                            <button class="btn btn-primary" type="submit">Search</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="card" id="compliance-results-card" hidden>
+                    <div class="card-header">
+                        <h3 id="compliance-summary">Results</h3>
+                        <button class="btn btn-secondary btn-sm" type="button" id="compliance-export">Export all as mbox</button>
+                    </div>
+                    <div class="card-body">
+                        <p id="compliance-unindexed" class="abuse-notice" hidden></p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Received</th><th>Account</th><th>Folder</th><th>From</th><th>To</th><th>Subject</th><th>Size</th><th aria-label="Download"></th></tr></thead>
+                            <tbody id="compliance-hits"></tbody>
+                        </table></div>
+                        <p class="field-hint">The export has every match, not only those shown, as one mbox file for review tools. Each message carries an <code>X-Elemta-Compliance</code> line naming its account and folder.</p>
+                    </div>
+                </div>
+                <form id="compliance-export-form" method="post" action="/api/compliance/export" target="compliance-download" hidden><input type="hidden" name="query"></form>
+                <iframe name="compliance-download" id="compliance-download" title="Export download" hidden></iframe>
+            </section>
+
             <section class="view" id="view-abuse">
                 <p id="abuse-notice" class="abuse-notice" role="status" hidden></p>
                 <p id="abuse-you" class="abuse-notice" hidden>
-                    You're working from <strong id="abuse-you-address"></strong>, which isn't on the allowlist, so too many mistyped passwords could block you too.
+                    You're working from <strong id="abuse-you-address"></strong>, which no allow rule covers, so too many mistyped passwords could block you too.
                     <button class="btn btn-secondary btn-sm" type="button" id="abuse-you-add">Add it</button>
                 </p>
                 <div class="abuse-range" role="group" aria-label="Time range">
@@ -549,7 +599,7 @@
                             <div class="abuse-chart" id="abuse-chart-failures"></div>
                             <details class="abuse-data"><summary>Show as a table</summary>
                                 <div class="ma-table-wrap"><table class="messages-table">
-                                    <thead><tr><th>When</th><th>IMAP and POP3</th><th>SMTP</th><th>Webmail</th><th>Admin console</th></tr></thead>
+                                    <thead><tr id="abuse-table-failures-head"></tr></thead>
                                     <tbody id="abuse-table-failures"></tbody>
                                 </table></div>
                             </details>
@@ -602,10 +652,32 @@
                 <div class="card">
                     <div class="card-header"><h3>Accounts under attack</h3></div>
                     <div class="card-body">
-                        <p class="field-hint">Failed sign-ins per account in this window, from any address. Accounts are never blocked, so nobody can lock a user out by guessing wrong.</p>
+                        <p class="field-hint">Failed sign-ins per account in this window, from any address. Accounts are never blocked, so nobody can lock a user out by guessing wrong. An account guessed at from many addresses is shielded instead: see the setting below.</p>
                         <div class="ma-table-wrap"><table class="messages-table">
                             <thead><tr><th>Account</th><th>Failures</th></tr></thead>
                             <tbody id="abuse-accounts"></tbody>
+                        </table></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>Unusual sign-ins</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">Successful sign-ins from somewhere the account couldn't have reached in time, or from a country it hasn't used before, and accounts under attack from many addresses. Nothing is blocked: VPNs and mobile networks look like travel too. If one isn't its owner, change the password and reset two-step sign-in under Mail Administration.</p>
+                        <p class="field-hint abuse-error" id="abuse-alerts-state" hidden></p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>When</th><th>Account</th><th>What</th><th>Detail</th><th>From</th><th aria-label="Actions"></th></tr></thead>
+                            <tbody id="abuse-alerts"></tbody>
+                        </table></div>
+                        <p class="field-hint abuse-attribution"><a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a></p>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>Accounts on hold</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">These accounts sent to more outside recipients than the hourly limit allows. They can't send outside the server until released. Check the account and change its password first if it was taken over.</p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Account</th><th>Why</th><th>Since</th><th aria-label="Release"></th></tr></thead>
+                            <tbody id="abuse-holds"></tbody>
                         </table></div>
                     </div>
                 </div>
@@ -635,11 +707,44 @@
                             <label for="abuse-rate">New connections per minute, per address</label>
                             <input id="abuse-rate" type="number" min="0" max="1000000" required>
                             <p class="field-hint">Catches clients that connect and disconnect as fast as they can. 0 turns it off. Port 25 isn't counted.</p>
+                            <fieldset class="abuse-protocol-limits"><legend>Per protocol</legend>
+                                <table class="messages-table">
+                                    <thead><tr><th scope="col">Protocol</th><th scope="col">Connections</th><th scope="col">Per minute</th></tr></thead>
+                                    <tbody>
+                                    <tr><th scope="row">SMTP submission</th><td><input id="abuse-limit-smtp-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="SMTP submission connections per address"></td><td><input id="abuse-limit-smtp-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="SMTP submission new connections per minute"></td></tr>
+                                    <tr><th scope="row">IMAP</th><td><input id="abuse-limit-imap-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="IMAP connections per address"></td><td><input id="abuse-limit-imap-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="IMAP new connections per minute"></td></tr>
+                                    <tr><th scope="row">POP3</th><td><input id="abuse-limit-pop3-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="POP3 connections per address"></td><td><input id="abuse-limit-pop3-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="POP3 new connections per minute"></td></tr>
+                                    <tr><th scope="row">ManageSieve</th><td><input id="abuse-limit-sieve-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="ManageSieve connections per address"></td><td><input id="abuse-limit-sieve-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="ManageSieve new connections per minute"></td></tr>
+                                    </tbody>
+                                </table>
+                                <p class="field-hint">Leave a box empty to use the limits above. Each protocol is counted on its own. POP3 clients usually need far fewer connections than IMAP.</p>
+                            </fieldset>
                             <label for="abuse-failures">Failed sign-ins before blocking</label>
                             <input id="abuse-failures" type="number" min="1" max="100000" required>
                             <label for="abuse-network">Failed sign-ins before blocking a whole /24 or /48</label>
                             <input id="abuse-network" type="number" min="0" max="1000000" required>
                             <p class="field-hint">Catches attackers spread across a rented block. 0 turns it off.</p>
+                            <label for="abuse-spray">Different accounts one address may fail against</label>
+                            <input id="abuse-spray" type="number" min="0" max="100000" required>
+                            <p class="field-hint">Catches password spraying: one password tried on many accounts, too few times each to reach the limit above. 0 turns it off.</p>
+                            <label for="abuse-targeted">Different addresses failing against one account before it's shielded</label>
+                            <input id="abuse-targeted" type="number" min="0" max="100000" required>
+                            <p class="field-hint">While shielded, the account's password works only from networks it has signed in from in the last 90 days; elsewhere a right password is answered like a wrong one, so guessing gets nowhere. App passwords and passkeys work from anywhere, and the account is never locked. It lasts until the attack stops for one window. 0 turns it off.</p>
+                            <label for="abuse-inbound">Messages per hour from one outside address</label>
+                            <input id="abuse-inbound" type="number" min="0" max="10000000" required>
+                            <p class="field-hint">Includes port 25. Over it, mail is deferred, so a real server retries later. Signed-in users and allowed relays don't count. 0 turns it off.</p>
+                            <label for="abuse-domain">Messages per hour claiming one sender domain</label>
+                            <input id="abuse-domain" type="number" min="0" max="10000000" required>
+                            <p class="field-hint">Catches a run forging one domain from many addresses, each under the limit above. Over it, that domain's mail is deferred. Large providers send a lot of real mail, so set it well above what you receive from them. 0 turns it off.</p>
+                            <label for="abuse-signin-alerts">Unusual sign-in alerts</label>
+                            <select id="abuse-signin-alerts"><option value="on">On</option><option value="off">Off</option></select>
+                            <p class="field-hint">Keeps each account's last sign-in location for 30 days and its countries for 90, to compare against. Off keeps nothing new.</p>
+                            <label for="abuse-alert-email">Email alerts to</label>
+                            <input id="abuse-alert-email" type="text" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="security@example.com">
+                            <p class="field-hint">Unusual sign-ins, accounts under attack and accounts put on hold are emailed here as they happen, up to 20 an hour. Separate addresses with commas. Empty sends nothing.</p>
+                            <label for="abuse-outbound">Recipients outside the server per hour, per account</label>
+                            <input id="abuse-outbound" type="number" min="0" max="10000000" required>
+                            <p class="field-hint">Over it, the account's outside mail is put on hold until you release it: a taken-over account sends far more than its owner. Mail inside the server still flows. 0 turns it off.</p>
                             <label for="abuse-window">Counted over (minutes)</label>
                             <input id="abuse-window" type="number" min="1" max="1440" required>
                             <p class="field-hint">Failures add up across every service and account.</p>
@@ -654,11 +759,34 @@
                                 <option value="apply">Apply: drop blocked addresses at the host firewall</option>
                                 <option value="off">Off</option>
                             </select>
-                            <p class="field-hint">Covers client ports, never port 25. Check the allowlist before applying.</p>
-                            <label for="abuse-allowlist">Allowlist, one address or network per line</label>
-                            <textarea id="abuse-allowlist" rows="5" spellcheck="false" autocomplete="off" placeholder="203.0.113.9&#10;198.51.100.0/24"></textarea>
-                            <p class="field-hint">Never limited or blocked. Add your own address and monitoring.</p>
+                            <p class="field-hint">Covers client ports, never port 25. Check your allow rules before applying.</p>
                             <button class="btn btn-primary" type="submit">Save</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3>Allow and deny rules</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">Inbound rules cover clients connecting here and mail from outside. Outbound rules cover where mail is going. An address or network matches the client or the destination mail server; a domain or mail address matches the sender or the recipient. Allow beats deny, and never skips virus or spam scanning. An allow rule on an address or network for all protocols also means it's never limited or blocked: add your own address and monitoring.</p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Action</th><th>Direction</th><th>Matches</th><th>Protocols</th><th>Expires</th><th>Note</th><th aria-label="Remove"></th></tr></thead>
+                            <tbody id="abuse-rules"></tbody>
+                        </table></div>
+                        <form id="abuse-rule-form" class="abuse-inline abuse-rule-form">
+                            <select id="abuse-rule-action" aria-label="Action"><option value="deny">Deny</option><option value="allow">Allow</option></select>
+                            <select id="abuse-rule-direction" aria-label="Direction"><option value="inbound">Inbound</option><option value="outbound">Outbound</option><option value="both">Both</option></select>
+                            <input id="abuse-rule-value" type="text" required maxlength="320" placeholder="203.0.113.0/24, example.org or a@example.org" aria-label="Address, network, domain or mail address" autocomplete="off" spellcheck="false">
+                            <input id="abuse-rule-days" type="number" min="0" max="3650" placeholder="Days" aria-label="Expires after this many days, empty for never">
+                            <input id="abuse-rule-note" type="text" maxlength="200" placeholder="Note" aria-label="Note">
+                            <fieldset class="abuse-rule-protocols"><legend>Protocols, for an inbound address or network. None means all.</legend>
+                                <label><input type="checkbox" data-abuse-protocol value="smtp"> SMTP</label>
+                                <label><input type="checkbox" data-abuse-protocol value="imap"> IMAP</label>
+                                <label><input type="checkbox" data-abuse-protocol value="pop3"> POP3</label>
+                                <label><input type="checkbox" data-abuse-protocol value="sieve"> ManageSieve</label>
+                                <label><input type="checkbox" data-abuse-protocol value="webmail"> Webmail</label>
+                                <label><input type="checkbox" data-abuse-protocol value="admin"> Admin console</label>
+                            </fieldset>
+                            <button class="btn btn-primary" type="submit">Add rule</button>
                         </form>
                     </div>
                 </div>
@@ -1300,6 +1428,23 @@
                         </section>
                         <h4>Delivery aliases</h4><ul id="ma-alias-list" class="ma-alias-list"></ul>
                         <form id="ma-alias-form" class="ma-inline"><label class="sr-only" for="ma-alias">Alias address</label><input id="ma-alias" type="email" placeholder="alias@example.com" required><button class="btn btn-secondary" type="submit">Add alias</button></form>
+                        <section id="ma-resource-section" hidden>
+                            <h4>Room or resource</h4>
+                            <p class="field-hint">Makes this account something people book. It accepts invitations by itself, first come first served, unless approval is on, when its delegate answers them.</p>
+                            <form id="ma-resource-form" class="ma-form">
+                                <label class="ma-check"><input id="ma-resource-on" type="checkbox"> People can book this account</label>
+                                <label for="ma-resource-name">Name</label><input id="ma-resource-name" type="text" maxlength="200">
+                                <label for="ma-resource-kind">Kind</label><select id="ma-resource-kind"><option value="room">Room</option><option value="equipment">Equipment</option></select>
+                                <label for="ma-resource-location">Location</label><input id="ma-resource-location" type="text" maxlength="200">
+                                <label for="ma-resource-capacity">Capacity</label><input id="ma-resource-capacity" type="number" min="0">
+                                <label class="ma-check"><input id="ma-resource-manual" type="checkbox"> Needs approval by a delegate</label>
+                                <button type="submit" class="button">Save</button>
+                            </form>
+                        </section>
+                        <section id="ma-calendar-section" hidden>
+                            <h4>Calendar sharing</h4><ul id="ma-calendar-list" class="ma-alias-list"></ul>
+                            <form id="ma-calendar-form" class="ma-inline"><label class="sr-only" for="ma-calendar-member">Share this calendar with</label><input id="ma-calendar-member" type="email" placeholder="assistant@example.com" required><label class="sr-only" for="ma-calendar-level">Access</label><select id="ma-calendar-level"><option value="view">View</option><option value="edit">Edit</option></select><button class="btn btn-secondary" type="submit">Share calendar</button></form>
+                        </section>
                         <h4>Forwarding and sending</h4>
                         <form id="ma-mail-form" class="ma-form">
                             <label for="ma-forward">Forward all mail to</label><input id="ma-forward" type="text" placeholder="someone@example.org, other@example.net" aria-describedby="ma-forward-help">
@@ -1327,6 +1472,11 @@
                     <section id="ma-domain-status-section" class="ma-form">
                         <label for="ma-domain-status">Domain status</label><select id="ma-domain-status"><option value="active">Active</option><option value="suspended">Suspended</option><option value="disabled">Disabled</option></select>
                         <p class="field-hint">Suspended keeps receiving mail but nobody can sign in. Disabled also refuses its mail.</p>
+                    </section>
+                    <section class="ma-health" aria-labelledby="ma-domain-health-title">
+                        <div class="ma-health-heading"><h4 id="ma-domain-health-title">DNS health</h4><button type="button" class="btn btn-secondary" id="ma-domain-health-run">Check DNS</button></div>
+                        <p id="ma-domain-health-summary" class="field-hint" role="status">Checks the records this domain needs to send and receive mail.</p>
+                        <div id="ma-domain-health-results" class="ma-health-results"></div>
                     </section>
                     <h4>DKIM signing</h4>
                     <p id="ma-domain-signing"></p>
@@ -1504,7 +1654,7 @@
                         <div class="card-body">
                             <div id="rate-limiting-loading" class="loading-placeholder">Loading rate limiting configuration...</div>
                             <div id="rate-limiting-content" style="display: none;">
-                                <p class="field-hint" id="rate-limit-inert">These settings belong to the rate limiter plugin, which isn't loaded, so they change nothing. Connection limits are under <strong>Abuse</strong>.</p>
+                                <p class="field-hint" id="rate-limit-inert">These settings belong to the rate limiter plugin, which isn't loaded, so they change nothing. The limits that apply, on connections, sign-ins, mail per address and each account's outside mail, are under <strong>Abuse</strong>.</p>
                                 <div class="config-section">
                                     <h4>Connection Limits</h4>
                                     <div class="config-grid">
@@ -1592,6 +1742,46 @@
                                 <input type="password" id="own-new-password" placeholder="New password (12+ characters)" autocomplete="new-password">
                                 <button class="btn btn-secondary" onclick="changeOwnPassword()">Change password</button>
                             </div>
+                        </div>
+                    </div>
+                    <div class="card" id="tf-card" style="margin-bottom: 1.5rem;" hidden>
+                        <div class="card-header"><h3>Two-step sign-in</h3></div>
+                        <div class="card-body">
+                            <p class="panel-intro">After your password, the console asks for a code from an authenticator app or for a passkey. A passkey also signs you in on its own, since it checks your fingerprint, face or PIN. With two-step sign-in on, scripts can't use your password; give them an API key.</p>
+                            <p id="tf-notice" class="abuse-notice" role="status" hidden></p>
+                            <div class="send-row">
+                                <input type="password" id="tf-password" placeholder="Your password, to make changes" autocomplete="current-password" aria-label="Your password, to make changes">
+                            </div>
+                            <h4>Authenticator app</h4>
+                            <p id="tf-totp-state" class="field-hint"></p>
+                            <div class="send-row" id="tf-totp-actions">
+                                <button class="btn btn-secondary" type="button" id="tf-totp-on">Set up an authenticator app</button>
+                                <button class="btn btn-secondary" type="button" id="tf-totp-codes">New recovery codes</button>
+                                <button class="btn btn-danger" type="button" id="tf-totp-off">Turn off</button>
+                            </div>
+                            <div id="tf-setup" hidden>
+                                <p class="field-hint">Scan this with your authenticator app, or type the key into it. Then enter the six-digit code it shows.</p>
+                                <img id="tf-qr" alt="QR code for your authenticator app" width="200" height="200">
+                                <p><code id="tf-secret"></code></p>
+                                <div class="send-row">
+                                    <input type="text" id="tf-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456" aria-label="Code from the app">
+                                    <button class="btn btn-primary" type="button" id="tf-confirm">Turn on</button>
+                                </div>
+                            </div>
+                            <div id="tf-codes" hidden>
+                                <p><strong>Recovery codes.</strong> Each signs you in once if you lose your phone. Keep them somewhere safe: they aren't shown again.</p>
+                                <pre id="tf-codes-list"></pre>
+                            </div>
+                            <h4>Passkeys</h4>
+                            <div class="ma-table-wrap"><table class="messages-table">
+                                <thead><tr><th>Name</th><th>Console address</th><th>Added</th><th>Last used</th><th aria-label="Remove"></th></tr></thead>
+                                <tbody id="tf-passkeys"></tbody>
+                            </table></div>
+                            <div class="send-row" id="tf-passkey-form">
+                                <input type="text" id="tf-passkey-name" maxlength="64" placeholder="Name, e.g. Work laptop" aria-label="Passkey name" autocomplete="off">
+                                <button class="btn btn-secondary" type="button" id="tf-passkey-add">Add a passkey</button>
+                            </div>
+                            <p id="tf-passkey-unsupported" class="field-hint" hidden>This browser can't use passkeys here. They need the console on HTTPS, or localhost.</p>
                         </div>
                     </div>
                 </div>
@@ -1758,11 +1948,13 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261031-certremove"></script>
+    <script src="/static/app.js?v=20261103-compliance"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
-    <script src="/static/users.js?v=20261021-domainadmin"></script>
+    <script src="/static/users.js?v=20261103-2fa"></script>
     <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
-    <script src="/static/abuse.js?v=20261030-abuse"></script>
+    <script src="/static/abuse.js?v=20261102-alertblock"></script>
+    <script src="/static/compliance.js?v=20261103-compliance"></script>
+    <script src="/static/security.js?v=20261103-2fa"></script>
 </body>
 
 </html>

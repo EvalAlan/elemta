@@ -116,6 +116,9 @@ type delivery struct {
 	rcpt    string // the address it was delivered to
 	raw     []byte
 	token   string // retry key, "" when the client gave none
+	// category is the inbox category keyword (categories.go), "" for
+	// Primary. It is set once spam has been ruled out.
+	category string
 }
 
 func storeToken(token, target string) string {
@@ -128,13 +131,18 @@ func storeToken(token, target string) string {
 
 // deliver stores one recipient's copy, running their Sieve script.
 func (s *Service) deliver(ctx context.Context, d delivery) error {
-	// Blocked senders and flagged spam go to Junk first: not forwarded,
-	// not filtered, never in the INBOX.
-	if junk, err := s.fileAsJunk(ctx, d); err != nil {
+	// Blocked senders and spam are filed first: not forwarded, not filtered,
+	// never in the INBOX.
+	if folder, err := s.spamFolder(ctx, d); err != nil {
 		return err
-	} else if junk {
-		return s.store(ctx, d, s.junkFolder(ctx, d.account.ID), nil, true, map[string]bool{})
+	} else if folder != "" {
+		return s.store(ctx, d, folder, nil, true, map[string]bool{})
 	}
+	if booked, err := s.bookResource(ctx, d); booked || err != nil {
+		return err
+	}
+	d.category = s.categoryKeyword(ctx, d)
+	s.copyInvitationToDelegates(ctx, d)
 	if len(d.account.Forward) > 0 {
 		// Forwarding from the directory comes before the account's own
 		// filters, which then see only the copy kept here, if any.
@@ -146,12 +154,12 @@ func (s *Service) deliver(ctx context.Context, d delivery) error {
 	if p := d.account.Policy; p != nil && !p.Filters {
 		// Filters turned off by the class of service: stored scripts stay,
 		// unused, so turning filters back on restores them.
-		_, err := s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, nil, time.Now(), d.token)
+		_, err := s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, withCategory(nil, d.category), time.Now(), d.token)
 		return err
 	}
 	script, err := s.engine.ActiveScript(ctx, d.account.ID)
 	if errors.Is(err, ErrNotFound) {
-		_, err = s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, nil, time.Now(), d.token)
+		_, err = s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, withCategory(nil, d.category), time.Now(), d.token)
 		return err
 	}
 	if err != nil {
@@ -269,7 +277,7 @@ func (s *Service) store(ctx context.Context, d delivery, folder string, flags in
 		return nil
 	}
 	done[key] = true
-	_, err := s.engine.Append(ctx, d.account.ID, folder, d.raw, flags, time.Now(), storeToken(d.token, key))
+	_, err := s.engine.Append(ctx, d.account.ID, folder, d.raw, withCategory(flags, d.category), time.Now(), storeToken(d.token, key))
 	return err
 }
 
@@ -306,11 +314,41 @@ func (s *Service) redirect(ctx context.Context, d delivery, to string) error {
 		return err
 	}
 	msg := append([]byte(redirectHeader+": "+d.rcpt+"\r\n"), d.raw...)
-	if err := s.submit(ctx, d.from, []string{target}, msg); err != nil {
+	if err := s.submit(ctx, s.forwardSender(ctx, d, target), []string{target}, msg); err != nil {
+		// A rule refusing the destination won't change on a retry, and
+		// retrying would hold the mail back from everyone else. Keep it here.
+		var refused *smtp.SMTPError
+		if errors.As(err, &refused) && refused.Code == 550 && refused.EnhancedCode == (smtp.EnhancedCode{5, 7, 1}) {
+			s.log.Info("forwarding refused by a rule; keeping the mail", "account", d.account.ID)
+			return s.store(ctx, d, "INBOX", nil, false, map[string]bool{})
+		}
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 0}, Message: "Forwarding temporarily unavailable"}
 	}
 	_, err = s.engine.claimSent(ctx, d.account.ID, key, 7*24*time.Hour)
 	return err
+}
+
+// forwardSender returns the envelope sender for mail forwarded to target. Mail
+// leaving the server goes out from an SRS address at the forwarding account's
+// domain, or the next server's SPF check on the original sender fails. A bounce
+// has no sender to rewrite, and mail staying here passes through no SPF check.
+//
+// When the rewritten address would be too long the original sender stays:
+// the mail may still get through on its DKIM signature, whereas a sender the
+// MTA refuses would never leave.
+func (s *Service) forwardSender(ctx context.Context, d delivery, target string) string {
+	if s.srs == nil || d.from == "" {
+		return d.from
+	}
+	if _, err := s.auth.Resolve(ctx, target); err == nil {
+		return d.from
+	}
+	from, err := s.srs.Forward(d.from, domainOf(d.account.Address))
+	if err != nil {
+		s.log.Info("forwarding with the original sender", "account", d.account.ID, "reason", err)
+		return d.from
+	}
+	return from
 }
 
 // hasRedirectMark reports whether rcpt already forwarded this message: it

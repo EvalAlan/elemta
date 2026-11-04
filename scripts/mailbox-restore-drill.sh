@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Restores a mailbox backup into throwaway containers, beside the running
 # stack and touching none of its data, then checks it: every body a
 # message refers to must exist with its checksum.
@@ -41,6 +41,9 @@ sleep 2
 
 echo "Restoring metadata"
 docker exec -i "$dbc" pg_restore -U mailbox -d mailbox --no-owner --exit-on-error <"$in/metadata.dump"
+# The bodies are in a volume here whatever store they came from, and the
+# engine refuses metadata that names another store.
+docker exec "$dbc" psql -q -U mailbox -d mailbox -c "UPDATE mailbox_bodies SET store='file:/var/lib/elemta/bodies'"
 echo "Restoring bodies"
 docker run --rm -i --network none --user 0 --entrypoint sh -v "$vol:/bodies" "$image" \
     -c 'tar -C /bodies -xzf - && chown -R 1001:1001 /bodies' <"$in/bodies.tar.gz"

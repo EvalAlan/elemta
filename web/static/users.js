@@ -23,6 +23,8 @@ async function usersRequest(method, path, body) {
 async function refreshUsers() {
     const listEl = document.getElementById('users-list');
     const card = document.getElementById('users-card');
+    // Everyone's own sign-in, whether or not they may manage others.
+    if (typeof refreshTwoFactor === 'function') refreshTwoFactor();
     if (!listEl) return;
 
     try {
@@ -49,7 +51,7 @@ async function refreshUsers() {
 
         listEl.innerHTML = `
             <table class="messages-table">
-                <thead><tr><th>User</th><th>Role</th><th>Domains</th><th></th></tr></thead>
+                <thead><tr><th>User</th><th>Role</th><th>Domains</th>${data.two_factor ? '<th>Two-step</th>' : ''}<th></th></tr></thead>
                 <tbody>
                     ${data.users.map(u => {
                         const isMe = u.username === data.current_user;
@@ -66,6 +68,9 @@ async function refreshUsers() {
                             <td>${current === 'domain-admin'
                                 ? `<button class="btn btn-secondary btn-sm" onclick="setUserRole('${name}', 'domain-admin', null, '${escapeJsArg((u.domains || []).join(', '))}')">${escapeHtml((u.domains || []).join(', ') || 'none')}</button>`
                                 : '<span class="field-hint">all</span>'}</td>
+                            ${data.two_factor ? `<td>${u.two_factor
+                                ? `On${isMe ? '' : ` <button class="btn btn-secondary btn-sm" onclick="resetSecondFactor('${name}')">Reset</button>`}`
+                                : '<span class="field-hint">Off</span>'}</td>` : ''}
                             <td style="white-space: nowrap;">
                                 <button class="btn btn-secondary btn-sm" onclick="resetUserPassword('${name}')">Set password</button>
                                 ${isMe ? '' : `<button class="btn btn-danger btn-sm" onclick="deleteUser('${name}')">Remove</button>`}
@@ -158,6 +163,17 @@ async function resetUserPassword(username) {
         showToast(`Password set for ${username}`, 'success');
     } catch (error) {
         showToast(`Could not set password: ${error.message}`, 'error');
+    }
+}
+
+async function resetSecondFactor(username) {
+    if (!confirm(`Turn off two-step sign-in for ${username}? Their authenticator app, recovery codes and passkeys stop working, and they sign in with their password alone until they set it up again. Do this for someone who lost their phone.`)) return;
+    try {
+        await usersRequest('POST', `/users/${encodeURIComponent(username)}/reset-2fa`);
+        showToast(`Two-step sign-in turned off for ${username}`, 'success');
+        refreshUsers();
+    } catch (error) {
+        showToast(`Could not reset: ${error.message}`, 'error');
     }
 }
 

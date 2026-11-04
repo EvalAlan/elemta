@@ -3,6 +3,7 @@ package webmail
 import (
 	"context"
 	"errors"
+	"github.com/EvalAlan/elemta/internal/mailcategory"
 	"strconv"
 	"strings"
 	"time"
@@ -13,13 +14,16 @@ type Role string
 
 // Folder roles the UI treats specially.
 const (
-	RoleNone    Role = ""
-	RoleInbox   Role = "inbox"
-	RoleDrafts  Role = "drafts"
-	RoleSent    Role = "sent"
-	RoleJunk    Role = "junk"
-	RoleTrash   Role = "trash"
-	RoleArchive Role = "archive"
+	RoleNone   Role = ""
+	RoleInbox  Role = "inbox"
+	RoleDrafts Role = "drafts"
+	RoleSent   Role = "sent"
+	RoleJunk   Role = "junk"
+	// RoleQuarantine holds mail the spam check would have refused. The mailbox
+	// service creates it on first use, so it isn't a default folder.
+	RoleQuarantine Role = "quarantine"
+	RoleTrash      Role = "trash"
+	RoleArchive    Role = "archive"
 )
 
 // Folder is one mailbox in the user's folder tree.
@@ -106,6 +110,19 @@ type Conversation struct {
 // Count is the number of messages in the conversation.
 func (c Conversation) Count() int { return len(c.UIDs) }
 
+// OpenUID is the message its row opens: the oldest unread, or the latest when
+// all are read. Opening a message is what marks it read, so a row that always
+// opened the latest could never clear an older unread one. The rest stay
+// unread rather than being marked read unseen, and the next click reaches them.
+func (c Conversation) OpenUID() uint32 {
+	for _, m := range c.Messages {
+		if !m.Seen {
+			return m.UID
+		}
+	}
+	return c.Latest.UID
+}
+
 // UIDList is the conversation's UIDs as one form value ("12,15,19").
 func (c Conversation) UIDList() string {
 	parts := make([]string, len(c.UIDs))
@@ -159,19 +176,22 @@ type ListQuery struct {
 	Answered      bool
 	HasAttachment bool
 	Tag           string
-	Since         time.Time // on or after this day
-	Before        time.Time // before this day
-	Sort          Sort
-	Reverse       bool // oldest first, or Z to A
-	Page          int  // 1-based
-	PageSize      int
+	// Category limits the list to one inbox tab, by mailcategory name
+	// ("primary", "social"...). Empty lists every tab.
+	Category string
+	Since    time.Time // on or after this day
+	Before   time.Time // before this day
+	Sort     Sort
+	Reverse  bool // oldest first, or Z to A
+	Page     int  // 1-based
+	PageSize int
 }
 
 // Filtered reports whether q restricts the folder at all, as opposed to
 // only paging and ordering it.
 func (q ListQuery) Filtered() bool {
 	return q.Text != "" || q.From != "" || q.To != "" || q.Subject != "" || q.Unread || q.Flagged ||
-		q.Answered || q.HasAttachment || q.Tag != "" || !q.Since.IsZero() || !q.Before.IsZero()
+		q.Answered || q.HasAttachment || q.Tag != "" || q.Category != "" || !q.Since.IsZero() || !q.Before.IsZero()
 }
 
 // Flags the UI sets and clears. Tags are stored as IMAP keywords alongside them.
@@ -234,6 +254,15 @@ type Mailstore interface {
 	// conversation as the given Message-IDs: those IDs themselves, and
 	// anything whose References or In-Reply-To name one of them.
 	Related(ctx context.Context, folders []string, ids []string) ([]Related, error)
+	// CategoryUnread counts the unread messages in each inbox tab of
+	// folder, keyed by mailcategory name.
+	CategoryUnread(ctx context.Context, folder string) (map[string]int, error)
+	// Senders returns the first From address of each message.
+	Senders(ctx context.Context, folder string, uids []uint32) (map[uint32]string, error)
+	// Categorize classifies up to limit of the most recent messages in
+	// folder that have no category yet, and returns how many it put in a
+	// tab other than Primary.
+	Categorize(ctx context.Context, folder string, limit int, overrides mailcategory.Overrides) (int, error)
 
 	ObjectStore
 	Close() error

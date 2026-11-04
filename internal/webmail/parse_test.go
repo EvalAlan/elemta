@@ -143,3 +143,25 @@ func TestLegacy8BitTextIsDecoded(t *testing.T) {
 		t.Errorf("valid UTF-8 changed: %q", got)
 	}
 }
+
+// Some senders give their body parts a Content-ID. They are still the body,
+// not attachments named part-1 and part-2.
+func TestParseBodyPartsWithContentID(t *testing.T) {
+	raw := "From: LinkedIn <jobalerts-noreply@linkedin.com>\r\n" +
+		"Subject: Principal Engineer job\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/alternative; boundary=\"b1\"\r\n\r\n" +
+		"--b1\r\nContent-Type: text/plain;charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-ID: text-body\r\n\r\nNew job for you\r\n" +
+		"--b1\r\nContent-Type: text/html;charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-ID: html-body\r\n\r\n<p>New job for you</p>\r\n" +
+		"--b1--\r\n"
+	msg, err := parseMessage([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg.Text, "New job") || !strings.Contains(msg.HTML, "<p>New job") {
+		t.Fatalf("body not found: text=%q html=%q", msg.Text, msg.HTML)
+	}
+	if got := msg.Attachments(); len(got) != 0 {
+		t.Fatalf("body parts listed as attachments: %+v", got)
+	}
+}

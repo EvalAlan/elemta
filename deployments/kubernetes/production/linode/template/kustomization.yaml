@@ -38,16 +38,13 @@ configMapGenerator:
       - mailbox.toml
   - name: elemta-rspamd-override
     files:
-      - ../../../../../docker/rspamd/override.d/rbl.conf
-      - ../../../../../docker/rspamd/override.d/surbl.conf
-      - ../../../../../docker/rspamd/override.d/asn.conf
-      - ../../../../../docker/rspamd/override.d/fuzzy_check.conf
       - ../../../../../docker/rspamd/override.d/options.inc
   - name: elemta-rspamd-local
     files:
       - ../../../../../docker/rspamd/local.d/greylist.conf
       - ../../../../../docker/rspamd/local.d/actions.conf
       - ../../../../../docker/rspamd/local.d/url_suspect_group.conf
+      - ../../../../../docker/rspamd/local.d/worker-controller.inc
 
 # Generated once by `make linode-init` into secrets/, apart from the
 # Object Storage keys and the recovery mailbox's password, which you add.
@@ -60,6 +57,8 @@ secretGenerator:
     envs: [secrets/web.env]
   - name: elemta-mailbox
     envs: [secrets/mailbox.env]
+  - name: elemta-rspamd
+    envs: [secrets/rspamd.env]
   - name: elemta-webmail
     envs: [secrets/webmail.env]
   - name: elemta-mailbox-s3

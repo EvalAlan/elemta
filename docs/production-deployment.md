@@ -224,6 +224,42 @@ That last point matters if you terminate TLS at a proxy: **set
 `X-Forwarded-Proto`**, otherwise the cookie is issued without `Secure` and can
 be sent over a plaintext connection.
 
+### Two-step sign-in
+
+Each console user can add a second step under **Settings > Users > Two-step
+sign-in**:
+
+- **An authenticator app.** Scan the QR code, enter the code it shows, and keep
+  the ten recovery codes it gives you. Each recovery code signs you in once if
+  you lose your phone.
+- **Passkeys.** A passkey can be the second step after your password, or it
+  signs you in on its own, since it checks your fingerprint, face or PIN
+  itself. Each passkey belongs to the address you reached the console at, and
+  needs HTTPS there (or `localhost`).
+
+Turning either on, or changing them, asks for your password again. With
+either on, the password alone leads only to the second step, never to a
+session. **HTTP Basic auth is refused for that account**, since a password on
+every request can't carry a code: give scripts their own account without
+two-step sign-in, or an API key. API keys are kept in the console's memory
+today and end when it restarts.
+
+The second factors are kept beside the users file, in `<users file>.2fa`
+(`0600`, owned like the users file), and need a users file: with users in LDAP
+or SQL, the section doesn't appear. Five wrong codes end the attempt, and wrong
+codes count towards the login lockout above like wrong passwords.
+
+Someone who lost their phone and recovery codes can be let back in by another
+administrator, with **Reset** in the users list, or on the server:
+
+```bash
+elemta user reset-2fa alice --file /etc/elemta/users.txt
+```
+
+They then sign in with their password alone until they set it up again.
+Removing a user also removes their second factors. Every change is recorded in
+the audit log.
+
 ---
 
 ### Never run the admin API without authentication off-host
@@ -354,6 +390,9 @@ section gate and the per-scanner gate are both honoured.
   message unscanned rather than refusing it. Leave it `false` unless you would
   rather lose mail than accept it unscanned; a scanner outage becomes a mail
   outage otherwise.
+- **`quarantine`** — hold what `reject_on_spam` would refuse in each recipient's
+  Quarantine folder, for mail to local mailboxes. See "Quarantine" in
+  [mail-administration.md](mail-administration.md).
 - **`reject_on_spam`** — the engine decides what is spam against its own
   threshold; this decides whether that verdict refuses the message. With it
   `false`, spam is delivered carrying `X-Spam-*` headers for downstream
@@ -377,17 +416,29 @@ Scanning costs a network round trip per message per engine, and the two run
 concurrently. Rspamd's optional lookups can dominate that:
 
 - `fuzzy_check` queries rspamd.com over UDP for every message. Measured on a
-  development stack it added roughly 4.3 seconds to about 5% of messages, cut
-  throughput by more than half, and made it swing eightfold between runs.
-- DNS blocklists (`rbl`, `surbl`) behave badly against a resolver that answers
-  for names which should not exist — rspamd cannot then tell a working
-  blocklist from a broken one.
+  development stack it added roughly 4.3 seconds to about 5% of messages. That stall did not appear on a Linode server, where the two
+  overrides below together added about 250 ms to the average scan (285 to
+  530 ms) and 170 ms at p95, with nothing over 1.4 seconds in 150 messages.
+- DNS blocklists (`rbl`, `surbl`) need a resolver of your own. Rspamd can't
+  tell a working blocklist from a broken one behind a resolver that answers for
+  names which should not exist, and Spamhaus refuses queries that arrive through
+  shared public resolvers.
 
-Both are genuinely useful against bulk mail. Keep them if you want them, but
-size for the latency and make sure Rspamd has a resolver that returns NXDOMAIN
-properly. The development stack disables them for reproducibility, via
+The Compose production stack (`docker-compose.cloud.yml`) and the `ha` Kubernetes
+overlay turn both on. The laptop stack keeps them off for reproducibility, via
 `docker/rspamd/override.d/`; those overrides are **not** intended for
 production.
+
+Two things to check on your own deployment:
+
+- **The resolver.** Compose runs its own (`elemta-dns`), which works. The `ha`
+  overlay uses the cluster's DNS, which forwards to your provider's resolvers,
+  and Spamhaus may refuse those. Look for `SPAMHAUS_BLOCKED`, `DBL_BLOCKED`,
+  `URIBL_BLOCKED` or `SURBL_BLOCKED` in Rspamd's symbols. A refusal never scores
+  mail as spam, but that list then does nothing.
+- **The blocklists' terms.** Spamhaus, URIBL and SURBL are free for low volumes
+  and non-commercial use. Above that, or for a commercial service, you need
+  their paid feeds.
 
 ---
 

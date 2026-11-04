@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/adminmfa"
 	"net"
 	"net/http"
 	"strings"
@@ -42,6 +43,9 @@ type AuthMiddleware struct {
 	// the same way as the login form. Both are optional.
 	throttle   *loginThrottle
 	clientAddr func(*http.Request) string
+	// mfa refuses Basic auth to users with a second factor, which a
+	// password on every request can't carry. Nil without one.
+	mfa *adminmfa.Store
 }
 
 // NewAuthMiddleware creates a new authentication middleware
@@ -189,12 +193,35 @@ func (am *AuthMiddleware) authenticateAPIKey(keyString string) (*AuthContext, er
 // too often; it surfaces as a 401 like any other refused credential.
 var errLoginThrottled = errors.New("too many failed logins; try again later")
 
+// secondFactorOff refuses a password-only sign-in for a user who has a
+// second factor, or when that can't be told.
+func (am *AuthMiddleware) secondFactorOff(username string) error {
+	if am.mfa == nil {
+		return nil
+	}
+	st, err := am.mfa.Status(username)
+	if err != nil || st.On() {
+		return errSecondFactor
+	}
+	return nil
+}
+
 func (am *AuthMiddleware) authenticateBasicAuthThrottled(r *http.Request, username, password string) (*AuthContext, error) {
 	if am.throttle == nil || am.clientAddr == nil {
-		return am.authenticateBasicAuth(username, password)
+		ctx, err := am.authenticateBasicAuth(username, password)
+		if err == nil {
+			err = am.secondFactorOff(username)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return ctx, nil
 	}
 	addr := am.clientAddr(r)
 	if am.throttle.retryAfter(addr, username) > 0 {
+		return nil, errLoginThrottled
+	}
+	if _, denied := am.abuse.DenyPeer(addr, abuse.ProtocolAdmin); denied {
 		return nil, errLoginThrottled
 	}
 	if _, blocked := am.abuse.Blocked(addr); blocked {
@@ -204,6 +231,9 @@ func (am *AuthMiddleware) authenticateBasicAuthThrottled(r *http.Request, userna
 	if err != nil {
 		am.throttle.recordFailure(addr, username)
 		am.abuse.Failure(r.Context(), addr, "admin", username)
+		return nil, err
+	}
+	if err := am.secondFactorOff(username); err != nil {
 		return nil, err
 	}
 	am.throttle.recordSuccess(addr, username)

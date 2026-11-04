@@ -98,18 +98,7 @@ JOIN mailbox_accounts a ON a.id=h.account WHERE a.address=$1 ORDER BY h.id`, str
 		if err != nil {
 			return n, fmt.Errorf("held message body %s: %w", it.body, err)
 		}
-		fmt.Fprintf(bw, "From MAILER-DAEMON %s\n", it.date.UTC().Format(time.ANSIC))
-		fmt.Fprintf(bw, "X-Elemta-Held: folder=%q; %s; held %s\n", it.folder, it.reason, it.heldAt.UTC().Format(time.RFC3339))
-		for _, line := range strings.SplitAfter(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
-			if strings.HasPrefix(strings.TrimLeft(line, ">"), "From ") {
-				line = ">" + line
-			}
-			_, _ = bw.WriteString(line)
-		}
-		if !strings.HasSuffix(string(raw), "\n") {
-			_ = bw.WriteByte('\n')
-		}
-		_ = bw.WriteByte('\n')
+		writeMbox(bw, it.date, fmt.Sprintf("X-Elemta-Held: folder=%q; %s; held %s", it.folder, it.reason, it.heldAt.UTC().Format(time.RFC3339)), raw)
 		n++
 	}
 	return n, bw.Flush()
@@ -187,6 +176,8 @@ func (e *Engine) Retention(ctx context.Context, now time.Time) (RetentionReport,
 				days = shorterRetention(days, eff.TrashDays)
 			case retentionFolderName(folder.Name, "Junk", "Spam", "Junk E-mail"):
 				days = shorterRetention(days, eff.JunkDays)
+			case retentionFolderName(folder.Name, quarantineFolder):
+				days = shorterRetention(days, eff.QuarantineDays)
 			case retentionFolderName(folder.Name, "Sent", "Sent Items", "Sent Messages"):
 				days = shorterRetention(days, eff.SentDays)
 			}

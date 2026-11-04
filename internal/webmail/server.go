@@ -26,6 +26,8 @@ const (
 
 // Server is the webmail HTTP application.
 type Server struct {
+	// images is the remote image proxy, nil when image_proxy is off.
+	images   *imageProxy
 	objectDB *sql.DB
 	cfg      Config
 	sessions *SessionManager
@@ -107,6 +109,13 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
 		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now, dav: newDAVPool(),
 		defaultLoc: cfg.location(),
+	}
+	if *cfg.ImageProxy {
+		images, err := newImageProxy(cfg.ImageCacheDir, int64(cfg.ImageCacheMB)<<20, int64(cfg.ImageMaxMB)<<20, log)
+		if err != nil {
+			return nil, err
+		}
+		server.images = images
 	}
 	if v, ok := sessions.shared.(*valkeySessions); ok {
 		server.pending.shared = v
@@ -213,6 +222,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.loginSubmit)
 	mux.HandleFunc("POST /login/admin", s.adminLoginSubmit)
+	mux.HandleFunc("POST /login/passkey/begin", s.passkeyLoginBegin)
+	mux.HandleFunc("POST /login/passkey/finish", s.passkeyLoginFinish)
 	mux.HandleFunc("GET /login/verify", s.twoFactorPage)
 	mux.HandleFunc("POST /login/verify", s.twoFactorSubmit)
 	mux.HandleFunc("GET /login/setup", s.forcedSetupPage)
@@ -223,12 +234,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/app-passwords", s.authed(s.appPasswordSubmit))
 	mux.HandleFunc("POST /settings/app-passwords/delete", s.authed(s.appPasswordDeleteSubmit))
 	mux.HandleFunc("POST /settings/app-required", s.authed(s.appRequiredSubmit))
+	mux.HandleFunc("POST /settings/protocols", s.authed(s.protocolSubmit))
 	mux.HandleFunc("POST /logout", s.authed(s.logout))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/mail", http.StatusFound) })
 	mux.HandleFunc("GET /mail", s.authed(s.mailPage))
 	mux.HandleFunc("GET /mail/body", s.authed(s.messageBody))
 	mux.HandleFunc("GET /mail/part", s.authed(s.messagePart))
 	mux.HandleFunc("GET /mail/raw", s.authed(s.messageRaw))
+	mux.HandleFunc("GET /mail/image", s.authed(s.serveImage))
 	mux.HandleFunc("GET /mail/print", s.authed(s.messagePrint))
 	mux.HandleFunc("GET /mail/source", s.authed(s.messageSource))
 	mux.HandleFunc("GET /api/reminders", s.authed(s.remindersAPI))
@@ -249,8 +262,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/theme", s.authed(s.themeSubmit))
 	mux.HandleFunc("POST /settings/conversations", s.authed(s.conversationsSubmit))
 	mux.HandleFunc("POST /settings/mail-calendar", s.authed(s.mailCalendarSubmit))
+	mux.HandleFunc("POST /settings/categorize", s.authed(s.categorizeSubmit))
+	mux.HandleFunc("POST /settings/tab-rules/remove", s.authed(s.categoryRuleRemove))
 	mux.HandleFunc("POST /settings/password", s.authed(s.passwordSubmit))
 	mux.HandleFunc("POST /settings/forwarding", s.authed(s.forwardingSubmit))
+	mux.HandleFunc("POST /settings/calendar-shares", s.authed(s.calendarShareSubmit))
+	mux.HandleFunc("GET /api/pgp/key", s.authed(s.pgpKeyGet))
+	mux.HandleFunc("POST /api/pgp/key", s.authed(s.pgpKeyPut))
+	mux.HandleFunc("POST /api/pgp/key/delete", s.authed(s.pgpKeyDelete))
+	mux.HandleFunc("POST /api/pgp/lookup", s.authed(s.pgpLookup))
+	mux.HandleFunc("POST /api/pgp/pin", s.authed(s.pgpPin))
+	mux.HandleFunc("POST /settings/pgp/publish", s.authed(s.pgpPublishSubmit))
+	mux.HandleFunc("GET /.well-known/openpgpkey/{path...}", s.wkdServe)
+	mux.HandleFunc("POST /settings/passkeys/begin", s.authed(s.passkeyAddBegin))
+	mux.HandleFunc("POST /settings/passkeys/finish", s.authed(s.passkeyAddFinish))
+	mux.HandleFunc("POST /settings/passkeys/delete", s.authed(s.passkeyDelete))
 	mux.HandleFunc("POST /settings/senders", s.authed(s.sendersSubmit))
 	mux.HandleFunc("POST /settings/retention", s.authed(s.retentionSubmit))
 	mux.HandleFunc("POST /mail/block-sender", s.authed(s.blockSender))
@@ -262,6 +288,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /calendar/event", s.authed(s.eventPage))
 	mux.HandleFunc("POST /calendar/event", s.authed(s.eventSubmit))
 	mux.HandleFunc("POST /calendar/holiday/hide", s.authed(s.holidayHide))
+	mux.HandleFunc("POST /calendar/shared", s.authed(s.calendarOverlaySubmit))
 	mux.HandleFunc("POST /calendar/rsvp", s.authed(s.rsvpSubmit))
 	mux.HandleFunc("GET /calendar/export", s.authed(s.calendarExport))
 	mux.HandleFunc("POST /calendar/import", s.authed(s.calendarImport))
@@ -390,7 +417,9 @@ type view struct {
 	Body            *sanitizeResult
 	Remote          bool
 	Tags            []string
-	Thread          []Related
+	// InboxTabs is the tab bar over the inbox, when tabs are on.
+	InboxTabs []InboxTab
+	Thread    []Related
 	// Conversations is the threaded list, when the list is grouped.
 	Conversations []Conversation
 	Threaded      bool
@@ -409,6 +438,8 @@ type view struct {
 	// Loc and Clock24 control how times are shown.
 	Loc     *time.Location
 	Clock24 bool
+	// MailSound is the new-mail tone, empty for none.
+	MailSound string
 	// TZSet is false until the user has a time zone, which tells the page
 	// to report the browser's.
 	TZSet bool
@@ -432,6 +463,11 @@ func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
 		pv.TZSet = cached.Timezone != ""
 		pv.Theme = cached.Theme
 		pv.Palette = cached.Palette
+		// An administrator looking at someone's mailbox isn't being told
+		// about their mail.
+		if pv.Session.AdminActor == "" {
+			pv.MailSound = cached.MailSound
+		}
 		if pv.App == "" {
 			pv.App = "mail"
 		}
@@ -480,61 +516,80 @@ func (s *Server) renderProblem(w http.ResponseWriter, r *http.Request, sess *Ses
 
 // notices maps the codes redirects carry to their text, so a crafted link
 // can't put arbitrary words on the page.
-var notices = map[string]string{
-	"sent":                 "Message sent.",
-	"sent-nocopy":          "Message sent, but a copy couldn't be saved to Sent.",
-	"saved":                "Draft saved.",
-	"deleted":              "Message deleted.",
-	"deleted-many":         "Messages deleted.",
-	"moved":                "Message moved.",
-	"moved-many":           "Messages moved.",
-	"archived":             "Message archived.",
-	"archived-many":        "Messages archived.",
-	"emptied":              "Folder emptied.",
-	"all-read":             "All messages marked read.",
-	"loggedout":            "You've signed out.",
-	"recovery-code-used":   "You signed in with a recovery code, which can't be used again. If you've lost your authenticator, turn two-step verification off and on again to get new codes.",
-	"2fa-off":              "Two-step verification is off.",
-	"app-password-deleted": "App password deleted. Apps using it will be asked for a new one.",
-	"app-required":         "Mail apps now need an app password; your account password works only in webmail.",
-	"app-optional":         "Mail apps can use your account password again.",
-	"folder-created":       "Folder created.",
-	"folder-renamed":       "Folder renamed.",
-	"folder-deleted":       "Folder deleted.",
-	"settings-saved":       "Settings saved.",
-	"password-reset":       "Your password was reset. Sign in with your new password.",
-	"recovery-sent":        "A verification link was sent to your recovery address.",
-	"recovery-verified":    "Your recovery email is verified.",
-	"recovery-removed":     "Your recovery email was removed.",
-	"password-changed":     "Your password was changed. Use the new one everywhere you read mail.",
-	"forwarding-saved":     "Forwarding saved.",
-	"senders-saved":        "Allowed and blocked senders saved.",
-	"senders-failed":       "Allowed and blocked senders couldn't be saved. Try again later.",
-	"forwarding-failed":    "Forwarding couldn't be saved. Try again, or ask your administrator.",
-	"sender-blocked":       "Sender blocked. Future messages from this address go to Junk.",
-	"retention-saved":      "Folder retention saved.",
-	"contact-saved":        "Contact saved.",
-	"contact-exists":       "That sender is already in your contacts.",
-	"contact-deleted":      "Contact deleted.",
-	"contacts-imported":    "Contacts imported.",
-	"event-saved":          "Event saved.",
-	"event-deleted":        "Event deleted.",
-	"events-imported":      "Events imported.",
-	"invites-sent":         "Event saved and invitations sent.",
-	"invite-failed":        "Event saved, but the invitations couldn't be sent.",
-	"rsvp-sent":            "Your reply was sent and the event is in your calendar.",
-	"rsvp-saved":           "The event is in your calendar. The organizer couldn't be told; try again later.",
-	"rsvp-updated":         "The attendee's reply was recorded in your calendar.",
-	"task-saved":           "Task saved.",
-	"task-deleted":         "Task deleted.",
-	"filters-saved":        "Filters saved.",
-	"vacation-saved":       "Out-of-office reply saved.",
+var notices = map[string]string{ // #nosec G101 -- messages shown on the page, not credentials
+	"sent":                   "Message sent.",
+	"sent-nocopy":            "Message sent, but a copy couldn't be saved to Sent.",
+	"saved":                  "Draft saved.",
+	"deleted":                "Message deleted.",
+	"deleted-many":           "Messages deleted.",
+	"categorized":            "Moved to the tab. Later mail from the same sender will go there too.",
+	"categorize-failed":      "Your inbox couldn't be sorted into tabs. Try again in a moment.",
+	"inbox-sorted":           "Your inbox is sorted into tabs.",
+	"tab-rule-removed":       "Tab rule removed.",
+	"moved":                  "Message moved.",
+	"moved-many":             "Messages moved.",
+	"archived":               "Message archived.",
+	"archived-many":          "Messages archived.",
+	"emptied":                "Folder emptied.",
+	"all-read":               "All messages marked read.",
+	"loggedout":              "You've signed out.",
+	"recovery-code-used":     "You signed in with a recovery code, which can't be used again. If you've lost your authenticator, turn two-step verification off and on again to get new codes.",
+	"2fa-off":                "Two-step verification is off.",
+	"app-password-deleted":   "App password deleted. Apps using it will be asked for a new one.",
+	"protocol-off":           "Turned off. Apps using it are disconnected within a minute.",
+	"protocol-on":            "Turned on. Mail apps can connect again.",
+	"app-required":           "Mail apps now need an app password; your account password works only in webmail.",
+	"app-optional":           "Mail apps can use your account password again.",
+	"folder-created":         "Folder created.",
+	"folder-renamed":         "Folder renamed.",
+	"folder-deleted":         "Folder deleted.",
+	"settings-saved":         "Settings saved.",
+	"password-reset":         "Your password was reset. Sign in with your new password.",
+	"recovery-sent":          "A verification link was sent to your recovery address.",
+	"recovery-verified":      "Your recovery email is verified.",
+	"recovery-removed":       "Your recovery email was removed.",
+	"password-changed":       "Your password was changed. Use the new one everywhere you read mail.",
+	"forwarding-saved":       "Forwarding saved.",
+	"senders-saved":          "Allowed and blocked senders saved.",
+	"senders-failed":         "Allowed and blocked senders couldn't be saved. Try again later.",
+	"forwarding-failed":      "Forwarding couldn't be saved. Try again, or ask your administrator.",
+	"calendar-shared":        "Calendar shared.",
+	"pgp-key-saved":          "Your PGP key is ready. Keep your passphrase safe: nobody can recover it.",
+	"pgp-key-removed":        "Your PGP key was removed.",
+	"pgp-published":          "Your key is published. People outside can find it and write to you encrypted.",
+	"pgp-unpublished":        "Your key is no longer published. Colleagues can still find it.",
+	"passkey-added":          "Passkey added. You can use it next time you sign in.",
+	"passkey-removed":        "Passkey removed.",
+	"calendar-unshared":      "Calendar sharing removed.",
+	"calendar-share-invalid": "Enter the address of someone in your domain, and an access level.",
+	"calendar-share-failed":  "That person couldn't be added. They must have an account in your domain.",
+	"sender-blocked":         "Sender blocked. Future messages from this address go to Junk.",
+	"retention-saved":        "Folder retention saved.",
+	"contact-saved":          "Contact saved.",
+	"contact-exists":         "That sender is already in your contacts.",
+	"contact-deleted":        "Contact deleted.",
+	"contacts-imported":      "Contacts imported.",
+	"event-saved":            "Event saved.",
+	"event-deleted":          "Event deleted.",
+	"events-imported":        "Events imported.",
+	"invites-sent":           "Event saved and invitations sent.",
+	"invite-failed":          "Event saved, but the invitations couldn't be sent.",
+	"rsvp-sent":              "Your reply was sent and the event is in your calendar.",
+	"rsvp-saved":             "The event is in your calendar. The organizer couldn't be told; try again later.",
+	"rsvp-updated":           "The attendee's reply was recorded in your calendar.",
+	"task-saved":             "Task saved.",
+	"task-deleted":           "Task deleted.",
+	"filters-saved":          "Filters saved.",
+	"vacation-saved":         "Out-of-office reply saved.",
 }
 
 // ---- login -----------------------------------------------------------------
 
 type loginView struct {
 	Recovery bool
+	// Passkeys offers the passkey button; passkey.js hides it from browsers
+	// that can't use one.
+	Passkeys bool
 	Theme    string
 	Palette  string
 	Token    string
@@ -571,7 +626,7 @@ func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int,
 		return
 	}
 	s.setCookie(w, preLoginCookie, token, 600)
-	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Theme: themeFromCookie(r), Palette: paletteFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
+	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Passkeys: s.security != nil, Theme: themeFromCookie(r), Palette: paletteFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
 }
 
 func remoteHost(r *http.Request) string {
@@ -658,6 +713,16 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		s.renderLogin(w, r, http.StatusBadGateway, user, "", "The mail server didn't respond. Try again in a moment.")
 		return
 	}
+	// An account under attack takes its password only from networks it has
+	// used, answered as a wrong password so a right guess looks like any
+	// other. A passkey still signs in from anywhere.
+	if s.abuse.Shielded(ctx, ip, s.cfg.address(user)) {
+		_ = store.Close()
+		s.loginFailed(r, ip, userKey, user)
+		s.log.Info("webmail: login held back; account under attack", "user", user, "ip", ip)
+		s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
+		return
+	}
 	if s.security != nil {
 		check, err := s.security.check(ctx, user, password)
 		if err != nil {
@@ -666,6 +731,13 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 			_ = store.Close()
 			s.log.Warn("webmail: account security check unavailable", "user", user, "error", err)
 			s.renderLogin(w, r, http.StatusBadGateway, user, "", "Sign-in is temporarily unavailable. Try again in a moment.")
+			return
+		}
+		if check.Kind == "session" {
+			// Never something anyone types.
+			_ = store.Close()
+			s.loginFailed(r, ip, userKey, user)
+			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
 			return
 		}
 		if check.Kind == "app" {
@@ -810,6 +882,9 @@ func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWrit
 	s.setCookie(w, sessionCookie, sess.ID, 0)
 	s.setAppearanceCookies(w, s.prefs(ctx, sess))
 	s.log.Info("webmail: login", "user", user, "ip", s.clientIP(r))
+	if actor == "" {
+		s.abuse.RecordSignIn(ctx, s.clientIP(r), "webmail", sess.Address)
+	}
 	// Catch calendar changes made elsewhere (another mail app over IMAP,
 	// or before free/busy existed).
 	if actor == "" {
@@ -819,6 +894,7 @@ func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWrit
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, sess *Session) {
+	s.endPasskeySession(r.Context(), sess)
 	s.sessions.Destroy(sess.ID)
 	s.pages.forget(sess.ID)
 	s.setCookie(w, sessionCookie, "", -1)
@@ -839,7 +915,7 @@ const (
 
 // throttled reports whether a sign-in shouldn't even be tried.
 func (s *Server) throttled(ip, userKey string) bool {
-	if s.abuse.Refuse(ip) {
+	if _, denied := s.abuse.DenyPeer(ip, abuse.ProtocolWebmail); denied || s.abuse.Refuse(ip) {
 		return true
 	}
 	return s.limiter.blocked(ip, maxFailuresPerIP) || s.limiter.blocked(userKey, maxFailuresPerUser)

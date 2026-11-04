@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // Surgical TOML editing.
@@ -28,10 +30,17 @@ import (
 // The key is updated in place if present, appended to the section if not, and
 // the section is created at the end of the document if it does not exist.
 // Comments, ordering and unrelated sections are preserved exactly.
+//
+// A key written as array tables ([[section.key]]) is replaced by the assignment,
+// because the two can't exist together: TOML refuses the file, and every service
+// reading it then fails to start.
 func SetTOMLValue(doc []byte, section, key string, value interface{}) ([]byte, error) {
 	formatted, err := formatTOMLValue(value)
 	if err != nil {
 		return nil, fmt.Errorf("%s.%s: %w", section, key, err)
+	}
+	if section != "" {
+		doc = RemoveTOMLSection(doc, section+"."+key)
 	}
 
 	lines := strings.Split(string(doc), "\n")
@@ -93,6 +102,14 @@ func SetTOMLValue(doc []byte, section, key string, value interface{}) ([]byte, e
 	out = append(out, fmt.Sprintf("%s = %s", key, formatted))
 	out = append(out, lines[insert:]...)
 	return []byte(strings.Join(out, "\n")), nil
+}
+
+// ValidateTOML reports whether doc parses, with the parser the services use. A
+// file that doesn't stops all of them at their next restart, so nothing should
+// be written without passing this.
+func ValidateTOML(doc []byte) error {
+	var parsed map[string]any
+	return toml.Unmarshal(doc, &parsed)
 }
 
 // RemoveTOMLSection removes a table and its descendant tables. It is used only

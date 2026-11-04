@@ -89,8 +89,14 @@ type appPassword struct {
 }
 
 type securityStatus struct {
-	TOTP        bool `json:"totp"`
-	AppRequired bool `json:"app_required"`
+	// PGP is the user's key, read separately for the settings page.
+	PGP *pgpKeyInfo `json:"-"`
+	// Protocols are the mail protocols the user can choose about.
+	Protocols []protocolChoice `json:"protocols"`
+	// Passkeys are read separately, for the settings page.
+	Passkeys    []passkeyInfo `json:"-"`
+	TOTP        bool          `json:"totp"`
+	AppRequired bool          `json:"app_required"`
 	// Required by the account's class of service, whatever the user picks.
 	AppRequiredByClass bool          `json:"app_required_by_class"`
 	TOTPRequired       bool          `json:"totp_required"`
@@ -98,6 +104,7 @@ type securityStatus struct {
 	AppPasswords       []appPassword `json:"app_passwords"`
 }
 
+// An empty user makes an unauthenticated call, which only a passkey sign-in does.
 func (c *securityClient) call(ctx context.Context, method, path, user, password string, in, out any) error {
 	var body io.Reader
 	if in != nil {
@@ -112,7 +119,9 @@ func (c *securityClient) call(ctx context.Context, method, path, user, password 
 	if err != nil {
 		return err
 	}
-	req.SetBasicAuth(user, password)
+	if user != "" {
+		req.SetBasicAuth(user, password)
+	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -355,6 +364,40 @@ func (s *Server) twoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 	s.finishLogin(ctx, w, r, p.user, p.password, store, next)
 }
 
+// protocolChoice is IMAP or POP3 as Settings shows it.
+type protocolChoice struct {
+	Protocol string `json:"protocol"`
+	Allowed  bool   `json:"allowed"`
+	On       bool   `json:"on"`
+}
+
+// Label is how the protocol is written.
+func (p protocolChoice) Label() string { return strings.ToUpper(p.Protocol) }
+
+// GroupedFingerprint is how people compare a key.
+func (k pgpKeyInfo) GroupedFingerprint() string {
+	var parts []string
+	for f := k.Fingerprint; f != ""; {
+		n := min(4, len(f))
+		parts = append(parts, f[:n])
+		f = f[n:]
+	}
+	return strings.Join(parts, " ")
+}
+
+// IMAPOn and POP3On say whether to list a protocol's server settings.
+func (st securityStatus) IMAPOn() bool { return st.protocolOn("imap") }
+func (st securityStatus) POP3On() bool { return st.protocolOn("pop3") }
+
+func (st securityStatus) protocolOn(name string) bool {
+	for _, p := range st.Protocols {
+		if p.Protocol == name {
+			return p.On
+		}
+	}
+	return true
+}
+
 // securityView is the Security part of the settings page. The one-time
 // fields are filled only on the response that creates them, and never put
 // in a URL.
@@ -395,6 +438,10 @@ func (s *Server) securityStatusFor(ctx context.Context, sess *Session) (*securit
 	var st securityStatus
 	if err := s.security.call(ctx, http.MethodGet, "/v1/security", sess.User, password, nil, &st); err != nil {
 		return nil, err
+	}
+	st.Passkeys = s.passkeysFor(ctx, sess)
+	if err := s.security.call(ctx, http.MethodGet, "/v1/security/pgp", sess.User, password, nil, &st.PGP); err != nil {
+		s.log.Warn("webmail: pgp key unavailable", "user", sess.User, "error", err)
 	}
 	return &st, nil
 }
@@ -564,6 +611,19 @@ func (s *Server) appPasswordDeleteSubmit(w http.ResponseWriter, r *http.Request,
 	http.Redirect(w, r, "/settings/security?n=app-password-deleted#app-passwords", http.StatusSeeOther)
 }
 
+// protocolSubmit turns IMAP or POP3 on or off for the user's own account.
+func (s *Server) protocolSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
+	on := r.PostFormValue("on") == "1"
+	if !s.securityAction(w, r, sess, "/v1/security/protocols", map[string]any{"protocol": r.PostFormValue("protocol"), "on": on}, nil) {
+		return
+	}
+	n := "protocol-off"
+	if on {
+		n = "protocol-on"
+	}
+	http.Redirect(w, r, "/settings/devices?n="+n+"#mail-access", http.StatusSeeOther)
+}
+
 func (s *Server) appRequiredSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
 	required := r.PostFormValue("required") == "1"
 	if !s.securityAction(w, r, sess, "/v1/security/app-required", map[string]bool{"required": required}, nil) {
@@ -574,4 +634,23 @@ func (s *Server) appRequiredSubmit(w http.ResponseWriter, r *http.Request, sess 
 		n = "app-required"
 	}
 	http.Redirect(w, r, "/settings/security?n="+n+"#app-passwords", http.StatusSeeOther)
+}
+
+// text fetches a plain response without credentials, for public data.
+func (c *securityClient) text(ctx context.Context, path string) (string, error) {
+	// #nosec G704 -- base is the operator's security_url
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.client.Do(req) // #nosec G704 -- request built above from operator configuration
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", errors.New("security: not found")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxPGPLookup))
+	return string(data), err
 }

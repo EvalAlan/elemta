@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/dane"
@@ -22,6 +23,10 @@ import (
 	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/tlsrpt"
 )
+
+// AnnotationDKIMSigned names the domain a message was DKIM-signed for when
+// it was submitted, so delivery doesn't sign it for that domain again.
+const AnnotationDKIMSigned = "dkim_signed"
 
 // messageSigner signs outbound message content for a given signing domain.
 // Satisfied by *dkim.Signer; abstracted so tests can inject a stub. A nil
@@ -57,6 +62,11 @@ type PermanentError struct {
 func (e *PermanentError) Error() string   { return e.msg }
 func (e *PermanentError) Unwrap() error   { return e.err }
 func (e *PermanentError) Permanent() bool { return true }
+
+// errRefusedDestination marks a dial the destination guard refused. A rule is
+// the operator's own decision and doesn't lift by waiting, so retrying for days
+// before bouncing only hides from the sender that it was refused.
+var errRefusedDestination = errors.New("destination refused by a rule")
 
 // newRequireTLSError reports an RFC 8689 delivery failure as permanent so the
 // processor bounces it rather than retrying insecurely.
@@ -125,6 +135,8 @@ type SMTPDeliveryHandler struct {
 	mtastsManager             mtastsEnforcer
 	resolver                  mxResolver
 	dialContext               func(context.Context, string, string) (net.Conn, error)
+	// destinationGuard refuses mail servers by address; nil refuses none.
+	destinationGuard func(net.IP) error
 	// shaper applies per-destination connection and rate limits, and the
 	// backoff a destination asks for by deferring. Nil means unshaped.
 	shaper       *Shaper
@@ -283,6 +295,12 @@ func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) ([]byte, 
 	}
 	if signingDomain == "" {
 		h.logger.Debug("No signing domain resolved for message, delivering unsigned", "message_id", msg.ID)
+		return content, nil
+	}
+
+	// Signed at submission for this domain (internal/smtp/submission_dkim.go):
+	// a second signature from the same domain adds nothing.
+	if strings.EqualFold(msg.Annotations[AnnotationDKIMSigned], signingDomain) {
 		return content, nil
 	}
 
@@ -521,6 +539,12 @@ func (h *SMTPDeliveryHandler) groupRecipientsByDomain(recipients []string) map[s
 }
 
 // deliverToDomainWithMetadata delivers messages to all recipients in a specific domain and returns delivery metadata
+// SetDestinationGuard sets a check on the address of each mail server this
+// handler connects to. A refusal counts as that server being unreachable.
+func (h *SMTPDeliveryHandler) SetDestinationGuard(guard func(net.IP) error) {
+	h.destinationGuard = guard
+}
+
 // SetShaper attaches per-destination traffic shaping.
 func (h *SMTPDeliveryHandler) SetShaper(shaper *Shaper) {
 	if h.shared != nil {
@@ -573,6 +597,7 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 
 	// Try each MX record in order of preference
 	var lastError error
+	refusedAll := true
 	for _, mx := range mxRecords {
 		ip, host, hostOutcomes, err := h.attemptDeliveryToHostWithMetadata(ctx, mx.Host, msg, recipients, content, requireTLS, domain)
 		if len(hostOutcomes) > 0 {
@@ -584,6 +609,7 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 				"priority", mx.Pref,
 				"error", err)
 			lastError = err
+			refusedAll = refusedAll && errors.Is(err, errRefusedDestination)
 			continue
 		}
 
@@ -591,6 +617,11 @@ func (h *SMTPDeliveryHandler) deliverToDomainWithMetadata(ctx context.Context, m
 		return ip, host, nil, nil
 	}
 
+	if !refusedAll && errors.Is(lastError, errRefusedDestination) {
+		// Only some of the domain's servers are refused, and another may
+		// come back: the refusal mustn't turn its outage into a bounce.
+		return "", "", nil, &TemporaryError{msg: fmt.Sprintf("delivery failed to all MX hosts for domain %s: %v", domain, lastError)}
+	}
 	return "", "", nil, fmt.Errorf("delivery failed to all MX hosts for domain %s: %w", domain, lastError)
 }
 
@@ -1323,6 +1354,20 @@ func (h *SMTPDeliveryHandler) dialAndGreet(ctx context.Context, address string) 
 			// addresses of the same family: an IPv4 pool address never
 			// tries to reach an IPv6-only MX it cannot route to.
 			dialer.LocalAddr = &net.TCPAddr{IP: src.ip}
+		}
+		if guard := h.destinationGuard; guard != nil {
+			// In the dialer, because only here is the name resolved: this
+			// sees the address actually about to be connected to.
+			dialer.Control = func(_, resolved string, _ syscall.RawConn) error {
+				host, _, err := net.SplitHostPort(resolved)
+				if err != nil {
+					return err
+				}
+				if err := guard(net.ParseIP(host)); err != nil {
+					return &PermanentError{msg: "550 5.7.1 " + err.Error(), err: errRefusedDestination}
+				}
+				return nil
+			}
 		}
 		dial = dialer.DialContext
 	}

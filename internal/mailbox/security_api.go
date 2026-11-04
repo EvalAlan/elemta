@@ -17,6 +17,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,10 +28,20 @@ import (
 type securityAuth struct {
 	account Account
 	app     bool
+	// session is a passkey sign-in's token rather than a password.
+	session bool
 	// admin is an administrator access token (admin_access.go), with the
 	// administrator's name. Only the check accepts one.
 	admin   string
 	expires time.Time
+}
+
+// passkeyLoginRequest is either half of a passkey sign-in.
+type passkeyLoginRequest struct {
+	Challenge string          `json:"challenge"`
+	Host      string          `json:"host"`
+	Origin    string          `json:"origin"`
+	Response  json.RawMessage `json:"response"`
 }
 
 func (s *Service) securityAPI(mux *http.ServeMux) {
@@ -54,6 +65,15 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 				limit = 1 << 19 // the most allowed and blocked senders a class can allow
 			case "/v1/security/retention":
 				limit = 1 << 16 // up to 100 folder names and their day limits
+			}
+			if strings.HasSuffix(r.URL.Path, "/freebusy") {
+				limit = 1 << 20 // an editor publishing the owner's busy times
+			}
+			if strings.HasPrefix(r.URL.Path, "/v1/security/passkeys") {
+				limit = 1 << 16 // an authenticator's attestation
+			}
+			if strings.HasPrefix(r.URL.Path, "/v1/security/pgp") {
+				limit = 3 * maxPGPKey // a key pair, armored
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
@@ -96,6 +116,11 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		if a.app {
 			kind = "app"
 		}
+		if a.session {
+			// The MTA takes this only on the webmail's own port, and DAV not
+			// at all.
+			kind = "session"
+		}
 		if a.admin != "" {
 			// Neither the MTA nor DAV accepts this kind; the webmail shows
 			// whose session it is.
@@ -121,6 +146,169 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		}
 		return out, nil
 	})
+	// Passkeys (passkey.go). Adding one asks for the account password whatever
+	// the session signed in with.
+	handle("GET /v1/security/passkeys", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.Passkeys(r.Context(), a.account.ID)
+	})
+	handle("POST /v1/security/passkeys/begin", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Password string `json:"password"`
+			Host     string `json:"host"`
+			Origin   string `json:"origin"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if _, app, err := s.authenticate(r.Context(), a.account.Address, in.Password, ""); err != nil || app {
+			return nil, ErrCredentials
+		}
+		id, options, err := s.beginPasskeyRegistration(r.Context(), a.account, in.Host, in.Origin)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"challenge": id, "options": options}, nil
+	})
+	handle("POST /v1/security/passkeys/finish", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Challenge string          `json:"challenge"`
+			Name      string          `json:"name"`
+			Host      string          `json:"host"`
+			Origin    string          `json:"origin"`
+			Response  json.RawMessage `json:"response"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return s.finishPasskeyRegistration(r.Context(), a.account, in.Host, in.Origin, in.Challenge, in.Name, in.Response)
+	})
+	handle("POST /v1/security/passkeys/{id}/delete", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			return nil, errBadRequest
+		}
+		return map[string]bool{"ok": true}, s.engine.DeletePasskey(r.Context(), a.account, id)
+	})
+	handle("POST /v1/security/session/end", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		_, token, _ := r.BasicAuth()
+		if !a.session {
+			return map[string]bool{"ok": true}, nil
+		}
+		return map[string]bool{"ok": true}, s.engine.endSessionToken(r.Context(), token)
+	})
+	// PGP keys (pgp.go). The password guards replacing or removing one.
+	handle("GET /v1/security/pgp", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.PGPKeyOf(r.Context(), a.account.ID)
+	})
+	handle("PUT /v1/security/pgp", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Password   string `json:"password"`
+			PublicKey  string `json:"public_key"`
+			PrivateKey string `json:"private_key"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if _, app, err := s.authenticate(r.Context(), a.account.Address, in.Password, ""); err != nil || app {
+			return nil, ErrCredentials
+		}
+		return s.engine.PutPGPKey(r.Context(), a.account, in.PublicKey, in.PrivateKey)
+	})
+	handle("POST /v1/security/pgp/delete", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Password string `json:"password"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if _, app, err := s.authenticate(r.Context(), a.account.Address, in.Password, ""); err != nil || app {
+			return nil, ErrCredentials
+		}
+		return map[string]bool{"ok": true}, s.engine.DeletePGPKey(r.Context(), a.account)
+	})
+	handle("POST /v1/security/pgp/publish", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Published bool `json:"published"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.SetPGPPublished(r.Context(), a.account, in.Published)
+	})
+	handle("POST /v1/security/pgp/lookup", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Addresses []string `json:"addresses"`
+		}
+		if err := decode(r, &in); err != nil || len(in.Addresses) > 100 {
+			return nil, errBadRequest
+		}
+		return s.engine.PGPLookup(r.Context(), in.Addresses)
+	})
+	handle("GET /v1/security/pgp/pins", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.PGPPins(r.Context(), a.account.ID)
+	})
+	handle("PUT /v1/security/pgp/pins", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in PGPPin
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.PutPGPPin(r.Context(), a.account.ID, in)
+	})
+	// The Web Key Directory is public, and reached through the webmail.
+	mux.HandleFunc("GET /v1/pgp/wkd/{domain}/{hash}", func(w http.ResponseWriter, r *http.Request) {
+		if !s.internalClient(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		public, err := s.engine.WKDKey(r.Context(), r.PathValue("domain"), r.PathValue("hash"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(public))
+	})
+	// A passkey sign-in has no credentials yet, so these two are open to the
+	// webmail, and to nothing else. It limits attempts by client, as it does for
+	// passwords.
+	passkeyLogin := func(pattern string, fn func(ctx context.Context, in passkeyLoginRequest) (any, error)) {
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			if !s.internalClient(r) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+			var in passkeyLoginRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				writeSecurityError(w, errBadRequest)
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+			defer cancel()
+			out, err := fn(ctx, in)
+			if err != nil {
+				writeSecurityError(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(out)
+		})
+	}
+	passkeyLogin("POST /v1/passkeys/login/begin", func(ctx context.Context, in passkeyLoginRequest) (any, error) {
+		id, options, err := s.beginPasskeyLogin(ctx, in.Host, in.Origin)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"challenge": id, "options": options}, nil
+	})
+	passkeyLogin("POST /v1/passkeys/login/finish", func(ctx context.Context, in passkeyLoginRequest) (any, error) {
+		address, token, err := s.finishPasskeyLogin(ctx, in.Host, in.Origin, in.Challenge, in.Response)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"address": address, "token": token}, nil
+	})
 	// The user's allowed and blocked senders (sender_rules.go).
 	senderMax := func(a securityAuth) int {
 		if p := a.account.Policy; p != nil {
@@ -139,6 +327,25 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			return nil, err
 		}
 		return s.engine.SetSenderRules(r.Context(), a.account.ID, in.Allow, in.Block, senderMax(a))
+	})
+	// Senders the user put in an inbox category (categories.go). POST adds or
+	// changes one, which is what moving a message to another tab does.
+	handle("GET /v1/security/categories", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.CategoryRules(r.Context(), a.account.ID)
+	})
+	handle("PUT /v1/security/categories", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in []CategoryRule
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return s.engine.SetCategoryRules(r.Context(), a.account.ID, in)
+	})
+	handle("POST /v1/security/categories", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in CategoryRule
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return s.engine.PutCategoryRule(r.Context(), a.account.ID, in)
 	})
 	handle("GET /v1/security/retention", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		return s.engine.FolderRetentions(r.Context(), a.account.ID)
@@ -164,6 +371,63 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 	handle("GET /v1/security/send-as", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		return s.sendAddresses(r.Context(), a.account)
 	})
+	// Calendar sharing. An app password can't change who sees the calendar:
+	// it's a credential a mail app holds, and these need the real sign-in.
+	handle("GET /v1/calendar-shares", true, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		granted, err := s.engine.CalendarSharesOwned(r.Context(), a.account.ID)
+		if err != nil {
+			return nil, err
+		}
+		received, err := s.engine.CalendarSharesFor(r.Context(), a.account.ID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string][]mailpolicy.CalendarShare{"granted": granted, "received": received}, nil
+	})
+	handle("PUT /v1/calendar-shares/{member}", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var request struct {
+			Level string `json:"level"`
+		}
+		if err := decode(r, &request); err != nil {
+			return nil, err
+		}
+		member, err := s.directoryAccount(r.Context(), r.PathValue("member"))
+		if err != nil {
+			return nil, err
+		}
+		return s.engine.GrantCalendar(r.Context(), a.account, member, request.Level)
+	})
+	handle("DELETE /v1/calendar-shares/{member}", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		member, err := s.directoryIdentity(r.Context(), r.PathValue("member"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.RevokeCalendar(r.Context(), a.account.ID, member.ID)
+	})
+	// An edit changes when the owner is busy, and only the webmail can work
+	// that out, so an editor publishes it for them.
+	handle("PUT /v1/calendar-shares/{owner}/freebusy", true, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		owner, err := s.directoryAccount(r.Context(), r.PathValue("owner"))
+		if err != nil {
+			return nil, err
+		}
+		level, err := s.engine.CalendarLevel(r.Context(), owner.ID, a.account.ID)
+		if err != nil {
+			return nil, err
+		}
+		if level != CalendarEdit && level != CalendarDelegate {
+			return nil, ErrCredentials
+		}
+		var fb FreeBusy
+		if err := decode(r, &fb); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.PublishFreeBusy(r.Context(), owner, fb)
+	})
+	// The rooms and equipment someone can book: those of their own domain.
+	handle("GET /v1/resources", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		return s.engine.Resources(r.Context(), a.account.Address[strings.LastIndexByte(a.account.Address, '@')+1:])
+	})
 	// Free/busy: the webmail publishes the user's own busy times and reads
 	// colleagues'.
 	handle("PUT /v1/freebusy", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
@@ -187,7 +451,29 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		if p := a.account.Policy; err == nil && p != nil {
 			st.AppRequiredByClass, st.TOTPRequired = p.RequireAppPasswords, p.RequireTwoFactor
 		}
+		if err != nil {
+			return st, err
+		}
+		off, err := s.engine.ProtocolsOff(r.Context(), a.account.ID)
+		for _, protocol := range userProtocols {
+			allowed := a.account.Policy == nil || a.account.Policy.Allows(protocol)
+			st.Protocols = append(st.Protocols, ProtocolChoice{Protocol: protocol, Allowed: allowed, On: allowed && !slices.Contains(off, protocol)})
+		}
 		return st, err
+	})
+	handle("POST /v1/security/protocols", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Protocol string `json:"protocol"`
+			On       bool   `json:"on"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		// A class's refusal isn't the owner's to lift.
+		if in.On && a.account.Policy != nil && !a.account.Policy.Allows(in.Protocol) {
+			return nil, errBadRequest
+		}
+		return map[string]bool{"ok": true}, s.engine.SetProtocol(r.Context(), a.account, in.Protocol, in.On)
 	})
 	handle("POST /v1/security/verify", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		var in struct{ Code string }
@@ -345,6 +631,10 @@ func (s *Service) securityLogin(ctx context.Context, user, password string) (sec
 	if strings.HasPrefix(password, adminTokenPrefix) {
 		a, actor, expires, err := s.adminLogin(ctx, user, password)
 		return securityAuth{account: a, admin: actor, expires: expires}, err
+	}
+	if strings.HasPrefix(password, sessionTokenPrefix) {
+		a, err := s.sessionLogin(ctx, user, password)
+		return securityAuth{account: a, session: true}, err
 	}
 	// Internal callers only (internalClient), and they limit by the real client.
 	a, app, err := s.authenticate(ctx, user, password, "")

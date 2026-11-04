@@ -32,7 +32,7 @@ var managedEventProps = map[string]bool{
 	ical.PropURL: true, ical.PropStatus: true, ical.PropTransparency: true,
 	ical.PropSequence: true, "X-ELEMTA-CALENDAR": true, ical.PropRecurrenceRule: true,
 	ical.PropExceptionDates: true, ical.PropOrganizer: true, ical.PropAttendee: true,
-	ical.PropRecurrenceID: true,
+	ical.PropRecurrenceID: true, ical.PropClass: true,
 }
 
 // overrideUID is the name decodeCalendar gives an override of one
@@ -134,9 +134,14 @@ func keepAlarms(dst, src *ical.Component, reminder int) {
 }
 
 func (s *Server) putEvent(ctx context.Context, sess *Session, e Event) error {
+	return s.putEventIn(ctx, sess, "", e)
+}
+
+// putEventIn stores e in the user's calendar, or in owner's.
+func (s *Server) putEventIn(ctx context.Context, sess *Session, owner string, e Event) error {
 	now := s.now()
 	e.Modified = now.UTC()
-	err := s.sessions.withStore(ctx, sess, s.dial, func(st Mailstore) error {
+	err := s.withCalendarStore(ctx, sess, owner, func(st Mailstore) error {
 		objs, err := st.Objects(ctx, CollCalendar)
 		if err != nil {
 			return err
@@ -148,9 +153,17 @@ func (s *Server) putEvent(ctx context.Context, sess *Session, e Event) error {
 		return st.PutObject(ctx, CollCalendar, Object{ID: id, Title: e.Summary, ContentType: "text/calendar", Data: data})
 	})
 	if err == nil {
-		s.calendarChanged(sess)
+		s.notifyCalendarChanged(sess, owner)
 	}
 	return err
+}
+
+func (s *Server) notifyCalendarChanged(sess *Session, owner string) {
+	if owner != "" {
+		s.sharedCalendarChanged(sess, owner)
+		return
+	}
+	s.calendarChanged(sess)
 }
 
 // mergeEvent renders e into the object it is stored in (or a new one when
@@ -242,16 +255,16 @@ func replaceComponent(stored *storedEvent, comp *ical.Component, overrides []*ic
 	return buf.Bytes(), stored.obj.ID, nil
 }
 
-func (s *Server) deleteEvent(ctx context.Context, sess *Session, uid string) error {
-	err := s.deleteEventIn(ctx, sess, uid)
+func (s *Server) deleteEvent(ctx context.Context, sess *Session, owner, uid string) error {
+	err := s.deleteEventIn(ctx, sess, owner, uid)
 	if err == nil {
-		s.calendarChanged(sess)
+		s.notifyCalendarChanged(sess, owner)
 	}
 	return err
 }
 
-func (s *Server) deleteEventIn(ctx context.Context, sess *Session, uid string) error {
-	return s.sessions.withStore(ctx, sess, s.dial, func(st Mailstore) error {
+func (s *Server) deleteEventIn(ctx context.Context, sess *Session, owner, uid string) error {
+	return s.withCalendarStore(ctx, sess, owner, func(st Mailstore) error {
 		objs, err := st.Objects(ctx, CollCalendar)
 		if err != nil {
 			return err

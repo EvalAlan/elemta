@@ -44,4 +44,28 @@ func init() {
 		},
 	}
 	mailboxCmd.AddCommand(cmd)
+	// Mail stored before compression was turned on. New mail doesn't need it.
+	mailboxCmd.AddCommand(&cobra.Command{
+		Use: "compress-bodies", Short: "Compress stored message bodies",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := openMailboxService(cmd)
+			if err != nil {
+				return err
+			}
+			defer service.Close()
+			out := cmd.OutOrStdout()
+			r, err := service.Engine().CompressBodies(cmd.Context(), func(n int) { fmt.Fprintf(out, "%d bodies checked\n", n) })
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "checked %d bodies: %d compressed, from %d bytes to %d; %d failed\n", r.Checked, r.Compressed, r.Before, r.After, len(r.Failed))
+			for _, f := range r.Failed {
+				fmt.Fprintf(out, "failed %s\n", f)
+			}
+			if len(r.Failed) > 0 {
+				return fmt.Errorf("%d bodies were left as they were", len(r.Failed))
+			}
+			return nil
+		},
+	})
 }

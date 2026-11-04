@@ -84,10 +84,13 @@ type Settings struct {
 	// Retention, in days; 0 keeps mail forever. TrashDays, JunkDays and SentDays
 	// count from when a message reached that folder; RetentionDays deletes
 	// mail in every mail folder by the message's own date.
-	TrashDays     *int `json:"trash_days,omitempty"`
-	JunkDays      *int `json:"junk_days,omitempty"`
-	SentDays      *int `json:"sent_days,omitempty"`
-	RetentionDays *int `json:"retention_days,omitempty"`
+	TrashDays *int `json:"trash_days,omitempty"`
+	JunkDays  *int `json:"junk_days,omitempty"`
+	// QuarantineDays empties the Quarantine folder. Unlike the others it has
+	// a default: nobody chose to keep this mail, and most of it is spam.
+	QuarantineDays *int `json:"quarantine_days,omitempty"`
+	SentDays       *int `json:"sent_days,omitempty"`
+	RetentionDays  *int `json:"retention_days,omitempty"`
 	// LegalHold keeps everything: mail the user deletes is held out of
 	// sight, retention skips the account, and it can't be purged.
 	LegalHold *bool `json:"legal_hold,omitempty"`
@@ -115,6 +118,7 @@ type Effective struct {
 	RequireTwoFactor     bool              `json:"require_two_factor"`
 	TrashDays            int               `json:"trash_days"`
 	JunkDays             int               `json:"junk_days"`
+	QuarantineDays       int               `json:"quarantine_days"`
 	SentDays             int               `json:"sent_days"`
 	RetentionDays        int               `json:"retention_days"`
 	LegalHold            bool              `json:"legal_hold"`
@@ -168,8 +172,11 @@ func (e Effective) ForwardLimit() int {
 
 // Builtin is what applies when no layer sets a value: everything allowed,
 // nothing limited but forwarding, the user's own choices respected.
+// DefaultQuarantineDays is how long held mail stays.
+const DefaultQuarantineDays = 30
+
 func Builtin() Effective {
-	e := Effective{Protocols: map[string]bool{}, ExternalForwarding: true, Filters: true, MaxForwardAddresses: DefaultMaxForwardAddresses, MaxSenderRules: DefaultMaxSenderRules, Source: map[string]string{}}
+	e := Effective{Protocols: map[string]bool{}, QuarantineDays: DefaultQuarantineDays, ExternalForwarding: true, Filters: true, MaxForwardAddresses: DefaultMaxForwardAddresses, MaxSenderRules: DefaultMaxSenderRules, Source: map[string]string{}}
 	for _, p := range Protocols {
 		e.Protocols[p] = true
 	}
@@ -249,6 +256,10 @@ func Resolve(address, class string, layers ...Layer) Effective {
 			e.JunkDays = *s.JunkDays
 			set("junk_days", l.Name)
 		}
+		if s.QuarantineDays != nil {
+			e.QuarantineDays = *s.QuarantineDays
+			set("quarantine_days", l.Name)
+		}
 		if s.SentDays != nil {
 			e.SentDays = *s.SentDays
 			set("sent_days", l.Name)
@@ -302,7 +313,7 @@ func (s Settings) Validate() error {
 	if v := s.MaxSenderRules; v != nil && (*v < 0 || *v > MaxSenderRulesLimit) {
 		return fmt.Errorf("%w: max_sender_rules must be 0 (up to %d) to %d", ErrInvalid, MaxSenderRulesLimit, MaxSenderRulesLimit)
 	}
-	for name, v := range map[string]*int{"trash_days": s.TrashDays, "junk_days": s.JunkDays, "sent_days": s.SentDays, "retention_days": s.RetentionDays} {
+	for name, v := range map[string]*int{"trash_days": s.TrashDays, "junk_days": s.JunkDays, "quarantine_days": s.QuarantineDays, "sent_days": s.SentDays, "retention_days": s.RetentionDays} {
 		if v != nil && (*v < 0 || *v > 36500) {
 			return fmt.Errorf("%w: %s must be 0 (keep forever) up to 36500", ErrInvalid, name)
 		}

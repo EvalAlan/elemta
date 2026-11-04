@@ -126,7 +126,14 @@ func coordinatedObjectDialer(coord *objectCoordinator, security *securityClient,
 		// never its objects, and the mailbox already checked the grant at
 		// IMAP login. The security API knows plain accounts, so asking it
 		// would refuse every shared mailbox.
-		if security != nil && !strings.Contains(user, "|") {
+		if isCalendarLogin(user) {
+			id, err := calendarOwnerID(ctx, security, user, password)
+			if err != nil {
+				_ = st.Close()
+				return nil, errors.New("webmail: cannot resolve object owner")
+			}
+			owner = id
+		} else if security != nil && !strings.Contains(user, "|") {
 			check, err := security.check(ctx, user, password)
 			if err != nil || check.AccountID == "" {
 				_ = st.Close()

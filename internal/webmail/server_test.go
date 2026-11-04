@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/EvalAlan/elemta/internal/mailcategory"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -12,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,11 +62,25 @@ func newFakeStore() *fakeStore {
 }
 
 func (f *fakeStore) Folders(context.Context) ([]Folder, error) { return f.folders, nil }
+
+// A real mailbox lists a message as read once it has been opened.
+func (f *fakeStore) listed(folder string) []Summary {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	msgs := slices.Clone(f.messages[folder])
+	for i := range msgs {
+		if f.seen[msgs[i].UID] {
+			msgs[i].Seen = true
+		}
+	}
+	return msgs
+}
+
 func (f *fakeStore) List(_ context.Context, folder string, q ListQuery) (Page, error) {
 	f.mu.Lock()
 	f.lastQuery = q
 	f.mu.Unlock()
-	msgs := f.messages[folder]
+	msgs := f.listed(folder)
 	return Page{Folder: folder, Messages: msgs, Total: len(msgs), Page: 1, PageSize: q.PageSize}, nil
 }
 func (f *fakeStore) ListThreads(_ context.Context, folder string, q ListQuery) (ThreadPage, error) {
@@ -75,7 +91,7 @@ func (f *fakeStore) ListThreads(_ context.Context, folder string, q ListQuery) (
 	// Messages sharing a base subject form one conversation.
 	var out []Conversation
 	idx := map[string]int{}
-	for _, m := range f.messages[folder] {
+	for _, m := range f.listed(folder) {
 		key := baseSubject(m.Subject)
 		i, ok := idx[key]
 		if !ok {
@@ -225,6 +241,28 @@ func (f *fakeStore) DeleteObject(_ context.Context, c Collection, id string) err
 	delete(f.objects[c], id)
 	return nil
 }
+func (f *fakeStore) CategoryUnread(context.Context, string) (map[string]int, error) {
+	return map[string]int{"primary": 1, "promotions": 3}, nil
+}
+func (f *fakeStore) Senders(_ context.Context, folder string, uids []uint32) (map[uint32]string, error) {
+	out := map[uint32]string{}
+	for _, m := range f.listed(folder) {
+		if slices.Contains(uids, m.UID) && len(m.From) > 0 {
+			out[m.UID] = m.From[0].Email
+		}
+	}
+	return out, nil
+}
+func (f *fakeStore) Categorize(_ context.Context, folder string, _ int, overrides mailcategory.Overrides) (int, error) {
+	n := 0
+	for uid, raw := range f.raw {
+		if k := mailcategory.Classify(raw, overrides).Keyword(); k != "" {
+			_ = f.SetFlags(context.Background(), folder, []uint32{uid}, []string{k}, true)
+			n++
+		}
+	}
+	return n, nil
+}
 func (f *fakeStore) Close() error { return nil }
 
 type fakeSubmitter struct {
@@ -257,7 +295,7 @@ func newHarness(t *testing.T) *harness {
 	store := newFakeStore()
 	sub := &fakeSubmitter{}
 	insecure := false
-	cfg := Config{IMAPAddr: "imap.test:143", SubmissionAddr: "smtp.test:587", SecureCookies: &insecure, DefaultDomain: "example.com"}
+	cfg := Config{IMAPAddr: "imap.test:143", SubmissionAddr: "smtp.test:587", SecureCookies: &insecure, DefaultDomain: "example.com", ImageCacheDir: t.TempDir()}
 	dial := func(_ context.Context, user, pw string) (Mailstore, error) {
 		if pw != "secret" {
 			return nil, ErrAuthFailed
@@ -284,6 +322,17 @@ func (h *harness) get(path string) (*http.Response, string) {
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp, string(b)
+}
+
+// postJSON posts a JSON body without the session's cookies.
+func (h *harness) postJSON(path, body string) *http.Response {
+	h.t.Helper()
+	resp, err := http.Post(h.srv.URL+path, "application/json", strings.NewReader(body))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	return resp
 }
 
 func (h *harness) post(path string, form url.Values) *http.Response {

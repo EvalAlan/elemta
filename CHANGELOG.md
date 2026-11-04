@@ -1,6 +1,256 @@
 # Elemta Changelog
 
-## Unreleased
+## v0.7.0 (2026-11-03)
+
+Users gain encrypted mail with PGP, passkeys, a spam quarantine, inbox tabs, shared
+calendars, delegates, and bookable rooms and equipment. Administrators gain a DNS check,
+single-mailbox restore, compliance search and export, MTA-STS publishing and
+compressed message bodies. This
+release also fixes a console save that could stop every service from restarting,
+and backups that left out message bodies stored in S3.
+
+### Upgrade notes
+
+- **SRS turns on with a new secret.** `scripts/cloud-deploy.sh` and
+  `scripts/dev-secrets.sh` add `ELEMTA_SRS_SECRETS` for the MTA and mailbox service.
+  Each account's domain needs an SPF record that lists this server.
+- **Rspamd needs a new secret.** Re-run `scripts/cloud-deploy.sh`, which creates Rspamd's
+  controller password. By hand, run `scripts/dev-secrets.sh` before starting
+  the new version: Compose needs `.secrets/rspamd.env`, and Kubernetes needs
+  `secrets/rspamd.env`.
+- **Saving in the console can no longer break the configuration.** On a
+  deployment whose DKIM domains were written as `[[plugins.dkim.domains]]`, which
+  `cloud-deploy.sh` does, saving any plugin setting left an invalid file, and
+  every service failed at its next restart. The save now works, and the console
+  refuses to write a file that wouldn't load. If yours has been saved since
+  `v0.6.0`, check it before restarting.
+- **Backups now include message bodies stored in S3.** Until now
+  `scripts/mailbox-backup.sh` copied only the local volume, so a deployment on S3
+  got a backup with no bodies in it, and `scripts/restore-drill.sh` refused those
+  backups. Backups taken before this version on S3 hold metadata only.
+- **Rolling back needs the previous tag's checkout.** Setting `ELEMTA_TAG` back
+  alone stops the mailbox service starting. See "Upgrades" in
+  [docs/production-compose.md](docs/production-compose.md). v0.6.0 can't read
+  compressed bodies, so leave compression off until you're staying on this release.
+- **The abuse allowlist and `[access_control]` lists become rules.** On first
+  start the console moves their entries into the Abuse page's rules and empties
+  the old lists. v0.6.0 doesn't know rules, so after a rollback to it those
+  allows and denies stop applying, without an error. Restore the runtime
+  configuration from the backup taken before upgrading (see "Rollback" in
+  [docs/production-compose.md](docs/production-compose.md)), or enter the entries
+  again.
+- **Spam filtering changes in production.** Rspamd's blocklists and fuzzy checks
+  come on, with the terms and resolver checks described below. Quarantine stays
+  off until you turn it on.
+- **Release tarballs can now be run as they are.** They unpack into one directory
+  and include the admin console's web files, which the console needs and which were
+  missing, along with a starter configuration, a README, the GPL license and the
+  license files of the Go dependencies. Releases also carry a `SHA256SUMS` file.
+  Anything that expected the binaries at the top of the archive needs a new path.
+- **Remote images now come through the webmail.** With images shown, the webmail
+  fetches them itself and serves them from its own address, so it needs outbound
+  HTTP and HTTPS. Without that, images don't load and messages are otherwise
+  unaffected. `image_proxy = false` under `[webmail]` goes back to loading them
+  from senders.
+- **`scripts/cloud-deploy.sh` fails when a service isn't healthy.** It used to
+  finish once containers started. It now waits for each to be running and
+  healthy, 300 seconds by default; set `DEPLOY_HEALTH_TIMEOUT` for longer, as on
+  a new server where ClamAV is still fetching its signatures.
+- **`config/elemta.toml.example` and the unused GoReleaser setup are gone.**
+  Start from the release tarball's `elemta.toml` or `config/elemta.toml`.
+
+### What's new
+
+- **Inbox tabs.** Settings, General can sort the inbox into Primary, Social,
+  Promotions, Updates and Forums, as Gmail does. Mail is sorted as it arrives, from
+  its headers, so it works for mail forwarded from another provider too, and
+  turning tabs on sorts existing mail. Moving a message to another tab teaches it
+  the sender. Tabs are off until a user turns them on.
+- **Remote images load through the webmail.** Senders no longer see a reader's
+  address or browser, and images that tracker blockers such as Brave's refused
+  now load. Only images in a message the reader opened can be fetched, never an
+  address inside the network. See [docs/webmail-images.md](docs/webmail-images.md).
+- **Mail looks as the sender designed it.** Messages from LinkedIn and others no
+  longer show their text as attachments named `part-1` and `part-2`, their hidden
+  preview line as a column of single letters, or blank boxes where photos go.
+  Messages always use their light design, so dark mode can't turn their text
+  white on white.
+- **DKIM accepts signatures whose identity differs only in case.** A signature
+  from `rocketmortgage.com` naming `@t.RocketMortgage.com` was refused, failing
+  DMARC for a domain with `p=reject`; with DMARC enforced, that mail would have
+  been rejected. Domain names are compared case-insensitively now, as the
+  standard requires. Reported upstream as emersion/go-msgauth#87.
+
+- **Forwarded mail from your own users now passes DMARC.** Mail a signed-in user
+  sent to someone on the same server was stored unsigned, so when that person
+  forwarded it outside, nothing aligned with the author's domain, and Gmail refused
+  it for a domain with `p=reject`. Mail from signed-in users is now DKIM-signed as
+  it's submitted, for every recipient, and forwards carry the signature.
+- **Two-step sign-in for the admin console.** Each console user can add an
+  authenticator app, with recovery codes, and passkeys, under Settings > Users. A
+  passkey also signs in on its own. Accounts with two-step sign-in can't use HTTP
+  Basic auth; scripts need an API key or an account of their own. A lost phone is
+  reset from the users list or with `elemta user reset-2fa`. See "Two-step
+  sign-in" in [docs/production-deployment.md](docs/production-deployment.md).
+- **Compliance search and export.** A new Compliance page searches every mailbox at
+  once, by account, sender, recipient, subject, words and dates, including mail a
+  legal hold kept after it was deleted. Matches download one at a time or export as
+  one mbox file. A new `compliance` role can use it and nothing else, and every
+  search, export and download is recorded in the audit log before anything is
+  shown. See "Compliance search and export" in
+  [docs/mail-administration.md](docs/mail-administration.md).
+- **Unusual sign-in alerts.** The Abuse page lists successful sign-ins from somewhere
+  an account couldn't have reached in time (impossible travel) or from a country it
+  hasn't used before, across IMAP, POP3, ManageSieve, SMTP, webmail and the console.
+  They alert and never block. `scripts/cloud-deploy.sh` fetches DB-IP's free location
+  database monthly; see "Unusual sign-ins" in
+  [docs/abuse-protection.md](docs/abuse-protection.md).
+
+- **Abuse alerts by email.** Unusual sign-ins, accounts under attack and accounts put
+  on hold can be emailed to administrators as they happen, at most 20 an hour. Set
+  the addresses on the Abuse page.
+
+- **Accounts under attack keep working for their owners.** When many addresses fail
+  against one account, its password works only from networks it has signed in from in
+  the last 90 days, and a right password from anywhere else is answered like a wrong
+  one, so guessing gets nowhere. App passwords and passkeys work from anywhere, and the
+  account is never locked. New installs shield an account at 20 addresses; existing
+  ones keep it off until set. See "Accounts under attack" in
+  [docs/abuse-protection.md](docs/abuse-protection.md).
+
+- **Volume limits and password spraying.** The Abuse page can now cap mail per hour
+  from one outside address (deferred, including on port 25), and puts an account's
+  outside mail on hold when it sends to more recipients than the hourly limit, until
+  an administrator releases it. That's the usual sign of a taken-over account. One
+  address failing against many different accounts is blocked as password spraying.
+  New installs get 1000 messages, 500 recipients and 10 accounts; existing ones keep
+  these off until set. Mail per hour claiming one sender domain can be capped too (off
+  unless set), and each of SMTP submission, IMAP, POP3 and ManageSieve can have its
+  own connection limits, which are now counted per protocol.
+
+- **Allow and deny rules with direction.** The Abuse page now has one rule list for
+  inbound and outbound, matching an address, network, domain or mail address, across
+  SMTP, IMAP, POP3, ManageSieve, webmail and the console. Rules can expire, carry a
+  note, and apply within seconds with no restart. Outbound rules on a network stop
+  delivery to that mail server, and the message bounces at once. See "Allow and deny rules" in
+  [docs/abuse-protection.md](docs/abuse-protection.md).
+  The abuse allowlist and the older `[access_control]` lists become rules when the
+  console starts, so one list decides who gets in. An allow rule limited to some
+  protocols no longer exempts an address from limits on the others.
+
+- **Forwarded mail keeps passing SPF.** Mail an account forwards outside the server
+  now goes out from an SRS address at that account's domain, so the next server's
+  SPF check passes, and bounces still reach the original sender. See "Forwarding
+  and SPF" in [docs/mail-administration.md](docs/mail-administration.md).
+
+- **The Abuse page counts IMAP, POP3 and ManageSieve separately.** The failed
+  sign-ins graph had them as one series, so you couldn't tell which was under
+  attack. `elemta_abuse_failed_logins_total` now has `imap`, `pop3` and `sieve`
+  sources in place of `mailbox`, so update any dashboard that uses it.
+
+- **Clicking through mail no longer reloads the page.** Opening a message replaces
+  only the reading pane, and on wide screens the list and the message scroll
+  separately, so a message opened from far down the list stays in view.
+
+- **Choose whether your PGP key is published.** Settings, Security, has a switch for
+  the public Web Key Directory, on by default. Colleagues find a key either way.
+
+- **Encrypted mail with PGP.** People can create or import a key in Settings,
+  Security, and send and read encrypted, signed mail in the webmail, with standard
+  PGP/MIME that other PGP programs read. Encryption happens in the browser, and the
+  passphrase never reaches the server. A forgotten passphrase can't be recovered.
+  Attachments are encrypted with the message, and signed mail is checked. See
+  "Encrypted mail" in
+  [docs/user-guide.md](docs/user-guide.md).
+- **The console sees real addresses behind a proxy.** On a cloud deployment it took
+  every visitor for the proxy, so they shared one login throttle and API rate limit,
+  audit entries named the proxy, and the Abuse page showed a private address as
+  yours. `ELEMTA_API_TRUSTED_PROXIES` now sets the proxies, and `cloud-deploy.sh`
+  deployments get it automatically.
+- **`cloud-deploy.sh` trims Docker's build cache** after each deploy, keeping 5 GB.
+  It grew without limit and could fill a server's disk.
+
+- **Turn off IMAP and POP3 for yourself.** Settings, Mail apps and sync, lets
+  someone switch off a protocol they don't use, when their class of service allows
+  it. Nobody can then sign in that way, even with an app password, and the webmail
+  is unaffected.
+
+- **Passkeys.** Sign in to the webmail with a fingerprint, face, device PIN or
+  security key. Add one under Settings, Security. A passkey counts as both factors
+  and works only on the web address it was added on. An administrator's two-step
+  reset removes an account's passkeys too.
+
+- **A sound for new mail.** Settings has a choice of tones, with a Play button, and
+  it's off until someone picks one. It plays while the webmail is open in a tab,
+  once however many tabs are open.
+
+- **Compress message bodies.** `[bodies] compression = "zstd"` compresses new mail
+  before it's encrypted, and `elemta mailbox compress-bodies` does what's already
+  stored. See "Compressing message bodies" in
+  [docs/mailbox-service.md](docs/mailbox-service.md).
+
+- **Calendar delegates.** The Delegate level now works: a delegate can invite
+  guests, change or cancel meetings and answer invitations for the owner, and gets
+  a copy of the owner's invitations. Their mail comes from their own address, with
+  `SENT-BY` naming them, so a grant gives no right to send as the owner.
+- **Shared calendars in CalDAV apps.** They appear beside your own, and each access
+  level means the same as in the webmail, with private events hidden from View.
+- **Rooms and equipment.** Mark an account as bookable, with `provision set-resource`
+  or in Mail Administration, and it accepts or declines invitations by itself. The
+  webmail's event form offers rooms, and a delegate can approve bookings instead.
+  See "Rooms and equipment" in [docs/mail-administration.md](docs/mail-administration.md).
+
+- **Restore one mailbox.** `scripts/mailbox-restore-account.sh` puts one account's
+  lost mail back from a backup while the stack keeps running, under a
+  `Restored <date>` folder and without changing anything the account has now.
+  With `--data` it also restores missing calendar events, contacts, tasks,
+  settings, filters and sender rules. See
+  "Restoring one account" in [docs/mailbox-service.md](docs/mailbox-service.md).
+- **Backups now include webmail's own object database.** With
+  `object_store = "postgres"`, `scripts/backup.sh` left calendars, contacts, tasks
+  and settings out, and `scripts/restore.sh` didn't restore them. Both now do.
+
+- **Calendar sharing.** Users can share their calendar with people in their
+  domain, from Settings, Account, and administrators can set it up from the
+  account dialog or `provision grant-calendar`. View shows events, with private
+  ones as "Busy". Edit also lets them add and change events. Shared calendars
+  appear beside the user's own in the webmail, not yet in CalDAV apps. Events
+  can be marked private. Events with guests can't be changed by someone else
+  yet. See "Sharing calendars" in
+  [docs/mail-administration.md](docs/mail-administration.md).
+
+- **Spam quarantine.** Mail the spam check would refuse now waits in the user's
+  Quarantine folder for 30 days, and they can release it from the webmail.
+  Viruses are still refused, and so is spam for outside addresses. Existing
+  installs keep rejecting until you turn on **Quarantine instead of rejecting**
+  under Plugins, Rspamd. Senders of held mail get no bounce. See "Quarantine" in
+  [docs/mail-administration.md](docs/mail-administration.md).
+
+- **Publish MTA-STS policies.** `MTA_STS_DOMAINS` in `cloud.env` serves a policy
+  for each domain, and the deploy prints the records to publish. See "MTA-STS"
+  in [docs/cloud-dev.md](docs/cloud-dev.md).
+
+- **Check a domain's DNS from the console.** Mail Administration's domain dialog
+  has a **Check DNS** button covering MX, reverse DNS, SPF, DKIM, DMARC, MTA-STS,
+  TLS-RPT and mail app discovery, with the record to publish where there's one
+  right answer. See "Checking a domain's DNS" in
+  [docs/mail-administration.md](docs/mail-administration.md).
+- **Conversations no longer get stuck unread.** A conversation row always opened
+  its latest message, so an older unread message could never be cleared by
+  clicking it. Rows now open the oldest unread message, and after each one is
+  read the row moves on to the next, so the last can be reached without
+  reloading the page. Expanding a message within a conversation also marks it
+  read.
+
+- **Users' spam reports now train the filter.** Moving mail in or out of Junk,
+  from the webmail or any mail app, teaches Rspamd's classifier. Nothing did
+  before, and the classifier had nothing to learn from. See "Learning from
+  users" in [docs/mail-administration.md](docs/mail-administration.md).
+- **Production now uses Rspamd's blocklists and fuzzy checks.** The switches
+  meant to keep the laptop stack offline were also applied to production, in
+  Compose and on Kubernetes. Scans take about 250 ms longer. Check the
+  blocklists' terms and your resolver; see "Latency" in
+  [docs/production-deployment.md](docs/production-deployment.md).
 
 ## v0.6.0 (2026-10-31)
 

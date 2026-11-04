@@ -20,7 +20,7 @@
     ];
     const PROTOCOLS = [['imap', 'IMAP'], ['pop3', 'POP3'], ['webmail', 'Webmail'], ['dav', 'Calendar and contact sync (DAV)'], ['submission', 'SMTP submission from mail apps']];
     const SWITCHES = [['address_book', 'Organisation address book (off by default)'], ['external_forwarding', 'Forwarding outside the server'], ['filters', 'Filters and vacation replies'], ['require_app_passwords', 'Require app passwords'], ['require_two_factor', 'Require two-step verification']];
-    const RETENTION = [['trash_days', 'Empty Trash after (days)', 'days'], ['junk_days', 'Empty Junk after (days)', 'days'], ['sent_days', 'Empty Sent after (days)', 'days'], ['retention_days', 'Delete all mail older than (days)', 'days'], ['legal_hold', 'Legal hold (keep everything)', 'switch']];
+    const RETENTION = [['trash_days', 'Empty Trash after (days)', 'days'], ['junk_days', 'Empty Junk after (days)', 'days'], ['quarantine_days', 'Empty Quarantine after (days, 30 if unset)', 'days'], ['sent_days', 'Empty Sent after (days)', 'days'], ['retention_days', 'Delete all mail older than (days)', 'days'], ['legal_hold', 'Legal hold (keep everything)', 'switch']];
 
     async function request(path, method = 'GET', body) {
         const options = { method, headers: { Accept: 'application/json' } };
@@ -297,10 +297,36 @@
         const row = node('tr'); cell(row, 'Class in effect'); cell(row, e.class); cell(row, ''); body.prepend(row);
         if (view.held || e.legal_hold) { const held = node('tr'); cell(held, 'Messages on hold'); cell(held, view.held || 0); cell(held, 'export with provision export-held'); body.appendChild(held); }
     }
+    const CALENDAR_LEVEL = { view: 'View', edit: 'Edit', delegate: 'Delegate' };
+    function fillCalendarShares(shares) {
+        const list = el('ma-calendar-list'); list.replaceChildren();
+        shares.forEach(share => {
+            const li = node('li'); li.appendChild(node('span', share.member + ' · ' + (CALENDAR_LEVEL[share.level] || share.level)));
+            li.appendChild(button('Remove', () => perform(async () => {
+                await request(accountPath() + '/calendar-shares/' + encodeURIComponent(share.member), 'DELETE');
+                fillCalendarShares(await request(accountPath() + '/calendar-shares'));
+                message('Calendar sharing removed.');
+            })));
+            list.appendChild(li);
+        });
+        if (!shares.length) list.appendChild(node('li', 'Not shared with anyone.'));
+    }
+    function fillResource(resource) {
+        el('ma-resource-on').checked = !!resource;
+        el('ma-resource-name').value = resource ? resource.name : '';
+        el('ma-resource-kind').value = resource ? resource.kind : 'room';
+        el('ma-resource-location').value = (resource && resource.location) || '';
+        el('ma-resource-capacity').value = (resource && resource.capacity) || 0;
+        el('ma-resource-manual').checked = !!resource && resource.booking === 'manual';
+    }
     async function openAccount(account) {
         policyLoaded = false; policyDirty = false;
         fillAccount(account); el('ma-account-dialog').showModal();
+        el('ma-calendar-section').hidden = !(account && mailboxAdmin);
+        el('ma-resource-section').hidden = !(account && mailboxAdmin);
         if (account && mailboxAdmin) {
+            try { fillCalendarShares(await request(accountPath() + '/calendar-shares')); } catch (error) { message(error.message, true); }
+            try { fillResource(await request(accountPath() + '/resource')); } catch (error) { message(error.message, true); }
             try { fillPolicy(await request(accountPath() + '/policy')); } catch (error) { message(error.message, true); }
         }
     }
@@ -374,6 +400,26 @@
         el('ma-new-alias').value = ''; message('Delivery alias ' + alias + ' now delivers to ' + account + '.'); await refresh();
     }); });
     el('ma-alias-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => { const updated = await request(accountPath() + '/aliases', 'POST', { alias: el('ma-alias').value }); fillAccount(updated); el('ma-account-policy').hidden = !mailboxAdmin; message('Delivery alias added.'); await refresh(); }); });
+    el('ma-resource-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+        if (!el('ma-resource-on').checked) {
+            await request(accountPath() + '/resource', 'DELETE');
+            fillResource(null);
+            message('This account is no longer bookable. Its mail and calendar remain.');
+            return;
+        }
+        fillResource(await request(accountPath() + '/resource', 'PUT', {
+            address: '', name: el('ma-resource-name').value.trim(), kind: el('ma-resource-kind').value,
+            location: el('ma-resource-location').value.trim(), capacity: Number(el('ma-resource-capacity').value) || 0,
+            booking: el('ma-resource-manual').checked ? 'manual' : 'auto',
+        }));
+        message('Saved. People can book this account.');
+    }); });
+    el('ma-calendar-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+        await request(accountPath() + '/calendar-shares/' + encodeURIComponent(el('ma-calendar-member').value.trim()), 'PUT', { level: el('ma-calendar-level').value });
+        el('ma-calendar-member').value = '';
+        fillCalendarShares(await request(accountPath() + '/calendar-shares'));
+        message('Calendar shared.');
+    }); });
     el('ma-password-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
         if (el('ma-password').value !== el('ma-confirm-password').value) throw new Error('The new passwords do not match.');
         const result = await request(accountPath() + '/password', 'POST', { password: el('ma-password').value }); el('ma-password').value = ''; el('ma-confirm-password').value = ''; message(result.status);
@@ -469,9 +515,51 @@
         missing: 'Not published: DNS has no DKIM record at this name yet.',
         mismatch: 'Wrong key: DNS has a different key at this name.',
     };
+    // Words as well as colour, so the result reads without either.
+    const HEALTH_LABEL = { ok: 'OK', info: 'Optional', unknown: "Couldn't check", warn: 'Needs attention', fail: 'Problem' };
+    const HEALTH_SUMMARY = {
+        ok: 'Everything this domain needs is in place.',
+        info: 'Everything this domain needs is in place.',
+        unknown: "Nothing is wrong so far, but some checks couldn't finish. Try again in a minute.",
+        warn: 'Mail works, but something needs attention.',
+        fail: 'Something is wrong that affects mail for this domain.',
+    };
+    function healthCheck(check) {
+        const row = node('div', undefined, 'ma-key');
+        const heading = node('div', undefined, 'ma-key-heading');
+        heading.appendChild(node('strong', check.name));
+        heading.appendChild(node('span', HEALTH_LABEL[check.status] || check.status, 'ma-health-status ma-health-' + check.status));
+        row.appendChild(heading);
+        row.appendChild(node('p', check.summary, 'ma-health-text'));
+        (check.found || []).forEach(line => row.appendChild(node('code', line, 'ma-health-found')));
+        if (check.fix) row.appendChild(node('p', check.fix, 'ma-health-text'));
+        if (check.record) row.appendChild(copyField('Publish', check.record));
+        return row;
+    }
+    function clearDomainHealth() {
+        el('ma-domain-health-summary').textContent = 'Checks the records this domain needs to send and receive mail.';
+        el('ma-domain-health-results').replaceChildren();
+    }
+    async function runDomainHealth() {
+        const domain = selectedDomain.domain;
+        el('ma-domain-health-summary').textContent = 'Checking…';
+        el('ma-domain-health-results').replaceChildren();
+        try {
+            const report = await request(domainPath('/dns-health'));
+            // The dialog may have moved on to another domain by now.
+            if (selectedDomain.domain !== domain) return;
+            el('ma-domain-health-summary').textContent = (HEALTH_SUMMARY[report.status] || '') +
+                ' A record you just changed can take until its TTL runs out to show here.';
+            report.checks.forEach(check => el('ma-domain-health-results').appendChild(healthCheck(check)));
+        } catch (error) {
+            clearDomainHealth();
+            throw error;
+        }
+    }
     function domainPath(suffix) { return '/domains/' + encodeURIComponent(selectedDomain.domain) + suffix; }
     async function openDomain(name) {
         fillDomain(await request('/domains/' + encodeURIComponent(name) + '/settings'));
+        clearDomainHealth();
         el('ma-domain-message').hidden = true;
         if (!el('ma-domain-dialog').open) el('ma-domain-dialog').showModal();
     }
@@ -548,6 +636,7 @@
         try { fillDomain(await request(domainPath('/status'), 'PUT', { status })); } catch (error) { event.target.value = selectedDomain.status; throw error; }
         message(selectedDomain.domain + ' is now ' + status + '.'); await refresh();
     }));
+    el('ma-domain-health-run').addEventListener('click', () => perform(runDomainHealth));
     el('ma-domain-signing-off').addEventListener('click', () => perform(async () => {
         if (!window.confirm('Stop signing mail from ' + selectedDomain.domain + '? Its keys are kept. Under a strict DMARC policy, unsigned mail depends on SPF alone.')) return;
         fillDomain(await request(domainPath('/dkim/signing'), 'PUT', { enabled: false }));

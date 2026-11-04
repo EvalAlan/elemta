@@ -232,15 +232,80 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 	handle("POST /v1/admin/accounts/{address}/messages", func(r *http.Request) (any, error) {
 		return s.importMessage(r)
 	})
-	mux.HandleFunc("GET /v1/admin/accounts/{address}/held", func(w http.ResponseWriter, r *http.Request) {
-		// Streams mbox, so it bypasses the JSON wrapper but not its checks.
+	// Files rather than JSON bypass the wrapper, but not its checks.
+	streamed := func(w http.ResponseWriter, r *http.Request) bool {
 		if s.adminToken == "" {
 			http.NotFound(w, r)
-			return
+			return false
 		}
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !s.internalClient(r) || !ok || subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) != 1 {
 			writeAdminError(w, http.StatusUnauthorized, "unauthorized")
+			return false
+		}
+		return true
+	}
+	handle("POST /v1/admin/compliance/search", func(r *http.Request) (any, error) {
+		var q mailpolicy.ComplianceQuery
+		if err := decode(r, &q); err != nil {
+			return nil, err
+		}
+		return s.engine.ComplianceSearch(r.Context(), q)
+	})
+	mux.HandleFunc("POST /v1/admin/compliance/export", func(w http.ResponseWriter, r *http.Request) {
+		if !streamed(w, r) {
+			return
+		}
+		var q mailpolicy.ComplianceQuery
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		if err := decode(r, &q); err != nil {
+			status, msg := adminStatus(err)
+			writeAdminError(w, status, msg)
+			return
+		}
+		// The export refuses (too many matches, bad words) before writing
+		// anything, and the refusal must reach the caller as an error, not
+		// as an empty file: the file's headers wait for its first byte.
+		pw := &firstWrite{w: w, start: func() {
+			w.Header().Set("Content-Type", "application/mbox")
+			w.Header().Set("Cache-Control", "no-store")
+		}}
+		n, err := s.engine.ComplianceExport(r.Context(), q, pw)
+		if err != nil {
+			if !pw.started {
+				status, msg := adminStatus(err)
+				if status == http.StatusInternalServerError {
+					s.log.Warn("compliance export failed", "error", err)
+				}
+				writeAdminError(w, status, msg)
+				return
+			}
+			s.log.Warn("compliance export failed part way", "exported", n, "error", err)
+			return
+		}
+		if !pw.started {
+			pw.start()
+			w.WriteHeader(http.StatusOK)
+		}
+		s.log.Info("compliance export", "messages", n)
+	})
+	mux.HandleFunc("GET /v1/admin/compliance/message", func(w http.ResponseWriter, r *http.Request) {
+		if !streamed(w, r) {
+			return
+		}
+		raw, account, err := s.engine.ComplianceMessage(r.Context(), r.URL.Query().Get("ref"), r.URL.Query()["domain"])
+		if err != nil {
+			status, msg := adminStatus(err)
+			writeAdminError(w, status, msg)
+			return
+		}
+		w.Header().Set(mailpolicy.ComplianceAccountHeader, account)
+		w.Header().Set("Content-Type", "message/rfc822")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(raw)
+	})
+	mux.HandleFunc("GET /v1/admin/accounts/{address}/held", func(w http.ResponseWriter, r *http.Request) {
+		if !streamed(w, r) {
 			return
 		}
 		address := strings.ToLower(strings.TrimSpace(r.PathValue("address")))
@@ -323,12 +388,74 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		}
 		return map[string]bool{"ok": true}, s.engine.RevokeShare(r.Context(), owner.ID, member.ID)
 	})
+	// Setting up an assistant is an administrator's job often enough.
+	handle("GET /v1/admin/accounts/{address}/calendar-shares", func(r *http.Request) (any, error) {
+		owner, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		return s.engine.CalendarSharesOwned(r.Context(), owner.ID)
+	})
+	handle("PUT /v1/admin/accounts/{address}/calendar-shares/{member}", func(r *http.Request) (any, error) {
+		owner, err := s.directoryAccount(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		member, err := s.directoryAccount(r.Context(), r.PathValue("member"))
+		if err != nil {
+			return nil, err
+		}
+		var request struct {
+			Level string `json:"level"`
+		}
+		if err := decode(r, &request); err != nil {
+			return nil, err
+		}
+		return s.engine.GrantCalendar(r.Context(), owner, member, request.Level)
+	})
+	handle("DELETE /v1/admin/accounts/{address}/calendar-shares/{member}", func(r *http.Request) (any, error) {
+		owner, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		member, err := s.directoryIdentity(r.Context(), r.PathValue("member"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.RevokeCalendar(r.Context(), owner.ID, member.ID)
+	})
+	handle("GET /v1/admin/resources", func(r *http.Request) (any, error) {
+		return s.engine.Resources(r.Context(), r.URL.Query().Get("domain"))
+	})
+	handle("PUT /v1/admin/accounts/{address}/resource", func(r *http.Request) (any, error) {
+		account, err := s.directoryAccount(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		var request mailpolicy.Resource
+		if err := decode(r, &request); err != nil {
+			return nil, err
+		}
+		return s.engine.PutResource(r.Context(), account, request)
+	})
+	handle("DELETE /v1/admin/accounts/{address}/resource", func(r *http.Request) (any, error) {
+		account, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.DeleteResource(r.Context(), account.ID)
+	})
 	handle("POST /v1/admin/accounts/{address}/reset-two-factor", func(r *http.Request) (any, error) {
 		a, err := s.directoryIdentity(r.Context(), r.PathValue("address"))
 		if err != nil {
 			return nil, err
 		}
 		if err := s.engine.DisableTOTP(r.Context(), a.ID); err != nil {
+			return nil, err
+		}
+		// Someone locked out needs a way back, and someone recovering a
+		// compromised account mustn't leave a stranger's passkey on it.
+		if err := s.engine.DeletePasskeys(r.Context(), a.ID); err != nil {
 			return nil, err
 		}
 		return map[string]bool{"ok": true}, nil
@@ -354,6 +481,22 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		}
 		return res, err
 	})
+}
+
+// firstWrite calls start before the first byte reaches w, so headers can
+// still change until something is written.
+type firstWrite struct {
+	w       io.Writer
+	start   func()
+	started bool
+}
+
+func (f *firstWrite) Write(p []byte) (int, error) {
+	if !f.started {
+		f.started = true
+		f.start()
+	}
+	return f.w.Write(p)
 }
 
 // directoryIdentity finds retained data for a disabled or removed account.

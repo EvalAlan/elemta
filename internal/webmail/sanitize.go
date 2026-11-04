@@ -27,6 +27,13 @@ var safeStyleProperties = []string{
 	"border", "border-top", "border-right", "border-bottom", "border-left",
 	"border-color", "border-style", "border-width", "border-radius", "border-collapse",
 	"border-spacing", "display", "table-layout",
+	// Placement of a background image; none of these loads anything. The
+	// image itself is background-image, allowed only through the proxy.
+	"background-size", "background-position", "background-repeat",
+	// Senders hide the preview line (the text an inbox shows beside the
+	// subject) with these. Without them it renders inside a zero-width box,
+	// one character per line.
+	"visibility", "opacity", "overflow", "overflow-x", "overflow-y",
 }
 
 // sanitizeOptions controls how message HTML is rewritten.
@@ -36,6 +43,9 @@ type sanitizeOptions struct {
 	AllowRemote bool
 	// CIDURL maps a cid: reference to the URL that serves that part.
 	CIDURL func(cid string) string
+	// ImageURL, when set, rewrites each remote image address that
+	// AllowRemote lets through, to the image proxy (imageproxy.go).
+	ImageURL func(raw string) string
 }
 
 // sanitizeResult is cleaned HTML plus what the cleaning removed.
@@ -55,19 +65,28 @@ var spacerImage = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAE
 // allowed, and links that open in a new tab without a referrer.
 func sanitizeHTML(in string, opts sanitizeOptions) sanitizeResult {
 	var blocked atomic.Int64
-	css, cssBlocked := extractCSS(in, opts.AllowRemote)
+	css, cssBlocked := extractCSS(in, opts.AllowRemote, opts.ImageURL)
 	blocked.Add(int64(cssBlocked))
 	in = wrapBody(in)
+	in = rewriteInlineURLs(in, opts, &blocked)
 	p := bluemonday.UGCPolicy()
 	p.AllowStyles(safeStyleProperties...).Globally()
 	// The background shorthand carries a colour in most mail ("Confirm"
-	// buttons are background:#1F4FA8;color:#fff). It's kept only when it
-	// loads nothing; images come through img, where they can be blocked.
-	p.AllowStyles("background").MatchingHandler(func(v string) bool {
-		return !strings.Contains(strings.ToLower(v), "url(") && !strings.ContainsAny(v, "\\<>")
+	// buttons are background:#1F4FA8;color:#fff), and background-image
+	// carries pictures: LinkedIn puts post photos on a table cell that way,
+	// with a hidden img for Outlook. rewriteInlineURLs has already pointed
+	// every remote url() at the proxy or removed it, so the only url() kept
+	// here is one naming the proxy path; anything else drops the property.
+	p.AllowStyles("background").MatchingHandler(onlyProxyURLs).Globally()
+	p.AllowStyles("background-image").MatchingHandler(func(v string) bool {
+		return onlyProxyURLs(v) && (proxyURLRE.MatchString(v) || dataImageURLRE.MatchString(v))
 	}).Globally()
 	// Classes and IDs, so the message's own stylesheet (above) applies.
-	p.AllowAttrs("class").Matching(bluemonday.SpaceSeparatedTokens).Globally()
+	// Utility-class mail (Tailwind and similar) uses names like max-h-[0],
+	// md:w-1/2 and w-[552px]; refusing those drops the whole attribute and
+	// the stylesheet's rules for it. A class only selects CSS the message
+	// brought with it, so anything short of quotes and angle brackets is safe.
+	p.AllowAttrs("class").Matching(classTokens).Globally()
 	p.AllowAttrs("id").Matching(regexp.MustCompile(`^[A-Za-z][\w-]{0,63}$`)).Globally()
 	p.AllowAttrs("bgcolor", "align", "valign", "width", "height", "border", "cellpadding", "cellspacing").Globally()
 	p.AllowElements("center", "font")
@@ -90,9 +109,12 @@ func sanitizeHTML(in string, opts sanitizeOptions) sanitizeResult {
 				replaceURL(u, spacerImage)
 			}
 		case "http", "https":
-			if !opts.AllowRemote {
+			switch {
+			case !opts.AllowRemote:
 				blocked.Add(1)
 				replaceURL(u, spacerImage)
+			case opts.ImageURL != nil:
+				replaceURL(u, opts.ImageURL(u.String()))
 			}
 		default:
 			replaceURL(u, spacerImage)
@@ -104,6 +126,13 @@ func sanitizeHTML(in string, opts sanitizeOptions) sanitizeResult {
 	out = dataHrefRE.ReplaceAllString(out, `href="#"`)
 	return sanitizeResult{HTML: out, BlockedImages: int(blocked.Load()), CSS: css}
 }
+
+// classTokens matches a class attribute: space-separated names that may use
+// the punctuation utility-class frameworks put in them.
+var classTokens = regexp.MustCompile(`^[\p{L}\p{N}\s_\-\[\]:./%#!@,()=+]*$`)
+
+// darkSchemeRE finds a media query's dark colour scheme condition.
+var darkSchemeRE = regexp.MustCompile(`(?i)prefers-color-scheme\s*:\s*dark\b`)
 
 var (
 	styleBlockRE = regexp.MustCompile(`(?is)<style[^>]*>(.*?)</style\s*>`)
@@ -123,7 +152,7 @@ const maxCSS = 256 << 10
 // close the style element, and no remote url() unless remote content is
 // allowed. The frame's CSP is the second line: it loads no remote style
 // sheets or fonts in any case, and remote images only when allowed.
-func extractCSS(in string, allowRemote bool) (string, int) {
+func extractCSS(in string, allowRemote bool, imageURL func(string) string) (string, int) {
 	var b strings.Builder
 	blocked := 0
 	for _, m := range styleBlockRE.FindAllStringSubmatch(in, -1) {
@@ -132,12 +161,22 @@ func extractCSS(in string, allowRemote bool) (string, int) {
 		css = cssCommentRE.ReplaceAllString(css, "")
 		css = cssImportRE.ReplaceAllString(css, "")
 		css = cssDangerRE.ReplaceAllString(css, "")
+		// Mail is shown on a light page, as large webmail services do, but
+		// the frame inherits the reader's dark preference. A message's dark
+		// rules then turn its text near-white over its own white background.
+		// An unknown value makes the query false, so they never apply.
+		css = darkSchemeRE.ReplaceAllString(css, "prefers-color-scheme: elemta-light")
 		css = cssURLRE.ReplaceAllStringFunc(css, func(u string) string {
 			target := strings.ToLower(strings.TrimSpace(cssURLRE.FindStringSubmatch(u)[2]))
 			switch {
 			case strings.HasPrefix(target, "data:image/"):
 				return u
 			case (strings.HasPrefix(target, "https:") || strings.HasPrefix(target, "http:")) && allowRemote:
+				if imageURL != nil {
+					// The original spelling, not the lower-cased target: paths
+					// and signed query strings are case-sensitive.
+					return `url("` + cssString(imageURL(strings.TrimSpace(cssURLRE.FindStringSubmatch(u)[2]))) + `")`
+				}
 				return u
 			case strings.HasPrefix(target, "http"):
 				blocked++
@@ -158,6 +197,77 @@ func extractCSS(in string, allowRemote bool) (string, int) {
 		out = out[:maxCSS]
 	}
 	return out, blocked
+}
+
+// inlineStyleRE finds style attributes, double- or single-quoted.
+var inlineStyleRE = regexp.MustCompile(`(?is)(\sstyle\s*=\s*)("[^"]*"|'[^']*')`)
+
+// rewriteInlineURLs handles url() in inline styles before sanitising, as
+// extractCSS does for <style> blocks: a remote address goes to the image
+// proxy when remote content is allowed and the proxy is on, and otherwise
+// becomes none and counts as a blocked image, so the Show images banner
+// appears. data: images stay. Values are entity-decoded first, since
+// style="background-image:url(&quot;https://...&quot;)" is common.
+func rewriteInlineURLs(in string, opts sanitizeOptions, blocked *atomic.Int64) string {
+	return inlineStyleRE.ReplaceAllStringFunc(in, func(attr string) string {
+		m := inlineStyleRE.FindStringSubmatch(attr)
+		val := html.UnescapeString(m[2][1 : len(m[2])-1])
+		if !strings.Contains(strings.ToLower(val), "url(") {
+			return attr
+		}
+		val = cssURLRE.ReplaceAllStringFunc(val, func(u string) string {
+			orig := strings.TrimSpace(cssURLRE.FindStringSubmatch(u)[2])
+			target := strings.ToLower(orig)
+			switch {
+			case strings.HasPrefix(target, "data:image/"):
+				return u
+			case strings.HasPrefix(target, "https:") || strings.HasPrefix(target, "http:"):
+				if opts.AllowRemote && opts.ImageURL != nil {
+					return `url("` + cssString(opts.ImageURL(orig)) + `")`
+				}
+				if !opts.AllowRemote {
+					// Counted so the Show images banner appears. With images
+					// allowed but the proxy off, it's dropped quietly: the
+					// banner would offer what the user already chose.
+					blocked.Add(1)
+				}
+			}
+			return "none"
+		})
+		return m[1] + `"` + html.EscapeString(val) + `"`
+	})
+}
+
+// proxyURLRE is a url() naming the image proxy, the only remote image an
+// inline style may keep.
+var proxyURLRE = regexp.MustCompile(`(?i)url\(\s*"(/mail/image\?[A-Za-z0-9%&=_.~+-]*)"\s*\)`)
+
+// onlyProxyURLs accepts a background value whose every url() names the
+// image proxy (or is a data: image) and whose remainder is plain colours,
+// sizes and keywords. Colour functions are allowed; any other function,
+// expression() included, refuses the value.
+func onlyProxyURLs(v string) bool {
+	rest := proxyURLRE.ReplaceAllString(v, " ")
+	rest = dataImageURLRE.ReplaceAllString(rest, " ")
+	rest = colorFuncRE.ReplaceAllString(rest, " ")
+	// Gradients (buttons and banners use them) after their colours are gone,
+	// so only plain stops and directions are left inside.
+	rest = gradientRE.ReplaceAllString(rest, " ")
+	return plainBackgroundRE.MatchString(rest)
+}
+
+var (
+	colorFuncRE       = regexp.MustCompile(`(?i)\b(rgba?|hsla?)\(\s*[0-9.,%\s/deg+-]*\)`)
+	gradientRE        = regexp.MustCompile(`(?i)\b(repeating-)?(linear|radial)-gradient\(\s*[A-Za-z0-9#%.,\s/-]*\)`)
+	plainBackgroundRE = regexp.MustCompile(`^[A-Za-z0-9#%.,\s/-]*$`)
+)
+
+var dataImageURLRE = regexp.MustCompile(`(?i)url\(\s*(['"]?)data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+(['"]?)\s*\)`)
+
+// cssString makes s safe inside a double-quoted CSS string. A proxy URL is
+// query-escaped already; this guards the quote and backslash regardless.
+func cssString(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", "", "\r", "").Replace(s)
 }
 
 // wrapBody keeps the <body> element's background and colours, which the

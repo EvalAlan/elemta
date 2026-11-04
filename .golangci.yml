@@ -72,6 +72,13 @@ linters:
           - staticcheck
           - unused
         path: ^internal/sievefork/
+      # Likewise the go-msgauth dkim fork (internal/dkimfork/FORK.md).
+      - linters:
+          - errcheck
+          - misspell
+          - staticcheck
+          - unused
+        path: ^internal/dkimfork/
       - linters:
           - errcheck
         path: cmd/

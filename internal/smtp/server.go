@@ -27,6 +27,7 @@ import (
 	deliverymetrics "github.com/EvalAlan/elemta/internal/metrics"
 	"github.com/EvalAlan/elemta/internal/plugin"
 	"github.com/EvalAlan/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/srs"
 	"github.com/EvalAlan/elemta/internal/suppression"
 	"github.com/EvalAlan/elemta/internal/tlsrpt"
 	"github.com/google/uuid"
@@ -36,6 +37,9 @@ import (
 
 // Server represents an SMTP server
 type Server struct {
+	// submitSigner DKIM-signs what signed-in users send as it arrives
+	// (submission_dkim.go); nil when signing is off. Swapped on reload.
+	submitSigner atomic.Pointer[dkim.Signer]
 	// abuse is the shared abuse policy; nil without one (SetAbuse).
 	abuse      *abuse.Engine
 	config     *Config
@@ -439,6 +443,13 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 		// Outbound EHLO announces this server's hostname, not "localhost".
 		if remoteSMTPHandler != nil {
 			remoteSMTPHandler.SetHeloHostname(config.Hostname)
+			// Read when dialling: the rules arrive after this is built.
+			remoteSMTPHandler.SetDestinationGuard(func(ip net.IP) error {
+				if config.destinationGuard == nil {
+					return nil
+				}
+				return config.destinationGuard(ip)
+			})
 		}
 
 		tlsReportHandler = remoteSMTPHandler
@@ -563,6 +574,7 @@ func initQueueSystem(config *Config, slogger *slog.Logger) (*queue.Manager, *que
 
 		// Set up bounce engine for DSN generation on permanent failures
 		bounceEngine := NewBounceEngine(queueManager, config.Hostname, slogger)
+		bounceEngine.srs = config.SRS
 		queueProcessor.SetBounceEngine(bounceEngine)
 
 		slogger.Info("Queue processor initialized successfully")
@@ -880,6 +892,9 @@ func NewServer(config *Config) (*Server, error) {
 	if err := prepareServerConfig(config); err != nil {
 		return nil, err
 	}
+	if config.SRS == nil {
+		config.SRS = srs.FromEnv()
+	}
 
 	slogger := slog.Default().With(
 		"component", "smtp-server",
@@ -939,6 +954,11 @@ func NewServer(config *Config) (*Server, error) {
 		dmarcReports:    initDMARCReports(config, queueManager, queueProcessor, slogger),
 	}
 	server.poolsFingerprint = poolsFingerprint(poolsSettings(config))
+	// Already validated by initQueueSystem; this is the same keys, for the
+	// sessions rather than for delivery.
+	if signer, err := dkim.NewSigner(config.DKIM, slogger); err == nil {
+		server.submitSigner.Store(signer)
+	}
 
 	tlsManager, err := initTLSManager(config, slogger)
 	if err != nil {
@@ -1058,7 +1078,7 @@ func (s *Server) refuseBlocked(conn net.Conn) bool {
 	}
 	addr := conn.RemoteAddr().String()
 	if !s.abuse.Refuse(addr) {
-		if s.abuse.AllowRate(addr) {
+		if s.abuse.AllowRate(addr, abuse.ProtocolSMTP) {
 			return false
 		}
 		_ = conn.Close()
@@ -1075,6 +1095,14 @@ func (s *Server) refuseBlocked(conn net.Conn) bool {
 // leaves the limit from the configuration file.
 func (s *Server) SetAbuse(e *abuse.Engine) {
 	s.abuse = e
+	if s.config != nil {
+		s.config.destinationGuard = func(ip net.IP) error {
+			if rule, denied := e.DenyDestination(ip); denied {
+				return fmt.Errorf("delivery to %s refused by a rule on %s", ip, rule.Value)
+			}
+			return nil
+		}
+	}
 	if s.resourceManager == nil {
 		return
 	}
@@ -1084,7 +1112,7 @@ func (s *Server) SetAbuse(e *abuse.Engine) {
 	e.OnPolicy(func(p abuse.Policy) {
 		limit := configured
 		if p.Mode == abuse.ModeEnforce {
-			limit = p.ConnectionsPerAddress
+			limit, _ = p.ConnectionLimits(abuse.ProtocolSMTP)
 		}
 		tracker.SetLimit(limit)
 		s.slogger.Info("Connection limit per address changed", "limit", limit)
@@ -1441,6 +1469,17 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
+	// The webmail's submission port carries its users, not the webmail, so
+	// a rule on the webmail's own address must not stop them all.
+	if sc, ok := conn.(submissionConn); !ok || !sc.webmail {
+		if rule, denied := s.abuse.DenyPeer(clientIP, abuse.ProtocolSMTP); denied {
+			s.slogger.WarnContext(ctx, "Connection refused by a rule",
+				"event_type", "rejection", "client_ip", clientIP, "rule", rule.Value)
+			_, _ = conn.Write([]byte("554 5.7.1 Connection refused by policy\r\n"))
+			_ = conn.Close()
+			return
+		}
+	}
 
 	var sessionID string
 	var cleanupDone bool
@@ -1500,6 +1539,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	session.useAbuse(s.abuse)
 	session.rcptVerifier = s.rcptVerifier
 	session.senderPolicies = s.senderPolicies
+	session.dkimSigner = s.submitSigner.Load()
 	if sc, ok := conn.(submissionConn); ok {
 		session.submission = true
 		session.webmailSubmission = sc.webmail
@@ -1517,6 +1557,7 @@ func (s *Server) handleAndCloseSession(ctx context.Context, conn net.Conn) {
 	s.pluginMu.RUnlock()
 	session.SetScannerManager(scanners)
 	session.SetAccessControl(accessControl)
+	session.abuse = s.abuse
 	session.SetRBLChecker(rblChecker)
 	session.SetAuthVerifier(authVerifier)
 	session.SetDMARCReports(s.dmarcReports)

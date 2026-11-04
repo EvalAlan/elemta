@@ -11,6 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/queue"
+	"github.com/EvalAlan/elemta/internal/srs"
 )
 
 // Config represents the main configuration for the SMTP server
@@ -106,6 +107,13 @@ type Config struct {
 
 	// Antispam configuration
 	Antispam *AntispamConfig `toml:"antispam" json:"antispam"`
+	// SRS reverses the addresses forwarded mail went out from, so bounces
+	// reach the original sender. It comes from the environment, not this file,
+	// because it holds a secret; nil is off (internal/srs).
+	SRS *srs.Rewriter `toml:"-" json:"-"`
+	// destinationGuard refuses delivery to a mail server by address. It comes
+	// with the abuse policy, which reaches the server after the queue is built.
+	destinationGuard func(net.IP) error
 
 	// Plugin configuration
 	Plugins *PluginConfig `toml:"plugins" json:"plugins"`
@@ -551,8 +559,12 @@ type ClamAVConfig struct {
 
 // AntispamConfig represents antispam configuration
 type AntispamConfig struct {
-	Enabled      bool                `toml:"enabled" json:"enabled"`
-	RejectOnSpam bool                `toml:"reject_on_spam" json:"reject_on_spam"`
+	Enabled      bool `toml:"enabled" json:"enabled"`
+	RejectOnSpam bool `toml:"reject_on_spam" json:"reject_on_spam"`
+	// Quarantine holds mail reject_on_spam would refuse in the recipients'
+	// Quarantine folders, when they are all mailboxes here. Viruses are never
+	// held, and mail that can't be held is still refused.
+	Quarantine   bool                `toml:"quarantine" json:"quarantine"`
 	SpamAssassin *SpamAssassinConfig `toml:"spamassassin" json:"spamassassin"`
 	Rspamd       *RspamdConfig       `toml:"rspamd" json:"rspamd"`
 }

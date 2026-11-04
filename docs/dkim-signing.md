@@ -10,10 +10,17 @@ This document covers the outbound **signing** path. Inbound DKIM/DMARC/ARC
 
 ## How it works
 
-- Signing happens on the **remote SMTP delivery path** (delivery to a remote
-  MX), inside `SMTPDeliveryHandler`. Local LMTP delivery (to the mailbox service) is
-  intentionally **not** signed, because a locally delivered copy never crosses
-  an administrative boundary where DKIM matters.
+- Mail a **signed-in user** sends is signed as it's queued, for every recipient,
+  with the envelope sender's domain (which the server has already checked is
+  theirs). A copy delivered to a mailbox here then carries its author's
+  signature, and keeps it when its recipient forwards it outside: SRS gives the
+  forward an envelope at the forwarding domain, so DMARC can only pass on that
+  signature. Without it, Gmail refuses forwarded mail from a domain with
+  `p=reject`.
+- Everything else is signed on the **remote SMTP delivery path** (delivery to a
+  remote MX), inside `SMTPDeliveryHandler`. A message already signed at
+  submission isn't signed for the same domain again; mail from outside the
+  server delivered to a local mailbox isn't signed, since it's its sender's.
 - A message is signed **once**, before recipients are grouped by domain, so the
   exact same signed bytes are delivered to every recipient MX.
 - Existing `DKIM-Signature` headers are preserved, but they never suppress
@@ -25,8 +32,9 @@ This document covers the outbound **signing** path. Inbound DKIM/DMARC/ARC
   a bounce/DSN with a null return path), the **From header** domain is used as a
   fallback. If no key is configured for the resolved domain, the message is
   delivered **unsigned** and a debug line is logged.
-- If signing fails for any reason, the message is delivered **unsigned** (with a
-  warning log) rather than being failed outright.
+- If signing fails for a domain that has a key, delivery is tried again later
+  rather than sending the message unsigned; at submission, the client is told to
+  try again (`451`).
 
 The signer reuses [`github.com/emersion/go-msgauth/dkim`](https://pkg.go.dev/github.com/emersion/go-msgauth/dkim),
 the same library referenced by the verification code, so a message signed by

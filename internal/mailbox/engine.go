@@ -77,8 +77,9 @@ type Engine struct {
 	bodySlots   chan struct{}
 	totpKeys    []totpKey
 	// bodyGrace is how long a body stays after it was first seen without
-	// any message referring to it. It must exceed the backup retention,
-	// or restoring an older metadata backup finds bodies already gone.
+	// any message referring to it. Backups from scripts/mailbox-backup.sh
+	// hold their own bodies; one that relies on the store must be younger
+	// than this, or restoring it finds bodies already gone.
 	bodyGrace     time.Duration
 	readinessMu   sync.Mutex
 	lastBodyCheck time.Time
@@ -86,6 +87,9 @@ type Engine struct {
 	// to an address's domain and account (Service.directoryClasses); nil
 	// when the directory carries none.
 	directoryClasses func(ctx context.Context, address string) (domainClass, accountClass string, err error)
+	// spamLearnPerDay is the per-account limit on moves queued for Rspamd
+	// to learn from (spam_learn.go); zero while learning is off.
+	spamLearnPerDay int
 }
 
 func NewEngine(ctx context.Context, db *sql.DB, bodies BodyStore, c Config) (*Engine, error) {
@@ -489,12 +493,17 @@ func (e *Engine) Read(ctx context.Context, m Message) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(raw)
-	if int64(len(raw)) != m.Size || hex.EncodeToString(sum[:]) != m.Checksum {
+	if !matchesBody(raw, m.Size, m.Checksum) {
 		return nil, errors.New("message body checksum mismatch")
 	}
 	return raw, nil
 }
+
+func matchesBody(raw []byte, size int64, checksum string) bool {
+	sum := sha256.Sum256(raw)
+	return int64(len(raw)) == size && hex.EncodeToString(sum[:]) == checksum
+}
+
 func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, flags []string, date time.Time, token string) (result AppendResult, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -952,6 +961,11 @@ SELECT $1,v.uid,v.body,v.flags::text[],v.date::timestamptz,v.ms FROM unnest($2::
 				return err
 			}
 			if err = changes(ctx, tx, s.ID, "expunge", oldUIDs, srcSeqs); err != nil {
+				return err
+			}
+		}
+		if class := learnClass(src, dst); class != "" && e.spamLearnPerDay > 0 {
+			if err = queueSpamFeedback(ctx, tx, account, class, bodies, e.spamLearnPerDay); err != nil {
 				return err
 			}
 		}

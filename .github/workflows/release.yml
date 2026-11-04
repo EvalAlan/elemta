@@ -66,8 +66,7 @@ jobs:
         env:
           GOARCH: ${{ matrix.goarch }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          tar czf elemta-${VERSION}-linux-${GOARCH}.tar.gz -C dist elemta elemta-cli
+        run: scripts/package-release.sh "$VERSION" "$GOARCH" dist
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -93,10 +92,16 @@ jobs:
           pattern: elemta-linux-*
           merge-multiple: true
 
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz > SHA256SUMS
+
       - name: Create Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
           generate_release_notes: true
           draft: false
           prerelease: false

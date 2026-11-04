@@ -155,6 +155,9 @@ func (s *imapSession) Thread(kind imapserver.NumKind, algorithm string, c *imap.
 // The whole account is one quota root, named "", as directory quotas are
 // per account.
 func (s *imapSession) QuotaRoots(mailbox string) ([]string, error) {
+	if err := s.allowNone(); err != nil {
+		return nil, err
+	}
 	if _, err := s.service.engine.Folder(s.ctx, s.account.ID, mailbox); err != nil {
 		return nil, protocolError(err)
 	}
@@ -162,6 +165,9 @@ func (s *imapSession) QuotaRoots(mailbox string) ([]string, error) {
 }
 
 func (s *imapSession) Quota(root string) ([]imapserver.QuotaResource, error) {
+	if err := s.allowNone(); err != nil {
+		return nil, err
+	}
 	if root != "" {
 		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeNonExistent, Text: "No such quota root"}
 	}

@@ -25,10 +25,13 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/abuse"
+	"github.com/EvalAlan/elemta/internal/adminmfa"
 	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/campaign"
 	"github.com/EvalAlan/elemta/internal/config"
 	"github.com/EvalAlan/elemta/internal/dkim"
+	"github.com/EvalAlan/elemta/internal/dnshealth"
+	"github.com/EvalAlan/elemta/internal/geoip"
 	"github.com/EvalAlan/elemta/internal/metrics"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/EvalAlan/elemta/internal/queue"
@@ -181,15 +184,18 @@ type ScannerStatus struct {
 	ScanLimit       int64   `json:"scan_limit"`
 	Threshold       float64 `json:"threshold,omitempty"`
 	RejectOnSpam    bool    `json:"reject_on_spam,omitempty"`
+	Quarantine      bool    `json:"quarantine,omitempty"`
 	RejectOnFailure bool    `json:"reject_on_failure,omitempty"`
 }
 
 // Server represents an API server for Elemta
 type Server struct {
-	config         *Config
-	mainConfig     *MainConfig // Main application configuration
-	configPath     string      // Path to config file for persistence
-	abuse          *abuse.Engine
+	config     *Config
+	mainConfig *MainConfig // Main application configuration
+	configPath string      // Path to config file for persistence
+	abuse      *abuse.Engine
+	// locations places sign-ins for alerts; nil without a database.
+	locations      *geoip.DB
 	httpServer     *http.Server
 	listener       net.Listener
 	restarting     atomic.Bool
@@ -201,12 +207,18 @@ type Server struct {
 	apiKeyManager  *auth.APIKeyManager
 	sessionManager *auth.SessionManager
 	loginThrottle  *loginThrottle
+	// mfa holds console users' second factors; nil when users don't come
+	// from a users file, which it sits beside.
+	mfa            *adminmfa.Store
+	mfaFlow        *mfaFlow
 	authMiddleware *AuthMiddleware
 	rateLimiter    *RateLimitMiddleware
 	corsMiddleware *CORSMiddleware
 	metricsStore   MetricsStore
 	// mailAuthLookupTXT is replaceable for deterministic DNS preflight tests.
 	mailAuthLookupTXT func(context.Context, string) ([]string, error)
+	// dnsHealth is replaceable for the same reason.
+	dnsHealth func(context.Context, dnshealth.Options) dnshealth.Report
 
 	// Mass mailer. Guarded because the plugin toggle builds and tears these
 	// down while requests are in flight, unlike the rest of the server's
@@ -378,6 +390,11 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 	}
 
 	// Initialize rate limiter
+	// From the environment too, because a deployment's runtime configuration is
+	// kept across upgrades, so a setting added later never reaches it. Behind a
+	// proxy without this, every visitor looks like the proxy: they share one
+	// login throttle, and audit entries name it.
+	config.RateLimit.TrustedProxies = append(config.RateLimit.TrustedProxies, strings.Fields(os.Getenv("ELEMTA_API_TRUSTED_PROXIES"))...)
 	server.rateLimiter = NewRateLimitMiddleware(config.RateLimit)
 
 	// Initialize CORS middleware
@@ -510,11 +527,13 @@ func (s *Server) initializeAuth() error {
 	// If an explicit auth file was provided, honor it before consulting environment defaults.
 	// This is especially important for container/web deployments that pass --auth-file
 	// while building without CGO (where the default SQLite path is unusable).
+	mfaFile := ""
 	if authFile != "" {
 		authSystem, err = auth.NewWithFile(authFile)
 		if err != nil {
 			return fmt.Errorf("failed to initialize file-based authentication from %s: %w", authFile, err)
 		}
+		mfaFile = authFile
 		logger.Info("Authentication initialized using explicit file-based datasource",
 			"datasource", authFile,
 		)
@@ -530,6 +549,7 @@ func (s *Server) initializeAuth() error {
 			if err != nil {
 				return fmt.Errorf("failed to initialize file-based authentication from %s: %w", authFile, err)
 			}
+			mfaFile = authFile
 			logger.Info("Authentication initialized using file-based datasource",
 				"datasource", authFile,
 			)
@@ -582,6 +602,11 @@ func (s *Server) initializeAuth() error {
 	}
 	authMiddleware.throttle = s.loginThrottle
 	authMiddleware.clientAddr = s.loginAddr
+	if mfaFile != "" {
+		s.mfa = adminmfa.Open(adminmfa.PathFor(mfaFile))
+		s.mfaFlow = newMFAFlow()
+		authMiddleware.mfa = s.mfa
+	}
 
 	s.authSystem = authSystem
 	s.rbac = rbac
@@ -677,6 +702,7 @@ func (s *Server) Start() error {
 		auth.HandleFunc("/login", s.handleLogin).Methods("POST")
 		auth.HandleFunc("/logout", s.handleLogout).Methods("POST", "GET")
 		auth.HandleFunc("/me", s.handleMe).Methods("GET")
+		s.mfaRoutes(r)
 
 		// API key management routes (require authentication)
 		apiKeys := r.PathPrefix("/auth/apikeys").Subrouter()
@@ -692,6 +718,7 @@ func (s *Server) Start() error {
 	// API routes
 	api := r.PathPrefix("/api").Subrouter()
 	s.provisionRoutes(api)
+	s.complianceRoutes(api)
 
 	// User management. Only meaningful with authentication on: without it
 	// there are no accounts to manage.
@@ -701,6 +728,7 @@ func (s *Server) Start() error {
 		api.Handle("/users", perm(auth.PermissionUserCreate)(http.HandlerFunc(s.handleCreateUser))).Methods("POST")
 		api.Handle("/users/{username}/role", perm(auth.PermissionUserUpdate)(http.HandlerFunc(s.handleSetUserRole))).Methods("PUT")
 		api.Handle("/users/{username}/password", perm(auth.PermissionUserUpdate)(http.HandlerFunc(s.handleResetUserPassword))).Methods("PUT")
+		api.Handle("/users/{username}/reset-2fa", perm(auth.PermissionUserUpdate)(http.HandlerFunc(s.handleResetSecondFactor))).Methods("POST")
 		api.Handle("/users/{username}", perm(auth.PermissionUserDelete)(http.HandlerFunc(s.handleDeleteUser))).Methods("DELETE")
 		api.Handle("/roles", perm(auth.PermissionUserView)(http.HandlerFunc(s.handleListRoles))).Methods("GET")
 		api.Handle("/account/password", s.authMiddleware.RequireAuth(http.HandlerFunc(s.handleChangeOwnPassword))).Methods("POST")
@@ -1416,6 +1444,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	addr := s.loginAddr(r)
+	if _, denied := s.abuse.DenyPeer(addr, abuse.ProtocolAdmin); denied {
+		http.Error(w, "Refused by policy", http.StatusForbidden)
+		return
+	}
 	if b, blocked := s.abuse.Blocked(addr); blocked {
 		writeThrottled(w, time.Until(b.Until))
 		return
@@ -1453,37 +1485,36 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	s.loginThrottle.recordSuccess(addr, loginReq.Username)
+	if s.secondStep(w, loginReq.Username, addr) {
+		return
+	}
+	s.completeLogin(w, r, loginReq.Username, addr)
+}
+
+// completeLogin opens a session for a user who has proved who they are,
+// with a password and, if they have one, a second factor.
+func (s *Server) completeLogin(w http.ResponseWriter, r *http.Request, username, addr string) {
+	s.loginThrottle.recordSuccess(addr, username)
+	s.abuse.RecordSignIn(r.Context(), addr, "admin", username)
 
 	// A session cookie the browser already holds is replaced, not kept
 	// alongside: an attacker who planted one must not end up signed in.
 	if oldID := s.sessionManager.GetSessionFromRequest(r); oldID != "" {
 		_ = s.sessionManager.RevokeSession(oldID)
 	}
-
-	// Create session
-	log.Printf("Creating session for user: %s", loginReq.Username)
 	// The client's address, not a proxy's: the one the throttle used.
-	session, err := s.sessionManager.CreateSession(loginReq.Username, r.UserAgent(), addr)
+	session, err := s.sessionManager.CreateSession(username, r.UserAgent(), addr)
 	if err != nil {
-		log.Printf("Failed to create session: %v", err)
+		slog.Error("Failed to create session", "error", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
-
-	log.Printf("Session created successfully for user: %s", loginReq.Username)
-
-	// Set session cookie
-	log.Printf("Setting session cookie")
+	slog.Info("Console sign-in", "username", sanitizeForLog(username), "remote", addr)
 	s.sessionManager.SetCookie(w, r, session.ID)
-	log.Printf("Session cookie set")
-
-	// Get user permissions
-	permissions, _ := s.rbac.GetUserPermissions(ctx, loginReq.Username)
-
+	permissions, _ := s.rbac.GetUserPermissions(r.Context(), username)
 	writeJSON(w, map[string]interface{}{
 		"status":      "success",
-		"username":    loginReq.Username,
+		"username":    username,
 		"permissions": permissions,
 	})
 }
@@ -2145,6 +2176,7 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"scan_limit":     as.ScanLimit,
 			"threshold":      as.Threshold,
 			"reject_on_spam": as.RejectOnSpam,
+			"quarantine":     as.Quarantine,
 		}
 	}
 
@@ -2548,13 +2580,23 @@ func (s *Server) persistConfig() error {
 			edit{"abuse", "connections_per_minute", p.ConnectionsPerMinute},
 			edit{"abuse", "failures_per_address", p.FailuresPerAddress},
 			edit{"abuse", "failures_per_network", p.FailuresPerNetwork},
+			edit{"abuse", "accounts_per_address", p.AccountsPerAddress},
+			edit{"abuse", "addresses_per_account", p.AddressesPerAccount},
+			edit{"abuse", "messages_per_address_per_hour", p.MessagesPerAddressPerHour},
+			edit{"abuse", "outbound_recipients_per_hour", p.OutboundRecipientsPerHour},
+			edit{"abuse", "messages_per_domain_per_hour", p.MessagesPerDomainPerHour},
+			edit{"abuse", "protocol_limits", protocolLimitTables(p.ProtocolLimits)},
 			edit{"abuse", "firewall", p.Firewall},
 			edit{"abuse", "window_minutes", p.WindowMinutes},
 			edit{"abuse", "block_minutes", p.BlockMinutes},
 			edit{"abuse", "max_block_hours", p.MaxBlockHours},
 			edit{"abuse", "allowlist", p.Allowlist},
+			edit{"abuse", "sign_in_alerts", p.SignInAlerts},
+			edit{"abuse", "alert_email", p.AlertEmail},
+			edit{"abuse", "rules", ruleTables(p.Rules)},
 		)
 	}
+
 	if p := s.mainConfig.DKIM; p != nil {
 		edits = append(edits,
 			edit{"plugins.dkim", "enabled", p.Enabled},
@@ -2641,6 +2683,7 @@ func (s *Server) persistConfig() error {
 		edits = append(edits,
 			edit{"antispam", "enabled", as.Enabled},
 			edit{"antispam", "reject_on_spam", as.RejectOnSpam},
+			edit{"antispam", "quarantine", as.Quarantine},
 			edit{"antispam.rspamd", "enabled", as.Enabled},
 		)
 		if as.Address != "" {
@@ -2708,6 +2751,13 @@ func (s *Server) persistConfig() error {
 	}
 	if migratedDKIM {
 		doc = config.RemoveTOMLSection(doc, "dkim")
+	}
+
+	// The running services keep working from memory after a bad write, so a
+	// broken file shows up only at the next restart, as every service failing
+	// at once. Refuse it here, where it's still just a failed save.
+	if err := config.ValidateTOML(doc); err != nil {
+		return fmt.Errorf("the configuration would not be valid, so it was not saved: %w", err)
 	}
 
 	// Write via a temp file in the same directory so a failure part-way through

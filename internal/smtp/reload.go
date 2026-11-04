@@ -80,6 +80,7 @@ func (s *Server) Reload(ctx context.Context, newConfig *Config) error {
 	s.authVerifier = next.authVerifier
 	s.pluginMu.Unlock()
 
+	s.submitSigner.Store(next.dkimSigner)
 	dkimReloaded := false
 	if s.queueProcessor != nil {
 		dkimReloaded = s.queueProcessor.SetDKIMSigner(next.dkimSigner)

@@ -81,8 +81,6 @@ enable_starttls = true
 cert_file = "/app/runtime-config/test.crt"
 key_file = "/app/runtime-config/test.key"
 
-queue_dir = "/app/queue"
-
 [queue]
 dir = "/app/queue"
 # The file backend is the default while the SQLite one is being reworked.
@@ -393,6 +391,10 @@ enabled = true
 # threshold. Trained, 0 of 61 real ham messages reach the reject action while
 # GTUBE reaches it exactly. If you retrain, re-measure before trusting this.
 reject_on_spam = true
+# Hold what would be refused in each recipient's Quarantine folder, where they
+# can release it. Only for mail to local mailboxes: viruses are always refused,
+# and so is spam for outside addresses, or from a logged-in user.
+quarantine = true
 
 [antispam.rspamd]
 enabled = true
@@ -452,9 +454,6 @@ cache_size = 10000
 cache_ttl = "1h"
 cleanup_interval = "5m"
 metrics_enabled = true
-timeout = 30
-max_retries = 3
-retry_delay = 60
 
 [memory]
 max_memory_usage = 2147483648  # 2GB total memory limit
@@ -476,8 +475,6 @@ idle_timeout = 120
 rate_limit_window = 60
 max_requests_per_window = 100000  # Very permissive for testing
 goroutine_pool_size = 100
-circuit_breaker_enabled = true
-resource_monitoring_enabled = true
 
 [metrics]
 enabled = true
@@ -565,3 +562,11 @@ page_size = 50
 # the sender's address. Turn this on to also put it in X-Originating-IP on
 # outgoing mail, where every recipient sees it.
 # originating_ip_header = false
+# Remote images in mail are fetched by the webmail and served from its own
+# address, so senders don't see readers' IP addresses and tracker blockers
+# don't break mail. Only signed addresses from messages a user opened are
+# fetched, never internal ones; see docs/webmail-images.md.
+# image_proxy = true
+# image_cache_dir = "/tmp/elemta-webmail-images"
+# image_cache_mb = 512
+# image_max_mb = 5

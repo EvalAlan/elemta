@@ -15,6 +15,8 @@ import (
 )
 
 type composeView struct {
+	// EncryptedOriginal marks a reply to encrypted mail, which stays encrypted.
+	EncryptedOriginal bool
 	// FromChoices are the senders offered when there is more than one
 	// (mailsettings.go fromChoices).
 	FromChoices []string
@@ -75,6 +77,7 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 		if err != nil {
 			return err
 		}
+		cv.EncryptedOriginal = orig.PGP != ""
 		if cv.Mode == "draft" {
 			prefillDraft(cv, orig)
 			cv.DraftUID = uid
@@ -341,6 +344,17 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 			d.Text = htmlToText(h)
 		}
 	}
+	encrypted := r.PostFormValue("pgp_message")
+	if encrypted != "" {
+		sealed, err := composeEncrypted(encrypted)
+		if err != nil || saveDraft {
+			again(http.StatusBadRequest, "That message couldn't be sent encrypted.")
+			return
+		}
+		// Only what the browser sealed goes out, whatever else was posted.
+		d.Encrypted, d.Text, richHTML = sealed, "", ""
+		cv.HTML, cv.Text = "", ""
+	}
 	if cv.Receipt {
 		d.ReceiptTo = fromAddress
 	}
@@ -427,6 +441,12 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 			}
 			d.Attachments = append(d.Attachments, Attachment{Filename: name, ContentType: part.ContentType, Data: body})
 		}
+	}
+	// Files that reached the server, such as a forward's originals, would go out
+	// readable beside an encrypted message. The browser seals its own.
+	if d.Encrypted != nil && len(d.Attachments) > 0 {
+		again(http.StatusBadRequest, "A forward's original attachments can't be encrypted. Remove them, or attach the files again.")
+		return
 	}
 	// A saved draft hasn't been sent from anywhere yet.
 	if !saveDraft {

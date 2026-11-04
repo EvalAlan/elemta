@@ -16,6 +16,7 @@ import (
 
 	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/authresult"
+	"github.com/EvalAlan/elemta/internal/dkim"
 	"github.com/EvalAlan/elemta/internal/dmarcrpt"
 	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/google/uuid"
@@ -28,6 +29,9 @@ type Session struct {
 	// senderPolicies, when set, applies the signed-in user's class of
 	// service to what they send (sender_policy.go).
 	senderPolicies *senderPolicies
+	// dkimSigner signs what this session's signed-in user sends, as it is
+	// queued (submission_dkim.go); nil when signing is off.
+	dkimSigner *dkim.Signer
 	// submission marks a session on the submission port: it must
 	// authenticate (or come from allowed_relays) before MAIL FROM.
 	submission bool
@@ -51,13 +55,15 @@ type Session struct {
 	dataHandler    *DataHandler
 
 	// Configuration and dependencies
-	config          *Config
-	logger          *slog.Logger
-	authenticator   Authenticator
-	queueManager    queue.QueueManager
-	tlsManager      TLSHandler
-	scannerManager  *ScannerManager
-	accessControl   *AccessControl
+	config         *Config
+	logger         *slog.Logger
+	authenticator  Authenticator
+	queueManager   queue.QueueManager
+	tlsManager     TLSHandler
+	scannerManager *ScannerManager
+	accessControl  *AccessControl
+	// abuse holds the allow and deny rules; nil is none (internal/abuse).
+	abuse           *abuse.Engine
 	rblChecker      *RBLChecker
 	rblDecision     RBLDecision
 	authVerifier    *authresult.Verifier

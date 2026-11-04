@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/mailcategory"
 	"mime"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,10 +37,13 @@ type listState struct {
 	Sort    Sort
 	Reverse bool
 	Page    int
+	// Tab is the inbox tab (a mailcategory name), or "" when the list has
+	// no tabs: another folder, a search, or tabs turned off.
+	Tab string
 }
 
 func listStateFrom(v url.Values) listState {
-	st := listState{Folder: v.Get("f"), Query: strings.TrimSpace(v.Get("q")), Sort: Sort(v.Get("sort")), Reverse: v.Get("rev") == "1"}
+	st := listState{Folder: v.Get("f"), Query: strings.TrimSpace(v.Get("q")), Sort: Sort(v.Get("sort")), Reverse: v.Get("rev") == "1", Tab: v.Get("tab")}
 	if st.Folder == "" {
 		st.Folder = "INBOX"
 	}
@@ -67,6 +72,9 @@ func (l listState) values() url.Values {
 	}
 	if l.Reverse {
 		v.Set("rev", "1")
+	}
+	if l.Tab != "" {
+		v.Set("tab", l.Tab)
 	}
 	return v
 }
@@ -106,8 +114,17 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	remote := q.Get("remote") == "1"
 	loc := s.loc(sess)
 
+	// Tabs split the inbox only. A search looks across every tab, as the
+	// user is looking for something rather than browsing.
+	tabs := s.prefsCached(sess).InboxTabs && strings.EqualFold(ls.Folder, "INBOX") && ls.Query == ""
+	if tabs {
+		cat, _ := mailcategory.Parse(ls.Tab)
+		ls.Tab = cat.Name()
+	} else {
+		ls.Tab = ""
+	}
 	lq := parseSearch(ls.Query, loc)
-	lq.Sort, lq.Reverse, lq.Page, lq.PageSize = ls.Sort, ls.Reverse, ls.Page, s.pageSize(sess)
+	lq.Sort, lq.Reverse, lq.Page, lq.PageSize, lq.Category = ls.Sort, ls.Reverse, ls.Page, s.pageSize(sess), ls.Tab
 
 	v := view{Title: ls.Folder, Session: sess, Folder: ls.Folder, Query: ls.Query, List: &ls, Notice: notices[q.Get("n")], Remote: remote}
 	v.SharedMailboxes = s.sharedMailboxes(r.Context(), sess)
@@ -139,6 +156,9 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 			return err
 		}
 		v.Folders = folders
+		if tabs {
+			v.InboxTabs = s.inboxTabs(r.Context(), st, ls)
+		}
 		if v.Message != nil {
 			if !remote && s.autoImages(sess, ls.Folder, folders) {
 				remote = true
@@ -169,9 +189,15 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 			}
 			v.Threaded, v.Conversations = true, tp.Conversations
 			p = Page{Folder: tp.Folder, Total: tp.Total, Page: tp.Page, PageSize: tp.PageSize}
-			// Newer/older navigation walks the conversations' latest messages.
+			// Newer/older navigation walks the conversations' latest messages,
+			// except that the open message stands for its own conversation:
+			// a row can open an older one, and the arrows have to find it.
 			for _, c := range tp.Conversations {
-				p.Messages = append(p.Messages, c.Latest)
+				row := c.Latest
+				if i := slices.IndexFunc(c.Messages, func(m Summary) bool { return hasUID && m.UID == uid }); i >= 0 {
+					row = c.Messages[i]
+				}
+				p.Messages = append(p.Messages, row)
 			}
 		} else {
 			var err error
@@ -222,7 +248,7 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 // without the user asking: only when they chose that in Settings, and never
 // in Junk, where a tracking pixel would confirm the address to a spammer.
 func (s *Server) autoImages(sess *Session, folder string, folders []Folder) bool {
-	return s.prefsCached(sess).LoadImages && !isRoleIn(folder, folders, RoleJunk)
+	return s.prefsCached(sess).LoadImages && !isRoleIn(folder, folders, RoleJunk) && !isRoleIn(folder, folders, RoleQuarantine)
 }
 
 func isRoleIn(name string, folders []Folder, role Role) bool {
@@ -361,8 +387,13 @@ func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Sessi
 		// every message the same way, each in its own frame.
 		msg.HTML = `<pre style="white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0">` + string(linkify(msg.Text)) + `</pre>`
 	}
+	var imageURL func(string) string
+	if s.images != nil {
+		imageURL = newImageSigner(sess).url
+	}
 	res := sanitizeHTML(msg.HTML, sanitizeOptions{
 		AllowRemote: remote,
+		ImageURL:    imageURL,
 		CIDURL: func(cid string) string {
 			part, body, err := findPart(raw, 0, cid)
 			if err != nil || len(body) > maxInlineImage || !strings.HasPrefix(part.ContentType, "image/") {
@@ -372,7 +403,13 @@ func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Sessi
 		},
 	})
 	imgSrc := "data:"
-	if remote {
+	switch {
+	case remote && s.images != nil:
+		// Every remote image was rewritten to the proxy, so the frame may
+		// load images from this origin only. Anything the rewrite missed
+		// fails here rather than reaching the sender.
+		imgSrc = "data: 'self'"
+	case remote:
 		imgSrc = "data: https: http:"
 	}
 	h := w.Header()
@@ -385,7 +422,7 @@ func (s *Server) messageBody(w http.ResponseWriter, r *http.Request, sess *Sessi
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Cache-Control", "private, no-store")
-	_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>body{margin:0;padding:16px 20px;font:15px/1.6 system-ui,sans-serif;color:#0E1726;background:#FFFFFF;word-wrap:break-word}img{max-width:100%%;height:auto}</style><style>%s</style></head><body>%s</body></html>`, res.CSS, res.HTML)
+	_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><base target="_blank"><style>:root{color-scheme:light}body{margin:0;padding:16px 20px;font:15px/1.6 system-ui,sans-serif;color:#0E1726;background:#FFFFFF;word-wrap:break-word}img{max-width:100%%;height:auto}</style><style>%s</style></head><body>%s</body></html>`, res.CSS, res.HTML)
 }
 
 // messagePart downloads one attachment. It is always served as an
@@ -543,6 +580,8 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 		return
 	}
 	notice := ""
+	var learn []string // senders whose tab the user just chose
+	var learnCat mailcategory.Category
 	// leaves is true for operations after which the open message is no
 	// longer in this folder, so the redirect drops it.
 	leaves := false
@@ -564,6 +603,23 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 				return errBadTag
 			}
 			return st.SetFlags(ctx, folder, uids, []string{tag}, op == "tag")
+		case "category":
+			cat, ok := mailcategory.Parse(r.PostFormValue("category"))
+			if !ok {
+				return fmt.Errorf("webmail: unknown category %q", r.PostFormValue("category"))
+			}
+			senders, err := st.Senders(ctx, folder, uids)
+			if err != nil {
+				return err
+			}
+			if err := setCategory(ctx, st, folder, uids, cat); err != nil {
+				return err
+			}
+			learn, learnCat = uniqueSenders(senders, 20), cat
+			notice = "categorized"
+			// The message has left the tab being shown.
+			leaves = r.PostFormValue("tab") != "" && r.PostFormValue("tab") != cat.Name()
+			return nil
 		case "delete":
 			notice, leaves = plural("deleted", len(uids)), true
 			return st.Delete(ctx, folder, uids)
@@ -605,6 +661,11 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 	if err != nil {
 		s.fail(w, r, sess, err)
 		return
+	}
+	if len(learn) > 0 {
+		// After the IMAP work, outside the store lock: these are calls to
+		// the mailbox service.
+		s.learnCategory(r.Context(), sess, learn, learnCat)
 	}
 	if leaves {
 		back = dropParam(back, "uid")
@@ -775,7 +836,7 @@ func (s *Server) foldersSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	case errors.Is(err, ErrExists):
 		s.renderProblem(w, r, sess, http.StatusConflict, "A folder with that name already exists.")
 	case errors.Is(err, errProtectedFolder):
-		s.renderProblem(w, r, sess, http.StatusBadRequest, "Inbox, Drafts, Sent, Archive, Junk and Trash can't be renamed or deleted.")
+		s.renderProblem(w, r, sess, http.StatusBadRequest, "Inbox, Drafts, Sent, Archive, Junk, Quarantine and Trash can't be renamed or deleted.")
 	case errors.Is(err, errFolderHasChildren):
 		s.renderProblem(w, r, sess, http.StatusBadRequest, "Delete or move the folders inside it first.")
 	case err != nil:

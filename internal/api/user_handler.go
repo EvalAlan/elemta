@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"sort"
@@ -53,6 +54,8 @@ type userView struct {
 	Username string   `json:"username"`
 	Roles    []string `json:"roles"`
 	IsAdmin  bool     `json:"is_admin"`
+	// TwoFactor is whether the user signs in with a second factor.
+	TwoFactor bool `json:"two_factor"`
 	// Domains a domain administrator manages; stored among the roles as
 	// "domain:" entries, shown apart from them.
 	Domains []string `json:"domains,omitempty"`
@@ -89,9 +92,15 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Could not read users: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var second map[string]bool
+	if s.mfa != nil {
+		second, _ = s.mfa.Users()
+	}
 	views := make([]userView, 0, len(users))
 	for _, u := range users {
-		views = append(views, viewUser(u.Username, u.Groups, u.IsAdmin))
+		v := viewUser(u.Username, u.Groups, u.IsAdmin)
+		v.TwoFactor = second[u.Username]
+		views = append(views, v)
 	}
 	current := ""
 	if ac := GetAuthContext(r); ac != nil {
@@ -102,6 +111,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		"roles":        s.roleViews(),
 		"current_user": current,
 		"datasource":   s.authSystem.GetDataSourceType(),
+		"two_factor":   s.mfa != nil,
 	})
 }
 
@@ -267,6 +277,12 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sessionManager.RevokeUserSessions(username)
+	// Someone given the name later mustn't inherit these.
+	if s.mfa != nil {
+		if err := s.mfa.Reset(username); err != nil {
+			slog.Error("Removed user's second factors were not cleared", "username", sanitizeForLog(username), "error", err)
+		}
+	}
 	s.provisionAudit(r, "dashboard-user-delete", username, "")
 	writeJSON(w, map[string]interface{}{"ok": true})
 }

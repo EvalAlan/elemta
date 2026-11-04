@@ -67,6 +67,11 @@ type local struct {
 	accounts map[string]*tally
 	top      map[string]*tally
 	events   []Event
+	holds    map[string]Hold
+	sprays   map[string]*spraySet
+	targets  map[string]*spraySet
+	shields  map[string]time.Time
+	known    map[string]map[string]time.Time
 	// pending waits for the next flush; series holds what couldn't be sent.
 	pending map[string]int
 	series  map[int64]map[string]int
@@ -117,7 +122,8 @@ func (e *Engine) Blocked(addr string) (Block, bool) {
 
 // Failure records a failed sign-in, and blocks the address once it has failed
 // too often across all services. It never blocks by account: that would hand
-// anyone a way to lock a user out. Accounts are only counted, for the console.
+// anyone a way to lock a user out. An account failed against from many
+// addresses is shielded instead (targeted.go).
 func (e *Engine) Failure(ctx context.Context, addr, service, account string) {
 	if e == nil {
 		return
@@ -137,6 +143,13 @@ func (e *Engine) Failure(ctx context.Context, addr, service, account string) {
 	metricFailures.WithLabelValues(e.service, service).Inc()
 	if failures >= p.FailuresPerAddress {
 		e.trip(ctx, p, network, service, failures)
+	} else if p.AccountsPerAddress > 0 {
+		if n := e.spray(ctx, network, account, window); n >= p.AccountsPerAddress {
+			e.trip(ctx, p, network, service, failures)
+		}
+	}
+	if p.AddressesPerAccount > 0 {
+		e.noteTarget(ctx, p, network, service, account, window)
 	}
 	// Many addresses in one network add up to the network, which is how a
 	// rented block stays under the per-address limit.
@@ -272,14 +285,14 @@ func (e *Engine) record(ctx context.Context, ev Event) {
 }
 
 // BlockAddress blocks an address or /64 by hand. It refuses an exempt address:
-// the allowlist is what stands between an operator and locking themselves out.
+// an allow rule is what stands between an operator and locking themselves out.
 func (e *Engine) BlockAddress(ctx context.Context, addr, reason, by string, duration time.Duration) (Block, error) {
 	network := Target(addr)
 	if network == "" {
 		return Block{}, fmt.Errorf("%q is not an address or a network of /16 or smaller", addr)
 	}
 	if e.overlapsExempt(network) {
-		return Block{}, fmt.Errorf("%s is on the allowlist", network)
+		return Block{}, fmt.Errorf("an allow rule covers %s", network)
 	}
 	if duration <= 0 {
 		return Block{}, errors.New("a block needs a duration")
@@ -416,7 +429,7 @@ func (e *Engine) pruneLocal() {
 	}
 }
 
-// overlapsExempt reports whether a block target touches the allowlist.
+// overlapsExempt reports whether a block target touches an exempt network.
 func (e *Engine) overlapsExempt(target string) bool {
 	if !strings.Contains(target, "/") {
 		return e.Exempt(target)
@@ -430,7 +443,7 @@ func (e *Engine) overlapsExempt(target string) bool {
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	for _, n := range e.exempt {
+	for _, n := range e.exemptNetworks(time.Now()) {
 		if network.Contains(n.IP) || n.Contains(network.IP) {
 			return true
 		}

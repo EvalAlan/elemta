@@ -580,6 +580,20 @@
     input.addEventListener("blur", function () { setTimeout(close, 150); });
   }
 
+  // ---- rooms on the event form ----------------------------------------------
+  // A room is a guest, so it goes in the guest list, where availability and
+  // invitations already work.
+  var roomPicker = $("[data-room-picker]");
+  if (roomPicker) {
+    roomPicker.addEventListener("change", function () {
+      var field = $("#ev-guests"), address = roomPicker.value;
+      roomPicker.value = "";
+      if (!field || !address || field.value.indexOf(address) >= 0) return;
+      field.value = field.value.trim() ? field.value.replace(/[,\s]*$/, "") + ", " + address : address;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
   // ---- availability on the event form --------------------------------------
   // Guests' busy times for the chosen day, from the free/busy they publish.
   // Hidden until there is someone to show, and if the server has none.
@@ -740,7 +754,74 @@
       .catch(function () {});
   }
 
-  var checkingMail = false, pendingMailCheck = false;
+  // ---- new-mail sound --------------------------------------------------------
+  // Generated here, so there are no audio files to serve and the CSP needs no
+  // media source. Each note is [frequency, start, length, peak, partials], where
+  // partials are overtones as [multiple, level]; a bell is mostly overtones.
+  var BELL = [[2.76, 0.4], [5.4, 0.2]], WOOD = [[3.9, 0.25]];
+  var TONES = {
+    chime: [[659.25, 0, 0.5, 0.2], [987.77, 0.13, 0.7, 0.2]],
+    bell: [[880, 0, 1.3, 0.2, BELL]],
+    ping: [[1318.51, 0, 0.3, 0.16]],
+    marimba: [[523.25, 0, 0.35, 0.24, WOOD], [659.25, 0.1, 0.35, 0.24, WOOD], [783.99, 0.2, 0.5, 0.24, WOOD]],
+    drop: [[1046.5, 0, 0.16, 0.18], [523.25, 0.1, 0.4, 0.2]]
+  };
+  var audio = null;
+  function audioContext() {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!audio && Ctx) audio = new Ctx();
+    return audio;
+  }
+  function playTone(name) {
+    var notes = TONES[name], ctx = audioContext();
+    if (!notes || !ctx) return;
+    if (ctx.state === "suspended") ctx.resume();
+    notes.forEach(function (n) {
+      [[1, 1]].concat(n[4] || []).forEach(function (p) {
+        var at = ctx.currentTime + n[1], osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = n[0] * p[0];
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(n[3] * p[1], at + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + n[2] / p[0]);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(at);
+        osc.stop(at + n[2] / p[0] + 0.02);
+      });
+    });
+  }
+  var mailSound = doc.body.getAttribute("data-mail-sound");
+  // A browser only lets a page make sound once someone has used that page, and
+  // a tab left open and untouched must not save it all up for later.
+  if (mailSound) {
+    ["pointerdown", "keydown"].forEach(function (kind) {
+      doc.addEventListener(kind, function unlock() {
+        doc.removeEventListener(kind, unlock, true);
+        var ctx = audioContext();
+        if (ctx && ctx.state === "suspended") ctx.resume();
+      }, true);
+    });
+  }
+  // Every open tab hears about the same message, and only one should ring.
+  function chime() {
+    if (audio && audio.state !== "running") { try { audio.resume(); } catch (err) { /* no sound, then */ } }
+    try {
+      var now = Date.now(), last = Number(localStorage.getItem("elemta-mail-sound")) || 0;
+      if (now - last < 3000) return;
+      localStorage.setItem("elemta-mail-sound", String(now));
+    } catch (err) { /* private windows: every tab rings */ }
+    playTone(mailSound);
+  }
+  var preview = $("[data-sound-preview]");
+  if (preview) {
+    preview.addEventListener("click", function () {
+      var choice = $("#mail_sound");
+      if (choice) playTone(choice.value);
+    });
+  }
+
+  var checkingMail = false, pendingMailCheck = false, knownInbox = null;
   function checkMail() {
     if (checkingMail) { pendingMailCheck = true; return; }
     checkingMail = true;
@@ -764,6 +845,13 @@
         doc.title = (inbox > 0 ? "(" + inbox + ") " : "") + baseTitle;
         var ol = listEl(), folder = ol && ol.getAttribute("data-folder");
         var totals = data.total || {};
+        // New mail adds a message and an unread one. Marking something unread
+        // adds no message, and reading one while another arrives adds neither
+        // count on its own, so both have to rise. The first check only learns
+        // where things stand.
+        var inboxTotal = totals.INBOX;
+        if (mailSound && knownInbox && inboxTotal > knownInbox.total && inbox > knownInbox.unread) chime();
+        if (inboxTotal !== undefined) knownInbox = { total: inboxTotal, unread: inbox };
         if (folder && folder in totals && folder in knownTotals && totals[folder] > knownTotals[folder]) refreshList();
         Object.keys(totals).forEach(function (k) { knownTotals[k] = totals[k]; });
       })
@@ -773,7 +861,9 @@
         if (pendingMailCheck) { pendingMailCheck = false; checkMail(); }
       });
   }
-  if ($("a.folder[data-folder]")) {
+  // With a sound on, pages without a mail list watch too: the point is hearing
+  // about mail while doing something else.
+  if ($("a.folder[data-folder]") || mailSound) {
     var mailTimer = null, stream = null;
     function fallback() {
       if (!mailTimer) mailTimer = setInterval(checkMail, 60000);
@@ -790,6 +880,9 @@
         stream.onerror = fallback;
       }
       connectMail();
+      // The stream watches the open folder. Reading another one, only this
+      // notices the inbox.
+      if (mailSound && watchedFolder && watchedFolder !== "INBOX") setInterval(checkMail, 60000);
       window.addEventListener("pagehide", function () { stream.close(); });
       window.addEventListener("pageshow", function (event) { if (event.persisted) connectMail(); });
     } else { fallback(); }
@@ -885,37 +978,170 @@
   // sized to its content here, so a long message scrolls with the page
   // instead of inside a box; images that load later resize it again.
   // Conversation cards load their message when first opened.
-  $$("details.thread-card").forEach(function (card) {
-    card.addEventListener("toggle", function () {
-      var f = $("iframe[data-src]", card);
-      if (card.open && f && !f.getAttribute("src")) f.setAttribute("src", f.getAttribute("data-src"));
+  // Expanding a card is reading that message, as opening it is. The frame
+  // only peeks, so a conversation read card by card stayed unread in the list
+  // however much of it had been read.
+  function readCard(card) {
+    var folder = card.getAttribute("data-unread-folder"), uid = card.getAttribute("data-unread-uid");
+    if (!folder || !uid || !csrf) return;
+    card.removeAttribute("data-unread-folder");
+    card.removeAttribute("data-unread-uid");
+    // Manual, so the action's redirect isn't fetched: it would render the
+    // whole mail page only to be thrown away.
+    fetch("/mail/action", {
+      method: "POST",
+      credentials: "same-origin",
+      redirect: "manual",
+      headers: { "X-CSRF-Token": csrf, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ f: folder, uid: uid, op: "read" }).toString()
+    }).then(function (r) {
+      if (!r.ok && r.type !== "opaqueredirect") throw new Error("not marked");
+      var dot = $(".unread-dot", card);
+      if (dot) dot.remove();
+      refreshRows();
+      checkMail();
+    }).catch(function () {
+      card.setAttribute("data-unread-folder", folder);
+      card.setAttribute("data-unread-uid", uid);
     });
-  });
-  $$("iframe[data-autosize]").forEach(function (frame) {
-    var fit = function () {
-      try {
-        var d = frame.contentDocument;
-        if (!d || !d.documentElement) return;
-        // The body's height is the content's; the document's is never less
-        // than the frame, so measuring it could only ever grow the frame.
-        var b = d.body || d.documentElement;
-        var cs = frame.contentWindow.getComputedStyle(b);
-        var h = b.getBoundingClientRect().height + parseFloat(cs.marginTop || 0) + parseFloat(cs.marginBottom || 0);
-        frame.style.height = Math.ceil(Math.max(120, h, b.scrollHeight)) + 2 + "px";
-        // Sized to fit, the frame needs no scrollbar of its own.
-        d.documentElement.style.overflowY = "hidden";
-      } catch (err) { /* not same-origin (an old cached page): keep the fixed height */ }
-    };
-    frame.addEventListener("load", function () {
-      frame.classList.add("autosized");
-      fit();
-      try {
-        if (window.ResizeObserver) new ResizeObserver(fit).observe(frame.contentDocument.body || frame.contentDocument.documentElement);
-        Array.prototype.forEach.call(frame.contentDocument.images, function (img) { img.addEventListener("load", fit); });
-      } catch (err) { /* see above */ }
+  }
+
+  // refreshRows brings the list's read state and links up to date without
+  // replacing it, for a change made from the reader.
+  function refreshRows() {
+    if (!listEl()) return;
+    fetch(location.href, { credentials: "same-origin" })
+      .then(function (r) { return r.ok && !r.redirected ? r.text() : null; })
+      .then(function (html) { if (html) syncRows(new DOMParser().parseFromString(html, "text/html")); })
+      .catch(function () {});
+  }
+
+  function setUpFrames(scope) {
+    $$("details.thread-card", scope).forEach(function (card) {
+      card.addEventListener("toggle", function () {
+        var f = $("iframe[data-src]", card);
+        if (card.open && f && !f.getAttribute("src")) f.setAttribute("src", f.getAttribute("data-src"));
+        if (card.open) readCard(card);
+      });
     });
-    if (frame.contentDocument && frame.contentDocument.readyState === "complete") fit();
+    $$("iframe[data-autosize]", scope).forEach(function (frame) {
+      var fit = function () {
+        try {
+          var d = frame.contentDocument;
+          if (!d || !d.documentElement) return;
+          // The body's height is the content's; the document's is never less
+          // than the frame, so measuring it could only ever grow the frame.
+          var b = d.body || d.documentElement;
+          var cs = frame.contentWindow.getComputedStyle(b);
+          var h = b.getBoundingClientRect().height + parseFloat(cs.marginTop || 0) + parseFloat(cs.marginBottom || 0);
+          frame.style.height = Math.ceil(Math.max(120, h, b.scrollHeight)) + 2 + "px";
+          // Sized to fit, the frame needs no scrollbar of its own.
+          d.documentElement.style.overflowY = "hidden";
+        } catch (err) { /* not same-origin (an old cached page): keep the fixed height */ }
+      };
+      frame.addEventListener("load", function () {
+        frame.classList.add("autosized");
+        fit();
+        try {
+          if (window.ResizeObserver) new ResizeObserver(fit).observe(frame.contentDocument.body || frame.contentDocument.documentElement);
+          Array.prototype.forEach.call(frame.contentDocument.images, function (img) { img.addEventListener("load", fit); });
+        } catch (err) { /* see above */ }
+      });
+      // A frame added by the reading pane is still about:blank here, and sizing
+      // that would squash it to the minimum until the message arrives.
+      if (frame.contentDocument && frame.contentDocument.readyState === "complete" && frame.contentDocument.URL !== "about:blank") fit();
+    });
+  }
+  setUpFrames(doc);
+
+  // ---- reading pane ------------------------------------------------------
+  // Opening a message from the list replaces only the reader. A full page load
+  // repainted the whole app on every click and lost the list's scroll position,
+  // so a message opened from further down threw the reader's user back to the
+  // top of the list. The server's page is still the only source: this fetches
+  // what the link would have loaded, and anything unexpected falls back to
+  // following the link, so a dead session reaches the sign-in page as it always
+  // did.
+  var opening = 0;
+
+  function revealSelected() {
+    var row = $(".messages .selected"), list = row && row.closest(".list");
+    // Only where the list is its own scroller: elsewhere this would move the page.
+    if (list && window.getComputedStyle(list).overflowY !== "visible") row.scrollIntoView({ block: "nearest" });
+  }
+
+  // The rows stay, because they hold the user's ticks and the list's scroll
+  // position. Only what opening a message changes is copied across.
+  function syncRows(fresh) {
+    $$("li[data-uid]", listEl()).forEach(function (li) {
+      var next = $('li[data-uid="' + li.getAttribute("data-uid") + '"]', fresh);
+      var selected = !!next && next.classList.contains("selected");
+      li.classList.toggle("selected", selected);
+      var link = $("a.row", li);
+      if (link) {
+        if (selected) link.setAttribute("aria-current", "true"); else link.removeAttribute("aria-current");
+      }
+      if (next) {
+        li.classList.toggle("unread", next.classList.contains("unread"));
+        li.toggleAttribute("data-seen", next.hasAttribute("data-seen"));
+        // A conversation row opens its oldest unread message, so reading
+        // one moves its link on to the next. Left as it was, the row kept
+        // reopening the message just read, and the last unread one in a
+        // conversation could never be reached from the list.
+        ["data-open", "data-latest", "data-count"].forEach(function (name) {
+          if (next.hasAttribute(name)) li.setAttribute(name, next.getAttribute(name));
+        });
+        var nextLink = $("a.row", next);
+        if (link && nextLink) {
+          link.setAttribute("href", nextLink.getAttribute("href"));
+          // The contents only, so a row the keyboard is on keeps focus.
+          link.replaceChildren.apply(link, Array.prototype.map.call(nextLink.childNodes, function (n) { return doc.importNode(n, true); }));
+        }
+      }
+    });
+  }
+
+  function showMessage(url, remember) {
+    var token = ++opening;
+    fetch(url, { credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok || r.redirected) throw new Error("not a message page");
+        return r.text();
+      })
+      .then(function (html) {
+        if (token !== opening) return;
+        var fresh = new DOMParser().parseFromString(html, "text/html");
+        var next = $(".reader", fresh), panes = $(".panes", fresh), reader = $(".reader");
+        if (!next || !panes || !reader || !listEl()) throw new Error("not a message page");
+        var added = doc.importNode(next, true);
+        reader.replaceWith(added);
+        $(".panes").classList.toggle("has-message", panes.classList.contains("has-message"));
+        syncRows(fresh);
+        if (remember) history.pushState(null, "", url);
+        baseTitle = fresh.title.replace(/^\(\d+\) /, "");
+        doc.title = fresh.title;
+        // In the single-pane layouts the page scrolls, not the reader.
+        window.scrollTo(0, 0);
+        revealSelected();
+        setUpFrames(added);
+        doc.dispatchEvent(new CustomEvent("elemta:reader"));
+        checkMail();
+      })
+      .catch(function () { if (token === opening) location.href = url; });
+  }
+
+  doc.addEventListener("click", function (e) {
+    if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest('.messages a.row, .reader a[data-key="j"], .reader a[data-key="k"]');
+    if (!a || !listEl()) return;
+    e.preventDefault();
+    showMessage(a.href, true);
   });
+  // Only the reader's own history entries land here; the rest are other pages.
+  if (listEl()) {
+    window.addEventListener("popstate", function () { showMessage(location.href, false); });
+    revealSelected();
+  }
 
   // ---- print -------------------------------------------------------------
   if (body.hasAttribute("data-print")) {
@@ -1160,7 +1386,8 @@
       return folderTargets(folder).map(function (n) { return { label: n, run: act("move", { dest: n }) }; });
     } });
     if (role !== "archive") items.push({ label: "Archive", run: act("archive") });
-    items.push(role === "junk" ? { label: "Not junk", run: act("notjunk") } : { label: "Report junk", run: act("junk") });
+    items.push(role === "quarantine" ? { label: "Release to Inbox", run: act("notjunk") } :
+      role === "junk" ? { label: "Not junk", run: act("notjunk") } : { label: "Report junk", run: act("junk") });
     items.push({ label: role === "trash" ? "Delete for good" : "Delete", danger: true, run: function () {
       if (role === "trash" && !window.confirm("Delete " + (one ? "this message" : uids.length + " messages") + " for good?")) return;
       act("delete")();
@@ -1219,19 +1446,21 @@
 
   function eventMenu(a) {
     var uid = a.getAttribute("data-uid"), occ = a.getAttribute("data-occ");
-    var q = function (extra) { return "/calendar/event?" + new URLSearchParams(Object.assign({ uid: uid, occ: occ }, extra || {})); };
+    var owner = a.getAttribute("data-owner");
+    var sharedFields = owner ? { owner: owner } : {};
+    var q = function (extra) { return "/calendar/event?" + new URLSearchParams(Object.assign({ uid: uid, occ: occ }, sharedFields, extra || {})); };
     var items = [{ label: "Open", run: function () { location.href = a.href; } }];
     if (a.hasAttribute("data-readonly")) return items;
     items.push({ label: "Edit", run: function () { location.href = q({ edit: "1" }); } });
-    items.push({ label: "Download .ics", run: function () { location.href = "/calendar/export?" + new URLSearchParams({ uid: uid }); } });
+    if (!owner) items.push({ label: "Download .ics", run: function () { location.href = "/calendar/export?" + new URLSearchParams({ uid: uid }); } });
     items.push("-");
     if (a.hasAttribute("data-recurring")) {
       items.push({ label: "Delete this occurrence", danger: true, run: function () {
-        if (window.confirm("Delete only this occurrence?")) submitPost("/calendar/event", { op: "delete-occurrence", uid: uid, occ: occ });
+        if (window.confirm("Delete only this occurrence?")) submitPost("/calendar/event", { owner: owner || "", op: "delete-occurrence", uid: uid, occ: occ });
       } });
     }
     items.push({ label: a.hasAttribute("data-recurring") ? "Delete series" : "Delete", danger: true, run: function () {
-      if (window.confirm(a.hasAttribute("data-recurring") ? "Delete every occurrence of this event?" : "Delete this event?")) submitPost("/calendar/event", { op: "delete", uid: uid, notify: "1" });
+      if (window.confirm(a.hasAttribute("data-recurring") ? "Delete every occurrence of this event?" : "Delete this event?")) submitPost("/calendar/event", { owner: owner || "", op: "delete", uid: uid, notify: "1" });
     } });
     return items;
   }

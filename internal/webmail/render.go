@@ -3,6 +3,7 @@ package webmail
 import (
 	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"hash/fnv"
@@ -95,6 +96,7 @@ var templateFuncs = template.FuncMap{
 	"codeURL":    func() string { return version.SourceURL },
 	"appVersion": func() string { return version.Version },
 	"asset":      assetURL,
+	"base64":     func(b []byte) string { return base64.StdEncoding.EncodeToString(b) },
 	"shortDate":  shortDate,
 	"longDate":   longDate,
 	"clock":      clock,
@@ -157,7 +159,8 @@ var templateFuncs = template.FuncMap{
 	"tasksURL":   tasksURL,
 	"calURL":     calURL,
 	"calClass":   calClass,
-	"evURL":      func(o Occurrence) string { return eventURL(o.Event.UID, o.Start) },
+	"domainOf":   domainOf,
+	"evURL":      func(o Occurrence) string { return occurrenceURL(o.Event, o.Start) },
 	"newEventAt": func(d time.Time, hour int) string { return newEventURL(d, hour) },
 	"hourLabel": func(h24 bool, h int) string {
 		return clock(h24, time.Date(2000, 1, 1, h, 0, 0, 0, time.UTC))
@@ -235,9 +238,9 @@ var templateFuncs = template.FuncMap{
 type option struct{ Value, Label string }
 
 // countable reports whether a folder's unread count means anything to the
-// user. Unread mail in Sent, Drafts, Junk or Trash isn't waiting for them.
+// user. Unread mail in Sent, Drafts, Junk, Quarantine or Trash isn't waiting for them.
 func countable(f Folder) bool {
-	return f.Role != RoleSent && f.Role != RoleTrash && f.Role != RoleDrafts && f.Role != RoleJunk
+	return f.Role != RoleSent && f.Role != RoleTrash && f.Role != RoleDrafts && f.Role != RoleJunk && f.Role != RoleQuarantine
 }
 
 // tagClass gives each tag one of eight colours, the same one everywhere it

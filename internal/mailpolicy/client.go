@@ -333,22 +333,54 @@ func (c *Client) Import(ctx context.Context, m Import) (ImportResult, error) {
 
 // ExportHeld writes an account's mail held under legal hold to w, as mbox.
 func (c *Client) ExportHeld(ctx context.Context, address string, w io.Writer) error {
-	// #nosec G704 -- the base URL is operator configuration; the path is fixed with an escaped segment
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1/admin/accounts/"+seg(address)+"/held", nil)
+	_, err := c.stream(ctx, http.MethodGet, "/v1/admin/accounts/"+seg(address)+"/held", nil, w)
+	return err
+}
+
+// stream sends a request whose answer is a file rather than JSON, and copies
+// it to w. Refusals still come as JSON, before anything is written.
+func (c *Client) stream(ctx context.Context, method, path string, in any, w io.Writer) (http.Header, error) {
+	var body io.Reader
+	if in != nil {
+		data, err := json.Marshal(in)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(data)
+	}
+	// #nosec G704 -- the base URL is operator configuration; paths are fixed with escaped segments
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	client := *c.http
 	client.Timeout = 0          // an export can be large; ctx bounds it
 	resp, err := client.Do(req) // #nosec G704 -- request built above from operator configuration
 	if err != nil {
-		return fmt.Errorf("mailbox admin API: %w", err)
+		return nil, fmt.Errorf("mailbox admin API: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return &APIError{Status: resp.StatusCode, Message: resp.Status}
+		var problem struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&problem)
+		if problem.Error == "" {
+			problem.Error = resp.Status
+		}
+		apiErr := &APIError{Status: resp.StatusCode, Message: problem.Error}
+		switch resp.StatusCode {
+		case http.StatusNotFound:
+			apiErr.kind = ErrNotFound
+		case http.StatusBadRequest:
+			apiErr.kind = ErrInvalid
+		}
+		return nil, apiErr
 	}
 	_, err = io.Copy(w, resp.Body)
-	return err
+	return resp.Header, err
 }

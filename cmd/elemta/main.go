@@ -14,19 +14,20 @@ func main() {
 	if logLevel == "" {
 		logLevel = "INFO"
 	}
-	// Provisioning output is consumed by scripts. Its diagnostics belong on
-	// stderr, including startup logging before Cobra runs the command.
+	// Provisioning output is consumed by scripts, and export-bodies writes an
+	// archive to stdout. Diagnostics belong on stderr, including startup
+	// logging before Cobra runs the command.
 	command, _, findErr := commands.GetRootCmd().Find(os.Args[1:])
-	provisioning := false
+	scripted := false
 	if findErr == nil {
 		for c := command; c != nil; c = c.Parent() {
-			if c.Name() == "provision" {
-				provisioning = true
+			if c.Name() == "provision" || c.Name() == "export-bodies" {
+				scripted = true
 				break
 			}
 		}
 	}
-	if provisioning {
+	if scripted {
 		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	} else {
 		logging.InitializeLogging(logLevel)

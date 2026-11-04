@@ -181,3 +181,61 @@ func TestRetentionKeepsApplicationData(t *testing.T) {
 		t.Fatalf("application data expired: %+v, %v", rep, err)
 	}
 }
+
+func TestQuarantineExpiresByDefault(t *testing.T) {
+	e, a := testEngine(t)
+	ctx := context.Background()
+	t.Cleanup(func() { _, _ = e.DB.Exec(`DELETE FROM mailbox_account_policy WHERE address=$1`, a.Address) })
+	if err := e.Create(ctx, a.ID, quarantineFolder); err != nil {
+		t.Fatal(err)
+	}
+	put := func(age string) {
+		t.Helper()
+		res, err := e.Append(ctx, a.ID, quarantineFolder, []byte("Subject: held\r\n\r\nbody\r\n"), nil, time.Time{}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.DB.Exec(`UPDATE mailbox_messages SET added=now()-$1::interval WHERE uid=$2 AND folder=(SELECT id FROM mailbox_folders WHERE account=$3 AND name=$4)`, age, res.UID, a.ID, quarantineFolder); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func() int {
+		_, msgs, err := e.Snapshot(ctx, a.ID, quarantineFolder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(msgs)
+	}
+	put("31 days")
+	put("29 days")
+	// Nobody set a rule: held mail still goes after 30 days.
+	if _, err := e.Retention(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("%d left after the default 30 days, want 1", got)
+	}
+	// A class can keep it for longer.
+	put("31 days")
+	class := testClass(t, e, mailpolicy.Settings{QuarantineDays: iptr(90)})
+	if err := e.PutAccountPolicy(ctx, mailpolicy.AccountPolicy{Address: a.Address, Class: class}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Retention(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(); got != 2 {
+		t.Fatalf("%d left under a 90 day class, want 2", got)
+	}
+	// Legal hold keeps everything.
+	put("400 days")
+	if err := e.PutAccountPolicy(ctx, mailpolicy.AccountPolicy{Address: a.Address, Class: class, Settings: mailpolicy.Settings{LegalHold: bptr(true)}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Retention(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(); got != 3 {
+		t.Fatalf("%d left under legal hold, want 3", got)
+	}
+}

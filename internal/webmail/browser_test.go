@@ -146,6 +146,10 @@ func (b *browser) login() {
 		chromedp.Submit(chromedp.ID("password")),
 		chromedp.WaitVisible(chromedp.CSS(`[data-ctx="message"]`)),
 	)
+	// A row shows before the deferred scripts run, and until they do a right
+	// click or a shortcut goes nowhere. The first page of a session then saves
+	// the time zone and reloads once, which would swallow whatever came next.
+	b.waitFor(`document.readyState === "complete" && !document.body.hasAttribute("data-detect-tz")`)
 }
 
 func evalAs[T any](b *browser, expr string) T {
@@ -183,7 +187,8 @@ func TestBrowserThemeToggle(t *testing.T) {
 	b := newBrowser(t)
 	b.login()
 	before := evalAs[string](b, `document.documentElement.getAttribute("data-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")`)
-	b.run(chromedp.Click(chromedp.CSS(`[data-theme-toggle]`), chromedp.NodeVisible), chromedp.Sleep(300*time.Millisecond))
+	b.run(chromedp.Click(chromedp.CSS(`[data-theme-toggle]`), chromedp.NodeVisible))
+	b.waitFor(`performance.getEntriesByType("resource").some(e => e.name.endsWith("/settings/theme") && e.responseEnd > 0)`)
 	after := evalAs[string](b, `document.documentElement.getAttribute("data-theme") || ""`)
 	if after == "" || after == before {
 		t.Fatalf("toggle went from %q to %q", before, after)
@@ -213,10 +218,8 @@ func TestBrowserContextMenu(t *testing.T) {
 		}
 	}
 	// Escape closes it.
-	b.run(chromedp.KeyEvent("\x1b"), chromedp.Sleep(100*time.Millisecond))
-	if evalAs[bool](b, `!!document.querySelector(".ctx-menu")`) {
-		t.Error("Escape left the context menu open")
-	}
+	b.run(chromedp.KeyEvent("\x1b"))
+	b.waitFor(`!document.querySelector(".ctx-menu")`)
 }
 
 // A conversation row's data-uid lists every message in it, which bulk actions
@@ -267,10 +270,197 @@ func TestBrowserKeyboardOpensMessage(t *testing.T) {
 	b := newBrowser(t)
 	b.login()
 	// j selects the first message, Enter opens it.
-	b.run(chromedp.KeyEvent("j"), chromedp.KeyEvent("\r"), chromedp.Sleep(500*time.Millisecond))
-	if path := evalAs[string](b, `location.pathname + location.search`); !strings.Contains(path, "uid=7") {
-		t.Fatalf("j then Enter went to %q", path)
+	b.run(chromedp.KeyEvent("j"), chromedp.KeyEvent("\r"))
+	b.waitFor(`location.search.includes("uid=7")`)
+}
+
+// A full list, so that opening a message from further down needs scrolling.
+func seedLongInbox(b *browser, extra map[uint32]string) {
+	now := time.Now()
+	var msgs []Summary
+	for i := 1; i <= 60; i++ {
+		uid := uint32(100 + i)
+		msgs = append(msgs, Summary{UID: uid, Subject: fmt.Sprintf("Message %d", i), From: []Address{{Email: "dana@example.com"}}, Date: now.Add(-time.Duration(i) * time.Hour)})
+		text := fmt.Sprintf("<p>body %d</p>", i)
+		ctype := "text/html"
+		if body, ok := extra[uid]; ok {
+			text, ctype = body, "text/plain"
+		}
+		b.h.store.raw[uid] = []byte(fmt.Sprintf("From: dana@example.com\r\nSubject: Message %d\r\nContent-Type: %s\r\n\r\n%s\r\n", i, ctype, text))
 	}
+	b.h.store.messages["INBOX"] = msgs
+}
+
+func (b *browser) clickRow(n int) {
+	b.t.Helper()
+	evalAs[bool](b, fmt.Sprintf(`document.querySelectorAll("a.row")[%d].click(); true`, n))
+}
+
+// waitFor polls until expr is true. A busy CI runner takes many times longer
+// than a laptop, so a fixed sleep long enough for one is a flaky test on the
+// other. Errors count as not yet, because the page may be navigating.
+func (b *browser) waitFor(expr string) {
+	b.t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+		ok, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+		cancel()
+		if err == nil && ok {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	b.t.Fatalf("timed out waiting for %s", expr)
+}
+
+// The reader's subject, once the pane shows the given message.
+func readerShows(subject string) string {
+	return fmt.Sprintf(`(document.querySelector("[data-message-subject]") || {textContent: ""}).textContent.includes(%q)`, subject)
+}
+
+// Clicking through mail must leave the page alone: a full load repaints
+// everything, and it put a message opened from far down the list off screen.
+func TestBrowserReadingPaneKeepsThePage(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.login()
+	evalAs[bool](b, `window.__samePage = true; document.querySelector(".list").scrollTop = 1500; true`)
+	if got := evalAs[int](b, `document.querySelector(".list").scrollTop`); got == 0 {
+		t.Fatal("the list does not scroll by itself")
+	}
+	b.clickRow(35)
+	b.waitFor(`location.search.includes("uid=136") && document.querySelector("iframe.body-frame").classList.contains("autosized")`)
+	if !evalAs[bool](b, `window.__samePage === true`) {
+		t.Error("opening a message loaded a whole page")
+	}
+	if !evalAs[bool](b, readerShows("Message 36")) {
+		t.Error("the reader does not show the message")
+	}
+	if !evalAs[bool](b, `document.title.includes("Message 36")`) {
+		t.Errorf("title = %q", evalAs[string](b, `document.title`))
+	}
+	if got := evalAs[int](b, `document.querySelector(".list").scrollTop`); got < 1000 {
+		t.Errorf("list scrolled to %d, want it where it was", got)
+	}
+	if !evalAs[bool](b, `(() => { const r = document.querySelector("li.selected").getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight + 1 })()`) {
+		t.Error("the open message's row is off screen")
+	}
+	if !evalAs[bool](b, `document.querySelectorAll("li.selected").length === 1 && !document.querySelector("li.selected").classList.contains("unread") && document.querySelector("li.selected a.row").getAttribute("aria-current") === "true"`) {
+		t.Error("the list does not mark the open message as selected and read")
+	}
+	// The new frame was sized for its message, and the page itself can't scroll.
+	if got := evalAs[int](b, `document.querySelector("iframe.body-frame").offsetHeight`); got > 200 {
+		t.Errorf("frame height = %d, want it fitted to a one-line message", got)
+	}
+	if got := evalAs[string](b, `document.querySelector("iframe.body-frame").contentDocument.body.textContent`); !strings.Contains(got, "body 36") {
+		t.Errorf("frame shows %q", got)
+	}
+	if got := evalAs[int](b, `scrollY`); got != 0 {
+		t.Errorf("page scrolled to %d", got)
+	}
+
+	// The toolbar's arrows go through the pane as well, and the row follows.
+	b.run(chromedp.KeyEvent("j"))
+	b.waitFor(readerShows("Message 37"))
+
+	// Back and forward walk the messages without leaving the page.
+	b.run(chromedp.Evaluate[chromedp.Void](`history.back()`, chromedp.EvalAsValue))
+	b.waitFor(readerShows("Message 36"))
+	b.run(chromedp.Evaluate[chromedp.Void](`history.back()`, chromedp.EvalAsValue))
+	b.waitFor(`!!document.querySelector(".reader-empty") && !document.querySelector("li.selected")`)
+	if !evalAs[bool](b, `window.__samePage === true`) {
+		t.Error("back to the list loaded a whole page")
+	}
+}
+
+// A conversation's row opens its oldest unread message. After each one is
+// read in the pane the row has to point at the next, or the last unread
+// message can't be reached and the conversation never stops being unread.
+func TestBrowserConversationRowReachesEachUnread(t *testing.T) {
+	b := newBrowser(t)
+	now := time.Now()
+	b.h.store.messages["INBOX"] = []Summary{
+		{UID: 31, Subject: "Budget", From: []Address{{Email: "dana@example.com"}}, Date: now.Add(-2 * time.Hour)},
+		{UID: 32, Subject: "Re: Budget", From: []Address{{Email: "lee@example.com"}}, Date: now.Add(-time.Hour)},
+		{UID: 33, Subject: "Re: Budget", From: []Address{{Email: "dana@example.com"}}, Date: now},
+	}
+	for _, u := range []uint32{31, 32, 33} {
+		b.h.store.raw[u] = []byte(fmt.Sprintf("From: dana@example.com\r\nSubject: Budget\r\n\r\nmessage %d\r\n", u))
+	}
+	b.login()
+	evalAs[bool](b, `window.__samePage = true; true`)
+	for _, uid := range []string{"31", "32", "33"} {
+		b.clickRow(0)
+		b.waitFor(`location.search.includes("uid=` + uid + `") && document.querySelector(".reader").textContent.includes("message ` + uid + `")`)
+	}
+	b.waitFor(`!document.querySelector("li.row-wrap").classList.contains("unread")`)
+	b.h.store.mu.Lock()
+	read := b.h.store.seen[31] && b.h.store.seen[32] && b.h.store.seen[33]
+	b.h.store.mu.Unlock()
+	if !read {
+		t.Errorf("seen = %v, want every message in the conversation read", b.h.store.seen)
+	}
+	if !evalAs[bool](b, `window.__samePage === true`) {
+		t.Error("reading the conversation loaded a whole page")
+	}
+}
+
+// Expanding a message in a conversation reads it, as opening it does.
+func TestBrowserExpandingACardMarksItRead(t *testing.T) {
+	b := newBrowser(t)
+	b.h.store.related = []Related{
+		{Folder: "INBOX", Summary: Summary{UID: 5, Subject: "MSA draft", From: []Address{{Email: "priya@northwind.example"}}, Date: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)}},
+	}
+	b.h.store.raw[5] = []byte("From: priya@northwind.example\r\nSubject: MSA draft\r\n\r\nearlier\r\n")
+	b.login()
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX&uid=7")), chromedp.WaitVisible(chromedp.CSS("details.thread-card summary")))
+	b.waitFor(`document.readyState === "complete"`)
+	if !evalAs[bool](b, `!!document.querySelector("details.thread-card .unread-dot")`) {
+		t.Fatal("the card does not show as unread")
+	}
+	b.run(chromedp.Click(chromedp.CSS("details.thread-card summary"), chromedp.NodeVisible))
+	b.waitFor(`!document.querySelector("details.thread-card .unread-dot")`)
+	b.h.store.mu.Lock()
+	read := b.h.store.seen[5]
+	b.h.store.mu.Unlock()
+	if !read {
+		t.Error("expanding the card did not mark its message read")
+	}
+	// Closing and opening it again sends nothing more.
+	if evalAs[bool](b, `document.querySelector("details.thread-card").hasAttribute("data-unread-uid")`) {
+		t.Error("the card still asks to be marked read")
+	}
+}
+
+// Whatever the pane can't show, the link still can.
+func TestBrowserReadingPaneFallsBackToTheLink(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.login()
+	b.h.store.messages["INBOX"][3].UID = 999
+	b.run(chromedp.Reload(), chromedp.WaitVisible(chromedp.CSS(`[data-ctx="message"]`)))
+	evalAs[bool](b, `window.__samePage = true; true`)
+	b.clickRow(3)
+	b.waitFor(`window.__samePage !== true && document.readyState === "complete"`)
+	// The error page's failed request is the fallback working.
+	b.mu.Lock()
+	b.problems = nil
+	b.mu.Unlock()
+}
+
+// Encrypted mail is set up by pgp.js, which has to run for each message the
+// pane shows and not only for the one the page loaded with.
+func TestBrowserReadingPaneSetsUpEncryptedMail(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, map[uint32]string{102: "-----BEGIN PGP MESSAGE-----\r\n\r\nwcBMA0Uw\r\n=abcd\r\n-----END PGP MESSAGE-----"})
+	b.login()
+	b.clickRow(0)
+	b.waitFor(readerShows("Message 1"))
+	b.clickRow(1)
+	// The form appears when the worker answers, and the worker has a large
+	// library to load first.
+	b.waitFor(`(() => { const f = document.querySelector("[data-pgp-unlock]"); return !!f && !f.hidden })()`)
 }
 
 func TestBrowserRichCompose(t *testing.T) {
@@ -445,5 +635,65 @@ func TestBrowserHolidayCountryPicker(t *testing.T) {
 	got := evalAs[string](b, `[...document.querySelectorAll(".country-chip input")].map(i => i.value).sort().join(",")`)
 	if got != "de,gb" {
 		t.Fatalf("saved countries = %q, want de,gb", got)
+	}
+}
+
+// stubAudio counts notes started, since a test browser has nothing to hear.
+const stubAudio = `(function () {
+  window.notes = 0;
+  window.AudioContext = function () { this.state = "running"; this.currentTime = 0; this.destination = {}; };
+  var param = function () { return { value: 0, setValueAtTime: function () {}, exponentialRampToValueAtTime: function () {} }; };
+  AudioContext.prototype.resume = function () {};
+  AudioContext.prototype.createGain = function () { return { gain: param(), connect: function () {} }; };
+  AudioContext.prototype.createOscillator = function () {
+    return { frequency: param(), connect: function () {}, start: function () { window.notes++; }, stop: function () {} };
+  };
+})()`
+
+func TestBrowserSettingsPreviewPlaysEachTone(t *testing.T) {
+	b := newBrowser(t)
+	b.login()
+	b.run(chromedp.Navigate(b.url("/settings")), chromedp.Evaluate[chromedp.Void](stubAudio, chromedp.EvalAsValue))
+	for _, tone := range mailSounds {
+		b.run(chromedp.Evaluate[chromedp.Void](`window.notes = 0; document.getElementById("mail_sound").value = "`+tone.Value+`"; document.querySelector("[data-sound-preview]").click()`, chromedp.EvalAsValue))
+		if n := evalAs[int](b, `window.notes`); n == 0 {
+			t.Errorf("%s has no recipe in app.js", tone.Value)
+		}
+	}
+}
+
+// Counted through the real page: a rise in the inbox rings once, and nothing
+// else does.
+func TestBrowserNewMailRings(t *testing.T) {
+	b := newBrowser(t)
+	if err := b.h.store.PutObject(context.Background(), CollSettings, Object{ID: settingsID, ContentType: "application/json", Data: []byte(`{"mail_sound":"chime"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	b.login()
+	counts := func(total, unread int) string {
+		return fmt.Sprintf(`window.fetch = function () { return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ unread: { INBOX: %d, Junk: 9 }, total: { INBOX: %d, Junk: 9 } }); } }); };
+			document.dispatchEvent(new Event("visibilitychange"));`, unread, total)
+	}
+	step := func(js string) int {
+		b.run(chromedp.Evaluate[chromedp.Void](js, chromedp.EvalAsValue), chromedp.Sleep(150*time.Millisecond))
+		return evalAs[int](b, `window.notes`)
+	}
+	b.run(chromedp.Navigate(b.url("/mail")), chromedp.Evaluate[chromedp.Void](stubAudio+`; try { localStorage.clear(); } catch (e) {}`, chromedp.EvalAsValue))
+	// Where things stand, however the page's own first check went.
+	step(counts(5, 2))
+	b.run(chromedp.Evaluate[chromedp.Void](`window.notes = 0; localStorage.clear()`, chromedp.EvalAsValue))
+	if n := step(counts(5, 2)); n != 0 {
+		t.Fatalf("rang with nothing new: %d", n)
+	}
+	if n := step(counts(5, 3)); n != 0 {
+		t.Fatalf("rang when something was marked unread: %d", n)
+	}
+	if n := step(counts(6, 4)); n == 0 {
+		t.Fatal("new mail didn't ring")
+	}
+	first := evalAs[int](b, `window.notes`)
+	b.run(chromedp.Evaluate[chromedp.Void](`localStorage.setItem("elemta-mail-sound", String(Date.now()))`, chromedp.EvalAsValue))
+	if n := step(counts(7, 5)); n != first {
+		t.Fatal("a second tab rang as well")
 	}
 }

@@ -23,11 +23,18 @@
           </div>
         </details>
       </div>
+      {{with .InboxTabs}}
+      <nav class="inbox-tabs" aria-label="Inbox tabs">
+        {{range .}}<a class="inbox-tab" href="{{.URL}}"{{if .Active}} aria-current="page"{{end}}>{{.Label}}{{if .Unread}} <span class="tab-count mono">{{.Unread}}</span>{{end}}</a>{{end}}
+      </nav>
+      <input type="hidden" name="tab" value="{{$.List.Tab}}">
+      {{end}}
+      {{if isRole .Folder .Folders "quarantine"}}<p class="muted folder-note">Mail the spam check would have refused. Release anything you were expecting. The rest is deleted automatically.</p>{{end}}
       <div class="bulk-bar" role="toolbar" aria-label="Selected messages">
         <button class="button" name="op" value="read">Mark read</button>
         <button class="button" name="op" value="unread">Mark unread</button>
         <button class="button" name="op" value="flag">Flag</button>
-        {{if isRole .Folder .Folders "junk"}}<button class="button" name="op" value="notjunk">Not junk</button>{{else}}<button class="button" name="op" value="junk">Junk</button>{{end}}
+        {{if isRole .Folder .Folders "quarantine"}}<button class="button" name="op" value="notjunk">Release</button>{{else if isRole .Folder .Folders "junk"}}<button class="button" name="op" value="notjunk">Not junk</button>{{else}}<button class="button" name="op" value="junk">Junk</button>{{end}}
         {{if not (isRole .Folder .Folders "archive")}}<button class="button" name="op" value="archive">Archive</button>{{end}}
         <button class="button danger" name="op" value="delete" data-confirm="{{if isRole .Folder .Folders "trash"}}Delete the selected messages for good?{{end}}">Delete</button>
         <label class="visually-hidden" for="bulk-dest">Move selected to</label>
@@ -36,6 +43,13 @@
           {{range $.Folders}}{{if and .Selectable (ne .Name $.Folder)}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
         </select>
         <button class="button" name="op" value="move">Move</button>
+        {{if .InboxTabs}}
+        <label class="visually-hidden" for="bulk-category">Move selected to tab</label>
+        <select id="bulk-category" name="category" class="compact">
+          {{range .CategoryOptions}}<option value="{{.Name}}"{{if eq .Name $.List.Tab}} selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+        <button class="button" name="op" value="category">Move to tab</button>
+        {{end}}
       </div>
     {{with .Page}}
       {{if and (not .Messages) (not $.Conversations)}}
@@ -44,7 +58,7 @@
       <ol class="messages" data-folder="{{$.Folder}}" data-role="{{roleName $.Folder $.Folders}}" data-back="{{$.List.URL}}">
       {{if $.Threaded}}
       {{range $.Conversations}}
-        {{$open := $.List.MessageURL .Latest.UID}}
+        {{$open := $.List.MessageURL .OpenUID}}
         <li class="row-wrap{{if .Unread}} unread{{end}}{{if and $.Message (inUIDs $.Message.UID .UIDs)}} selected{{end}}" data-uid="{{.UIDList}}" data-latest="{{.Latest.UID}}" data-ctx="message"{{if not .Unread}} data-seen{{end}}{{if .Flagged}} data-flagged{{end}}{{with .Latest.From}} data-from="{{(index . 0).Email}}"{{end}} data-open="{{$open}}" data-count="{{.Count}}">
           <label class="check"><input type="checkbox" name="uid" value="{{.UIDList}}"><span class="visually-hidden">Select conversation</span></label>
           <a class="row" href="{{$open}}"{{if and $.Message (inUIDs $.Message.UID .UIDs)}} aria-current="true"{{end}}>
@@ -136,13 +150,23 @@
           <button class="button" type="submit">Move</button>
         </form>
       </details>
+      {{if $.InboxTabs}}
+      <details class="menu">
+        <summary class="button">Tab</summary>
+        <form class="menu-body" action="/mail/action" method="post">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="category"><input type="hidden" name="tab" value="{{$.List.Tab}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+          <p class="small muted">Move to tab. Later mail from this sender goes there too.</p>
+          {{range $.CategoryOptions}}<button class="menu-item" name="category" value="{{.Name}}"{{if eq .Name $.List.Tab}} aria-current="true"{{end}}>{{if eq .Name $.List.Tab}}✓ {{end}}{{.Label}}</button>{{end}}
+        </form>
+      </details>
+      {{end}}
       <details class="menu">
         <summary class="button">More</summary>
         <div class="menu-body">
           <form action="/mail/action" method="post">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
             <button class="menu-item" name="op" value="unread">Mark unread</button>
-            {{if isRole .Folder $.Folders "junk"}}<button class="menu-item" name="op" value="notjunk">Not junk</button>{{else}}<button class="menu-item" name="op" value="junk">Report junk</button>{{end}}
+            {{if isRole .Folder $.Folders "quarantine"}}<button class="menu-item" name="op" value="notjunk">Release to Inbox</button>{{else if isRole .Folder $.Folders "junk"}}<button class="menu-item" name="op" value="notjunk">Not junk</button>{{else}}<button class="menu-item" name="op" value="junk">Report junk</button>{{end}}
           </form>
           {{if and .From (not $.Session.AdminActor)}}
           <form action="/mail/block-sender" method="post">
@@ -161,7 +185,7 @@
       </span>
     </div>
     <div class="message">
-      <h2>{{if .HighPriority}}<span class="priority" title="High priority">!</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
+      <h2 data-message-subject>{{if .HighPriority}}<span class="priority" title="High priority">!</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
       {{if $.Thread}}<p class="small muted thread-note">{{add (len $.Thread) 1}} messages in this conversation</p>{{end}}
       {{range $.ThreadBefore}}{{template "thread-card" (threadCard . $)}}{{end}}
       <div class="sender">
@@ -214,7 +238,22 @@
         {{end}}
       </ul>
       {{end}}
-      {{if $.Body}}
+      {{if .PGPSignature}}{{if .PGPSignedContent}}<p class="small" role="status" data-pgp-verify data-sender="{{with .From}}{{(index . 0).Email}}{{end}}" data-content="{{base64 .PGPSignedContent}}">Checking the signature…</p><textarea hidden data-pgp-detached>{{.PGPSignature}}</textarea>{{end}}
+      {{else if .PGPClearsigned}}<p class="small" role="status" data-pgp-verify data-sender="{{with .From}}{{(index . 0).Email}}{{end}}">Checking the signature…</p><textarea hidden data-pgp-cleartext>{{.PGPClearsigned}}</textarea>{{end}}
+      {{if .PGP}}
+        <section class="invite" aria-label="Encrypted message" data-pgp-message data-folder="{{.Folder}}" data-uid="{{.UID}}" data-sender="{{with .From}}{{(index . 0).Email}}{{end}}">
+          <p class="strong">Encrypted message</p>
+          <textarea hidden data-pgp-armor>{{.PGP}}</textarea>
+          <p class="small" role="status" data-pgp-signature hidden></p>
+          <p class="problem" role="alert" data-pgp-problem hidden></p>
+          <form class="form-grid" data-pgp-unlock hidden>
+            <label for="pgp-unlock-read">Your PGP passphrase</label><input id="pgp-unlock-read" name="passphrase" type="password" autocomplete="off" required>
+            <div class="form-actions"><button class="button primary" type="submit">Unlock</button></div>
+          </form>
+          <pre class="text-body" data-pgp-text hidden></pre>
+          <ul class="attachments" data-pgp-attachments hidden></ul>
+        </section>
+      {{else if $.Body}}
         {{if $.Body.BlockedImages}}
         <p class="banner">Remote images are hidden to protect your privacy. <a href="{{$.List.MessageURL .UID}}&amp;remote=1">Show images</a></p>
         {{end}}
@@ -247,7 +286,7 @@
 </div>
 {{end}}
 {{define "thread-card"}}
-<details class="thread-card" data-ctx="message-card">
+<details class="thread-card" data-ctx="message-card"{{if not .R.Seen}} data-unread-folder="{{.R.Folder}}" data-unread-uid="{{.R.UID}}"{{end}}>
   <summary>
     <span class="avatar soft small-avatar" aria-hidden="true">{{initials .R.From}}</span>
     <span class="tc-from strong">{{addrs .R.From}}</span>

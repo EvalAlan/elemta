@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/EvalAlan/elemta/internal/abuse"
+	"github.com/EvalAlan/elemta/internal/antispam"
 	"github.com/EvalAlan/elemta/internal/proxyproto"
+	"github.com/EvalAlan/elemta/internal/srs"
 	"github.com/EvalAlan/elemta/internal/tlssni"
 
 	"github.com/EvalAlan/elemta/internal/imapfork/imapserver"
@@ -31,9 +33,13 @@ type Service struct {
 	receiveSlots chan struct{}
 	// abuse limits and blocks clients on the public listeners, with the rest
 	// of the platform (internal/abuse).
-	abuse        *abuse.Engine
-	cfg          Config
-	engine       *Engine
+	abuse *abuse.Engine
+	// srs rewrites the sender of forwarded mail; nil is off (internal/srs).
+	srs    *srs.Rewriter
+	cfg    Config
+	engine *Engine
+	// spamLearner teaches Rspamd from Junk moves; nil while that is off.
+	spamLearner  spamLearner
 	auth         Authenticator
 	log          *slog.Logger
 	imap         *imapserver.Server
@@ -87,6 +93,7 @@ func Open(ctx context.Context, c Config, log *slog.Logger) (*Service, error) {
 	if len(bodyKeys) > 0 {
 		bodies = &encryptedBodies{BodyStore: bodies, keys: bodyKeys}
 	}
+	bodies = &compressedBodies{BodyStore: bodies, compress: c.Bodies.Compression == CompressionZstd}
 	engine, err := NewEngine(ctx, db, bodies, c)
 	if err != nil {
 		_ = bodies.Close()
@@ -111,8 +118,17 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel, adminToken: os.Getenv(c.Admin.TokenEnv), abuse: abuse.New("mailbox", os.Getenv("VALKEY_ADDR"), log)}
+	s.srs = srs.FromEnv()
 	if s.mailDirectory() != nil {
 		e.directoryClasses = s.directoryClasses
+	}
+	if pw := os.Getenv(c.SpamLearning.PasswordEnv); c.SpamLearning.RspamdURL != "" && pw != "" {
+		s.spamLearner = antispam.NewLearner(c.SpamLearning.RspamdURL, pw)
+		e.spamLearnPerDay = c.SpamLearning.MaxPerDay
+	} else if c.SpamLearning.RspamdURL != "" {
+		// Said out loud: otherwise Junk moves just never teach anything,
+		// and nothing anywhere looks wrong.
+		log.Warn("spam learning is off: the variable named by spam_learning.password_env is empty")
 	}
 	var tlsConfig *tls.Config
 	if c.Server.TLSCert != "" {
@@ -218,16 +234,17 @@ func (s *Service) Run(ctx context.Context) error {
 	start(func() error { return s.lmtp.Serve(&limitedListener{Listener: listeners[1], slots: slots}) })
 	start(func() error { return s.http.Serve(listeners[2]) })
 	for _, endpoint := range []struct {
-		addr  string
-		serve func(net.Listener) error
+		addr     string
+		serve    func(net.Listener) error
+		protocol string
 	}{
-		{s.cfg.Server.IMAPStartTLSListen, s.imapStartTLS.Serve},
-		{s.cfg.Server.POP3Listen, s.servePOP3},
+		{s.cfg.Server.IMAPStartTLSListen, s.imapStartTLS.Serve, abuse.ProtocolIMAP},
+		{s.cfg.Server.POP3Listen, s.servePOP3, abuse.ProtocolPOP3},
 	} {
 		if endpoint.addr == "" {
 			continue
 		}
-		ln, err := s.publicListen(endpoint.addr)
+		ln, err := s.publicListen(endpoint.addr, endpoint.protocol)
 		if err != nil {
 			s.cancel()
 			_ = s.imap.Close()
@@ -249,7 +266,7 @@ func (s *Service) Run(ctx context.Context) error {
 		// Implicit TLS (port 993), which most clients default to. TLS wraps
 		// the connection limiter, so the IMAP server sees a *tls.Conn and
 		// knows the session is encrypted.
-		ln, err := s.publicListen(s.cfg.Server.IMAPSListen)
+		ln, err := s.publicListen(s.cfg.Server.IMAPSListen, abuse.ProtocolIMAP)
 		if err != nil {
 			s.cancel()
 			for _, l := range listeners {
@@ -264,7 +281,7 @@ func (s *Service) Run(ctx context.Context) error {
 		})
 	}
 	if s.cfg.Sieve.Listen != "" {
-		ln, err := s.publicListen(s.cfg.Sieve.Listen)
+		ln, err := s.publicListen(s.cfg.Sieve.Listen, abuse.ProtocolSieve)
 		if err != nil {
 			s.cancel()
 			for _, l := range listeners {
@@ -275,6 +292,10 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 		listeners = append(listeners, ln)
 		start(func() error { return s.serveManageSieve(&limitedListener{Listener: ln, slots: slots}, s.tlsConfig) })
+	}
+	if s.spamLearner != nil {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.runSpamLearning() }()
 	}
 	wg.Add(1)
 	go func() {
@@ -342,6 +363,10 @@ func (s *Service) collect(ctx context.Context) (int, error) {
 	}
 	return s.engine.GC(ctx)
 }
+
+// metadataDSN is the connection string of the service's own database.
+func (s *Service) metadataDSN() string { return os.Getenv(s.cfg.Metadata.DSNEnv) }
+
 func (s *Service) Close() error {
 	s.cancel()
 	return errors.Join(s.engine.DB.Close(), s.engine.Bodies.Close())
@@ -430,14 +455,31 @@ func (s *Service) failLogin(key string) int {
 	return attempts
 }
 
+// sourceKey marks a context with the protocol signing in.
+type sourceKey struct{}
+
+// withLoginSource names the protocol a sign-in came through, for the console's
+// graphs and metrics. It travels in the context so the many paths between a
+// protocol and recordLoginFailure needn't each carry it.
+func withLoginSource(ctx context.Context, source string) context.Context {
+	return context.WithValue(ctx, sourceKey{}, source)
+}
+
+func loginSource(ctx context.Context) string {
+	if source, _ := ctx.Value(sourceKey{}).(string); source != "" {
+		return source
+	}
+	return "mailbox"
+}
+
 // recordLoginFailure counts a failure against the client, which is what
 // blocks, and against the account, which only reports. Many clients guessing
 // at one account aren't stopped here, because stopping them by account is what
 // would hand them a way to lock the user out.
-func (s *Service) recordLoginFailure(user, client string) {
+func (s *Service) recordLoginFailure(ctx context.Context, user, client string) {
 	if client != "" {
 		s.failLogin(loginFailureKey(user, client))
-		s.abuse.Failure(s.ctx, client, "mailbox", user)
+		s.abuse.Failure(s.ctx, client, loginSource(ctx), user)
 	}
 	if s.failLogin(user) == loginFailureLimit {
 		s.log.Warn("mailbox: many failed sign-ins for one account", "user", user)
@@ -641,7 +683,7 @@ var tls12Suites = []uint16{
 // sign-in throttling, logs and the security API's view of the client
 // (proxy_protocol_from). The internal listeners (the webmail's IMAP, LMTP,
 // HTTP) are reached directly and don't take it.
-func (s *Service) publicListen(addr string) (net.Listener, error) {
+func (s *Service) publicListen(addr, protocol string) (net.Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -651,7 +693,7 @@ func (s *Service) publicListen(addr string) (net.Listener, error) {
 		_ = ln.Close()
 		return nil, err
 	}
-	return &abuseListener{Listener: wrapped, abuse: s.abuse}, nil
+	return &abuseListener{Listener: wrapped, abuse: s.abuse, protocol: protocol}, nil
 }
 
 // abuseListener turns away clients over their limit before they cost a TLS
@@ -662,6 +704,8 @@ func (s *Service) publicListen(addr string) (net.Listener, error) {
 type abuseListener struct {
 	net.Listener
 	abuse *abuse.Engine
+	// protocol is what allow and deny rules know this listener as.
+	protocol string
 }
 
 func (l *abuseListener) Accept() (net.Conn, error) {
@@ -670,11 +714,11 @@ func (l *abuseListener) Accept() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		if l.abuse.Refuse(c.RemoteAddr().String()) {
+		if _, denied := l.abuse.DenyPeer(c.RemoteAddr().String(), l.protocol); denied || l.abuse.Refuse(c.RemoteAddr().String()) {
 			_ = c.Close()
 			continue
 		}
-		release, ok := l.abuse.Acquire(c.RemoteAddr().String())
+		release, ok := l.abuse.Acquire(c.RemoteAddr().String(), l.protocol)
 		if !ok {
 			_ = c.Close()
 			continue

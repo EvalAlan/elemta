@@ -58,3 +58,50 @@ func TestSenderRulesAndJunk(t *testing.T) {
 		t.Errorf("a refused change altered the rules: %+v", got)
 	}
 }
+
+func TestQuarantineFiling(t *testing.T) {
+	r := newAddressingRig(t)
+	ctx := context.Background()
+	ana := r.dir.accounts[r.addr("ana")]
+	r.send("x@example.org", "", []string{r.addr("ana")}, msgWith("hello"))
+	if _, err := r.e.SetSenderRules(ctx, ana.ID, []string{"friend@good.example"}, []string{"@spammy.example"}, 10); err != nil {
+		t.Fatal(err)
+	}
+	held := func(from string) string {
+		return "X-Spam-Status: Yes, quarantine, score=14.0/6.0\r\nFrom: " + from + "\r\nSubject: s\r\n\r\nbuy\r\n"
+	}
+	to := []string{r.addr("ana")}
+	r.send("someone@else.example", "", to, held("someone@else.example"))
+	// An allow entry can match a forged From, so it doesn't lift a hold.
+	r.send("forger@else.example", "", to, held("friend@good.example"))
+	// The user asked never to see this sender, and Junk is where that goes.
+	r.send("a@spammy.example", "", to, held("a@spammy.example"))
+	// A sender can't put their mail there with a header below the MTA's...
+	r.send("c@else.example", "", to, "X-Spam-Status: No, score=0.1/6.0\r\nX-Spam-Status: Yes, quarantine\r\nFrom: c@else.example\r\nSubject: s\r\n\r\nhi\r\n")
+	// ...or lift a hold with one.
+	r.send("d@else.example", "", to, "X-Spam-Status: Yes, quarantine, score=14.0/6.0\r\nX-Spam-Status: No\r\nFrom: d@else.example\r\nSubject: s\r\n\r\nhi\r\n")
+	if got, want := r.folderCount("ana", quarantineFolder), 3; got != want {
+		t.Errorf("Quarantine holds %d, want %d", got, want)
+	}
+	if got := r.folderCount("ana", "Junk"); got != 1 {
+		t.Errorf("Junk holds %d, want 1", got)
+	}
+	if got := r.folderCount("ana", "INBOX"); got != 2 {
+		t.Errorf("INBOX holds %d, want 2", got)
+	}
+}
+
+func TestSpamHeldReadsOnlyTheFirstHeader(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"X-Spam-Status: Yes, quarantine, score=14/6\r\n\r\n":          true,
+		"X-Spam-Status: yes,  QUARANTINE, score=14/6\r\n\r\n":         true,
+		"X-Spam-Status: Yes, score=7/6\r\n\r\n":                       false,
+		"X-Spam-Status: No, quarantine\r\n\r\n":                       false,
+		"X-Spam-Status: No\r\nX-Spam-Status: Yes, quarantine\r\n\r\n": false,
+		"Subject: x\r\n\r\nX-Spam-Status: Yes, quarantine\r\n":        false,
+	} {
+		if got := spamHeld([]byte(raw)); got != want {
+			t.Errorf("spamHeld(%q) = %v", raw, got)
+		}
+	}
+}

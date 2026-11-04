@@ -6,11 +6,16 @@
     const view = document.getElementById('view-abuse');
     if (!view) return;
     const el = id => document.getElementById(id);
-    let you = '', allowlist = [], range = '24h', timer = null;
+    let you = '', rules = [], range = '24h', timer = null;
 
     // Fixed order, so a service keeps its colour whichever ones have data.
-    const SERVICES = [['mailbox', 'IMAP and POP3'], ['smtp', 'SMTP'], ['webmail', 'Webmail'], ['admin', 'Admin console']];
-    const REASONS = [['blocked', 'Blocked'], ['limit', 'Too many connections'], ['rate', 'Too fast']];
+    // "mailbox" is what these protocols were counted as together; it only
+    // matters until those buckets age out, so it stays last and appears only
+    // while it has data.
+    const SERVICES = [['imap', 'IMAP'], ['smtp', 'SMTP'], ['webmail', 'Webmail'], ['admin', 'Admin console'],
+        ['pop3', 'POP3'], ['sieve', 'ManageSieve'], ['mailbox', 'IMAP and POP3, not separated']];
+    const REASONS = [['blocked', 'Blocked'], ['limit', 'Too many connections'], ['rate', 'Too fast'], ['rule', 'Denied by a rule'], ['messages', 'Too much mail'], ['held', 'Account on hold'], ['domain', 'Too much from one domain']];
+    const LIMIT_PROTOCOLS = ['smtp', 'imap', 'pop3', 'sieve'];
 
     async function call(path, method = 'GET', body) {
         const options = { method, headers: { Accept: 'application/json' } };
@@ -49,13 +54,53 @@
         el('abuse-connections').value = p.connections_per_address;
         el('abuse-rate').value = p.connections_per_minute;
         el('abuse-network').value = p.failures_per_network;
+        el('abuse-spray').value = p.accounts_per_address || 0;
+        el('abuse-targeted').value = p.addresses_per_account || 0;
+        el('abuse-inbound').value = p.messages_per_address_per_hour || 0;
+        el('abuse-outbound').value = p.outbound_recipients_per_hour || 0;
+        el('abuse-domain').value = p.messages_per_domain_per_hour || 0;
+        LIMIT_PROTOCOLS.forEach(name => {
+            const limit = (p.protocol_limits || []).find(l => l.protocol === name) || {};
+            el('abuse-limit-' + name + '-connections').value = limit.connections_per_address || '';
+            el('abuse-limit-' + name + '-rate').value = limit.connections_per_minute || '';
+        });
+        el('abuse-signin-alerts').value = p.sign_in_alerts === 'off' ? 'off' : 'on';
+        el('abuse-alert-email').value = (p.alert_email || []).join(', ');
         el('abuse-firewall').value = p.firewall;
         el('abuse-failures').value = p.failures_per_address;
         el('abuse-window').value = p.window_minutes;
         el('abuse-block').value = p.block_minutes;
         el('abuse-max-block').value = p.max_block_hours;
-        allowlist = p.allowlist || [];
-        el('abuse-allowlist').value = allowlist.join('\n');
+        rules = p.rules || [];
+        fillRules();
+    }
+    function fillRules() {
+        const body = table('abuse-rules', rules, 7, 'No rules yet.');
+        rules.forEach((r, i) => {
+            const row = document.createElement('tr');
+            const remove = document.createElement('button');
+            remove.type = 'button'; remove.className = 'btn btn-secondary btn-sm'; remove.textContent = 'Remove';
+            remove.setAttribute('aria-label', 'Remove the rule on ' + r.value);
+            remove.addEventListener('click', () => saveRules(rules.filter((_, n) => n !== i), 'Rule removed.'));
+            const expired = r.expires && new Date(r.expires) <= new Date();
+            cell(row, r.action === 'allow' ? 'Allow' : 'Deny');
+            cell(row, { inbound: 'Inbound', outbound: 'Outbound', both: 'Both' }[r.direction] || r.direction);
+            cell(row, r.value);
+            cell(row, r.protocols ? r.protocols.split(',').join(', ') : 'All');
+            cell(row, r.expires ? (expired ? 'Expired ' : '') + when(r.expires) : 'Never');
+            cell(row, r.note || '');
+            cell(row, remove);
+            body.appendChild(row);
+        });
+    }
+    async function saveRules(next, message) {
+        try {
+            const saved = await call('/policy', 'PUT', { rules: next });
+            rules = saved.policy.rules || [];
+            fillRules();
+            notice(message);
+            return true;
+        } catch (e) { notice(e.message, true); return false; }
     }
     function readPolicy() {
         return {
@@ -63,12 +108,23 @@
             connections_per_address: Number(el('abuse-connections').value),
             connections_per_minute: Number(el('abuse-rate').value),
             failures_per_network: Number(el('abuse-network').value),
+            accounts_per_address: Number(el('abuse-spray').value),
+            addresses_per_account: Number(el('abuse-targeted').value),
+            messages_per_address_per_hour: Number(el('abuse-inbound').value),
+            outbound_recipients_per_hour: Number(el('abuse-outbound').value),
+            messages_per_domain_per_hour: Number(el('abuse-domain').value),
+            protocol_limits: LIMIT_PROTOCOLS.map(name => ({
+                protocol: name,
+                connections_per_address: Number(el('abuse-limit-' + name + '-connections').value) || 0,
+                connections_per_minute: Number(el('abuse-limit-' + name + '-rate').value) || 0,
+            })).filter(l => l.connections_per_address || l.connections_per_minute),
+            sign_in_alerts: el('abuse-signin-alerts').value,
+            alert_email: el('abuse-alert-email').value.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean),
             firewall: el('abuse-firewall').value,
             failures_per_address: Number(el('abuse-failures').value),
             window_minutes: Number(el('abuse-window').value),
             block_minutes: Number(el('abuse-block').value),
             max_block_hours: Number(el('abuse-max-block').value),
-            allowlist: el('abuse-allowlist').value.split(/[\s,]+/).map(x => x.trim()).filter(Boolean),
         };
     }
     function fillStatus(status) {
@@ -98,6 +154,66 @@
                 notice(b.network + ' unblocked.');
             }));
             cell(row, button);
+            body.appendChild(row);
+        });
+    }
+    const ALERT_KINDS = { 'impossible-travel': 'Impossible travel', 'new-country': 'New country', targeted: 'Under attack' };
+    function fillAlerts(alerts, locations, policy) {
+        const state = el('abuse-alerts-state');
+        state.textContent = policy && policy.sign_in_alerts === 'off'
+            ? 'Sign-in alerts are off in the settings below.'
+            : locations ? '' : 'No location database is installed, so sign-ins aren\'t placed. scripts/cloud-deploy.sh installs one.';
+        state.hidden = !state.textContent;
+        const body = table('abuse-alerts', alerts, 6, 'No unusual sign-ins.');
+        alerts.forEach(a => {
+            const row = document.createElement('tr');
+            const dismiss = document.createElement('button');
+            dismiss.type = 'button'; dismiss.className = 'btn btn-secondary btn-sm'; dismiss.textContent = 'Dismiss';
+            dismiss.setAttribute('aria-label', 'Dismiss the alert for ' + a.account);
+            dismiss.addEventListener('click', async () => {
+                try { await call('/alerts?id=' + encodeURIComponent(a.id), 'DELETE'); refresh(); }
+                catch (e) { notice(e.message, true); }
+            });
+            cell(row, when(a.time)); cell(row, a.account); cell(row, ALERT_KINDS[a.kind] || a.kind);
+            // A block covers every client protocol for a day, which is room to
+            // reach the account's owner; port 25 stays open as for any block.
+            const block = document.createElement('button');
+            block.type = 'button'; block.className = 'btn btn-secondary btn-sm'; block.textContent = 'Block address';
+            block.setAttribute('aria-label', 'Block ' + a.address + ' for a day');
+            block.addEventListener('click', async () => {
+                if (!confirm('Block ' + a.address + ' for 24 hours on every client protocol?')) return;
+                try {
+                    await call('/blocks', 'POST', { address: a.address, minutes: 1440, reason: 'Unusual sign-in to ' + a.account });
+                    notice(a.address + ' is blocked for 24 hours. Change ' + a.account + "'s password if it wasn't them.");
+                    refresh();
+                } catch (e) { notice(e.message, true); }
+            });
+            const actions = document.createElement('span');
+            actions.className = 'abuse-actions';
+            // An attack from many addresses isn't stopped by blocking the
+            // last one, so that alert offers only Dismiss.
+            if (a.kind === 'targeted') actions.append(dismiss); else actions.append(block, dismiss);
+            cell(row, a.detail); row.lastChild.className = 'abuse-wrap';
+            cell(row, a.address + ' (' + a.service + ')'); row.appendChild(document.createElement('td')).appendChild(actions);
+            body.appendChild(row);
+        });
+    }
+    function fillHolds(holds) {
+        const body = table('abuse-holds', holds, 4, 'No account is on hold.');
+        holds.forEach(h => {
+            const row = document.createElement('tr');
+            const release = document.createElement('button');
+            release.type = 'button'; release.className = 'btn btn-secondary btn-sm'; release.textContent = 'Release';
+            release.setAttribute('aria-label', 'Release ' + h.account);
+            release.addEventListener('click', async () => {
+                if (!confirm('Let ' + h.account + ' send outside the server again? Change its password first if it was taken over.')) return;
+                try {
+                    await call('/holds?account=' + encodeURIComponent(h.account), 'DELETE');
+                    notice(h.account + ' can send again.');
+                    refresh();
+                } catch (e) { notice(e.message, true); }
+            });
+            cell(row, h.account); cell(row, h.reason); cell(row, when(h.created)); cell(row, release);
             body.appendChild(row);
         });
     }
@@ -274,16 +390,22 @@
     function drawGraphs() {
         if (!lastStats) return;
         const s = lastStats;
-        stacked('abuse-chart-failures', s.buckets, SERVICES, b => b.failures, s.step_seconds, 'Nothing failed in this range.');
+        const services = SERVICES.filter(([k]) => k !== 'mailbox' || s.buckets.some(b => b.failures[k]));
+        legend('abuse-legend-failures', services);
+        const head = el('abuse-table-failures-head'); head.replaceChildren();
+        ['When', ...services.map(([, name]) => name)].forEach(name => {
+            const th = document.createElement('th'); th.textContent = name; head.appendChild(th);
+        });
+        stacked('abuse-chart-failures', s.buckets, services, b => b.failures, s.step_seconds, 'Nothing failed in this range.');
         stacked('abuse-chart-refused', s.buckets, REASONS, b => b.refused, s.step_seconds, 'Nothing refused in this range.');
-        fillTable('abuse-table-failures', s.buckets, SERVICES, b => b.failures, s.step_seconds);
+        fillTable('abuse-table-failures', s.buckets, services, b => b.failures, s.step_seconds);
         fillTable('abuse-table-refused', s.buckets, REASONS, b => b.refused, s.step_seconds);
     }
     async function refresh() {
         try {
             const [status, stats] = await Promise.all([call(''), call('/metrics?range=' + range)]);
             fillPolicy(status.policy); fillStatus(status); fillYou(status);
-            fillBlocks(status.blocks || []); fillAccounts(status.accounts || []); fillEvents(status.events || []);
+            fillBlocks(status.blocks || []); fillHolds(status.holds || []); fillAlerts(status.alerts || [], status.locations, status.policy); fillAccounts(status.accounts || []); fillEvents(status.events || []);
             fillEnforcers(status.enforcers || [], status.policy);
             lastStats = stats; fillTiles(stats, (status.blocks || []).length); fillTop(stats.top || []); drawGraphs();
         } catch (error) { notice(error.message, true); }
@@ -307,15 +429,25 @@
         view.querySelectorAll('[data-abuse-range]').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
         refresh();
     }));
-    legend('abuse-legend-failures', SERVICES);
     legend('abuse-legend-refused', REASONS);
     window.addEventListener('resize', drawGraphs);
+    el('abuse-rule-form').addEventListener('submit', async e => {
+        e.preventDefault();
+        const rule = { action: el('abuse-rule-action').value, direction: el('abuse-rule-direction').value,
+            value: el('abuse-rule-value').value.trim(), note: el('abuse-rule-note').value.trim() };
+        const protocols = [...view.querySelectorAll('[data-abuse-protocol]:checked')].map(b => b.value);
+        if (protocols.length) rule.protocols = protocols.join(',');
+        const days = Number(el('abuse-rule-days').value);
+        if (days > 0) rule.expires = new Date(Date.now() + days * 86400000).toISOString();
+        if (await saveRules([...rules, rule], 'Rule added. Every service applies it within a few seconds.')) e.target.reset();
+    });
 
     el('abuse-policy-form').addEventListener('submit', event => {
         event.preventDefault();
         const policy = readPolicy();
         if (policy.mode === 'off' && !window.confirm('Turn abuse protection off? Nothing is blocked, and connection limits fall back to the configuration file.')) return;
-        if (policy.firewall === 'apply' && !policy.allowlist.length && !window.confirm('Apply blocks at the firewall with an empty allowlist? A block could cut off your own network until it expires.')) return;
+        const exempt = rules.some(r => r.action === 'allow' && !r.protocols && r.direction !== 'outbound' && !r.value.includes('@') && /[:\d]/.test(r.value));
+        if (policy.firewall === 'apply' && !exempt && !window.confirm('Apply blocks at the firewall with no allow rule for an address? A block could cut off your own network until it expires.')) return;
         act(async () => {
             const saved = await call('/policy', 'PUT', policy);
             notice(saved.published
@@ -332,10 +464,8 @@
             notice(block.network + ' blocked. Every service applies it within a few seconds.');
         });
     });
-    el('abuse-you-add').addEventListener('click', () => act(async () => {
-        const policy = readPolicy();
-        policy.allowlist = allowlist.concat(you);
-        await call('/policy', 'PUT', policy);
-        notice(you + ' added to the allowlist.');
-    }));
+    el('abuse-you-add').addEventListener('click', async () => {
+        const rule = { action: 'allow', direction: 'inbound', value: you, note: 'Added from the warning' };
+        if (await saveRules([...rules, rule], 'Allow rule added for ' + you + '.')) refresh();
+    });
 })();
