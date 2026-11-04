@@ -1,6 +1,8 @@
 package webmail
 
 import (
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -163,5 +165,59 @@ func TestParseBodyPartsWithContentID(t *testing.T) {
 	}
 	if got := msg.Attachments(); len(got) != 0 {
 		t.Fatalf("body parts listed as attachments: %+v", got)
+	}
+}
+
+// Spam often carries a made-up Content-Transfer-Encoding. The part is shown
+// raw, as mail apps do, instead of the whole message failing to open.
+func TestParseUnknownTransferEncoding(t *testing.T) {
+	single := "From: a@example.org\r\nSubject: offer\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: 0000007bit\r\n\r\nBuy now\r\n"
+	msg, err := parseMessage([]byte(single))
+	if err != nil {
+		t.Fatalf("single part: %v", err)
+	}
+	if !strings.Contains(msg.Text, "Buy now") || msg.Subject != "offer" {
+		t.Fatalf("single part: text=%q subject=%q", msg.Text, msg.Subject)
+	}
+
+	multi := "From: a@example.org\r\nSubject: offer\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/alternative; boundary=\"b\"\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: 0000007bit\r\n\r\nPlain body\r\n" +
+		"--b\r\nContent-Type: text/html\r\nContent-Transfer-Encoding: x-weird\r\n\r\n<p>HTML body</p>\r\n" +
+		"--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"a.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0=\r\n" +
+		"--b--\r\n"
+	msg, err = parseMessage([]byte(multi))
+	if err != nil {
+		t.Fatalf("multipart: %v", err)
+	}
+	if !strings.Contains(msg.Text, "Plain body") || !strings.Contains(msg.HTML, "HTML body") {
+		t.Fatalf("multipart: text=%q html=%q", msg.Text, msg.HTML)
+	}
+	if got := msg.Attachments(); len(got) != 1 || got[0].Filename != "a.pdf" {
+		t.Fatalf("multipart attachments: %+v", got)
+	}
+	// The attachment after the odd parts is still downloadable.
+	if _, body, err := findPart([]byte(multi), 3, ""); err != nil || string(body) != "%PDF-" {
+		t.Fatalf("findPart: %q %v", body, err)
+	}
+}
+
+// A message that can't be parsed at all is reported as unreadable, not as
+// the mail server failing.
+func TestUnparseableMessageIsReportedAsSuch(t *testing.T) {
+	broken := []byte("From: a@example.org\r\nthis header line has no colon\r\n\r\nbody\r\n")
+	if _, err := parseMessage(broken); !errors.Is(err, ErrUnreadable) {
+		t.Fatalf("want ErrUnreadable, got %v", err)
+	}
+
+	h := newHarness(t)
+	h.login()
+	h.store.raw[7] = broken
+	resp, page := h.get("/mail?f=INBOX&uid=7")
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(page, "malformed") {
+		t.Fatalf("status %d, page lacks the malformed-message text", resp.StatusCode)
+	}
+	if strings.Contains(page, "didn&#39;t respond") || strings.Contains(page, "didn't respond") {
+		t.Fatal("an unparseable message blamed the mail server")
 	}
 }
