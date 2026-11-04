@@ -59,14 +59,49 @@ func TestJudgeSignIns(t *testing.T) {
 		{"a known country", was(paris, "1.1.1.1", 0), now("2.2.2.2", 3000), berlin, []string{"FR", "DE"}, ""},
 		{"a new country, reachable", was(paris, "1.1.1.1", 0), now("2.2.2.2", 3000), berlin, []string{"FR"}, AlertNewCountry},
 	} {
-		got := judge(c.previous, c.signIn, c.place, c.known)
+		got := judge(c.previous, c.signIn, c.place, c.known, nil)
 		if kinds(got) != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, kinds(got), c.want)
 		}
 	}
-	got := judge(was(paris, "1.1.1.1", 0), now("2.2.2.2", 20), sydney, []string{"FR"})
+	got := judge(was(paris, "1.1.1.1", 0), now("2.2.2.2", 20), sydney, []string{"FR"}, nil)
 	if len(got) != 1 || !strings.Contains(got[0].Detail, "Paris, FR") || !strings.Contains(got[0].Detail, "Sydney, AU") || !strings.Contains(got[0].Detail, "20 minutes") {
 		t.Fatalf("detail = %+v", got)
+	}
+}
+
+// The false positive that prompted this: a phone on cellular data placed
+// several hundred kilometres from the home Wi-Fi it alternates with, within
+// a minute.
+func TestJudgeHomeAndPhone(t *testing.T) {
+	boston := geoip.Place{Country: "US", City: "Boston", Latitude: 42.3601, Longitude: -71.0589}
+	buffalo := geoip.Place{Country: "US", City: "Buffalo", Latitude: 42.8864, Longitude: -78.8784}
+	if km := distance(boston, buffalo); km < 600 || km > 700 {
+		t.Fatalf("fixture distance %.0f km", km)
+	}
+	// Under the domestic minimum: no alert even the first time.
+	if got := judge(was(boston, "198.51.100.7", 0), now("203.0.113.9", 0), buffalo, []string{"US"}, nil); len(got) != 0 {
+		t.Fatalf("home then phone raised %s", kinds(got))
+	}
+	// The same jump across a border still counts.
+	toronto := geoip.Place{Country: "CA", City: "Toronto", Latitude: 43.6532, Longitude: -79.3832}
+	if got := judge(was(boston, "198.51.100.7", 0), now("203.0.113.9", 1), toronto, []string{"US", "CA"}, nil); kinds(got) != AlertTravel {
+		t.Fatalf("cross-border jump raised %q", kinds(got))
+	}
+}
+
+// A place the account signed in from lately isn't travel: a VPN exit and
+// home, flipping all day, alert once at most.
+func TestJudgeFamiliarPlaces(t *testing.T) {
+	if got := judge(was(paris, "1.1.1.1", 0), now("2.2.2.2", 20), sydney, []string{"FR", "AU"}, []string{placeKey(paris), placeKey(sydney)}); len(got) != 0 {
+		t.Fatalf("familiar place raised %s", kinds(got))
+	}
+	// An unfamiliar destination still does, even with other places known.
+	if got := judge(was(paris, "1.1.1.1", 0), now("2.2.2.2", 20), sydney, []string{"FR"}, []string{placeKey(paris), placeKey(berlin)}); kinds(got) != AlertTravel {
+		t.Fatalf("unfamiliar place raised %q", kinds(got))
+	}
+	if placeKey(geoip.Place{Country: "US", Latitude: 40.71, Longitude: -74.0}) != "us/40.7,-74.0" || placeKey(paris) != "fr/paris" {
+		t.Fatalf("placeKey: %q %q", placeKey(geoip.Place{Country: "US", Latitude: 40.71, Longitude: -74.0}), placeKey(paris))
 	}
 }
 
