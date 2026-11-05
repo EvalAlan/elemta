@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/valkey-io/valkey-go"
 	"math"
 	"net"
 	"sort"
@@ -31,6 +32,7 @@ const (
 	keySignIns    = "elemta:abuse:sign-ins"
 	keyLastSeen   = "elemta:abuse:seen:"
 	keyCountries  = "elemta:abuse:countries:"
+	keyPlaces     = "elemta:abuse:places:"
 	keyAlerts     = "elemta:abuse:alerts"
 	keyAlertOrder = "elemta:abuse:alerts:order"
 	keyAlertOnce  = "elemta:abuse:alerts:once:"
@@ -52,6 +54,12 @@ const (
 	// wrong by guessing a neighbouring city.
 	travelSpeed   = 1000.0 // km/h
 	travelMinimum = 500.0  // km
+	// travelMinimumDomestic applies when both places are in one country.
+	// There the free database is often several hundred kilometres out:
+	// mobile carriers send traffic out through a few regional gateways, so a
+	// phone on cellular data is placed far from the Wi-Fi it just left. A
+	// real jump that short inside one country is rarely worth an alert.
+	travelMinimumDomestic = 1000.0 // km
 
 	AlertTravel     = "impossible-travel"
 	AlertNewCountry = "new-country"
@@ -183,27 +191,40 @@ func (e *Engine) assess(ctx context.Context, places Locator, s SignIn) {
 		}
 	}
 	known, _ := client.Do(ctx, client.B().Smembers().Key(keyCountries+s.Account).Build()).AsStrSlice()
-	for _, a := range judge(previous, s, place, known) {
+	familiar, _ := client.Do(ctx, client.B().Smembers().Key(keyPlaces+s.Account).Build()).AsStrSlice()
+	for _, a := range judge(previous, s, place, known, familiar) {
 		e.raise(ctx, a)
 	}
 	if raw, err := json.Marshal(seen{SignIn: s, Place: place}); err == nil {
 		_ = client.Do(ctx, client.B().Set().Key(keyLastSeen+s.Account).Value(string(raw)).Ex(signInMemory).Build()).Error()
 	}
+	_ = client.Do(ctx, client.B().Sadd().Key(keyPlaces+s.Account).Member(placeKey(place)).Build()).Error()
+	_ = client.Do(ctx, client.B().Expire().Key(keyPlaces+s.Account).Seconds(int64(signInMemory.Seconds())).Build()).Error()
 	_ = client.Do(ctx, client.B().Sadd().Key(keyCountries+s.Account).Member(place.Country).Build()).Error()
 	_ = client.Do(ctx, client.B().Expire().Key(keyCountries+s.Account).Seconds(int64(countryMemory.Seconds())).Build()).Error()
 }
 
-// judge decides what a sign-in should raise, given where the account was last
-// and the countries it knows. It touches nothing, so it can be tested alone.
-func judge(previous *seen, s SignIn, place geoip.Place, known []string) []Alert {
+// judge decides what a sign-in should raise, given where the account was last,
+// the countries it knows and the places it has signed in from lately. It
+// touches nothing, so it can be tested alone.
+//
+// A sign-in from a place the account already uses isn't travel, however
+// far that is from the last one: someone switching between home Wi-Fi and
+// a phone on cellular data, or between a VPN and their own connection,
+// flips between the same two places all day.
+func judge(previous *seen, s SignIn, place geoip.Place, known, familiar []string) []Alert {
 	var alerts []Alert
-	if previous != nil && previous.Address != s.Address {
+	if previous != nil && previous.Address != s.Address && !contains(familiar, placeKey(place)) {
 		km := distance(previous.Place, place)
 		elapsed := s.Time.Sub(previous.Time)
 		if elapsed < time.Minute {
 			elapsed = time.Minute
 		}
-		if km >= travelMinimum && km/elapsed.Hours() > travelSpeed {
+		minimum := travelMinimum
+		if previous.Place.Country != "" && previous.Place.Country == place.Country {
+			minimum = travelMinimumDomestic
+		}
+		if km >= minimum && km/elapsed.Hours() > travelSpeed {
 			from := previous.Place
 			alerts = append(alerts, Alert{
 				Time: s.Time, Account: s.Account, Kind: AlertTravel, Address: s.Address, Service: s.Service,
@@ -228,8 +249,13 @@ func (e *Engine) raise(ctx context.Context, a Alert) {
 	if client == nil {
 		return
 	}
+	// SET NX answers nil, which the client reports as an error, when the key
+	// is already there: that is the "raised within the hour" case. Reading it
+	// with AsBool treated it as a failure to check and raised again, so every
+	// qualifying sign-in alerted. Any other error still raises: an alert too
+	// many beats one lost while Valkey hiccups.
 	once := keyAlertOnce + a.Kind + ":" + a.Account
-	if ok, err := client.Do(ctx, client.B().Set().Key(once).Value("1").Nx().Ex(alertQuiet).Build()).AsBool(); err == nil && !ok {
+	if err := client.Do(ctx, client.B().Set().Key(once).Value("1").Nx().Ex(alertQuiet).Build()).Error(); valkey.IsValkeyNil(err) {
 		return
 	}
 	id := make([]byte, 8)
@@ -292,6 +318,15 @@ func (e *Engine) DismissAlert(ctx context.Context, id, by string) error {
 }
 
 // distance is the great-circle distance in kilometres.
+// placeKey names a place for the account's familiar places: the city where
+// the database has one, or else the coordinates to about 10 km.
+func placeKey(p geoip.Place) string {
+	if p.City != "" {
+		return strings.ToLower(p.Country + "/" + p.City)
+	}
+	return fmt.Sprintf("%s/%.1f,%.1f", strings.ToLower(p.Country), p.Latitude, p.Longitude)
+}
+
 func distance(a, b geoip.Place) float64 {
 	const earth = 6371.0
 	rad := func(d float64) float64 { return d * math.Pi / 180 }
