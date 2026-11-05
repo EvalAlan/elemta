@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -695,5 +696,65 @@ func TestBrowserNewMailRings(t *testing.T) {
 	b.run(chromedp.Evaluate[chromedp.Void](`localStorage.setItem("elemta-mail-sound", String(Date.now()))`, chromedp.EvalAsValue))
 	if n := step(counts(7, 5)); n != first {
 		t.Fatal("a second tab rang as well")
+	}
+}
+
+// One click on an event shows its details in a bubble and stays on the
+// calendar; a double click opens the event page.
+func TestBrowserEventBubble(t *testing.T) {
+	b := newBrowser(t)
+	csrf := b.h.login()
+	resp := b.h.post("/calendar/event", url.Values{
+		"csrf": {csrf}, "op": {"save"}, "summary": {"Design review"}, "location": {"Room 4"},
+		"start_date": {"2026-10-21"}, "start_time": {"10:00"}, "end_date": {"2026-10-21"}, "end_time": {"11:00"},
+		"ends": {"never"}, "interval": {"1"}, "calendar": {"Work"}, "reminder": {"15"}, "busy": {"busy"},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save = %d", resp.StatusCode)
+	}
+	b.login()
+	const week = "/calendar?view=week&date=2026-10-21"
+	b.run(chromedp.Navigate(b.url(week)), chromedp.WaitVisible(chromedp.CSS(`.ev[data-ctx="event"]`)))
+	b.waitFor(`document.readyState === "complete"`)
+	ev := func() *chromedp.Node {
+		ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+		defer cancel()
+		nodes, err := chromedp.Run(ctx, chromedp.Nodes(chromedp.CSS(`.ev[data-ctx="event"]`), chromedp.NodeVisible))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return nodes[0]
+	}
+
+	b.run(chromedp.MouseClickNode(ev()))
+	b.waitFor(`!!document.querySelector(".event-peek .event-view")`)
+	if got := evalAs[string](b, `location.pathname + location.search`); got != week {
+		t.Errorf("a single click left the calendar for %s", got)
+	}
+	text := evalAs[string](b, `document.querySelector(".event-peek").textContent`)
+	for _, want := range []string{"Design review", "Room 4", "Open", "Edit", "Delete"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("bubble %q lacks %q", text, want)
+		}
+	}
+	if !evalAs[bool](b, `(() => { const p = document.querySelector(".event-peek").getBoundingClientRect(), e = document.querySelector(".ev").getBoundingClientRect(); return p.left >= e.right || p.right <= e.left || p.top >= e.bottom || p.bottom <= e.top })()`) {
+		t.Error("the bubble covers the event it belongs to")
+	}
+	// Escape closes it and puts the keyboard back on the event.
+	b.run(chromedp.KeyEvent("\x1b"))
+	b.waitFor(`!document.querySelector(".event-peek") && document.activeElement.matches(".ev")`)
+	// So does a click elsewhere.
+	b.run(chromedp.MouseClickNode(ev()))
+	b.waitFor(`!!document.querySelector(".event-peek .event-view")`)
+	b.run(chromedp.MouseClickXY(5, 5))
+	b.waitFor(`!document.querySelector(".event-peek")`)
+
+	// A double click as a mouse sends it: one click, then a second that
+	// counts two.
+	n := ev()
+	b.run(chromedp.MouseClickNode(n), chromedp.MouseClickNode(n, chromedp.ClickCount(2)))
+	b.waitFor(`location.pathname === "/calendar/event" && !!document.querySelector(".event-view h2")`)
+	if text := evalAs[string](b, `document.querySelector(".event-view h2").textContent`); !strings.Contains(text, "Design review") {
+		t.Errorf("double click opened %q", text)
 	}
 }

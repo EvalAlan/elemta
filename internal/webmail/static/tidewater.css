@@ -1508,6 +1508,20 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .ctx-item:hover, .ctx-item:focus { background: var(--accent-soft); color: var(--accent-dark); outline: none; }
 .ctx-item.danger { color: var(--danger); }
 .ctx-item.danger:hover, .ctx-item.danger:focus { background: var(--danger-soft); color: var(--danger); }
+/* The event bubble: the event page's card, compacted to sit beside an event. */
+.event-peek { position: fixed; z-index: 65; width: min(360px, calc(100vw - 16px)); max-height: min(70vh, 520px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.event-peek:focus { outline: none; }
+.event-peek .peek-loading { margin: 0; padding: 16px 40px 16px 16px; }
+.event-peek .event-view { padding: 14px 16px 10px; gap: 8px; max-width: none; }
+.event-peek .event-view h2 { font-size: 16px; margin: 0; padding-right: 24px; overflow-wrap: anywhere; }
+.event-peek .event-view .when { font-size: 13px; margin: 0; }
+.event-peek .event-view p { margin: 0; }
+.event-peek .details { gap: 4px 14px; font-size: 13px; }
+.event-peek .text-body { max-height: 9em; overflow-y: auto; font-size: 13px; }
+.event-peek .peek-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 16px 14px; border-top: 1px solid var(--line); }
+.event-peek .peek-actions form.inline { display: contents; }
+.peek-close { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; }
+.peek-close:hover, .peek-close:focus-visible { background: var(--accent-soft); color: var(--accent-dark); outline: none; }
 .ctx-sep { height: 1px; background: var(--line-soft); margin: 4px 6px; }
 .tb-group { display: inline-flex; align-items: center; gap: 2px; padding-right: 6px; margin-right: 2px; border-right: 1px solid var(--line); }
 .tb-select { min-height: 30px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); padding: 0 4px; font-size: 13px; max-width: 120px; }
