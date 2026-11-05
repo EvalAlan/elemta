@@ -120,7 +120,7 @@ func paletteFromCookie(r *http.Request) string {
 
 func validPalette(p string) string {
 	switch p {
-	case "tidewater", "forest", "plum", "sand", "graphite":
+	case "tidewater", "forest", "plum", "sand", "graphite", "ocean", "rose", "ember", "arctic", "contrast":
 		return p
 	}
 	return ""
