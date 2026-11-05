@@ -1534,4 +1534,132 @@
     openCtx(m.items, r.left + 16, r.top + r.height / 2, m.title);
   });
 
+  // ---- event bubble --------------------------------------------------------
+  // A click on an event shows its details in a bubble beside it, so checking
+  // where or when something is doesn't cost leaving the calendar. A double
+  // click, or a click with a modifier, opens the full event page as before.
+  // The bubble is the event page's own card, fetched and lifted out the way
+  // the reading pane is: what it shows, including what a shared private event
+  // hides, is decided by the server once and can't drift from the page.
+  var peek = null, peekToken = 0;
+  var EVENT = 'a[data-ctx="event"]';
+
+  function closePeek(refocus) {
+    peekToken++;
+    if (!peek) return;
+    var from = peek.from;
+    peek.el.remove();
+    peek = null;
+    if (refocus && from.isConnected) from.focus();
+  }
+
+  // Beside the event if there's room on either side, otherwise below or
+  // above it (a month cell on a phone has no side to spare).
+  function placePeek() {
+    var r = peek.from.getBoundingClientRect(), el = peek.el, p = el.getBoundingClientRect();
+    var w = doc.documentElement.clientWidth, h = window.innerHeight, gap = 8, edge = 8;
+    var clamp = function (v, lo, hi) { return Math.max(lo, Math.min(v, hi)); };
+    var left, top;
+    if (r.right + gap + p.width <= w - edge) left = r.right + gap;
+    else if (r.left - gap - p.width >= edge) left = r.left - gap - p.width;
+    if (left !== undefined) {
+      top = clamp(r.top, edge, h - p.height - edge);
+    } else {
+      left = clamp(r.left, edge, w - p.width - edge);
+      if (r.bottom + gap + p.height <= h - edge) top = r.bottom + gap;
+      else if (r.top - gap - p.height >= edge) top = r.top - gap - p.height;
+      else top = clamp(r.bottom + gap, edge, h - p.height - edge);
+    }
+    el.style.left = Math.max(edge, left) + "px";
+    el.style.top = Math.max(edge, top) + "px";
+  }
+
+  function openPeek(a) {
+    closePeek(false);
+    var token = peekToken;
+    var el = doc.createElement("div");
+    el.className = "event-peek";
+    el.setAttribute("role", "dialog");
+    el.tabIndex = -1;
+    var name = (a.getAttribute("title") || a.textContent).trim();
+    el.setAttribute("aria-label", name);
+    var close = doc.createElement("button");
+    close.type = "button";
+    close.className = "peek-close";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "×";
+    close.addEventListener("click", function () { closePeek(true); });
+    // Shown straight away, so a slow server still answers the click.
+    var loading = doc.createElement("p");
+    loading.className = "muted small peek-loading";
+    loading.textContent = "Loading " + name + "…";
+    el.append(close, loading);
+    el.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { closePeek(true); e.preventDefault(); }
+      // Keys typed here are for the bubble, not the calendar's shortcuts.
+      e.stopPropagation();
+    });
+    body.appendChild(el);
+    peek = { el: el, from: a };
+    placePeek();
+
+    fetch(a.href, { credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok || r.redirected) throw new Error("not an event page");
+        return r.text();
+      })
+      .then(function (html) {
+        if (token !== peekToken) return;
+        var fresh = new DOMParser().parseFromString(html, "text/html");
+        var card = $(".event-view", fresh), bar = $('.toolbar[aria-label="Event actions"]', fresh);
+        if (!card) throw new Error("not an event page");
+        var actions = doc.createElement("div");
+        actions.className = "peek-actions";
+        var open = doc.createElement("a");
+        open.className = "button";
+        open.href = a.href;
+        open.textContent = "Open";
+        actions.appendChild(open);
+        // The page's own Edit, Delete and Hide buttons: their forms carry
+        // the CSRF token and their data-confirm prompts work anywhere.
+        if (bar) Array.prototype.forEach.call(bar.children, function (n) { actions.appendChild(doc.importNode(n, true)); });
+        loading.replaceWith(doc.importNode(card, true), actions);
+        placePeek();
+        el.focus();
+      })
+      .catch(function () {
+        // Signed out, gone or the server failed: the full page says which.
+        if (token === peekToken) location.href = a.href;
+      });
+  }
+
+  doc.addEventListener("click", function (e) {
+    var a = e.target.closest(EVENT);
+    if (peek && !peek.el.contains(e.target) && a !== peek.from) closePeek(false);
+    if (!a || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    // The second click of a double click: the dblclick that follows opens it.
+    if (e.detail > 1) return;
+    if (peek && peek.from === a) closePeek(false); else openPeek(a);
+  });
+  doc.addEventListener("dblclick", function (e) {
+    var a = e.target.closest(EVENT);
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    closePeek(false);
+    location.href = a.href;
+  });
+  // A double click would otherwise select the event's text as it leaves.
+  doc.addEventListener("mousedown", function (e) {
+    if (e.detail > 1 && e.target.closest(EVENT)) e.preventDefault();
+  });
+  doc.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && peek) closePeek(true);
+  });
+  doc.addEventListener("contextmenu", function () { closePeek(false); });
+  // The bubble is placed against the event; once that moves, it points at
+  // nothing. Scrolling inside the bubble itself is fine.
+  window.addEventListener("scroll", function (e) { if (peek && !peek.el.contains(e.target)) closePeek(false); }, true);
+  window.addEventListener("resize", function () { closePeek(false); });
+
 })();
