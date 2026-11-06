@@ -43,6 +43,9 @@ dc() { docker compose -p "$project" --env-file "$env_file" "${files[@]}" "$@"; }
 
 step "Stopping mail services"
 dc stop elemta elemta-admin elemta-webmail elemta-mailbox mailbox-server elemta-ldap
+# The spam filter too, when its training is being put back: its Valkey
+# would otherwise write its own snapshot over the restored one.
+[ ! -d "$in/rspamd" ] || dc stop elemta-rspamd rspamd-valkey
 dc up -d elemta-mailbox-db
 until docker exec elemta-mailbox-db sh -c 'pg_isready -q -U "$POSTGRES_USER"'; do sleep 1; done
 # shellcheck source=SCRIPTDIR/lib/compose.sh
@@ -58,8 +61,14 @@ load() {
 
 step "Mailbox metadata"
 docker exec -i elemta-mailbox-db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --exit-on-error' <"$in/mailbox/metadata.dump"
-step "Message bodies"
-load mailbox_bodies "$in/mailbox/bodies.tar.gz" 1001:1001
+if [ "$(sed -n 's/^bodies=//p' "$in/mailbox/manifest")" = external ]; then
+    # The metadata names the bucket the bodies are in; the deploy puts its
+    # keys back (they aren't in the backup).
+    step "Message bodies stay in their store (backed up with BACKUP_BODIES=external)"
+else
+    step "Message bodies"
+    load mailbox_bodies "$in/mailbox/bodies.tar.gz" 1001:1001
+fi
 if [ -f "$in/objects/webmail-objects.dump" ]; then
     step "Webmail objects"
     objects=$(docker ps --filter label=com.docker.compose.service=webmail-objects --format '{{.Names}}' | head -n 1)
@@ -80,6 +89,14 @@ docker run --rm --network none --user 0 --entrypoint sh --env-file "$secrets/lda
 step "MTA queue and runtime configuration"
 load elemta_queue "$in/mta/elemta_queue.tar.gz" 1001:1001
 load elemta_config "$in/mta/elemta_config.tar.gz" 1001:1001
+
+if [ -d "$in/rspamd" ]; then
+    step "Spam filter"
+    # Extracted as root, so the files keep the Rspamd and Valkey owners
+    # they were saved with.
+    load rspamd_valkey_data "$in/rspamd/rspamd_valkey_data.tar.gz"
+    load rspamd_data "$in/rspamd/rspamd_data.tar.gz"
+fi
 
 step "Starting the stack"
 # The restored runtime configuration is kept, not reseeded from the host.

@@ -4,6 +4,7 @@ go 1.26.10
 
 require (
 	blitiri.com.ar/go/spf v1.6.0
+	filippo.io/age v1.2.1
 	github.com/BurntSushi/toml v1.6.0
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/chromedp/cdproto v0.158.6

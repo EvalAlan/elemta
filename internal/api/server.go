@@ -799,6 +799,9 @@ func (s *Server) Start() error {
 	// TLS has started failing, so it follows dashboard auth like the rest.
 	api.Handle("/tls/certificate", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTLSCertificate))).Methods("GET")
 	api.Handle("/tls/certificates", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTLSCertificates))).Methods("GET")
+	// Off-site backups: when the last one ran and whether it worked, from
+	// the host job's status file. Read-only, behind dashboard auth.
+	api.Handle("/backup/status", s.requireAuthIfConfigured(http.HandlerFunc(s.handleBackupStatus))).Methods("GET")
 	// Requesting, uploading and removing certificates change what the mail
 	// services present, and a sync runs a host job, so they take the same
 	// permission as a restart.

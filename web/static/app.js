@@ -194,6 +194,7 @@ function switchView(viewName) {
         case 'health':
             refreshHealth();
             refreshCertificate();
+            refreshBackupStatus();
             break;
         case 'certificates':
             refreshCertificates();
@@ -3421,6 +3422,47 @@ async function refreshCertificate() {
     } catch (error) {
         console.error('Certificate check failed:', error);
         body.innerHTML = `<div class="error-message">Could not check the certificate: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+// ============================================================================
+// Off-site backups
+// ============================================================================
+//
+// The backup job runs on the host, out of sight of every container; it
+// leaves the result of each run for this card. The status and wording come
+// from the API, as for the certificate.
+
+async function refreshBackupStatus() {
+    const body = document.getElementById('backup-body');
+    if (!body) return;
+    try {
+        const response = await fetch(`${API_BASE}/backup/status`);
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        const b = await response.json();
+        if (!b.configured) {
+            body.innerHTML = `<div class="field-hint">${escapeHtml(b.message)}</div>`;
+            return;
+        }
+        const when = (t) => t ? escapeHtml(formatDate(t)) : 'never';
+        const rows = [
+            ['Status', `<span class="cert-status ${escapeHtml(b.status)}">${escapeHtml(b.message)}</span>`],
+            ['Last good backup', when(b.last_success) + (b.bytes ? ` (${escapeHtml(formatBytes(b.bytes))})` : '')],
+            ['Last attempt', when(b.last_attempt)],
+            ['Last restore drill', when(b.last_drill)],
+            ['Stored as', `<span class="cert-path">${escapeHtml(b.object || '—')}</span>`],
+        ];
+        body.innerHTML = `
+            <div class="cert-grid">
+                ${rows.map(([label, value]) => `
+                    <div class="cert-row">
+                        <span class="cert-label">${label}</span>
+                        <span class="cert-value">${value}</span>
+                    </div>`).join('')}
+            </div>`;
+    } catch (error) {
+        console.error('Backup status check failed:', error);
+        body.innerHTML = `<div class="error-message">Could not check backups: ${escapeHtml(error.message)}</div>`;
     }
 }
 

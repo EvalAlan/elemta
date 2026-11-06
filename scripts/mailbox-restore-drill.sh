@@ -7,13 +7,26 @@
 #
 # Restoring for real is the same steps against the stack's own volumes,
 # with the mailbox replicas stopped.
+#
+# A backup made with BACKUP_BODIES=external has no bodies: they stayed in
+# the stack's store. The drill then checks a random sample of the restored
+# messages' bodies there (DRILL_BODY_SAMPLE, default 200), through a running
+# mailbox replica, which holds the store's keys. It only reads: verify never
+# deletes, and the cleanup that does runs only in the serving process. A
+# body removed since the backup (a deleted message, after body_grace_hours)
+# shows as missing unless the store kept its old version, so drill a backup
+# when it's made.
 set -eu
 in=${1:?usage: $0 <backup directory>}
 [ -f "$in/complete" ] || { echo "Backup is incomplete" >&2; exit 1; }
+bodies=$(sed -n 's/^bodies=//p' "$in/manifest")
+bodies=${bodies:-copy}
 metadata_hash=$(sed -n 's/^metadata_sha256=//p' "$in/manifest")
-bodies_hash=$(sed -n 's/^bodies_sha256=//p' "$in/manifest")
 [ "$(sha256sum "$in/metadata.dump" | cut -d ' ' -f 1)" = "$metadata_hash" ] || { echo "Metadata checksum differs" >&2; exit 1; }
-[ "$(sha256sum "$in/bodies.tar.gz" | cut -d ' ' -f 1)" = "$bodies_hash" ] || { echo "Bodies checksum differs" >&2; exit 1; }
+if [ "$bodies" = copy ]; then
+    bodies_hash=$(sed -n 's/^bodies_sha256=//p' "$in/manifest")
+    [ "$(sha256sum "$in/bodies.tar.gz" | cut -d ' ' -f 1)" = "$bodies_hash" ] || { echo "Bodies checksum differs" >&2; exit 1; }
+fi
 image=${MAILBOX_IMAGE:-elemta-mailbox:dev}
 root="$(cd "$(dirname "$0")/.." && pwd)"
 secrets="$root/deployments/compose/.secrets"
@@ -41,6 +54,23 @@ sleep 2
 
 echo "Restoring metadata"
 docker exec -i "$dbc" pg_restore -U mailbox -d mailbox --no-owner --exit-on-error <"$in/metadata.dump"
+
+if [ "$bodies" = external ]; then
+    # shellcheck source=SCRIPTDIR/lib/compose.sh
+    . "$root/scripts/lib/compose.sh"
+    mailbox=${MAILBOX_CONTAINER:-$(svc_container mailbox-server)}
+    live_net=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' "$mailbox" | head -n 1)
+    # The throwaway database joins the stack's network so the replica can
+    # reach it; removing it at the end takes it off again.
+    docker network connect "$live_net" "$dbc"
+    echo "Verifying a sample of bodies in the stack's store, through $mailbox"
+    docker exec -e "${MAILBOX_DSN_ENV:-ELEMTA_MAILBOX_DATABASE_DSN}=postgres://mailbox:$pw@$dbc:5432/mailbox?sslmode=disable" "$mailbox" \
+        /app/elemta mailbox verify --config /etc/elemta/mailbox.toml --sample "${DRILL_BODY_SAMPLE:-200}"
+    got=$(docker exec "$dbc" psql -U mailbox -d mailbox -tAc "select count(*) from mailbox_messages")
+    echo "restored messages: $got"
+    echo "Restore drill passed (bodies checked in place)"
+    exit 0
+fi
 # The bodies are in a volume here whatever store they came from, and the
 # engine refuses metadata that names another store.
 docker exec "$dbc" psql -q -U mailbox -d mailbox -c "UPDATE mailbox_bodies SET store='file:/var/lib/elemta/bodies'"
