@@ -27,6 +27,7 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/log"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
@@ -779,4 +780,88 @@ func TestBrowserEventBubble(t *testing.T) {
 	if text := evalAs[string](b, `document.querySelector(".event-view h2").textContent`); !strings.Contains(text, "Design review") {
 		t.Errorf("double click opened %q", text)
 	}
+}
+
+// A due reminder shows as a card and rings once; a reload shows it again
+// without ringing; snooze hides it until the snooze runs out, when it rings
+// again; dismiss keeps it away. Settings can show an example.
+func TestBrowserEventReminder(t *testing.T) {
+	b := newBrowser(t)
+	csrf := b.h.login()
+	b.h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "week_start": {"0"}, "clock": {"24"}, "page_size": {"50"}})
+	start := time.Now().UTC().Add(10 * time.Minute).Truncate(time.Minute)
+	resp := b.h.post("/calendar/event", url.Values{
+		"csrf": {csrf}, "op": {"save"}, "summary": {"Budget call"}, "location": {"Room 2"},
+		"start_date": {start.Format("2006-01-02")}, "start_time": {start.Format("15:04")},
+		"end_date": {start.Add(time.Hour).Format("2006-01-02")}, "end_time": {start.Add(time.Hour).Format("15:04")},
+		"ends": {"never"}, "interval": {"1"}, "calendar": {"Work"}, "reminder": {"15"}, "busy": {"busy"},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save = %d", resp.StatusCode)
+	}
+	// Signing in lands on the inbox, which already shows and rings the
+	// reminder. The first page after the stub goes in starts afresh, before
+	// any of its own scripts run.
+	b.login()
+	fresh := `if (!sessionStorage.getItem("fresh")) { localStorage.clear(); sessionStorage.setItem("fresh", "1"); }`
+	b.run(chromedp.Func(func(ctx context.Context, tg *chromedp.Target) error {
+		_, err := cdp.Call(ctx, tg, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{Source: stubAudio + ";" + fresh})
+		return err
+	}))
+	const card = `document.querySelector(".toast.reminder")`
+	open := func() {
+		t.Helper()
+		b.run(chromedp.Navigate(b.url("/calendar")))
+		b.waitFor(`!!` + card)
+	}
+	// stays checks for a while that no card comes, since its absence has no
+	// moment to wait for.
+	stays := func(why string) {
+		t.Helper()
+		b.waitFor(`document.readyState === "complete"`)
+		for range 10 {
+			if evalAs[bool](b, `!!`+card) {
+				t.Fatal(why)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	open()
+	text := evalAs[string](b, card+`.textContent`)
+	for _, want := range []string{"Budget call", "Room 2", "Starts in", "Snooze", "Dismiss"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("reminder %q lacks %q", text, want)
+		}
+	}
+	if n := evalAs[int](b, `window.notes`); n == 0 {
+		t.Error("the reminder didn't ring")
+	}
+
+	open()
+	if n := evalAs[int](b, `window.notes`); n != 0 {
+		t.Error("a reload rang the same reminder again")
+	}
+
+	b.run(chromedp.Evaluate[chromedp.Void](card+`.querySelector("button").click()`, chromedp.EvalAsValue)) // Snooze
+	b.waitFor(`!` + card)
+	b.run(chromedp.Navigate(b.url("/calendar")))
+	stays("a snoozed reminder came back at once")
+
+	// The snooze runs out: back, and ringing.
+	b.run(chromedp.Evaluate[chromedp.Void](`(() => { const s = JSON.parse(localStorage.getItem("elemta-reminders")); for (const k in s) if (s[k].s) s[k].s = Date.now() - 1000; localStorage.setItem("elemta-reminders", JSON.stringify(s)); })()`, chromedp.EvalAsValue))
+	open()
+	if n := evalAs[int](b, `window.notes`); n == 0 {
+		t.Error("the reminder didn't ring after its snooze")
+	}
+
+	b.run(chromedp.Evaluate[chromedp.Void](card+`.querySelectorAll("button")[1].click()`, chromedp.EvalAsValue)) // Dismiss
+	b.waitFor(`!` + card)
+	b.run(chromedp.Navigate(b.url("/calendar")))
+	stays("a dismissed reminder came back")
+
+	b.run(chromedp.Navigate(b.url("/settings")), chromedp.WaitVisible(chromedp.CSS(`[data-reminder-test]`)))
+	b.waitFor(`document.readyState === "complete"`)
+	b.run(chromedp.Evaluate[chromedp.Void](`window.notes = 0; document.querySelector("[data-reminder-test]").click()`, chromedp.EvalAsValue))
+	b.waitFor(`!!` + card + ` && window.notes > 0`)
 }
