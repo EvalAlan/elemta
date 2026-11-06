@@ -28,6 +28,7 @@
   <button class="button block" type="button" data-passkey-signin data-token="{{.Token}}" hidden>Sign in with a passkey</button>
   {{end}}
   {{if .Recovery}}<p class="login-links"><a href="/forgot-password">Forgot password?</a></p>{{end}}
+  {{if .StayDays}}<p class="login-note small muted">You'll stay signed in on this device for {{if eq .StayDays 1}}a day{{else}}{{.StayDays}} days{{end}} after you last use it. On a shared computer, sign out when you're done.</p>{{end}}
 </main>
 {{template "login-footer"}}
 </body>
