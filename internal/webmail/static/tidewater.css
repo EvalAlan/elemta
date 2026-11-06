@@ -2133,12 +2133,12 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .theme-toggle { border: 0; background: none; cursor: pointer; padding: 0; }
 .cal-toggle button { border: 0; background: none; cursor: pointer; padding: 0; }
 .cal-toggle button:hover, .cal-toggle button[aria-pressed="true"] { background: var(--chrome-2); color: var(--chrome-strong); }
-.theme-toggle .icon-sun { display: none; }
-:root[data-theme="dark"] .theme-toggle .icon-sun { display: inline; }
-:root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+[data-theme-toggle] .icon-sun { display: none; }
+:root[data-theme="dark"] [data-theme-toggle] .icon-sun { display: inline; }
+:root[data-theme="dark"] [data-theme-toggle] .icon-moon { display: none; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .theme-toggle .icon-sun { display: inline; }
-  :root:not([data-theme="light"]) .theme-toggle .icon-moon { display: none; }
+  :root:not([data-theme="light"]) [data-theme-toggle] .icon-sun { display: inline; }
+  :root:not([data-theme="light"]) [data-theme-toggle] .icon-moon { display: none; }
 }
 .source-page { max-width: 1100px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .source-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
@@ -2296,3 +2296,105 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 .availability .fb-summary.conflict { color: var(--warn-fg); }
 .mailbox-switch{display:grid;gap:.35rem;margin-bottom:1rem}.mailbox-switch label{font-size:.8rem;color:var(--muted)}.mailbox-switch select{width:100%;min-width:0}
 .admin-access-banner{padding:.65rem 1rem;background:var(--warn-bg,#fff3cf);color:var(--warn-fg,#5b3900);font-weight:600;text-align:center;border-bottom:1px solid var(--line)}
+
+/* ---- Phones ------------------------------------------------------------
+   A phone gets a layout of its own rather than the computer's stacked in a
+   column: one slim top bar (folders, search, account), the apps in a bar
+   along the bottom where a thumb reaches, the New button floating above
+   it, and the sidebar in a drawer. What remains of the screen is mail.
+   Above 720px nothing here applies. */
+.account-menu, .narrow-only { display: none; }
+.drawer-toggle { border: 0; background: none; cursor: pointer; padding: 0; color: var(--chrome-fg); }
+@media (min-width: 721px) { .drawer-toggle, .drawer-backdrop { display: none; } }
+@media (min-width: 721px) {
+  /* The toolbar's icons are for phones; computers keep the words. */
+  .toolbar .button:has(.tb-label) > .icon { display: none; }
+}
+@media (max-width: 720px) {
+  .topbar { flex-wrap: nowrap; gap: 6px; padding: 6px max(8px, env(safe-area-inset-right)) 6px max(8px, env(safe-area-inset-left)); }
+  .brand span { display: none; }
+  .search { flex: 1 1 auto; min-width: 0; padding: 0 10px; }
+  .search input { min-height: 38px; font-size: 16px; } /* 16px stops iOS zooming in on focus */
+  .search-spacer { flex: 1 1 auto; }
+  .account > :not(.account-menu) { display: none; }
+  .account-menu { display: block; }
+  .account-menu > summary { cursor: pointer; }
+  .account-menu .menu-body { min-width: 220px; }
+  .account-menu .menu-body a, .account-menu .menu-item { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+  .account-address { margin: 0; padding: 4px 10px 8px; border-bottom: 1px solid var(--line-soft); overflow: hidden; text-overflow: ellipsis; }
+
+  /* The apps along the bottom. */
+  .apps { position: fixed; z-index: 30; left: 0; right: 0; bottom: 0; order: 0; width: auto; overflow: visible; gap: 0;
+    padding: 4px max(4px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+    background: var(--chrome); border-top: 1px solid var(--chrome-line); }
+  .apps a { flex: 1; flex-direction: column; gap: 2px; padding: 6px 0; font-size: 11px; line-height: 1.2; }
+  .apps a .icon { width: 22px; height: 22px; }
+  .apps a span { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+  .apps a[aria-current="page"] { background: transparent; color: var(--chrome-accent, var(--chrome-strong)); font-weight: 600; }
+  body { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+
+  /* The sidebar as a drawer, once the script can open it. */
+  .has-drawer .sidebar { position: fixed; z-index: 40; top: 0; bottom: 0; left: -100%; width: min(84vw, 320px); padding: 16px 12px calc(16px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    overflow-y: auto; background: var(--surface); border: 0; box-shadow: var(--shadow); visibility: hidden; transition: left .2s ease, visibility 0s .2s; }
+  .has-drawer.drawer-open .sidebar { left: 0; visibility: visible; transition: left .2s ease; }
+  .has-drawer .sidebar .folders { flex-direction: column; overflow: visible; }
+  .has-drawer .sidebar .folder { min-height: 44px; }
+  .has-drawer .sidebar .manage, .has-drawer .sidebar .import, .has-drawer .sidebar .cal-legend, .has-drawer .sidebar .mini, .has-drawer .sidebar h3, .has-drawer .sidebar .sidebar-title { display: revert; }
+  .has-drawer .sidebar .mini { display: table; }
+  .drawer-backdrop { position: fixed; z-index: 35; inset: 0; background: rgb(0 0 0 / .4); }
+  @media (prefers-reduced-motion: reduce) { .has-drawer .sidebar { transition: none; } }
+
+  /* The New button floats above the app bar. It sits in the sidebar, but a
+     fixed element isn't hidden or moved with its drawer. */
+  .has-drawer .sidebar > .button.primary.block { position: fixed; z-index: 30; right: max(16px, env(safe-area-inset-right)); bottom: calc(76px + env(safe-area-inset-bottom)); left: auto;
+    width: 56px; height: 56px; min-height: 0; padding: 0; border-radius: 16px; box-shadow: var(--shadow); visibility: visible; font-size: 0; gap: 0; }
+  .has-drawer .sidebar > .button.primary.block .icon { width: 24px; height: 24px; }
+  .has-drawer.drawer-open .sidebar > .button.primary.block,
+  body:has(.panes.has-message, .compose, .event-form, .contact-form) .sidebar > .button.primary.block { display: none; }
+
+  /* A message: one row of icons, then the message. */
+  .toolbar { flex-wrap: nowrap; gap: 2px; padding: 6px 8px; position: sticky; top: 0; z-index: 5; background: var(--surface); }
+  .toolbar .button { min-width: 42px; min-height: 42px; padding: 0 9px; border-color: transparent; background: transparent; }
+  .toolbar .button.primary-soft { border-color: transparent; }
+  .toolbar .tb-label, .toolbar .back > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .toolbar .menu-body { left: auto; right: 0; }
+  .toolbar .menu:first-of-type .menu-body { left: auto; right: auto; }
+  .wide-only, .nav-arrows { display: none; }
+  .narrow-only { display: block; }
+  .menu-body a.narrow-only { display: block; }
+  .message { padding: 12px 16px 24px; gap: 12px; }
+  .message > h2 { font-size: 20px; }
+
+  /* The calendar's controls in one row: arrows, the title, the views. */
+  .cal-head { flex-wrap: wrap; gap: 6px; padding: 8px 12px; }
+  .cal-head h1 { order: -1; flex: 1 0 100%; margin: 0 0 2px; font-size: 18px; }
+  .cal-head .button { min-height: 36px; padding: 0 8px; }
+  .cal-head .segmented { flex: 1 1 auto; min-width: 0; margin-left: 0; }
+  .cal-head .segmented a { flex: 1 1 0; min-width: 0; padding: 8px 2px; text-align: center; font-size: 13px; }
+
+  /* Composing: the formatting buttons in one row that scrolls sideways. */
+  .editor-toolbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 4px 8px; }
+  .editor-toolbar::-webkit-scrollbar { display: none; }
+  .editor-toolbar .tb-group { flex: none; }
+  .editor-toolbar .push { margin-left: 0; }
+  /* The common buttons first; the style, font and size pickers after. */
+  .editor-toolbar .tb-group:has(.tb-select) { order: 1; }
+  .editor-toolbar .push { order: 2; }
+  /* Writing takes the screen: no app bar, and Send stays in reach at the
+     foot instead of below the attachments and options. */
+  body:has(form.compose) .apps { display: none; }
+  body:has(form.compose) { padding-bottom: 0; }
+  .compose .actions { position: sticky; bottom: 0; z-index: 5; margin: 0; padding: 10px max(16px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    background: var(--surface); border-top: 1px solid var(--line); }
+
+  /* Tables become a card per row; the script labels each cell from its
+     column's heading. */
+  .table.stack thead { display: none; }
+  .table.stack, .table.stack tbody, .table.stack tr, .table.stack td { display: block; width: auto; }
+  .table.stack tr { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); }
+  .table.stack tr:last-child { border-bottom: 0; }
+  .table.stack td { padding: 2px 0; border: 0; text-align: left; white-space: normal; }
+  .table.stack td[data-label]:not(:first-child)::before { content: attr(data-label) ": "; color: var(--muted); }
+  .table.stack td:first-child { font-weight: 600; }
+  .table.stack td.num { width: auto; }
+}
