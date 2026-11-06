@@ -194,6 +194,11 @@ func (s *Server) calendarPage(w http.ResponseWriter, r *http.Request, sess *Sess
 		if view == "" {
 			view = "month"
 		}
+		// Seven days across a phone are slivers too narrow to read; it opens
+		// on the day instead, and Week is still a tap away.
+		if view == "week" && phoneUA(r.UserAgent()) {
+			view = "day"
+		}
 	}
 	events, err := s.calendarEvents(r.Context(), sess, loc)
 	if err != nil {
@@ -1327,4 +1332,11 @@ func (s *Server) calendarImport(w http.ResponseWriter, r *http.Request, sess *Se
 		}
 	}
 	http.Redirect(w, r, "/calendar?n=events-imported", http.StatusSeeOther)
+}
+
+// phoneUA says whether a browser is on a phone. Phones' browsers say
+// "Mobile" (iPhone and Android alike); tablets mostly don't, and get the
+// computer's layout, which fits them.
+func phoneUA(ua string) bool {
+	return strings.Contains(ua, "Mobile") && !strings.Contains(ua, "iPad")
 }

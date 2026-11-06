@@ -130,19 +130,19 @@
       <a class="button primary-soft" href="{{composeURL "draft" .Folder .UID}}" data-key="r">Edit draft</a>
       {{else}}
       {{if not $.Session.AdminActor}}
-      <a class="button" href="{{composeURL "reply" .Folder .UID}}" data-key="r">Reply</a>
-      <a class="button" href="{{composeURL "replyall" .Folder .UID}}" data-key="a">Reply all</a>
-      <a class="button" href="{{composeURL "forward" .Folder .UID}}" data-key="f">Forward</a>
+      <a class="button" href="{{composeURL "reply" .Folder .UID}}" data-key="r" title="Reply">{{template "icon-reply"}}<span class="tb-label">Reply</span></a>
+      <a class="button wide-only" href="{{composeURL "replyall" .Folder .UID}}" data-key="a" title="Reply all">{{template "icon-reply-all"}}<span class="tb-label">Reply all</span></a>
+      <a class="button wide-only" href="{{composeURL "forward" .Folder .UID}}" data-key="f" title="Forward">{{template "icon-forward"}}<span class="tb-label">Forward</span></a>
       {{end}}
       {{end}}
       <form action="/mail/action" method="post" class="inline">
         <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
-        {{if not (isRole .Folder $.Folders "archive")}}<button class="button" name="op" value="archive" data-key="e">Archive</button>{{end}}
-        <button class="button danger" name="op" value="delete" data-key="#" data-confirm="{{if isRole .Folder $.Folders "trash"}}Delete this message for good?{{end}}">Delete</button>
-        {{if .Flagged}}<button class="button" name="op" value="unflag" data-key="s">Unflag</button>{{else}}<button class="button" name="op" value="flag" data-key="s">Flag</button>{{end}}
+        {{if not (isRole .Folder $.Folders "archive")}}<button class="button" name="op" value="archive" data-key="e" title="Archive">{{template "icon-archive"}}<span class="tb-label">Archive</span></button>{{end}}
+        <button class="button danger" name="op" value="delete" data-key="#" data-confirm="{{if isRole .Folder $.Folders "trash"}}Delete this message for good?{{end}}" title="Delete">{{template "icon-trash"}}<span class="tb-label">Delete</span></button>
+        {{if .Flagged}}<button class="button wide-only" name="op" value="unflag" data-key="s" title="Unflag">{{template "icon-star"}}<span class="tb-label">Unflag</span></button>{{else}}<button class="button wide-only" name="op" value="flag" data-key="s" title="Flag">{{template "icon-star"}}<span class="tb-label">Flag</span></button>{{end}}
       </form>
       <details class="menu">
-        <summary class="button">Move</summary>
+        <summary class="button" title="Move">{{template "icon-folder"}}<span class="tb-label">Move</span></summary>
         <form class="menu-body" action="/mail/action" method="post">
           <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="move"><input type="hidden" name="back" value="{{$.List.URL}}">
           <label class="small muted" for="dest">Move to folder</label>
@@ -154,7 +154,7 @@
       </details>
       {{if $.InboxTabs}}
       <details class="menu">
-        <summary class="button">Tab</summary>
+        <summary class="button" title="Move to tab">{{template "icon-tag"}}<span class="tb-label">Tab</span></summary>
         <form class="menu-body" action="/mail/action" method="post">
           <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="category"><input type="hidden" name="tab" value="{{$.List.Tab}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
           <p class="small muted">Move to tab. Later mail from this sender goes there too.</p>
@@ -163,10 +163,15 @@
       </details>
       {{end}}
       <details class="menu">
-        <summary class="button">More</summary>
+        <summary class="button" title="More">{{template "icon-more"}}<span class="tb-label">More</span></summary>
         <div class="menu-body">
+          {{if and (not $.Session.AdminActor) (not (isRole .Folder $.Folders "drafts"))}}
+          <a class="narrow-only" href="{{composeURL "replyall" .Folder .UID}}">Reply all</a>
+          <a class="narrow-only" href="{{composeURL "forward" .Folder .UID}}">Forward</a>
+          {{end}}
           <form action="/mail/action" method="post">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+            {{if .Flagged}}<button class="menu-item narrow-only" name="op" value="unflag">Unflag</button>{{else}}<button class="menu-item narrow-only" name="op" value="flag">Flag</button>{{end}}
             <button class="menu-item" name="op" value="unread">Mark unread</button>
             {{if isRole .Folder $.Folders "quarantine"}}<button class="menu-item" name="op" value="notjunk">Release to Inbox</button>{{else if isRole .Folder $.Folders "junk"}}<button class="menu-item" name="op" value="notjunk">Not junk</button>{{else}}<button class="menu-item" name="op" value="junk">Report junk</button>{{end}}
           </form>
