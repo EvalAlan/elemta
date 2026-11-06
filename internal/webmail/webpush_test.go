@@ -149,6 +149,11 @@ func TestServiceWorkerAndManifest(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/javascript") || !strings.Contains(body, "showNotification") {
 		t.Fatalf("sw.js: %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
+	// The sign-in page links it too: a phone usually opens there first, and
+	// Add to Home Screen only makes an app of a page with the manifest.
+	if _, login := h.get("/login"); !strings.Contains(login, `rel="manifest" href="/manifest.webmanifest"`) || !strings.Contains(login, `rel="apple-touch-icon"`) {
+		t.Error("the sign-in page doesn't link the manifest")
+	}
 	resp, body = h.get("/manifest.webmanifest")
 	var m map[string]any
 	if resp.StatusCode != http.StatusOK || json.Unmarshal([]byte(body), &m) != nil || m["start_url"] != "/mail" || m["display"] != "standalone" {

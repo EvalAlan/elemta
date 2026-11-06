@@ -31,3 +31,7 @@
 {{define "icon-folder"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6a1 1 0 011-1h5l2 2h9a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1z"/></svg>{{end}}
 {{define "icon-tag"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L3 13V3h10l7.6 7.6a2 2 0 010 2.8z"/><circle cx="8" cy="8" r="1.5"/></svg>{{end}}
 {{define "icon-reply-all"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14L2 9l5-5"/><path d="M12 14L7 9l5-5"/><path d="M22 20v-7a4 4 0 00-4-4H7"/></svg>{{end}}
+{{/* The app manifest and icons, so the webmail can be installed from any page a phone opens on, the sign-in page included. */}}
+{{define "app-meta"}}<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="{{asset "apple-touch-icon.png"}}">
+<meta name="theme-color" content="#0F172A">{{end}}
