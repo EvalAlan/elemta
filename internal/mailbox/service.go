@@ -54,8 +54,10 @@ type Service struct {
 	http       *http.Server
 	dir        directoryCache
 	dirMail    directoryMail
-	ctx        context.Context
-	cancel     context.CancelFunc
+	// push sends notifications to browsers (push.go); nil when off.
+	push   *pusher
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func Open(ctx context.Context, c Config, log *slog.Logger) (*Service, error) {
@@ -118,6 +120,9 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel, adminToken: os.Getenv(c.Admin.TokenEnv), abuse: abuse.New("mailbox", os.Getenv("VALKEY_ADDR"), log)}
+	if !c.Push.Disabled {
+		s.push = newPusher(ctx, e, log)
+	}
 	s.srs = srs.FromEnv()
 	if s.mailDirectory() != nil {
 		e.directoryClasses = s.directoryClasses
@@ -296,6 +301,10 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.spamLearner != nil {
 		wg.Add(1)
 		go func() { defer wg.Done(); s.runSpamLearning() }()
+	}
+	if s.push != nil {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.push.run(s.ctx) }()
 	}
 	wg.Add(1)
 	go func() {

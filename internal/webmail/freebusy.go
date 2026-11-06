@@ -160,11 +160,13 @@ func (s *Server) publishFreeBusyNow(ctx context.Context, user, password, self st
 	}
 	defer func() { _ = st.Close() }()
 	loc := s.defaultLoc
+	var prefs Settings
 	if objs, err := st.Objects(ctx, CollSettings); err == nil {
 		for _, o := range objs {
 			var p Settings
-			if o.ID == settingsID && json.Unmarshal(o.Data, &p) == nil && p.Timezone != "" {
-				if l, err := time.LoadLocation(p.Timezone); err == nil {
+			if o.ID == settingsID && json.Unmarshal(o.Data, &p) == nil {
+				prefs = p
+				if l, err := time.LoadLocation(p.Timezone); err == nil && p.Timezone != "" {
 					loc = l
 				}
 			}
@@ -175,9 +177,16 @@ func (s *Server) publishFreeBusyNow(ctx context.Context, user, password, self st
 		return err
 	}
 	now := s.now()
+	events := eventsFrom(objs, loc)
 	from, to := now.Add(-freeBusyBack), now.Add(freeBusyAhead)
-	body := map[string]any{"from": from.UTC(), "to": to.UTC(), "busy": busyFrom(eventsFrom(objs, loc), self, from, to)}
-	return s.security.call(ctx, http.MethodPut, "/v1/freebusy", user, password, body, nil)
+	body := map[string]any{"from": from.UTC(), "to": to.UTC(), "busy": busyFrom(events, self, from, to)}
+	if err := s.security.call(ctx, http.MethodPut, "/v1/freebusy", user, password, body, nil); err != nil {
+		return err
+	}
+	// Reminders for the user's devices (webpush.go). The mailbox service
+	// keeps them only while a device wants them.
+	reminders := pushRemindersFrom(events, now, loc, prefs.Uses24h(), pushReminderAhead)
+	return s.security.call(ctx, http.MethodPut, "/v1/push/reminders", user, password, map[string]any{"reminders": reminders}, nil)
 }
 
 // calendarChanged republishes a signed-in user's busy times.

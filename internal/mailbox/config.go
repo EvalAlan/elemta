@@ -31,6 +31,14 @@ type Config struct {
 	// SpamLearning is named apart from the MTA's [antispam] table: this
 	// service teaches Rspamd, it never asks it for a verdict.
 	SpamLearning SpamLearningConfig `toml:"spam_learning"`
+	Push         PushConfig         `toml:"push"`
+}
+
+// PushConfig controls notifications to people's browsers (push.go).
+type PushConfig struct {
+	// Disabled stops this service sending them. The webmail then doesn't
+	// offer them. They need outbound HTTPS to the browsers' push services.
+	Disabled bool `toml:"disabled"`
 }
 
 // SpamLearningConfig sends mail people move in and out of Junk to Rspamd
