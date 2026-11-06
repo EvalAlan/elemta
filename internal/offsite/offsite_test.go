@@ -173,3 +173,46 @@ func TestConfigFromEnv(t *testing.T) {
 		t.Errorf("config = %+v, %v", c, err)
 	}
 }
+
+// A symlink in the backup, to something outside it, never brings that file
+// into the sealed archive: the walk is confined to the backup directory.
+func TestSealLeavesOutLinksOutOfTheBackup(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	outside := filepath.Join(root, "shadow")
+	if err := os.WriteFile(outside, []byte("OUTSIDE SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "elemta-20261106T030000Z")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "complete"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "manifest")); err != nil {
+		t.Fatal(err)
+	}
+	var sealed bytes.Buffer
+	if err := Seal(&sealed, dir, id.Recipient().String()); err != nil {
+		t.Fatal(err)
+	}
+	plain, err := age.Decrypt(&sealed, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := gzip.NewReader(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(all, []byte("OUTSIDE SECRET")) {
+		t.Fatal("a file outside the backup was sealed into it through a symlink")
+	}
+}

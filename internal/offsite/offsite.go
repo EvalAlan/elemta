@@ -19,6 +19,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -82,12 +83,23 @@ func ConfigFromEnv() (Config, error) {
 // opening it (age -d -i key | tar -xz) gives the same directory back.
 // Sockets and other special files are left out; a backup has none, but a
 // tar of a live volume can.
+//
+// The walk and every read go through an os.Root for dir, so nothing outside
+// the backup can end up in it: a symlink in the directory, or one swapped in
+// while it is being read, can't lead the walk to /etc/shadow or another
+// account's files. The process runs as root to read the backup, which is
+// what makes that worth guarding.
 func Seal(w io.Writer, dir, recipient string) error {
 	r, err := age.ParseX25519Recipient(strings.TrimSpace(recipient))
 	if err != nil {
 		return fmt.Errorf("offsite: age recipient: %w", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "complete")); err != nil {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("offsite: open %s: %w", dir, err)
+	}
+	defer func() { _ = root.Close() }()
+	if _, err := root.Stat("complete"); err != nil {
 		return fmt.Errorf("offsite: %s is not a complete backup", dir)
 	}
 	enc, err := age.Encrypt(w, r)
@@ -97,7 +109,7 @@ func Seal(w io.Writer, dir, recipient string) error {
 	zw := gzip.NewWriter(enc)
 	tw := tar.NewWriter(zw)
 	base := filepath.Base(filepath.Clean(dir))
-	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -108,15 +120,11 @@ func Seal(w io.Writer, dir, recipient string) error {
 		if !info.Mode().IsRegular() && !info.IsDir() {
 			return nil
 		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
 		h, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return err
 		}
-		h.Name = filepath.ToSlash(filepath.Join(base, rel))
+		h.Name = path.Join(base, rel)
 		if info.IsDir() {
 			h.Name += "/"
 		}
@@ -126,8 +134,7 @@ func Seal(w io.Writer, dir, recipient string) error {
 		if info.IsDir() {
 			return nil
 		}
-		// #nosec G304 -- walking the backup directory the operator named
-		f, err := os.Open(path)
+		f, err := root.Open(rel)
 		if err != nil {
 			return err
 		}
