@@ -966,6 +966,15 @@ func TestBrowserCalendarDragMovesAndResizes(t *testing.T) {
 		// Nine o'clock at the top, so the hours used here are on screen.
 		b.run(chromedp.Evaluate[chromedp.Void](`(() => { const g = document.querySelector(".time-grid"); g.scrollTop = document.querySelector('.daycol .slot[data-hour="9"]').offsetTop; })()`, chromedp.EvalAsValue))
 	}
+	// dropAndReload drags, then waits for the page to reload with the saved
+	// change. The dragged event looks right before the save finishes, and a
+	// navigation started then is cancelled by the reload that follows it.
+	dropAndReload := func(p []float64) {
+		t.Helper()
+		b.run(chromedp.Evaluate[chromedp.Void](`window.__beforeDrop = true`, chromedp.EvalAsValue))
+		b.dragMouse(p[0], p[1], p[2], p[3])
+		b.waitFor(`!window.__beforeDrop && document.readyState === "complete"`)
+	}
 	open()
 	// Grab the event 6px below its top and drop it on Thursday at 14:00.
 	p := evalAs[[]float64](b, `(() => {
@@ -974,7 +983,7 @@ func TestBrowserCalendarDragMovesAndResizes(t *testing.T) {
 		const hour = col.height / 24;
 		return [e.left + e.width / 2, e.top + 6, col.left + col.width / 2, col.top + 14 * hour + 6];
 	})()`)
-	b.dragMouse(p[0], p[1], p[2], p[3])
+	dropAndReload(p)
 	b.waitFor(gridShows("2026-10-22", "14:00", "Design review"))
 	if evalAs[bool](b, `!!document.querySelector(".event-peek")`) {
 		t.Error("the drag also opened the event bubble")
@@ -987,8 +996,8 @@ func TestBrowserCalendarDragMovesAndResizes(t *testing.T) {
 		const col = document.querySelector('.daycol[data-date="2026-10-22"]').getBoundingClientRect();
 		return [h.left + h.width / 2, h.top + h.height / 2, h.left + h.width / 2, h.top + h.height / 2 + col.height / 24];
 	})()`)
-	b.dragMouse(p[0], p[1], p[2], p[3])
-	b.waitFor(`(() => { const e = document.querySelector('.daycol[data-date="2026-10-22"] .ev'); return !!e && !document.body.classList.contains("cal-dragging") && Math.abs(e.getBoundingClientRect().height - 2 * document.querySelector(".daycol").getBoundingClientRect().height / 24) < 4 })()`)
+	dropAndReload(p)
+	b.waitFor(`(() => { const e = document.querySelector('.daycol[data-date="2026-10-22"] .ev'); return !!e && Math.abs(e.getBoundingClientRect().height - 2 * document.querySelector(".daycol").getBoundingClientRect().height / 24) < 4 })()`)
 	_, ics := b.h.get("/calendar/export")
 	if !strings.Contains(ics, "DTSTART:20261022T140000Z") || !strings.Contains(ics, "DTEND:20261022T160000Z") {
 		t.Errorf("stored event after move and resize:\n%s", ics)
@@ -1002,7 +1011,7 @@ func TestBrowserCalendarDragMovesAndResizes(t *testing.T) {
 		const d = document.querySelector('.month .day[data-date="2026-10-27"]').getBoundingClientRect();
 		return [c.left + 20, c.top + c.height / 2, d.left + d.width / 2, d.top + d.height / 2];
 	})()`)
-	b.dragMouse(p[0], p[1], p[2], p[3])
+	dropAndReload(p)
 	b.waitFor(`[...document.querySelectorAll('.month .day[data-date="2026-10-27"] .chip-ev')].some(c => c.textContent.includes("14:00") && c.textContent.includes("Design review"))`)
 }
 
