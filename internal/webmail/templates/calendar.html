@@ -27,10 +27,10 @@
   <div class="month" role="grid" aria-label="{{.Title}}">
     {{range .Weekdays}}<div class="dow" role="columnheader">{{.}}</div>{{end}}
     {{range .Weeks}}{{range .}}
-    <div class="day{{if .Other}} other{{end}}{{if .Today}} today{{end}}" role="gridcell">
+    <div class="day{{if .Other}} other{{end}}{{if .Today}} today{{end}}" role="gridcell" data-date="{{.Date.Format "2006-01-02"}}">
       <a class="daynum" href="{{.URL}}">{{.Date.Day}}</a>
       {{range .AllDay}}
-        <a class="chip-ev {{.Class}}{{if not .Occ.Event.AllDay}} timed{{end}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}} title="{{.Occ.Event.Summary}}">{{if .TimeLabel}}<span class="t">{{.TimeLabel}}</span>{{end}}{{.Occ.Event.Summary}}</a>
+        <a class="chip-ev {{.Class}}{{if not .Occ.Event.AllDay}} timed{{end}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}}{{template "ev-move" .}} title="{{.Occ.Event.Summary}}">{{if .TimeLabel}}<span class="t">{{.TimeLabel}}</span>{{end}}{{.Occ.Event.Summary}}</a>
       {{end}}
       {{if .More}}<a class="more" href="{{.URL}}">+{{.More}} more</a>{{end}}
     </div>
@@ -59,17 +59,17 @@
     </div>
     <div class="allday-row cols-{{len .Days}}">
       <div class="gutter">all day</div>
-      {{range .Days}}<div class="cell">{{range .AllDay}}<a class="chip-ev {{.Class}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}} title="{{.Occ.Event.Summary}}">{{.Occ.Event.Summary}}</a>{{end}}</div>{{end}}
+      {{range .Days}}<div class="cell" data-date="{{.Date.Format "2006-01-02"}}">{{range .AllDay}}<a class="chip-ev {{.Class}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}}{{template "ev-move" .}} title="{{.Occ.Event.Summary}}">{{.Occ.Event.Summary}}</a>{{end}}</div>{{end}}
     </div>
     </div>
     <div class="hours cols-{{len .Days}}">
       <div class="gutter">{{range $.Calendar.Hours}}<div class="hour-label" data-hour="{{.}}">{{if .}}{{hourLabel $.Clock24 .}}{{end}}</div>{{end}}</div>
       {{range .Days}}
       {{$day := .}}
-      <div class="daycol{{if .Today}} today{{end}}">
+      <div class="daycol{{if .Today}} today{{end}}" data-date="{{.Date.Format "2006-01-02"}}">
         {{range $.Calendar.Hours}}<a class="slot" href="{{newEventAt $day.Date .}}" data-hour="{{.}}" aria-label="New event at {{hourLabel $.Clock24 .}}"></a>{{end}}
         {{range .Timed}}
-        <a class="ev {{.Class}} {{.PosClass}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}} title="{{.Occ.Event.Summary}}"><span class="t">{{.TimeLabel}}</span><strong>{{.Occ.Event.Summary}}</strong>{{if .Occ.Event.Location}}<br><span>{{.Occ.Event.Location}}</span>{{end}}</a>
+        <a class="ev {{.Class}} {{.PosClass}}" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}}{{template "ev-move" .}} title="{{.Occ.Event.Summary}}"><span class="t">{{.TimeLabel}}</span><strong>{{.Occ.Event.Summary}}</strong>{{if .Occ.Event.Location}}<br><span>{{.Occ.Event.Location}}</span>{{end}}</a>
         {{end}}
         {{if .Today}}<div class="now-line q{{$.Calendar.NowQ}}" aria-hidden="true"></div>{{end}}
       </div>
@@ -80,6 +80,11 @@
 </div>
 {{end}}
 {{end}}
+
+{{/* What the page needs to drag an event: whether it's all day, its
+     start as a clock time (the grid's occurrences are in the viewer's zone),
+     and whether moving it tells guests. */}}
+{{define "ev-move"}} data-day="{{.Occ.Start.Format "2006-01-02"}}"{{if .Occ.Event.AllDay}} data-allday{{else}} data-time="{{.Occ.Start.Format "15:04"}}"{{end}}{{if .Occ.Event.HasAttendees}} data-guests{{end}}{{end}}
 
 {{define "event-detail"}}
 {{with .Calendar.Event}}

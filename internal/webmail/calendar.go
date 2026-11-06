@@ -987,6 +987,9 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 	case "delete", "delete-occurrence":
 		s.deleteEventSubmit(w, r, sess, owner, acting, delegated, events, op == "delete-occurrence")
 		return
+	case "move":
+		s.moveEventSubmit(w, r, sess, owner, acting, delegated, events)
+		return
 	case "save":
 	default:
 		s.fail(w, r, sess, ErrNotFound)
@@ -1084,6 +1087,103 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 		}
 	}
 	http.Redirect(w, r, sharedEventURL(eventURL(e.UID, time.Time{}), owner)+"&n="+notice, http.StatusSeeOther)
+}
+
+// moveEventSubmit moves an event dragged on the calendar: to a new start,
+// keeping its length, or, when its end was dragged, to a new end. It's a
+// separate operation rather than a save of the edit form because the page
+// knows only the event's place on the grid; rebuilding the whole form from
+// that would risk dropping fields the form doesn't carry. Times are dates
+// and clock times in the viewer's zone, as the form sends them, so a move
+// across a daylight-saving change keeps the clock time the user dropped it
+// at. The page gets a status and a short message, not a page.
+func (s *Server) moveEventSubmit(w http.ResponseWriter, r *http.Request, sess *Session, owner, acting string, delegated bool, events []Event) {
+	refuse := func(status int, msg string) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(msg))
+	}
+	loc := s.loc(sess)
+	existing := findEvent(events, r.PostFormValue("uid"))
+	if existing == nil || existing.ReadOnly {
+		refuse(http.StatusNotFound, "This event can't be moved here. Open it to see why.")
+		return
+	}
+	if existing.HasAttendees() && (!existing.IsOrganizer(acting) || owner != "" && !delegated) {
+		refuse(http.StatusConflict, "Only the organizer can move this meeting.")
+		return
+	}
+	occ := existing.Start
+	if n, err := strconv.ParseInt(r.PostFormValue("occ"), 10, 64); err == nil && n != 0 {
+		occ = time.Unix(n, 0).In(existing.Start.Location())
+	}
+	day, err := time.ParseInLocation("2006-01-02", r.PostFormValue("start_date"), loc)
+	if err != nil {
+		refuse(http.StatusBadRequest, "Choose a day to move it to.")
+		return
+	}
+	e := *existing
+	if e.AllDay {
+		days := int(e.End.Sub(e.Start).Hours()/24 + 0.5)
+		e.Start = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, e.Start.Location())
+		e.End = e.Start.AddDate(0, 0, max(days, 1))
+	} else {
+		clockAt := func(dateField, timeField string) (time.Time, bool) {
+			d, err1 := time.ParseInLocation("2006-01-02", r.PostFormValue(dateField), loc)
+			t, err2 := time.Parse("15:04", r.PostFormValue(timeField))
+			if err1 != nil || err2 != nil {
+				return time.Time{}, false
+			}
+			return time.Date(d.Year(), d.Month(), d.Day(), t.Hour(), t.Minute(), 0, 0, loc), true
+		}
+		start, ok := clockAt("start_date", "start_time")
+		if !ok {
+			refuse(http.StatusBadRequest, "Choose a time to move it to.")
+			return
+		}
+		end := start.Add(existing.Duration())
+		if r.PostFormValue("end_date") != "" {
+			if end, ok = clockAt("end_date", "end_time"); !ok || !end.After(start) {
+				refuse(http.StatusBadRequest, "The event has to end after it starts.")
+				return
+			}
+		}
+		if end.Sub(start) > 366*24*time.Hour {
+			refuse(http.StatusBadRequest, "Events can last at most a year.")
+			return
+		}
+		e.Start, e.End = start, end
+	}
+	ctx := r.Context()
+	if existing.Recurring() {
+		// A dragged occurrence moves on its own, as an edit of "this one"
+		// does: cut out of the series and saved as an event of its own.
+		series := *existing
+		series.ExDates = append(series.ExDates, occ)
+		series.Sequence++
+		if err := s.putEventIn(ctx, sess, owner, series); err != nil {
+			s.log.Warn("webmail: move event", "user", sess.User, "error", err)
+			refuse(http.StatusBadGateway, "The calendar couldn't be saved. Try again in a moment.")
+			return
+		}
+		e.UID = existing.UID + "-" + occ.UTC().Format("20060102T150405Z")
+		e.RRule, e.ExDates, e.Sequence = "", nil, 0
+	} else {
+		e.Sequence++
+	}
+	if err := s.putEventIn(ctx, sess, owner, e); err != nil {
+		s.log.Warn("webmail: move event", "user", sess.User, "error", err)
+		refuse(http.StatusBadGateway, "The calendar couldn't be saved. Try again in a moment.")
+		return
+	}
+	if e.HasAttendees() {
+		if err := s.sendInvites(ctx, sess, owner, e, "REQUEST", e.Attendees); err != nil {
+			s.log.Warn("webmail: send invitations", "user", sess.User, "error", err)
+			refuse(http.StatusOK, "Moved, but the guests couldn't be told. Open the event and save it to try again.")
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // renderGuestsOnShared explains the refusal. Guests would have to hear about

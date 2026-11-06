@@ -1677,6 +1677,7 @@
     if (!peek) return;
     var from = peek.from;
     peek.el.remove();
+    if (peek.onclose) peek.onclose();
     peek = null;
     if (refocus && from.isConnected) from.focus();
   }
@@ -1789,5 +1790,333 @@
   // nothing. Scrolling inside the bubble itself is fine.
   window.addEventListener("scroll", function (e) { if (peek && !peek.el.contains(e.target)) closePeek(false); }, true);
   window.addEventListener("resize", function () { closePeek(false); });
+
+  // ---- quick add ------------------------------------------------------------
+  // A click on an empty hour, or an empty part of a day, asks for a title in
+  // a bubble there instead of leaving for the full form; More options takes
+  // what was typed to the form. The bubble and its closing rules are the
+  // event bubble's.
+  function ymdAdd(ymd, days) {
+    var p = ymd.split("-"), d = new Date(Date.UTC(+p[0], p[1] - 1, +p[2] + days));
+    return d.toISOString().slice(0, 10);
+  }
+  function ymdDiff(from, to) {
+    var a = from.split("-"), b = to.split("-");
+    return Math.round((Date.UTC(+b[0], b[1] - 1, +b[2]) - Date.UTC(+a[0], a[1] - 1, +a[2])) / 86400000);
+  }
+  function hhmm(mins) {
+    var h = Math.floor(mins / 60), m = mins % 60;
+    return (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m;
+  }
+  function dayLabel(ymd) {
+    var p = ymd.split("-");
+    return new Date(+p[0], p[1] - 1, +p[2]).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  }
+
+  // hour is -1 for an all-day event. when is how the slot names its time.
+  function quickAdd(anchor, date, hour, when) {
+    closePeek(false);
+    var el = doc.createElement("div");
+    el.className = "event-peek event-quick-add";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-label", "New event");
+    var close = doc.createElement("button");
+    close.type = "button";
+    close.className = "peek-close";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "×";
+    close.addEventListener("click", function () { closePeek(true); });
+    var form = doc.createElement("form");
+    form.className = "event-quick-add-form";
+    var title = doc.createElement("input");
+    title.type = "text";
+    title.name = "summary";
+    title.maxLength = 500;
+    title.placeholder = "Add a title";
+    title.setAttribute("aria-label", "Title");
+    var whenLine = doc.createElement("p");
+    whenLine.className = "muted small";
+    whenLine.textContent = dayLabel(date) + " · " + (hour < 0 ? "All day" : when);
+    var problem = doc.createElement("p");
+    problem.className = "small event-quick-add-problem";
+    problem.hidden = true;
+    var actions = doc.createElement("div");
+    actions.className = "peek-actions";
+    var save = doc.createElement("button");
+    save.type = "submit";
+    save.className = "button primary";
+    save.textContent = "Save";
+    var more = doc.createElement("a");
+    more.className = "button";
+    more.textContent = "More options";
+    var full = function () {
+      var q = { new: "1", date: date };
+      if (hour < 0) q.allday = "1"; else q.hour = String(hour);
+      if (title.value.trim()) q.title = title.value.trim();
+      return "/calendar/event?" + new URLSearchParams(q);
+    };
+    more.href = full();
+    title.addEventListener("input", function () { more.href = full(); });
+    actions.append(save, more);
+    form.append(title, whenLine, problem, actions);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      save.disabled = true;
+      var f = { op: "save", summary: title.value.trim(), start_date: date, end_date: date,
+        reminder: "15", busy: "busy", ends: "never", interval: "1" };
+      if (hour < 0) {
+        f.allday = "1";
+      } else {
+        f.start_time = hhmm(hour * 60);
+        // An hour long; one starting at 23:00 ends at midnight, the next day.
+        if (hour === 23) { f.end_date = ymdAdd(date, 1); f.end_time = "00:00"; } else f.end_time = hhmm(hour * 60 + 60);
+      }
+      post("/calendar/event", f).then(function (r) {
+        if (!r.ok) throw new Error("not saved");
+        location.reload();
+      }).catch(function () {
+        save.disabled = false;
+        problem.textContent = "The event couldn't be saved. Try More options.";
+        problem.hidden = false;
+      });
+    });
+    el.append(close, form);
+    el.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { closePeek(true); e.preventDefault(); }
+      e.stopPropagation();
+    });
+    body.appendChild(el);
+    anchor.classList.add("picked");
+    peek = { el: el, from: anchor, onclose: function () { anchor.classList.remove("picked"); } };
+    placePeek();
+    title.focus();
+  }
+
+  doc.addEventListener("click", function (e) {
+    if (!csrf || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    var slot = e.target.closest(".daycol .slot");
+    if (slot) {
+      var col = slot.closest(".daycol[data-date]");
+      if (!col) return;
+      e.preventDefault();
+      var hour = +slot.getAttribute("data-hour");
+      var next = slot.nextElementSibling && slot.nextElementSibling.matches(".slot") ? slot.nextElementSibling : null;
+      var label = function (s) { return (s.getAttribute("aria-label") || "").replace(/^New event at /, ""); };
+      quickAdd(slot, col.getAttribute("data-date"), hour, label(slot) + (next ? " – " + label(next) : ""));
+      return;
+    }
+    // The empty part of a month day, or of a day in the week's all-day row.
+    var cell = e.target.closest(".month .day[data-date], .allday-row .cell[data-date]");
+    if (cell && !e.target.closest("a, button")) {
+      e.preventDefault();
+      quickAdd(cell, cell.getAttribute("data-date"), -1, "");
+    }
+  });
+
+  // ---- drag events to move or resize ----------------------------------------
+  // With a mouse, an event can be dragged to another time or day, and a
+  // timed event's bottom edge dragged to change when it ends. Touch keeps
+  // scrolling and uses the form instead: a drag there is a scroll. Nothing
+  // moves until the pointer has travelled a few pixels, so a click or a
+  // double click still opens the bubble or the event.
+  var drag = null, swallowClick = false;
+  $$(".daycol .ev[data-ctx=\"event\"]:not([data-readonly])").forEach(function (a) {
+    var h = doc.createElement("span");
+    h.className = "ev-resize";
+    h.setAttribute("aria-hidden", "true");
+    a.appendChild(h);
+  });
+  // A link drags its address natively, and once the browser starts that it
+  // cancels the pointer events this needs, so it's turned off up front.
+  // The hour slots are links too, and once the dragged event lets the
+  // pointer through, a native drag would start from the slot beneath it.
+  $$(".daycol " + EVENT + ", .month " + EVENT + ", .allday-row " + EVENT + ", .daycol .slot").forEach(function (a) { a.draggable = false; });
+  doc.addEventListener("dragstart", function (e) {
+    if (drag || (e.target.closest && e.target.closest(EVENT))) e.preventDefault();
+  });
+
+  function timeText(mins, like) {
+    var h = Math.floor(mins / 60) % 24, m = mins % 60, mm = (m < 10 ? "0" : "") + m;
+    if (/[ap]m/i.test(like)) return ((h + 11) % 12 + 1) + ":" + mm + (h < 12 ? " AM" : " PM");
+    return (h < 10 ? "0" : "") + h + ":" + mm;
+  }
+
+  doc.addEventListener("pointerdown", function (e) {
+    if (e.pointerType === "touch" || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || !csrf) return;
+    var a = e.target.closest(EVENT);
+    if (!a || a.hasAttribute("data-readonly") || !a.closest(".daycol, .month .day, .allday-row .cell")) return;
+    drag = { a: a, x0: e.clientX, y0: e.clientY, started: false, resize: e.target.classList.contains("ev-resize"),
+      grid: !!a.closest(".daycol"), home: a.parentElement, next: a.nextSibling };
+  });
+
+  function beginDrag(d) {
+    d.started = true;
+    closePeek(false);
+    var a = d.a;
+    a.classList.add("dragging");
+    body.classList.add("cal-dragging");
+    if (d.grid) {
+      var col = a.parentElement, r = a.getBoundingClientRect();
+      d.qh = col.getBoundingClientRect().height / 96;
+      d.q = Math.round(a.offsetTop / d.qh);
+      d.len = Math.max(1, Math.round(r.height / d.qh));
+      d.grab = d.y0 - r.top;
+      d.label = $(".t", a) ? $(".t", a).textContent : "";
+      // Out of its lane, full width, placed by pixels while it moves.
+      a.style.left = "2px"; a.style.right = "2px"; a.style.width = "auto";
+      a.style.top = d.q * d.qh + "px"; a.style.height = d.len * d.qh + "px";
+    } else {
+      d.from = d.home.getAttribute("data-date");
+    }
+  }
+
+  function dragTo(d, x, y) {
+    var a = d.a, under = doc.elementFromPoint(x, y);
+    if (d.grid) {
+      var col = under && under.closest(".daycol[data-date]");
+      if (col && col !== a.parentElement && !d.resize) col.appendChild(a);
+      var top = a.parentElement.getBoundingClientRect().top;
+      if (d.resize) {
+        d.len = Math.max(1, Math.min(96 - d.q, Math.round((y - top) / d.qh) - d.q));
+        a.style.height = d.len * d.qh + "px";
+      } else {
+        d.q = Math.max(0, Math.min(96 - d.len, Math.round((y - d.grab - top) / d.qh)));
+        a.style.top = d.q * d.qh + "px";
+      }
+      var t = $(".t", a);
+      if (t) t.textContent = timeText(d.q * 15, d.label) + (d.resize ? " – " + timeText((d.q + d.len) * 15, d.label) : "");
+    } else {
+      var cell = under && under.closest(".month .day[data-date], .allday-row .cell[data-date]");
+      if (cell && cell !== a.parentElement) cell.insertBefore(a, $(".more", cell));
+    }
+  }
+
+  function undoDrag(d) {
+    var a = d.a;
+    a.classList.remove("dragging");
+    body.classList.remove("cal-dragging");
+    d.home.insertBefore(a, d.next && d.next.parentNode === d.home ? d.next : null);
+    // Property by property: the CSP refuses a style attribute set whole.
+    ["left", "right", "width", "top", "height"].forEach(function (k) { a.style[k] = ""; });
+    if (d.grid && $(".t", a)) $(".t", a).textContent = d.label;
+  }
+
+  function dropDrag(d) {
+    var a = d.a;
+    a.classList.remove("dragging");
+    body.classList.remove("cal-dragging");
+    var f = { op: "move", uid: a.getAttribute("data-uid"), occ: a.getAttribute("data-occ"), owner: a.getAttribute("data-owner") || "" };
+    if (d.grid) {
+      var date = a.parentElement.getAttribute("data-date");
+      f.start_date = date;
+      f.start_time = hhmm(d.q * 15);
+      if (d.resize) {
+        var end = (d.q + d.len) * 15;
+        f.end_date = end >= 1440 ? ymdAdd(date, 1) : date;
+        f.end_time = hhmm(end % 1440);
+      }
+      if (!d.resize && d.home === a.parentElement && f.start_time === a.getAttribute("data-time")) { undoDrag(d); return; }
+    } else {
+      var shift = ymdDiff(d.from, a.parentElement.getAttribute("data-date"));
+      if (!shift) { undoDrag(d); return; }
+      f.start_date = ymdAdd(a.getAttribute("data-day"), shift);
+      if (!a.hasAttribute("data-allday")) f.start_time = a.getAttribute("data-time");
+    }
+    if (a.hasAttribute("data-recurring") && !window.confirm("This event repeats. Move only this occurrence?")) { undoDrag(d); return; }
+    if (a.hasAttribute("data-guests") && !window.confirm("Move this meeting? Its guests will be sent the new time.")) { undoDrag(d); return; }
+    post("/calendar/event", f).then(function (r) {
+      if (r.status === 204) { location.reload(); return; }
+      return r.text().then(function (msg) {
+        window.alert(msg || "The event couldn't be moved.");
+        if (r.ok) location.reload(); else undoDrag(d);
+      });
+    }).catch(function () {
+      window.alert("The event couldn't be moved. Check your connection and try again.");
+      undoDrag(d);
+    });
+  }
+
+  doc.addEventListener("pointermove", function (e) {
+    var d = drag;
+    if (!d) return;
+    if (!d.started) {
+      if (Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) < 5) return;
+      beginDrag(d);
+    }
+    e.preventDefault();
+    dragTo(d, e.clientX, e.clientY);
+  });
+  doc.addEventListener("pointerup", function () {
+    var d = drag;
+    drag = null;
+    if (!d || !d.started) return;
+    // The click this release makes isn't a click on the event.
+    swallowClick = true;
+    setTimeout(function () { swallowClick = false; }, 400);
+    dropDrag(d);
+  });
+  doc.addEventListener("pointercancel", function () { if (drag && drag.started) undoDrag(drag); drag = null; });
+  doc.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && drag && drag.started) { undoDrag(drag); drag = null; e.preventDefault(); }
+  });
+  doc.addEventListener("click", function (e) {
+    if (!swallowClick) return;
+    swallowClick = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+
+  // ---- drag messages onto a folder -----------------------------------------
+  // A message row dragged onto a folder in the sidebar moves there, with the
+  // other ticked rows if it was one of them. It posts the bulk Move, so the
+  // page comes back with the usual notice.
+  var DRAG_TYPE = "application/x-elemta-messages";
+  doc.addEventListener("dragstart", function (e) {
+    var li = e.target.closest && e.target.closest(".messages li[data-uid]");
+    if (!li || !e.dataTransfer) return;
+    var list = li.closest("ol.messages"), box = $("input[name=uid]", li), uids;
+    if (box && box.checked) {
+      uids = $$("input[name=uid]:checked", list).map(function (i) { return i.value; });
+    } else {
+      uids = [li.getAttribute("data-uid")];
+    }
+    e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ folder: list.getAttribute("data-folder"), uids: uids, back: list.getAttribute("data-back") }));
+    e.dataTransfer.effectAllowed = "move";
+    var n = uids.join(",").split(",").length;
+    var ghost = doc.createElement("div");
+    ghost.className = "drag-ghost";
+    ghost.textContent = n === 1 ? "1 message" : n + " messages";
+    body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, 10, 10);
+    setTimeout(function () { ghost.remove(); }, 0);
+  });
+  function folderTarget(e) {
+    if (!e.dataTransfer || Array.prototype.indexOf.call(e.dataTransfer.types, DRAG_TYPE) < 0) return null;
+    return e.target.closest && e.target.closest("a.folder[data-folder]");
+  }
+  doc.addEventListener("dragover", function (e) {
+    var f = folderTarget(e);
+    if (!f) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    $$("a.folder.drop-target").forEach(function (x) { if (x !== f) x.classList.remove("drop-target"); });
+    f.classList.add("drop-target");
+  });
+  doc.addEventListener("dragleave", function (e) {
+    var f = folderTarget(e);
+    if (f && !f.contains(e.relatedTarget)) f.classList.remove("drop-target");
+  });
+  doc.addEventListener("drop", function (e) {
+    var f = folderTarget(e);
+    if (!f) return;
+    e.preventDefault();
+    f.classList.remove("drop-target");
+    var m;
+    try { m = JSON.parse(e.dataTransfer.getData(DRAG_TYPE)); } catch (err) { return; }
+    var dest = f.getAttribute("data-folder");
+    if (!m || !m.uids.length || dest === m.folder) return;
+    submitPost("/mail/action", { f: m.folder, uid: m.uids, op: "move", dest: dest, back: m.back || "/mail?f=" + encodeURIComponent(m.folder) });
+  });
+  doc.addEventListener("dragend", function () { $$("a.folder.drop-target").forEach(function (x) { x.classList.remove("drop-target"); }); });
 
 })();
