@@ -49,6 +49,7 @@ type Server struct {
 	pushStreams  map[string]int
 	push         pushHub
 	pages        pageCache
+	sends        *sendQueue
 	tmpl         map[string]*template.Template
 	log          *slog.Logger
 	limiter      *loginLimiter
@@ -106,7 +107,7 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 	}
 	server := &Server{
 		passwords: passwords, mailSettings: mailSettings, recoveryMail: make(chan struct{}, 4),
-		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
+		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve, sends: newSendQueue(),
 		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now, dav: newDAVPool(),
 		defaultLoc: cfg.location(),
 	}
@@ -249,6 +250,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /mail/switch", s.authed(s.switchMailbox))
 	mux.HandleFunc("GET /compose", s.authed(s.composePage))
 	mux.HandleFunc("POST /compose", s.authed(s.composeSubmit))
+	mux.HandleFunc("POST /compose/undo", s.authed(s.undoSend))
 	mux.HandleFunc("GET /folders", s.authed(s.foldersPage))
 	mux.HandleFunc("POST /folders", s.authed(s.foldersSubmit))
 	mux.HandleFunc("GET /folders/retention", s.authed(s.folderRetentionGet))
@@ -418,13 +420,17 @@ type view struct {
 	List            *listState
 	Notice          string
 	// Undo puts back the move the notice reports, for a couple of minutes.
-	Undo    *undoMove
-	Problem string
-	Page    *Page
-	Message *Message
-	Body    *sanitizeResult
-	Remote  bool
-	Tags    []string
+	Undo *undoMove
+	// PendingSend is a message waiting out its undo delay (sendlater.go).
+	PendingSend *pendingNotice
+	// SendFailures are delayed sends that didn't go, said once.
+	SendFailures []string
+	Problem      string
+	Page         *Page
+	Message      *Message
+	Body         *sanitizeResult
+	Remote       bool
+	Tags         []string
 	// InboxTabs is the tab bar over the inbox, when tabs are on.
 	InboxTabs []InboxTab
 	Thread    []Related
@@ -478,6 +484,9 @@ func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
 		if pv.Session.AdminActor == "" {
 			pv.MailSound = cached.MailSound
 			pv.ReminderSound = cached.ReminderTone()
+			if s.sends != nil {
+				pv.SendFailures = s.sends.takeFailures(pv.Session.ID)
+			}
 		}
 		if pv.App == "" {
 			pv.App = "mail"
@@ -544,6 +553,9 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"tab-rule-removed":       "Tab rule removed.",
 	"moved":                  "Message moved.",
 	"undone":                 "Moved back.",
+	"sending":                "Sending.",
+	"send-undone":            "Not sent. The message is back in the editor, and saved in Drafts.",
+	"send-too-late":          "Too late to undo: that message has been sent.",
 	"moved-many":             "Messages moved.",
 	"archived":               "Message archived.",
 	"archived-many":          "Messages archived.",

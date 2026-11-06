@@ -839,18 +839,18 @@ func orAll(list []imap.SearchCriteria) imap.SearchCriteria {
 // defaultRoleNames are the folders Append creates when an account has none.
 var defaultRoleNames = map[Role]string{RoleSent: "Sent", RoleDrafts: "Drafts", RoleTrash: "Trash", RoleJunk: "Junk", RoleArchive: "Archive"}
 
-func (s *imapStore) Append(ctx context.Context, role Role, raw []byte, seen, draft bool) error {
+func (s *imapStore) Append(ctx context.Context, role Role, raw []byte, seen, draft bool) (uint32, error) {
 	name, err := s.roleFolder(ctx, role)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if name == "" {
 		name = defaultRoleNames[role]
 		if name == "" {
-			return fmt.Errorf("webmail: no folder for role %q", role)
+			return 0, fmt.Errorf("webmail: no folder for role %q", role)
 		}
 		if err := s.ensureFolder(name); err != nil {
-			return err
+			return 0, err
 		}
 		s.folders = nil
 	}
@@ -861,8 +861,7 @@ func (s *imapStore) Append(ctx context.Context, role Role, raw []byte, seen, dra
 	if draft {
 		flags = append(flags, imap.FlagDraft)
 	}
-	_, err = s.appendRaw(name, raw, flags)
-	return err
+	return s.appendRaw(name, raw, flags)
 }
 
 // ensureFolder creates name if it doesn't exist.

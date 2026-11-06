@@ -237,7 +237,8 @@ type Mailstore interface {
 	Expunge(ctx context.Context, folder string, uids []uint32) error
 	// Append stores a message (a sent copy or a draft) in the folder with the
 	// given role, creating that folder if the account has none.
-	Append(ctx context.Context, role Role, raw []byte, seen, draft bool) error
+	// It returns the message's UID there when the server reports it, or 0.
+	Append(ctx context.Context, role Role, raw []byte, seen, draft bool) (uint32, error)
 
 	CreateFolder(ctx context.Context, name string) error
 	// EnsureFolders creates a folder for each role the account lacks, under

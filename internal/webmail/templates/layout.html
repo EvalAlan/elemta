@@ -85,13 +85,18 @@
   {{end}}
   </aside>
   <main id="main" class="content">
-    {{if .Notice}}{{with .Undo}}<div class="notice" role="status">{{$.Notice}}
+    {{range .SendFailures}}<p class="problem" role="alert">{{.}}</p>{{end}}
+    {{if .Notice}}{{if .PendingSend}}{{with .PendingSend}}<div class="notice" role="status" data-send-left="{{.Left}}"><span data-send-status>Sending…</span>
+      <form class="inline undo-form" action="/compose/undo" method="post">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+        <button class="button small-button" type="submit" title="Undo (z)">Undo</button>
+      </form></div>{{end}}{{else}}{{with .Undo}}<div class="notice" role="status">{{$.Notice}}
       <form class="inline undo-form" action="/mail/action" method="post">
         <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="undo">
         <input type="hidden" name="f" value="{{.From}}"><input type="hidden" name="uid" value="{{.UIDList}}"><input type="hidden" name="dest" value="{{.To}}">
         <input type="hidden" name="back" value="{{if $.List}}{{$.List.URL}}{{else}}/mail{{end}}">
         <button class="button small-button" type="submit" title="Undo (z)">Undo</button>
-      </form></div>{{else}}<p class="notice" role="status">{{$.Notice}}</p>{{end}}{{end}}
+      </form></div>{{else}}<p class="notice" role="status">{{$.Notice}}</p>{{end}}{{end}}{{end}}
     {{template "content" .}}
   </main>
 </div>
@@ -107,7 +112,7 @@
       <dt>s</dt><dd>Flag or unflag</dd>
       <dt>e</dt><dd>Archive</dd>
       <dt>#</dt><dd>Delete</dd>
-      <dt>z</dt><dd>Undo a move or delete, just after it</dd>
+      <dt>z</dt><dd>Undo a send, move or delete, just after it</dd>
       <dt>x</dt><dd>Select the current message</dd>
       <dt>/</dt><dd>Search</dd>
       <dt>g then i / c / t / k</dt><dd>Go to Inbox / Calendar / Tasks / Contacts</dd>

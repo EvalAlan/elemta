@@ -234,6 +234,10 @@ services:
       - path: .secrets/webmail.env
         required: false
     restart: unless-stopped
+    # Time to send messages still waiting out their undo delay before the
+    # container is killed (webmail sends them on SIGTERM; Docker's default
+    # of 10 seconds can cut that short).
+    stop_grace_period: 60s
     ports:
       - "8027:8027" # Webmail
     volumes:

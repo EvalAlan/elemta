@@ -1112,3 +1112,38 @@ func TestBrowserUndoDelete(t *testing.T) {
 		t.Errorf("undo moved the message to %q, want INBOX", back)
 	}
 }
+
+// Send counts down with an Undo; Undo goes back to the draft, and a send
+// left alone says it's gone and goes.
+func TestBrowserUndoSend(t *testing.T) {
+	defaultUndoSend = 2
+	t.Cleanup(func() { defaultUndoSend = 0 })
+	b := newBrowser(t)
+	b.h.sub.sent = make(chan struct{}, 1)
+	b.login()
+	send := func() {
+		b.run(chromedp.Navigate(b.url("/compose")), chromedp.WaitVisible(chromedp.ID("to")),
+			chromedp.SendKeys(chromedp.ID("to"), "priya@northwind.example"),
+			chromedp.SendKeys(chromedp.CSS(`input[name="subject"]`), "Kickoff"),
+			chromedp.Click(chromedp.CSS(`button[name="op"][value="send"]`)))
+		b.waitFor(`document.readyState === "complete" && !!document.querySelector("[data-send-left]")`)
+	}
+
+	send()
+	b.waitFor(`/Sending in \d/.test(document.querySelector("[data-send-status]").textContent)`)
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelector(".undo-form button").click()`, chromedp.EvalAsValue))
+	b.waitFor(`location.pathname === "/compose" && location.search.includes("mode=draft")`)
+	select {
+	case <-b.h.sub.sent:
+		t.Fatal("an undone message was sent")
+	case <-time.After(2500 * time.Millisecond):
+	}
+
+	send()
+	b.waitFor(`document.querySelector("[data-send-status]").textContent === "Message sent." && !document.querySelector(".undo-form")`)
+	select {
+	case <-b.h.sub.sent:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the message wasn't sent")
+	}
+}

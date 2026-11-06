@@ -56,7 +56,7 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 	prefs := s.prefs(r.Context(), sess)
 	choices := s.fromChoices(r.Context(), sess)
 	cv := &composeView{Mode: q.Get("mode"), To: q.Get("to"), Subject: q.Get("subject"), From: prefs.fromAddress(choices[0]), FromChoices: choices}
-	v := view{Title: "New message", Session: sess, Folder: q.Get("f"), Compose: cv}
+	v := view{Title: "New message", Session: sess, Folder: q.Get("f"), Compose: cv, Notice: notices[q.Get("n")]}
 	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		folders, err := st.Folders(r.Context())
 		if err != nil {
@@ -461,7 +461,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 
 	if saveDraft {
 		err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-			if err := st.Append(r.Context(), RoleDrafts, raw, true, true); err != nil {
+			if _, err := st.Append(r.Context(), RoleDrafts, raw, true, true); err != nil {
 				return err
 			}
 			return s.dropDraft(r.Context(), st, cv.DraftUID)
@@ -481,6 +481,17 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	// Undo send: saved to Drafts and sent when the delay is up (sendlater.go).
+	if delay := prefs.UndoSendSeconds(); delay > 0 {
+		p, err := s.queueSend(r.Context(), sess, pw, fromAddress, d, raw, cv, time.Duration(delay)*time.Second)
+		if err != nil {
+			s.log.Warn("webmail: queue send", "user", sess.User, "error", err)
+			again(http.StatusBadGateway, "The message couldn't be sent. It hasn't been lost: try Send again.")
+			return
+		}
+		http.Redirect(w, r, folderURL("INBOX", 1, "")+"&n=sending&send="+p.id, http.StatusSeeOther)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 	if err := s.submit.Submit(ctx, sess.User, pw, fromAddress, d.Recipients(), raw); err != nil {
@@ -495,7 +506,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	s.logSent(r.Context(), sess, d, "message")
 	notice := "sent"
 	if err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-		if err := st.Append(r.Context(), RoleSent, raw, true, false); err != nil {
+		if _, err := st.Append(r.Context(), RoleSent, raw, true, false); err != nil {
 			return err
 		}
 		// Housekeeping after a successful send. Failures here don't undo

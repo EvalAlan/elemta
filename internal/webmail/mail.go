@@ -130,6 +130,14 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	if u, ok := decodeUndo(q.Get("undo"), time.Now()); ok && v.Notice != "" {
 		v.Undo = &u
 	}
+	if q.Get("n") == "sending" {
+		// Still waiting out its undo delay, or already gone.
+		if p := s.pendingFor(sess, q.Get("send")); p != nil {
+			v.PendingSend = p
+		} else {
+			v.Notice = notices["sent"]
+		}
+	}
 	v.SharedMailboxes = s.sharedMailboxes(r.Context(), sess)
 	if s.prefsCached(sess).MailCalendar {
 		v.Calendar = s.mailCalendar(r.Context(), sess)

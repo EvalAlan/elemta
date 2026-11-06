@@ -113,6 +113,8 @@ func (f *fakeStore) ListThreads(_ context.Context, folder string, q ListQuery) (
 	return ThreadPage{Folder: folder, Conversations: out, Total: len(out), Page: 1, PageSize: q.PageSize}, nil
 }
 func (f *fakeStore) Raw(_ context.Context, _ string, uid uint32, _ int64) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if b, ok := f.raw[uid]; ok {
 		return b, nil
 	}
@@ -150,14 +152,21 @@ func (f *fakeStore) Delete(_ context.Context, _ string, uids []uint32) error {
 	return nil
 }
 func (f *fakeStore) Expunge(_ context.Context, _ string, uids []uint32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.expunged = append(f.expunged, uids...)
 	return nil
 }
-func (f *fakeStore) Append(_ context.Context, role Role, raw []byte, _, _ bool) error {
+func (f *fakeStore) Append(_ context.Context, role Role, raw []byte, _, _ bool) (uint32, error) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.appended[role] = append(f.appended[role], raw)
-	f.mu.Unlock()
-	return nil
+	// As a server reports APPENDUID, and readable again by it.
+	uid := uint32(9000 + len(f.appended[role]))
+	if role == RoleDrafts {
+		f.raw[uid] = raw
+	}
+	return uid, nil
 }
 func (f *fakeStore) CreateFolder(_ context.Context, name string) error {
 	for _, x := range f.folders {
