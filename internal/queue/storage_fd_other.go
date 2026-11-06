@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 )
 
 // Pathname emulation cannot provide the descriptor-relative no-follow
@@ -19,6 +20,7 @@ func openChildDir(*os.File, string, bool) (*os.File, error)     { return nil, un
 func readFileAt(*os.File, string) ([]byte, error)               { return nil, unsupportedFilesystem() }
 func unlinkFileAt(*os.File, string) error                       { return unsupportedFilesystem() }
 func atomicWriteAt(*os.File, string, []byte, os.FileMode) error { return unsupportedFilesystem() }
+func modTimeAt(*os.File, string) (time.Time, error)             { return time.Time{}, unsupportedFilesystem() }
 
 func atomicWriteReaderAt(*os.File, string, io.Reader, os.FileMode) error {
 	return unsupportedFilesystem()
