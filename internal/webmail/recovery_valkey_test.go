@@ -259,3 +259,62 @@ func TestValkeyRecoveryAndRevocation(t *testing.T) {
 		t.Fatal("consumed token survived")
 	}
 }
+
+// Changing a password revokes the account's sessions and starts a new one
+// for the browser that changed it (signOutOthers). With sessions in Valkey,
+// the revocation is a timestamp every replica checks, so the new session
+// must count as after it, on every replica, while the old ones are refused.
+func TestValkeyRevokeKeepsTheSessionMadeAfter(t *testing.T) {
+	addr := os.Getenv("ELEMTA_TEST_VALKEY")
+	if addr == "" {
+		t.Skip("set ELEMTA_TEST_VALKEY for real Valkey integration")
+	}
+	shared, err := NewValkeySessionStore(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := shared.(*valkeySessions)
+	defer v.client.Close()
+	suffix, err := randomToken(16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.prefix += "test:" + suffix + ":"
+	key := make([]byte, 32)
+	a, err := NewSharedSessionManager(time.Hour, key, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := NewSharedSessionManager(time.Hour, key, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laptop, err := a.Create("dana", "dana@example.com", "old-password", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	here, err := b.Create("dana", "dana@example.com", "old-password", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RevokeUser(context.Background(), "dana@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := b.Create("dana", "dana@example.com", "new-password", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.Get(laptop.ID); ok {
+		t.Error("the other device's session survived the password change")
+	}
+	if _, ok := b.Get(here.ID); ok {
+		t.Error("the session the password was changed in survived under its old ID")
+	}
+	got, ok := a.Get(fresh.ID)
+	if !ok {
+		t.Fatal("the new session was refused on another replica")
+	}
+	if pw, _ := a.password(got); pw != "new-password" {
+		t.Errorf("new session password = %q", pw)
+	}
+}
