@@ -499,3 +499,111 @@ func TestCalendarGridUsesTheViewersZone(t *testing.T) {
 		t.Error("month view doesn't show the review at 06:00")
 	}
 }
+
+// Dragging an event posts op=move: to a new start keeping its length, or
+// with a new end; a repeating event moves just the dragged occurrence; an
+// all-day event keeps its span; and what can't be moved is refused with a
+// status the page can show.
+func TestCalendarMoveEvent(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	postForm(t, h, "/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "week_start": {"0"}, "clock": {"24"}, "page_size": {"50"}})
+	save := func(f url.Values) string {
+		t.Helper()
+		f.Set("csrf", csrf)
+		f.Set("op", "save")
+		resp := postForm(t, h, "/calendar/event", f)
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("save %s = %d", f.Get("summary"), resp.StatusCode)
+		}
+		loc, _ := url.Parse(resp.Header.Get("Location"))
+		return loc.Query().Get("uid")
+	}
+	move := func(f url.Values) (int, string) {
+		t.Helper()
+		f.Set("csrf", csrf)
+		f.Set("op", "move")
+		// Not h.post, which closes the body: the message is the point.
+		resp, err := h.client.PostForm(h.srv.URL+"/calendar/event", f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	when := func(uid string) string {
+		t.Helper()
+		_, page := h.get("/calendar/event?uid=" + url.QueryEscape(uid))
+		m := regexp.MustCompile(`class="when">([^<]+)<`).FindStringSubmatch(page)
+		if m == nil {
+			t.Fatalf("no event page for %s", uid)
+		}
+		return m[1]
+	}
+
+	review := save(url.Values{"summary": {"Review"}, "start_date": {"2026-10-21"}, "start_time": {"10:00"}, "end_date": {"2026-10-21"}, "end_time": {"11:30"}})
+	if st, msg := move(url.Values{"uid": {review}, "start_date": {"2026-10-23"}, "start_time": {"14:15"}}); st != http.StatusNoContent {
+		t.Fatalf("move = %d %q", st, msg)
+	}
+	if got := when(review); !strings.Contains(got, "October 23, 2026, 14:15 – 15:45") {
+		t.Errorf("moved review: %s", got)
+	}
+	if st, _ := move(url.Values{"uid": {review}, "start_date": {"2026-10-23"}, "start_time": {"14:15"}, "end_date": {"2026-10-23"}, "end_time": {"17:00"}}); st != http.StatusNoContent {
+		t.Fatalf("resize = %d", st)
+	}
+	if got := when(review); !strings.Contains(got, "14:15 – 17:00") {
+		t.Errorf("resized review: %s", got)
+	}
+	if st, _ := move(url.Values{"uid": {review}, "start_date": {"2026-10-23"}, "start_time": {"14:15"}, "end_date": {"2026-10-23"}, "end_time": {"14:00"}}); st != http.StatusBadRequest {
+		t.Errorf("an end before the start = %d, want 400", st)
+	}
+
+	standup := save(url.Values{"summary": {"Standup"}, "start_date": {"2026-10-19"}, "start_time": {"09:00"}, "end_date": {"2026-10-19"}, "end_time": {"09:15"},
+		"repeat": {"daily"}, "ends": {"never"}, "interval": {"1"}})
+	occ := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC).Unix()
+	if st, msg := move(url.Values{"uid": {standup}, "occ": {itoa64(occ)}, "start_date": {"2026-10-21"}, "start_time": {"11:00"}}); st != http.StatusNoContent {
+		t.Fatalf("move occurrence = %d %q", st, msg)
+	}
+	_, day := h.get("/calendar?view=day&date=2026-10-21")
+	if !strings.Contains(day, `<span class="t">11:00</span><strong>Standup`) || strings.Contains(day, `<span class="t">09:00</span><strong>Standup`) {
+		t.Error("the dragged occurrence didn't move on its own")
+	}
+	if _, next := h.get("/calendar?view=day&date=2026-10-22"); !strings.Contains(next, `<span class="t">09:00</span><strong>Standup`) {
+		t.Error("the rest of the series moved too")
+	}
+
+	trip := save(url.Values{"summary": {"Trip"}, "allday": {"1"}, "start_date": {"2026-10-12"}, "end_date": {"2026-10-14"}})
+	if st, _ := move(url.Values{"uid": {trip}, "start_date": {"2026-10-26"}}); st != http.StatusNoContent {
+		t.Fatalf("move all-day = %d", st)
+	}
+	if got := when(trip); !strings.Contains(got, "Mon, Oct 26 – Wed, Oct 28, 2026 (all day)") {
+		t.Errorf("moved trip: %s", got)
+	}
+
+	if st, _ := move(url.Values{"uid": {"nonexistent@example.com"}, "start_date": {"2026-10-26"}, "start_time": {"10:00"}}); st != http.StatusNotFound {
+		t.Errorf("unknown event = %d, want 404", st)
+	}
+	// Invited, not organizing: the organizer's meeting isn't ours to move.
+	invited := save(url.Values{"summary": {"Their meeting"}, "start_date": {"2026-10-27"}, "start_time": {"10:00"}, "end_date": {"2026-10-27"}, "end_time": {"11:00"}})
+	objs, _ := h.store.Objects(context.Background(), CollCalendar)
+	for _, o := range objs {
+		cal, err := decodeCalendar(o.Data, time.UTC)
+		if err != nil || len(cal.Events) == 0 || cal.Events[0].UID != invited {
+			continue
+		}
+		e := cal.Events[0]
+		e.Organizer = &Attendee{Email: "boss@example.org"}
+		e.Attendees = []Attendee{{Email: "boss@example.org", Status: "ACCEPTED"}, {Email: "user@example.com", Status: "ACCEPTED"}}
+		data, id, err := mergeEvent(findStoredEvent(objs, e.UID), e, time.Now())
+		if err == nil {
+			err = h.store.PutObject(context.Background(), CollCalendar, Object{ID: id, ContentType: "text/calendar", Data: data})
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st, msg := move(url.Values{"uid": {invited}, "start_date": {"2026-10-28"}, "start_time": {"10:00"}}); st != http.StatusConflict || !strings.Contains(msg, "organizer") {
+		t.Errorf("moving someone else's meeting = %d %q, want 409", st, msg)
+	}
+}

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/log"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
@@ -888,5 +889,142 @@ func TestBrowserInboxTabsFitAndStay(t *testing.T) {
 	}
 	if !evalAs[bool](b, `(() => { const r = document.querySelector(".inbox-tabs").getBoundingClientRect(); return r.height > 30 && r.top > 0 && r.bottom < innerHeight })()`) {
 		t.Error("the inbox tabs scrolled away or collapsed")
+	}
+}
+
+// dragMouse presses at one point, moves in steps as a hand would, and lets
+// go at another.
+func (b *browser) dragMouse(x0, y0, x1, y1 float64) {
+	b.t.Helper()
+	steps := []chromedp.Action[chromedp.Void]{chromedp.MouseEvent(input.DispatchMouseEventTypeMousePressed, x0, y0, chromedp.ButtonLeft, chromedp.ClickCount(1))}
+	for i := 1; i <= 6; i++ {
+		f := float64(i) / 6
+		steps = append(steps, chromedp.MouseEvent(input.DispatchMouseEventTypeMouseMoved, x0+(x1-x0)*f, y0+(y1-y0)*f, chromedp.ButtonLeft))
+	}
+	steps = append(steps, chromedp.MouseEvent(input.DispatchMouseEventTypeMouseReleased, x1, y1, chromedp.ButtonLeft, chromedp.ClickCount(1)))
+	b.run(steps...)
+}
+
+// calendarBrowser signs in with a UTC time zone, so times on the page are
+// the times saved, and returns a function that saves events.
+func calendarBrowser(t *testing.T) (*browser, func(url.Values)) {
+	b := newBrowser(t)
+	csrf := b.h.login()
+	b.h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "week_start": {"0"}, "clock": {"24"}, "page_size": {"50"}})
+	save := func(f url.Values) {
+		t.Helper()
+		f.Set("csrf", csrf)
+		f.Set("op", "save")
+		if resp := b.h.post("/calendar/event", f); resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("save %s = %d", f.Get("summary"), resp.StatusCode)
+		}
+	}
+	b.login()
+	return b, save
+}
+
+// gridShows reports whether the week or day grid has the event at that
+// time on that day.
+func gridShows(date, at, title string) string {
+	return fmt.Sprintf(`[...document.querySelectorAll('.daycol[data-date=%q] .ev')].some(e => e.querySelector(".t").textContent.trim() === %q && e.textContent.includes(%q))`, date, at, title)
+}
+
+func TestBrowserCalendarQuickAdd(t *testing.T) {
+	b, _ := calendarBrowser(t)
+	b.run(chromedp.Navigate(b.url("/calendar?view=week&date=2026-10-21")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".daycol[data-date]")`)
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelector('.daycol[data-date="2026-10-21"] .slot[data-hour="10"]').click()`, chromedp.EvalAsValue))
+	b.waitFor(`document.activeElement && document.activeElement.matches(".event-quick-add input[name=summary]")`)
+	if got := evalAs[string](b, `document.querySelector(".event-quick-add").textContent`); !strings.Contains(got, "10:00") || !strings.Contains(got, "More options") {
+		t.Errorf("quick add bubble = %q", got)
+	}
+	if !evalAs[bool](b, `location.pathname === "/calendar"`) {
+		t.Fatal("clicking an hour left the calendar")
+	}
+	b.run(chromedp.SendKeys(chromedp.CSS(".event-quick-add input[name=summary]"), "Lunch with Sam\r"))
+	b.waitFor(gridShows("2026-10-21", "10:00", "Lunch with Sam"))
+
+	// An empty part of a month day adds an all-day event.
+	b.run(chromedp.Navigate(b.url("/calendar?view=month&date=2026-10-21")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector('.month .day[data-date="2026-10-24"]')`)
+	box := evalAs[[]float64](b, `(() => { const r = document.querySelector('.month .day[data-date="2026-10-24"]').getBoundingClientRect(); return [r.left + r.width / 2, r.bottom - 10] })()`)
+	b.run(chromedp.MouseClickXY(box[0], box[1]))
+	b.waitFor(`!!document.querySelector(".event-quick-add input[name=summary]")`)
+	if got := evalAs[string](b, `document.querySelector(".event-quick-add").textContent`); !strings.Contains(got, "All day") {
+		t.Errorf("month quick add = %q", got)
+	}
+	b.run(chromedp.SendKeys(chromedp.CSS(".event-quick-add input[name=summary]"), "Garden party\r"))
+	b.waitFor(`[...document.querySelectorAll('.month .day[data-date="2026-10-24"] .chip-ev')].some(c => c.textContent.includes("Garden party") && !c.classList.contains("timed"))`)
+}
+
+func TestBrowserCalendarDragMovesAndResizes(t *testing.T) {
+	b, save := calendarBrowser(t)
+	save(url.Values{"summary": {"Design review"}, "start_date": {"2026-10-21"}, "start_time": {"10:00"}, "end_date": {"2026-10-21"}, "end_time": {"11:00"}})
+	open := func() {
+		b.run(chromedp.Navigate(b.url("/calendar?view=week&date=2026-10-21")))
+		b.waitFor(`document.readyState === "complete" && !!document.querySelector(".ev-resize")`)
+		// Nine o'clock at the top, so the hours used here are on screen.
+		b.run(chromedp.Evaluate[chromedp.Void](`(() => { const g = document.querySelector(".time-grid"); g.scrollTop = document.querySelector('.daycol .slot[data-hour="9"]').offsetTop; })()`, chromedp.EvalAsValue))
+	}
+	open()
+	// Grab the event 6px below its top and drop it on Thursday at 14:00.
+	p := evalAs[[]float64](b, `(() => {
+		const e = document.querySelector(".ev").getBoundingClientRect();
+		const col = document.querySelector('.daycol[data-date="2026-10-22"]').getBoundingClientRect();
+		const hour = col.height / 24;
+		return [e.left + e.width / 2, e.top + 6, col.left + col.width / 2, col.top + 14 * hour + 6];
+	})()`)
+	b.dragMouse(p[0], p[1], p[2], p[3])
+	b.waitFor(gridShows("2026-10-22", "14:00", "Design review"))
+	if evalAs[bool](b, `!!document.querySelector(".event-peek")`) {
+		t.Error("the drag also opened the event bubble")
+	}
+
+	// Its bottom edge dragged an hour down: 14:00 to 16:00.
+	open()
+	p = evalAs[[]float64](b, `(() => {
+		const h = document.querySelector('.daycol[data-date="2026-10-22"] .ev .ev-resize').getBoundingClientRect();
+		const col = document.querySelector('.daycol[data-date="2026-10-22"]').getBoundingClientRect();
+		return [h.left + h.width / 2, h.top + h.height / 2, h.left + h.width / 2, h.top + h.height / 2 + col.height / 24];
+	})()`)
+	b.dragMouse(p[0], p[1], p[2], p[3])
+	b.waitFor(`(() => { const e = document.querySelector('.daycol[data-date="2026-10-22"] .ev'); return !!e && !document.body.classList.contains("cal-dragging") && Math.abs(e.getBoundingClientRect().height - 2 * document.querySelector(".daycol").getBoundingClientRect().height / 24) < 4 })()`)
+	_, ics := b.h.get("/calendar/export")
+	if !strings.Contains(ics, "DTSTART:20261022T140000Z") || !strings.Contains(ics, "DTEND:20261022T160000Z") {
+		t.Errorf("stored event after move and resize:\n%s", ics)
+	}
+
+	// In the month, a chip dragged to another day keeps its time.
+	b.run(chromedp.Navigate(b.url("/calendar?view=month&date=2026-10-21")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector('.month .day[data-date="2026-10-22"] .chip-ev')`)
+	p = evalAs[[]float64](b, `(() => {
+		const c = document.querySelector('.month .day[data-date="2026-10-22"] .chip-ev').getBoundingClientRect();
+		const d = document.querySelector('.month .day[data-date="2026-10-27"]').getBoundingClientRect();
+		return [c.left + 20, c.top + c.height / 2, d.left + d.width / 2, d.top + d.height / 2];
+	})()`)
+	b.dragMouse(p[0], p[1], p[2], p[3])
+	b.waitFor(`[...document.querySelectorAll('.month .day[data-date="2026-10-27"] .chip-ev')].some(c => c.textContent.includes("14:00") && c.textContent.includes("Design review"))`)
+}
+
+func TestBrowserDragMessagesToFolder(t *testing.T) {
+	b := newBrowser(t)
+	b.login()
+	// Drag and drop as the browser reports it: one DataTransfer from the
+	// row's dragstart to the folder's drop.
+	b.run(chromedp.Evaluate[chromedp.Void](`(() => {
+		window.__beforeDrop = true;
+		const dt = new DataTransfer();
+		const row = document.querySelector(".messages li[data-uid] a.row");
+		const folder = document.querySelector('a.folder[data-folder="Junk"]');
+		row.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }));
+		folder.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+		folder.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+	})()`, chromedp.EvalAsValue))
+	b.waitFor(`!window.__beforeDrop && document.readyState === "complete"`)
+	b.h.store.mu.Lock()
+	dest := b.h.store.moved[7]
+	b.h.store.mu.Unlock()
+	if dest != "Junk" {
+		t.Errorf("message 7 moved to %q, want Junk", dest)
 	}
 }

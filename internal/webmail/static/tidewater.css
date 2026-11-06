@@ -2158,6 +2158,23 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .event-peek .peek-actions form.inline { display: contents; }
 .peek-close { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; }
 .peek-close:hover, .peek-close:focus-visible { background: var(--accent-soft); color: var(--accent-dark); outline: none; }
+/* Quick add: a title box in the event bubble, beside the hour or day picked. */
+.event-quick-add-form { display: flex; flex-direction: column; gap: 8px; padding-top: 14px; }
+.event-quick-add-form input[type="text"] { font: inherit; font-size: 16px; padding: 8px 10px; margin: 0 44px 0 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.event-quick-add-form input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.event-quick-add-form p { margin: 0 16px; }
+.event-quick-add-form .peek-actions .button { min-height: 36px; }
+.event-quick-add-problem { color: var(--danger); }
+.daycol .slot.picked, .month .day.picked, .allday-row .cell.picked { background: var(--accent-soft); }
+/* Dragging events. The dragged one lets the pointer through, so the day or
+   column under it can be found. */
+.daycol .ev, .month .chip-ev, .allday-row .chip-ev { user-select: none; -webkit-user-select: none; }
+.ev-resize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
+.chip-ev.dragging, .ev.dragging { pointer-events: none; opacity: .85; box-shadow: var(--shadow); z-index: 5; }
+body.cal-dragging, body.cal-dragging * { cursor: grabbing !important; }
+/* Dragging messages onto a folder. */
+a.folder.drop-target { background: var(--accent-soft); color: var(--accent-dark); outline: 2px dashed var(--accent); outline-offset: -2px; }
+.drag-ghost { position: fixed; top: -100px; left: 0; padding: 6px 10px; border-radius: 6px; background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 600; }
 .ctx-sep { height: 1px; background: var(--line-soft); margin: 4px 6px; }
 .tb-group { display: inline-flex; align-items: center; gap: 2px; padding-right: 6px; margin-right: 2px; border-right: 1px solid var(--line); }
 .tb-select { min-height: 30px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); padding: 0 4px; font-size: 13px; max-width: 120px; }
