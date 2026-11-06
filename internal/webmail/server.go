@@ -182,7 +182,7 @@ func (s *Server) Close() error {
 // newSessions builds the session manager the config asks for.
 func newSessions(cfg Config) (*SessionManager, error) {
 	if cfg.SessionStore != "valkey" {
-		return NewSessionManager(cfg.sessionTTL())
+		return NewSessionManager(cfg.idleTTL())
 	}
 	addr := cfg.ValkeyAddr
 	if addr == "" {
@@ -199,7 +199,7 @@ func newSessions(cfg Config) (*SessionManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewSharedSessionManager(cfg.sessionTTL(), key, store)
+	return NewSharedSessionManager(cfg.idleTTL(), key, store)
 }
 
 // Sessions exposes the session manager so the caller can run its sweeper.
@@ -357,6 +357,12 @@ func (s *Server) authed(next func(http.ResponseWriter, *http.Request, *Session))
 		if sess.AdminActor != "" && !adminMailRoute(r.URL.Path) {
 			http.Error(w, "This administrator session opens mail only.", http.StatusForbidden)
 			return
+		}
+		// The session's idle clock restarts with every request, so the
+		// cookie's does too: a remembered sign-in lasts from last use, not
+		// from signing in. GETs only, which every open page makes as it polls.
+		if r.Method == http.MethodGet && sess.AdminActor == "" && s.cfg.staySignedIn() > 0 {
+			s.setSessionCookie(w, sess)
 		}
 		if r.Method == http.MethodPost {
 			// Cap every request body: attachments plus room for the text
@@ -604,6 +610,8 @@ type loginView struct {
 	User     string
 	Problem  string
 	Notice   string
+	// StayDays is how many days a sign-in is remembered, 0 when it isn't.
+	StayDays int
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int) {
@@ -612,6 +620,18 @@ func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int
 		Name: name, Value: value, Path: "/", MaxAge: maxAge,
 		HttpOnly: true, Secure: *s.cfg.SecureCookies, SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// setSessionCookie gives the browser its session. A remembered sign-in's
+// cookie outlives the browser, for as long as the session lasts unused; an
+// administrator's look into a mailbox never does, since it expires on its own
+// clock anyway.
+func (s *Server) setSessionCookie(w http.ResponseWriter, sess *Session) {
+	maxAge := 0
+	if stay := s.cfg.staySignedIn(); stay > 0 && sess.AdminActor == "" {
+		maxAge = int(stay.Seconds())
+	}
+	s.setCookie(w, sessionCookie, sess.ID, maxAge)
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -634,7 +654,7 @@ func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int,
 		return
 	}
 	s.setCookie(w, preLoginCookie, token, 600)
-	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Passkeys: s.security != nil, Theme: themeFromCookie(r), Palette: paletteFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
+	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Passkeys: s.security != nil, Theme: themeFromCookie(r), Palette: paletteFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem, StayDays: int(s.cfg.staySignedIn().Hours() / 24)})
 }
 
 func remoteHost(r *http.Request) string {
@@ -887,7 +907,7 @@ func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWrit
 		return false
 	}
 	s.setCookie(w, preLoginCookie, "", -1)
-	s.setCookie(w, sessionCookie, sess.ID, 0)
+	s.setSessionCookie(w, sess)
 	s.setAppearanceCookies(w, s.prefs(ctx, sess))
 	s.log.Info("webmail: login", "user", user, "ip", s.clientIP(r))
 	if actor == "" {
