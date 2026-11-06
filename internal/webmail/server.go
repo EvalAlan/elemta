@@ -213,6 +213,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServerFS(staticFiles()))))
 	// Pages link the SVG icon, but some browsers still ask for /favicon.ico.
 	mux.Handle("GET /favicon.ico", http.RedirectHandler(assetURL("favicon.svg"), http.StatusMovedPermanently))
+	// The service worker and the app manifest (webpush.go).
+	mux.HandleFunc("GET /sw.js", s.serviceWorker)
+	mux.HandleFunc("GET /manifest.webmanifest", s.manifest)
+	mux.HandleFunc("POST /settings/push", s.authed(s.pushSubscribe))
+	mux.HandleFunc("POST /settings/push/delete", s.authed(s.pushDelete))
+	mux.HandleFunc("POST /settings/push/test", s.authed(s.pushTest))
 	mux.HandleFunc("GET /forgot-password", s.forgotPage)
 	mux.HandleFunc("POST /forgot-password", s.forgotSubmit)
 	mux.HandleFunc("GET /reset-password", s.resetPage)
@@ -589,6 +595,9 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"pgp-unpublished":        "Your key is no longer published. Colleagues can still find it.",
 	"passkey-added":          "Passkey added. You can use it next time you sign in.",
 	"passkey-removed":        "Passkey removed.",
+	"push-saved":             "Notifications are on for this device.",
+	"push-off":               "Notifications are off for this device.",
+	"push-removed":           "That device won't get notifications any more.",
 	"calendar-unshared":      "Calendar sharing removed.",
 	"calendar-share-invalid": "Enter the address of someone in your domain, and an access level.",
 	"calendar-share-failed":  "That person couldn't be added. They must have an account in your domain.",

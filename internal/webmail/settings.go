@@ -321,6 +321,8 @@ var commonZones = []string{
 }
 
 type settingsView struct {
+	// Push is the notifications card (webpush.go); nil hides it.
+	Push             *pushSettings
 	CanRecover       bool
 	RecoveryEmail    string
 	Prefs            Settings
@@ -370,6 +372,9 @@ type settingsView struct {
 // noticeCards places each settings notice in the card it is about. The
 // cards' ids match the anchors their forms and redirects return to.
 var noticeCards = map[string]string{
+	"push-saved":           "notifications",
+	"push-off":             "notifications",
+	"push-removed":         "notifications",
 	"forwarding-saved":     "forwarding",
 	"inbox-sorted":         "tabs",
 	"categorize-failed":    "tabs",
@@ -491,6 +496,11 @@ func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view,
 		}
 		v.Settings.CanRecover = true
 		v.Settings.RecoveryEmail = rec.Email
+	}
+	if tab == "devices" {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		v.Settings.Push = s.pushSettingsFor(ctx, sess)
+		cancel()
 	}
 	if s.security != nil && (tab == "security" || tab == "devices") {
 		// The rest of the page works without the mailbox service's API, so

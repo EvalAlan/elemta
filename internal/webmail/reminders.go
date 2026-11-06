@@ -38,11 +38,26 @@ func (s *Server) remindersAPI(w http.ResponseWriter, r *http.Request, sess *Sess
 		http.Error(w, "unavailable", http.StatusBadGateway)
 		return
 	}
-	now := s.now()
+	out := remindersBetween(events, s.now(), loc, h24, reminderWindow)
+	// An open page keeps the reminders sent to the user's devices current
+	// as recurring events roll forward (webpush.go).
+	if s.security != nil && sess.AdminActor == "" {
+		if password, err := s.sessions.password(sess); err == nil {
+			s.publishFreeBusyAtSignIn(sess.User, password, sess.Address)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// remindersBetween lists the reminders that fire from a little before now
+// until ahead, and those still showing for an event about to start.
+func remindersBetween(events []Event, now time.Time, loc *time.Location, h24 bool, ahead time.Duration) []reminderJSON {
 	out := []reminderJSON{}
 	// Look back a little so a reminder due while the page was loading
 	// isn't missed, and far enough ahead for week-long reminders.
-	horizon := now.Add(reminderWindow + 7*24*time.Hour)
+	horizon := now.Add(ahead + 7*24*time.Hour)
 	for _, o := range expand(events, now.Add(-10*time.Minute), horizon) {
 		e := o.Event
 		if e.Reminder < 0 {
@@ -53,7 +68,7 @@ func (s *Server) remindersAPI(w http.ResponseWriter, r *http.Request, sess *Sess
 		// not just for a moment after it fires: a tab opened or reloaded in
 		// between still shows one that wasn't dismissed. The page keeps
 		// track of what was dismissed and what already rang.
-		if fire.After(now.Add(reminderWindow)) ||
+		if fire.After(now.Add(ahead)) ||
 			(fire.Before(now.Add(-10*time.Minute)) && o.Start.Before(now.Add(-10*time.Minute))) {
 			continue
 		}
@@ -68,9 +83,7 @@ func (s *Server) remindersAPI(w http.ResponseWriter, r *http.Request, sess *Sess
 			Title: e.Summary, When: when, Where: e.Location, URL: eventURL(e.UID, o.Start), AllDay: e.AllDay,
 		})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(out)
+	return out
 }
 
 // birthdayCalendar holds the read-only events made from contacts' birthdays.

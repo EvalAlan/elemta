@@ -783,6 +783,45 @@ docker exec elemta-rspamd-valkey valkey-cli hgetall RS
 The mailbox logs `spam feedback learned` as it works and `spam learning failed`
 when it can't reach Rspamd or the password is wrong.
 
+## Notifications on phones and computers
+
+People can have new mail and event reminders shown on their phones and
+computers with the webmail closed, using the browser's own notifications
+(Web Push). Each person turns them on per device under **Settings › Mail
+apps and sync › Notifications**, choosing all new inbox mail, only the
+Primary tab, or none; event reminders on or off; and whether the
+notification shows the sender, subject and event name or only says there is
+something new. The same card lists their devices, with a Remove button for
+each. On an iPhone or iPad the webmail must first be added to the Home
+Screen (Share, then Add to Home Screen), which also makes it an app with its
+own icon; Android and desktop browsers can install it the same way.
+
+The mailbox service sends them, so it needs outbound HTTPS to the browsers'
+push services: Google (`fcm.googleapis.com`), Mozilla
+(`*.push.services.mozilla.com`), Apple (`*.push.apple.com`) and Microsoft
+(`*.notify.windows.com`). It sends to nowhere else, whatever a browser
+claims. Messages are encrypted for the receiving browser, so the push
+services can't read them; they see only that a message was sent and its
+size. The service makes its own signing key the first time it's needed and
+keeps it in the mailbox database, so every replica uses the same one and
+nothing needs to be set up.
+
+Reminders come from the webmail, which publishes each person's upcoming
+reminders (two weeks ahead) whenever their calendar changes and hourly
+while they have it open. Someone who doesn't open the webmail for more than
+two weeks stops getting reminders for events that repeat beyond that, until
+they next do. Signing out of the webmail turns notifications off on that
+browser. Resetting someone's two-step verification in the console also
+removes all their devices, as it does their passkeys.
+
+To turn notifications off for everyone, set this in the mailbox
+configuration; the webmail then doesn't offer them:
+
+```toml
+[push]
+disabled = true
+```
+
 ## Encrypted mail
 
 Users' PGP keys are held by the mailbox service: the public key, and the private key

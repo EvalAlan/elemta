@@ -68,7 +68,11 @@ type Message struct {
 	Size     int64
 	Checksum string
 }
-type AppendResult struct{ Validity, UID uint32 }
+type AppendResult struct {
+	Validity, UID uint32
+	// Duplicate is a retried delivery that was already stored.
+	Duplicate bool
+}
 type Engine struct {
 	DB          *sql.DB
 	Bodies      BodyStore
@@ -659,6 +663,7 @@ func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, f
 		reserved = false
 		published = true
 	}
+	result.Duplicate = duplicate
 	return result, err
 }
 func change(ctx context.Context, tx *sql.Tx, folder int64, modseq uint64, kind string, uid uint32) error {

@@ -334,3 +334,43 @@ CREATE TABLE IF NOT EXISTS mailbox_pgp_pins (
     fingerprint text NOT NULL,
     PRIMARY KEY (account, address)
 );
+-- Web Push (push.go). One VAPID key pair for the whole service, made by
+-- whichever replica first needs it.
+CREATE TABLE IF NOT EXISTS mailbox_push_keys (
+    id integer PRIMARY KEY CHECK (id = 1),
+    private_key text NOT NULL,
+    public_key text NOT NULL,
+    created timestamptz NOT NULL DEFAULT now()
+);
+-- A browser that asked to be notified. The endpoint belongs to one browser
+-- profile, so signing in as someone else there moves it to them.
+CREATE TABLE IF NOT EXISTS mailbox_push_subscriptions (
+    id bigserial PRIMARY KEY,
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    endpoint text NOT NULL UNIQUE,
+    p256dh text NOT NULL,
+    auth text NOT NULL,
+    label text NOT NULL DEFAULT '',
+    mail text NOT NULL DEFAULT 'all',
+    reminders boolean NOT NULL DEFAULT true,
+    preview boolean NOT NULL DEFAULT true,
+    contact text NOT NULL DEFAULT '',
+    created timestamptz NOT NULL DEFAULT now(),
+    last_sent timestamptz,
+    failures integer NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS mailbox_push_subscriptions_account ON mailbox_push_subscriptions(account);
+-- Upcoming event reminders, published by the webmail (which alone can read
+-- and expand calendars) and sent from here when they come due.
+CREATE TABLE IF NOT EXISTS mailbox_push_reminders (
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    key text NOT NULL,
+    fire_at timestamptz NOT NULL,
+    starts timestamptz NOT NULL,
+    title text NOT NULL,
+    body text NOT NULL DEFAULT '',
+    url text NOT NULL DEFAULT '',
+    sent boolean NOT NULL DEFAULT false,
+    PRIMARY KEY (account, key)
+);
+CREATE INDEX IF NOT EXISTS mailbox_push_reminders_due ON mailbox_push_reminders(fire_at) WHERE NOT sent;

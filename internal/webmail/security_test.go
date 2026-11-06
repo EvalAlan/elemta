@@ -15,11 +15,17 @@ import (
 
 // fakeSecurity stands in for the mailbox service's account-security API.
 type fakeSecurity struct {
-	mu          sync.Mutex
-	totp        bool
-	appRequired bool
-	codeUsed    bool
-	created     []string
+	mu sync.Mutex
+	// Web Push (webpush.go): the key ("" is push off), the devices, and
+	// what was asked of it.
+	pushKey       string
+	pushDevices   []pushDevice
+	pushCalls     []map[string]any
+	pushReminders []any
+	totp          bool
+	appRequired   bool
+	codeUsed      bool
+	created       []string
 	// The class of service the check reports.
 	protocols        map[string]bool
 	requireTwoFactor bool
@@ -173,6 +179,25 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 			return
 		case r.URL.Path == "/v1/directory":
 			_ = json.NewEncoder(w).Encode(f.directory)
+			return
+		case r.URL.Path == "/v1/push":
+			devices := f.pushDevices
+			if devices == nil {
+				devices = []pushDevice{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"key": f.pushKey, "devices": devices})
+			return
+		case r.URL.Path == "/v1/push/reminders":
+			f.pushReminders, _ = in["reminders"].([]any)
+			_ = json.NewEncoder(w).Encode(map[string]int{"stored": len(f.pushReminders)})
+			return
+		case strings.HasPrefix(r.URL.Path, "/v1/push/"):
+			if in == nil {
+				in = map[string]any{}
+			}
+			in["path"] = r.Method + " " + r.URL.Path
+			f.pushCalls = append(f.pushCalls, in)
+			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 			return
 		case r.URL.Path == "/v1/freebusy" && r.Method == http.MethodPut:
 			f.published = in

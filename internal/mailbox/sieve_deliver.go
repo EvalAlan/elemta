@@ -23,6 +23,7 @@ import (
 	"errors"
 	"net/mail"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -154,13 +155,11 @@ func (s *Service) deliver(ctx context.Context, d delivery) error {
 	if p := d.account.Policy; p != nil && !p.Filters {
 		// Filters turned off by the class of service: stored scripts stay,
 		// unused, so turning filters back on restores them.
-		_, err := s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, withCategory(nil, d.category), time.Now(), d.token)
-		return err
+		return s.appendDelivered(ctx, d, "INBOX", nil, d.token)
 	}
 	script, err := s.engine.ActiveScript(ctx, d.account.ID)
 	if errors.Is(err, ErrNotFound) {
-		_, err = s.engine.Append(ctx, d.account.ID, "INBOX", d.raw, withCategory(nil, d.category), time.Now(), d.token)
-		return err
+		return s.appendDelivered(ctx, d, "INBOX", nil, d.token)
 	}
 	if err != nil {
 		return err
@@ -277,7 +276,17 @@ func (s *Service) store(ctx context.Context, d delivery, folder string, flags in
 		return nil
 	}
 	done[key] = true
-	_, err := s.engine.Append(ctx, d.account.ID, folder, d.raw, withCategory(flags, d.category), time.Now(), storeToken(d.token, key))
+	return s.appendDelivered(ctx, d, folder, flags, storeToken(d.token, key))
+}
+
+// appendDelivered stores a delivery, and announces it to the account's
+// browsers when it lands in the inbox for the first time.
+func (s *Service) appendDelivered(ctx context.Context, d delivery, folder string, flags interp.Flags, token string) error {
+	all := withCategory(flags, d.category)
+	res, err := s.engine.Append(ctx, d.account.ID, folder, d.raw, all, time.Now(), token)
+	if err == nil && !res.Duplicate && s.push != nil && canonicalMailbox(folder) == "INBOX" && !slices.ContainsFunc(all, func(f string) bool { return strings.EqualFold(f, `\Seen`) }) {
+		s.push.mailArrived(d.account, res.UID, d.raw, d.category)
+	}
 	return err
 }
 

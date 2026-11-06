@@ -27,6 +27,173 @@
     });
   }
 
+  // ---- notifications on this device (Web Push) ------------------------------
+  // The service worker shows what the mail server pushes (static/sw.js). This
+  // page remembers whether this browser is subscribed, so its own pop-ups for
+  // new mail and reminders stand aside and nothing shows twice.
+  var PUSH_KEY = "elemta-push";
+  function pushState() {
+    try { return JSON.parse(localStorage.getItem(PUSH_KEY) || "null"); } catch (err) { return null; }
+  }
+  function setPushState(v) {
+    try {
+      if (v) localStorage.setItem(PUSH_KEY, JSON.stringify(v));
+      else localStorage.removeItem(PUSH_KEY);
+    } catch (err) { /* private mode */ }
+  }
+  function pushHere() {
+    return !!pushState() && !!window.Notification && Notification.permission === "granted";
+  }
+  var pushSupported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  var swReady = null;
+  if ("serviceWorker" in navigator) {
+    swReady = navigator.serviceWorker.register("/sw.js").then(function () { return navigator.serviceWorker.ready; });
+    swReady.catch(function () { /* no worker: no notifications, nothing else lost */ });
+  }
+  function postJSON(url, data) {
+    return fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "X-CSRF-Token": csrf, "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    }).then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    });
+  }
+  function subscriptionBody(sub, prefs) {
+    var j = sub.toJSON();
+    return { endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, mail: prefs.mail, reminders: prefs.reminders, preview: prefs.preview };
+  }
+  // Once a day, tell the server this browser's subscription again: browsers
+  // replace them now and then, and the server forgets ones that stop working.
+  if (pushSupported && swReady && pushState() && body.getAttribute("data-app")) {
+    var pushSaved = pushState();
+    if (!pushSaved.synced || Date.now() - pushSaved.synced > 86400000) {
+      swReady.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+        if (!sub) { setPushState(null); return; }
+        return postJSON("/settings/push", subscriptionBody(sub, pushSaved)).then(function () {
+          pushSaved.synced = Date.now();
+          pushSaved.endpoint = sub.endpoint;
+          setPushState(pushSaved);
+        });
+      }).catch(function () { /* try again next time */ });
+    }
+  }
+  // Signing out stops this browser's notifications, so the next person to
+  // use it doesn't see someone else's mail arriving.
+  var logout = $("form[data-logout]");
+  if (logout) {
+    logout.addEventListener("submit", function (e) {
+      var st = pushState();
+      if (!st || !swReady || logout.hasAttribute("data-push-cleared")) return;
+      e.preventDefault();
+      logout.setAttribute("data-push-cleared", "");
+      var finished = false;
+      var done = function () {
+        if (finished) return;
+        finished = true;
+        setPushState(null);
+        logout.submit();
+      };
+      setTimeout(done, 3000);
+      swReady.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+        var endpoint = sub ? sub.endpoint : st.endpoint;
+        return postJSON("/settings/push/delete", { endpoint: endpoint }).catch(function () {}).then(function () {
+          return sub ? sub.unsubscribe() : null;
+        });
+      }).catch(function () {}).then(done);
+    });
+  }
+  // The settings card.
+  var pushCard = $("#notifications[data-push-key]");
+  if (pushCard) {
+    var standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+    var ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    var pushForm = $("[data-push-form]", pushCard);
+    var pushStatus = $("[data-push-status]", pushCard);
+    var say = function (text) { pushStatus.textContent = text; };
+    if (!pushSupported || !swReady) {
+      $(ios && !standalone ? "[data-push-ios]" : "[data-push-unsupported]", pushCard).hidden = false;
+    } else if (Notification.permission === "denied") {
+      $("[data-push-blocked]", pushCard).hidden = false;
+    } else {
+      pushForm.hidden = false;
+      var keyBytes = function () {
+        var s = pushCard.getAttribute("data-push-key").replace(/-/g, "+").replace(/_/g, "/");
+        var raw = atob(s + "===".slice((s.length + 3) % 4));
+        var out = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+        return out;
+      };
+      var prefs = function () {
+        return { mail: pushForm.elements.mail.value, reminders: pushForm.elements.reminders.checked, preview: pushForm.elements.preview.checked };
+      };
+      var current = null;
+      swReady.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+        current = sub;
+        var known = sub && $$("tr[data-endpoint]", pushCard).filter(function (tr) { return tr.getAttribute("data-endpoint") === sub.endpoint; })[0];
+        if (!sub || !known) {
+          // Not subscribed, or the server dropped it: offer to turn it on.
+          if (!sub) setPushState(null);
+          return;
+        }
+        $("[data-this-device]", known).hidden = false;
+        var st = pushState() || {};
+        if (st.mail) pushForm.elements.mail.value = st.mail;
+        if (st.reminders !== undefined) pushForm.elements.reminders.checked = st.reminders;
+        if (st.preview !== undefined) pushForm.elements.preview.checked = st.preview;
+        $("[data-push-save]", pushCard).textContent = "Save";
+        $("[data-push-test]", pushCard).hidden = false;
+        $("[data-push-off]", pushCard).hidden = false;
+      }).catch(function () {});
+      pushForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        say("");
+        // Asked from the click itself: browsers only allow the question then.
+        Notification.requestPermission().then(function (perm) {
+          if (perm !== "granted") throw new Error(perm === "denied" ? "blocked" : "dismissed");
+          return swReady;
+        }).then(function (reg) {
+          return reg.pushManager.getSubscription().then(function (sub) {
+            return sub || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes() });
+          });
+        }).then(function (sub) {
+          var p = prefs();
+          return postJSON("/settings/push", subscriptionBody(sub, p)).then(function () {
+            p.endpoint = sub.endpoint;
+            p.synced = Date.now();
+            setPushState(p);
+            location.href = "/settings/devices?n=push-saved#notifications";
+          });
+        }).catch(function (err) {
+          if (err && err.message === "blocked") {
+            pushForm.hidden = true;
+            $("[data-push-blocked]", pushCard).hidden = false;
+            return;
+          }
+          say(err && err.message === "dismissed" ? "Notifications weren't allowed. Try again, and choose Allow." : "Notifications couldn't be turned on. Try again in a moment.");
+        });
+      });
+      $("[data-push-test]", pushCard).addEventListener("click", function () {
+        if (!current) return;
+        say("Sending…");
+        postJSON("/settings/push/test", { endpoint: current.endpoint }).then(function () {
+          say("Sent. It should appear in a few seconds.");
+        }).catch(function () { say("The test couldn't be sent. Wait a few seconds and try again."); });
+      });
+      $("[data-push-off]", pushCard).addEventListener("click", function () {
+        if (!current) return;
+        postJSON("/settings/push/delete", { endpoint: current.endpoint }).catch(function () {}).then(function () {
+          return current.unsubscribe();
+        }).then(function () {
+          setPushState(null);
+          location.href = "/settings/devices?n=push-off#notifications";
+        }).catch(function () { say("Notifications couldn't be turned off. Try again in a moment."); });
+      });
+    }
+  }
+
   // ---- confirmations -------------------------------------------------------
   // A button or link with a non-empty data-confirm asks first.
   doc.addEventListener("click", function (e) {
@@ -727,7 +894,8 @@
   }
 
   function notifyNew(added) {
-    if (!doc.hidden || !window.Notification || Notification.permission !== "granted" || !added.length) return;
+    // With notifications on for this device, the service worker shows them.
+    if (!doc.hidden || !window.Notification || Notification.permission !== "granted" || !added.length || pushHere()) return;
     try {
       if (added.length === 1) {
         var n = new Notification(added[0].from.trim() || "New mail", { body: added[0].subject.trim(), tag: "elemta-new-mail" });
@@ -1322,7 +1490,7 @@
       if (audio && audio.state !== "running") { try { audio.resume(); } catch (err) { /* no sound, then */ } }
       playTone(sound);
     }
-    if (window.Notification && Notification.permission === "granted") {
+    if (window.Notification && Notification.permission === "granted" && !pushHere()) {
       try {
         // requireInteraction: a reminder that slips away after a few seconds,
         // unseen, is no reminder.

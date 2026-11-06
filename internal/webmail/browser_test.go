@@ -16,9 +16,11 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +33,7 @@ import (
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/device"
 
 	"github.com/EvalAlan/elemta/internal/mailcategory"
 )
@@ -1145,5 +1148,67 @@ func TestBrowserUndoSend(t *testing.T) {
 	case <-b.h.sub.sent:
 	case <-time.After(3 * time.Second):
 		t.Fatal("the message wasn't sent")
+	}
+}
+
+// Notifications: the settings card offers them where the browser can show
+// them, the service worker is in place, and signing out with them on still
+// signs out (taking this browser's subscription with it).
+func TestBrowserPushSettings(t *testing.T) {
+	b := newBrowser(t)
+	f := &fakeSecurity{pushKey: "BEXAMPLEKEY", pushDevices: []pushDevice{{ID: 3, Endpoint: "https://fcm.googleapis.com/fcm/send/other", Label: "Chrome on Android", Mail: "all", Reminders: true}}}
+	api := httptest.NewServer(f.handler(t))
+	t.Cleanup(api.Close)
+	b.h.server.security = newSecurityClient(api.URL)
+	// The fake mailbox service knows dana.
+	b.run(
+		chromedp.Navigate(b.url("/login")),
+		chromedp.SendKeys(chromedp.ID("user"), "dana"),
+		chromedp.SendKeys(chromedp.ID("password"), "secret"),
+		chromedp.Submit(chromedp.ID("password")),
+		chromedp.WaitVisible(chromedp.CSS(`[data-ctx="message"]`)),
+	)
+	b.waitFor(`document.readyState === "complete" && !document.body.hasAttribute("data-detect-tz")`)
+	b.run(chromedp.Navigate(b.url("/settings/devices")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector("[data-push-form]") && !document.querySelector("[data-push-form]").hidden`)
+	if got := evalAs[string](b, `document.querySelector("[data-push-save]").textContent`); got != "Turn on for this device" {
+		t.Errorf("button = %q", got)
+	}
+	if !evalAs[bool](b, `document.querySelector("[data-this-device]").hidden`) {
+		t.Error("another device is marked as this one")
+	}
+	b.waitFor(`window.__sw === true || (navigator.serviceWorker.getRegistration().then(r => { window.__sw = !!r && r.scope === location.origin + "/"; }), false)`)
+	// Readable and within the window, on a desktop and a phone, light and dark.
+	for _, width := range []struct {
+		name string
+		set  chromedp.Action[chromedp.Void]
+	}{{"desktop", chromedp.EmulateViewport(1400, 900)}, {"phone", chromedp.Emulate(device.IPhone13)}} {
+		b.run(width.set)
+		for _, theme := range []string{"light", "dark"} {
+			b.run(chromedp.Evaluate[chromedp.Void](`document.documentElement.setAttribute("data-theme", "`+theme+`"); document.getElementById("notifications").scrollIntoView()`, chromedp.EvalAsValue))
+			for _, p := range evalAs[[]string](b, layoutCheck) {
+				t.Errorf("%s/%s: %s", width.name, theme, p)
+			}
+			if dir := os.Getenv("ELEMTA_SCREENSHOTS"); dir != "" {
+				if png, err := chromedp.Run(b.ctx, chromedp.CaptureScreenshot()); err == nil {
+					_ = os.WriteFile(filepath.Join(dir, "push-"+width.name+"-"+theme+".png"), png, 0o600)
+				}
+			}
+		}
+	}
+	b.run(chromedp.EmulateViewport(1400, 900))
+
+	// Signing out with notifications marked on asks the server to forget
+	// this browser's subscription, then signs out.
+	b.run(chromedp.Evaluate[chromedp.Void](`localStorage.setItem("elemta-push", JSON.stringify({endpoint: "https://fcm.googleapis.com/fcm/send/mine", mail: "all"}))`, chromedp.EvalAsValue))
+	b.run(chromedp.Click(chromedp.CSS(`form[data-logout] button`)))
+	b.waitFor(`location.pathname === "/login"`)
+	if evalAs[bool](b, `localStorage.getItem("elemta-push") !== null`) {
+		t.Error("the push state outlived signing out")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.pushCalls) != 1 || f.pushCalls[0]["endpoint"] != "https://fcm.googleapis.com/fcm/send/mine" {
+		t.Errorf("push calls = %v", f.pushCalls)
 	}
 }

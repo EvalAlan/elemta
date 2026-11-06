@@ -75,6 +75,9 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			if strings.HasPrefix(r.URL.Path, "/v1/security/pgp") {
 				limit = 3 * maxPGPKey // a key pair, armored
 			}
+			if r.URL.Path == "/v1/push/reminders" {
+				limit = 1 << 19 // maxPushReminders of them
+			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 			defer cancel()
@@ -308,6 +311,65 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			return nil, err
 		}
 		return map[string]string{"address": address, "token": token}, nil
+	})
+	// Notifications to the user's browsers (push.go). Without push, the
+	// webmail is told there is no key and doesn't offer them.
+	handle("GET /v1/push", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		if s.push == nil {
+			return map[string]any{"key": "", "devices": []PushDevice{}}, nil
+		}
+		key, err := s.push.PublicKey(r.Context())
+		if err != nil {
+			return nil, err
+		}
+		devices, err := s.engine.PushDevices(r.Context(), a.account.ID)
+		return map[string]any{"key": key, "devices": devices}, err
+	})
+	handle("PUT /v1/push/subscriptions", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		if s.push == nil {
+			return nil, ErrNotFound
+		}
+		var in PushSubscribe
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		id, err := s.engine.PutPushSubscription(r.Context(), a.account.ID, in, s.push.checkEndpoint)
+		return map[string]int64{"id": id}, err
+	})
+	handle("POST /v1/push/subscriptions/delete", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			ID       int64  `json:"id"`
+			Endpoint string `json:"endpoint"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.DeletePushSubscription(r.Context(), a.account.ID, in.ID, in.Endpoint)
+	})
+	handle("POST /v1/push/test", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		if s.push == nil {
+			return nil, ErrNotFound
+		}
+		var in struct {
+			Endpoint string `json:"endpoint"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.push.test(r.Context(), a.account, in.Endpoint)
+	})
+	handle("PUT /v1/push/reminders", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Reminders []PushReminder `json:"reminders"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if s.push == nil {
+			return map[string]int{"stored": 0}, nil
+		}
+		n, err := s.engine.SetPushReminders(r.Context(), a.account.ID, in.Reminders)
+		return map[string]int{"stored": n}, err
 	})
 	// The user's allowed and blocked senders (sender_rules.go).
 	senderMax := func(a securityAuth) int {

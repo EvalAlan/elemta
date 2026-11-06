@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="{{asset "apple-touch-icon.png"}}">
+<meta name="theme-color" content="#0F172A">
 <title>{{if .Title}}{{.Title}} · {{end}}Elemta Mail</title>
 <link rel="stylesheet" href="{{asset "tidewater.css"}}">
 <script src="{{asset "app.js"}}" defer></script>
@@ -43,7 +46,7 @@
     </form>
     {{if not .Session.AdminActor}}<a class="icon-link" href="/settings" title="Settings"{{if eq .App "settings"}} aria-current="page"{{end}}>{{template "icon-gear"}}<span class="visually-hidden">Settings</span></a>{{end}}
     <span class="avatar" title="{{.Session.Address}}">{{initials (addrOf .Session.Address)}}</span>
-    <form action="/logout" method="post">
+    <form action="/logout" method="post" data-logout>
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
       <button class="link-button" type="submit">Sign out</button>
     </form>
