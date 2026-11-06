@@ -74,13 +74,13 @@
   --chrome-line: #263349;
   --chrome-accent: #60A5FA;
   --chrome-placeholder: #7C8BA1;
-  --on-accent: #FFFFFF;
+  --on-accent: #0A0F1A; /* dark on the light-blue accent: white was 3.7:1 */
   --line: #263349;
   --line-soft: #1B2537;
   --accent: #3B82F6;
   --accent-dark: #60A5FA;
   /* Button hover: darker for white text, lighter for the dark teal text. */
-  --accent-hover: #2563EB;
+  --accent-hover: #60A5FA;
   --accent-soft: #172A4A;
   --danger: #F87171;
   --danger-soft: #3B1518;
@@ -116,13 +116,13 @@
     --chrome-line: #263349;
     --chrome-accent: #60A5FA;
     --chrome-placeholder: #7C8BA1;
-    --on-accent: #FFFFFF;
+    --on-accent: #0A0F1A; /* dark on the light-blue accent: white was 3.7:1 */
     --line: #263349;
     --line-soft: #1B2537;
     --accent: #3B82F6;
     --accent-dark: #60A5FA;
     /* Button hover: darker for white text, lighter for the dark teal text. */
-    --accent-hover: #2563EB;
+    --accent-hover: #60A5FA;
     --accent-soft: #172A4A;
     --danger: #F87171;
     --danger-soft: #3B1518;
@@ -1632,7 +1632,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .form-grid > label, .form-grid > .label { color: var(--muted); }
 .form-grid input[type="text"], .form-grid input[type="email"], .form-grid input[type="tel"], .form-grid input[type="url"], .form-grid input[type="date"], .form-grid input[type="time"], .form-grid input[type="number"], .form-grid select, .form-grid textarea, .pair input { min-height: 38px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; width: 100%; max-width: 520px; }
 .form-grid textarea { padding: 8px 10px; resize: vertical; font: inherit; }
-.form-grid select { width: auto; }
+.form-grid select { width: auto; max-width: 100%; }
 .form-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .pair { display: flex; gap: 8px; max-width: 520px; }
 .pair select { flex: 0 0 auto; }
@@ -1854,7 +1854,10 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
   .message, .event-view { padding: 16px; }
   .compose { margin: 0; border-radius: 0; border-left: 0; border-right: 0; }
   .page { margin: 12px; }
-  .form-grid { grid-template-columns: 1fr; }
+  /* minmax(0, ...): a plain 1fr can't shrink below its widest child, and a
+     select is as wide as its longest option, which pushed Settings past a
+     phone's width. */
+  .form-grid { grid-template-columns: minmax(0, 1fr); }
   .month .day { min-height: 72px; }
   .chip-ev .t { display: none; }
   .agenda-item { grid-template-columns: 90px 10px 1fr; }
@@ -2186,7 +2189,7 @@ a.folder.drop-target { background: var(--accent-soft); color: var(--accent-dark)
 .tb-color { position: relative; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
 .tb-color input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0; }
 .tb-a { font-weight: 700; text-decoration: underline; text-decoration-color: #c0392b; text-decoration-thickness: 3px; }
-.tb-hl { color: #e6c700; }
+.tb-hl { color: #e6c700; } /* a colour sample, not text */
 .tb.danger { color: var(--danger); }
 .image-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line-soft); }
 .editor img { max-width: 100%; height: auto; cursor: pointer; }
