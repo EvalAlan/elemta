@@ -31,6 +31,8 @@ import (
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+
+	"github.com/EvalAlan/elemta/internal/mailcategory"
 )
 
 type browser struct {
@@ -1035,5 +1037,56 @@ func TestBrowserDragMessagesToFolder(t *testing.T) {
 	b.h.store.mu.Unlock()
 	if dest != "Junk" {
 		t.Errorf("message 7 moved to %q, want Junk", dest)
+	}
+}
+
+// With inbox tabs on, a message moves to a tab from its right-click menu or
+// by being dragged onto the tab.
+func TestBrowserMoveMessageToTab(t *testing.T) {
+	b := newBrowser(t)
+	if err := b.h.store.PutObject(context.Background(), CollSettings, Object{ID: settingsID, ContentType: "application/json", Data: []byte(`{"inbox_tabs":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	b.login()
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".inbox-tabs a.inbox-tab[data-category]")`)
+	hasKeyword := func(c mailcategory.Category) bool {
+		b.h.store.mu.Lock()
+		defer b.h.store.mu.Unlock()
+		return b.h.store.flags[7][c.Keyword()]
+	}
+
+	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+	nodes, err := chromedp.Run(ctx, chromedp.Nodes(chromedp.CSS(`[data-ctx="message"]`), chromedp.NodeVisible))
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.run(chromedp.MouseClickNode(nodes[0], chromedp.ButtonRight), chromedp.WaitVisible(chromedp.CSS(".ctx-menu")))
+	b.run(chromedp.Evaluate[chromedp.Void](`[...document.querySelectorAll(".ctx-menu .ctx-item")].find(e => e.textContent.startsWith("Move to tab")).click()`, chromedp.EvalAsValue))
+	labels := evalAs[[]string](b, `[...document.querySelectorAll(".ctx-menu .ctx-item")].map(e => e.textContent)`)
+	if strings.Join(labels, "|") != "✓ Primary|Social|Promotions|Updates|Forums" {
+		t.Errorf("tab menu = %q", labels)
+	}
+	b.run(chromedp.Evaluate[chromedp.Void](`window.__before = true; [...document.querySelectorAll(".ctx-menu .ctx-item")].find(e => e.textContent === "Social").click()`, chromedp.EvalAsValue))
+	b.waitFor(`!window.__before && document.readyState === "complete"`)
+	if !hasKeyword(mailcategory.Social) {
+		t.Error("the menu didn't move the message to Social")
+	}
+
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".messages li[data-uid] a.row")`)
+	b.run(chromedp.Evaluate[chromedp.Void](`(() => {
+		window.__before = true;
+		const dt = new DataTransfer();
+		const row = document.querySelector(".messages li[data-uid] a.row");
+		const tab = document.querySelector('a.inbox-tab[data-category="promotions"]');
+		row.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }));
+		tab.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+		tab.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+	})()`, chromedp.EvalAsValue))
+	b.waitFor(`!window.__before && document.readyState === "complete"`)
+	if !hasKeyword(mailcategory.Promotions) || hasKeyword(mailcategory.Social) {
+		t.Error("dropping on Promotions didn't move the message there")
 	}
 }

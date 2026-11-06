@@ -25,7 +25,7 @@
       </div>
       {{with .InboxTabs}}
       <nav class="inbox-tabs" aria-label="Inbox tabs">
-        {{range .}}<a class="inbox-tab" href="{{.URL}}"{{if .Active}} aria-current="page"{{end}}>{{.Label}}{{if .Unread}} <span class="tab-count mono">{{.Unread}}</span>{{end}}</a>{{end}}
+        {{range .}}<a class="inbox-tab" href="{{.URL}}" data-category="{{.Name}}" data-label="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{.Label}}{{if .Unread}} <span class="tab-count mono">{{.Unread}}</span>{{end}}</a>{{end}}
       </nav>
       <input type="hidden" name="tab" value="{{$.List.Tab}}">
       {{end}}
