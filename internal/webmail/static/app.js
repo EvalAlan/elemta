@@ -81,9 +81,9 @@
     }
   }
   // Signing out stops this browser's notifications, so the next person to
-  // use it doesn't see someone else's mail arriving.
-  var logout = $("form[data-logout]");
-  if (logout) {
+  // use it doesn't see someone else's mail arriving. There are two sign-out
+  // forms: the top bar's, and the one in a phone's account menu.
+  $$("form[data-logout]").forEach(function (logout) {
     logout.addEventListener("submit", function (e) {
       var st = pushState();
       if (!st || !swReady || logout.hasAttribute("data-push-cleared")) return;
@@ -104,7 +104,7 @@
         });
       }).catch(function () {}).then(done);
     });
-  }
+  });
   // The settings card.
   var pushCard = $("#notifications[data-push-key]");
   if (pushCard) {
@@ -269,18 +269,75 @@
   // The toggle flips whichever theme is showing, including one that came
   // from the device's setting, applies it at once and saves it in the
   // background. Without script the button's form posts and reloads.
-  var toggle = $("[data-theme-toggle]");
-  if (toggle) {
+  // There are two: the top bar's, and the one in a phone's account menu.
+  var toggles = $$("[data-theme-toggle]");
+  toggles.forEach(function (toggle) {
     toggle.addEventListener("click", function (e) {
       e.preventDefault();
       var current = root.getAttribute("data-theme") ||
         (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
       var next = current === "dark" ? "light" : "dark";
       root.setAttribute("data-theme", next);
-      toggle.value = next === "dark" ? "light" : "dark";
+      toggles.forEach(function (t) { t.value = next === "dark" ? "light" : "dark"; });
       post("/settings/theme", { theme: next });
     });
+  });
+
+  // ---- phone layout --------------------------------------------------------
+  // On a phone the sidebar (folders, the mini calendar, settings' sections)
+  // becomes a drawer behind the top bar's menu button, so the page starts
+  // with mail rather than navigation. Without script it stays a strip above
+  // the content.
+  var phone = window.matchMedia ? window.matchMedia("(max-width: 720px)") : { matches: false };
+  var drawerButton = $("[data-drawer]");
+  var sidebar = $("#sidebar");
+  var backdrop = $("[data-drawer-close]");
+  if (drawerButton && sidebar && backdrop && sidebar.children.length) {
+    root.classList.add("has-drawer");
+    drawerButton.hidden = false;
+    var setDrawer = function (open) {
+      root.classList.toggle("drawer-open", open);
+      drawerButton.setAttribute("aria-expanded", open ? "true" : "false");
+      backdrop.hidden = !open;
+      if (open) {
+        var first = $("[aria-current=page], a, button, select", sidebar);
+        if (first) first.focus({ preventScroll: true });
+      }
+    };
+    drawerButton.addEventListener("click", function () { setDrawer(!root.classList.contains("drawer-open")); });
+    backdrop.addEventListener("click", function () { setDrawer(false); });
+    doc.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && root.classList.contains("drawer-open")) {
+        setDrawer(false);
+        drawerButton.focus();
+      }
+    });
+    // Following a link in the drawer closes it, so Back doesn't reopen it.
+    sidebar.addEventListener("click", function (e) {
+      if (phone.matches && e.target.closest("a[href]")) setDrawer(false);
+    });
   }
+  // The search box's hint of operators doesn't fit a phone's top bar.
+  var searchBox = $("#q[data-short-placeholder]");
+  if (searchBox) {
+    var longHint = searchBox.placeholder;
+    var fitHint = function () { searchBox.placeholder = phone.matches ? searchBox.getAttribute("data-short-placeholder") : longHint; };
+    fitHint();
+    if (phone.addEventListener) phone.addEventListener("change", fitHint);
+  }
+  // Tables of a few columns read as a card per row on a phone (CSS .stack);
+  // each cell is labelled with its column's heading.
+  $$(".page table.table").forEach(function (table) {
+    var heads = $$("thead th", table).map(function (th) { return th.textContent.trim(); });
+    if (!heads.length) return;
+    $$("tbody tr", table).forEach(function (tr) {
+      Array.prototype.forEach.call(tr.cells, function (cell, i) {
+        // A cell of buttons names itself; "Remove: Remove" helps no one.
+        if (heads[i] && !cell.hasAttribute("data-label") && !cell.querySelector("button, form, a.button")) cell.setAttribute("data-label", heads[i]);
+      });
+    });
+    table.classList.add("stack");
+  });
 
   // ---- appearance preview --------------------------------------------------
   // Settings' theme and colour scheme repaint the page as they're chosen, so

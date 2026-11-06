@@ -79,6 +79,7 @@ func TestBrowserVisualQA(t *testing.T) {
 	b.login()
 	shots := os.Getenv("ELEMTA_SCREENSHOTS")
 	pages := map[string]string{
+		"inbox":    "/mail?f=INBOX",
 		"mail":     "/mail?f=INBOX&uid=7",
 		"calendar": "/calendar?view=week",
 		"compose":  "/compose",
@@ -97,6 +98,9 @@ func TestBrowserVisualQA(t *testing.T) {
 		for page, path := range pages {
 			b.run(chromedp.Navigate(b.url(path)))
 			b.waitFor(`document.readyState === "complete"`)
+			if width.name == "phone" {
+				problems = append(problems, phoneChrome(b, page)...)
+			}
 			for _, palette := range visualPalettes {
 				for _, theme := range []string{"light", "dark"} {
 					b.run(chromedp.Evaluate[chromedp.Void](fmt.Sprintf(`(() => { const h = document.documentElement; h.setAttribute("data-theme", %q); if (%q) h.setAttribute("data-palette", %q); else h.removeAttribute("data-palette"); })()`, theme, palette, palette), chromedp.EvalAsValue))
@@ -127,4 +131,69 @@ func paletteLabel(p string) string {
 		return "default"
 	}
 	return p
+}
+
+// phoneChrome checks that a phone's screen goes to the page rather than
+// its navigation: the content starts within the top eighth of the screen,
+// and an open message's subject within the top quarter. Overflow checks
+// passed while the phone layout stacked the computer's sidebar and toolbars
+// above the mail, half a screen of them.
+func phoneChrome(b *browser, page string) []string {
+	var problems []string
+	got := evalAs[map[string]float64](b, `(() => {
+		const h = window.innerHeight;
+		const top = (sel) => { const el = document.querySelector(sel); return el ? el.getBoundingClientRect().top / h : -1; };
+		return { main: top("#main"), subject: top("[data-message-subject]"), apps: top(".apps") };
+	})()`)
+	if got["main"] > 0.125 {
+		problems = append(problems, fmt.Sprintf("phone/%s: the page starts %.0f%% down the screen", page, got["main"]*100))
+	}
+	if page == "mail" && (got["subject"] < 0 || got["subject"] > 0.25) {
+		problems = append(problems, fmt.Sprintf("phone/%s: the subject starts %.0f%% down the screen", page, got["subject"]*100))
+	}
+	if page != "compose" && got["apps"] < 0.85 { // composing hides the app bar
+		problems = append(problems, fmt.Sprintf("phone/%s: the apps aren't along the bottom (%.0f%%)", page, got["apps"]*100))
+	}
+	return problems
+}
+
+// On a phone the folders are in a drawer behind the menu button: it opens
+// over the page, a folder in it is reachable, and Escape closes it. The
+// account menu holds sign out, and a message's More menu holds the actions
+// its one-row toolbar leaves out.
+func TestBrowserPhoneDrawerAndMenus(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.login()
+	b.run(chromedp.Emulate(device.IPhone13))
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !document.querySelector("[data-drawer]").hidden`)
+	visible := `(sel) => { const el = document.querySelector(sel); if (!el) return false; const r = el.getBoundingClientRect(); return getComputedStyle(el).visibility === "visible" && r.right > 0 && r.left < innerWidth && r.width > 0; }`
+	if evalAs[bool](b, `(`+visible+`)(".sidebar .folder")`) {
+		t.Fatal("the folders show before the drawer is opened")
+	}
+	b.run(chromedp.Click(chromedp.CSS("[data-drawer]")))
+	b.waitFor(`(` + visible + `)(".sidebar .folder[data-folder='INBOX']")`)
+	if evalAs[string](b, `document.querySelector("[data-drawer]").getAttribute("aria-expanded")`) != "true" {
+		t.Error("the menu button doesn't say the drawer is open")
+	}
+	b.run(chromedp.KeyEvent("\x1b")) // Escape
+	b.waitFor(`!document.documentElement.classList.contains("drawer-open")`)
+
+	// The account menu: sign out and settings, which the top bar no longer shows.
+	b.run(chromedp.Click(chromedp.CSS(".account-menu > summary")))
+	if !evalAs[bool](b, `(`+visible+`)(".account-menu .menu-body") && [...document.querySelectorAll(".account-menu button")].some(b => b.textContent.includes("Sign out"))`) {
+		t.Error("the account menu doesn't offer sign out")
+	}
+
+	// A message: one row of controls; Reply all is in More.
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX&uid=7")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".reader .toolbar")`)
+	if h := evalAs[float64](b, `document.querySelector(".reader .toolbar").getBoundingClientRect().height`); h > 60 {
+		t.Errorf("the message toolbar is %.0fpx tall: more than one row", h)
+	}
+	b.run(chromedp.Click(chromedp.CSS(`.toolbar summary[title="More"]`)))
+	if !evalAs[bool](b, `[...document.querySelectorAll(".toolbar details[open] a")].some(a => a.textContent === "Reply all" && a.getBoundingClientRect().width > 0)`) {
+		t.Error("Reply all isn't in More on a phone")
+	}
 }
