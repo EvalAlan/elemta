@@ -47,9 +47,9 @@ echo "== MTA and secrets"
 for f in mta/elemta_queue.tar.gz mta/elemta_config.tar.gz; do
     tar -tzf "$in/$f" >/dev/null
 done
-tar -tzf "$in/mta/elemta_config.tar.gz" | grep -q 'elemta.toml$' || { echo "No elemta.toml in the runtime configuration" >&2; exit 1; }
+tar -tzf "$in/mta/elemta_config.tar.gz" | grep 'elemta.toml$' >/dev/null || { echo "No elemta.toml in the runtime configuration" >&2; exit 1; }
 if [ -d "$in/rspamd" ]; then
-    tar -tzf "$in/rspamd/rspamd_valkey_data.tar.gz" | grep -q 'dump.rdb$' || { echo "The spam filter's Valkey snapshot is missing" >&2; exit 1; }
+    tar -tzf "$in/rspamd/rspamd_valkey_data.tar.gz" | grep 'dump.rdb$' >/dev/null || { echo "The spam filter's Valkey snapshot is missing" >&2; exit 1; }
     tar -tzf "$in/rspamd/rspamd_data.tar.gz" >/dev/null
 fi
 if [ -f "$in/secrets.tar.gz" ]; then
