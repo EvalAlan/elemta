@@ -1,0 +1,4 @@
+# git archive writes the commit it was made from into COMMIT, so a deploy
+# made with `git archive` (docs/cloud-dev.md) knows exactly what it runs,
+# and every backup records it (scripts/backup.sh).
+COMMIT export-subst

@@ -108,6 +108,11 @@ fi
     # From a mailbox replica: they run throughout, while the MTA may have
     # been stopped for a quiet backup.
     echo "version=$(docker exec "$mailbox" /app/elemta version 2>/dev/null | tail -1)"
+    # The exact source, so a restore on a new host checks out the same code:
+    # from a git checkout, or from COMMIT, which git archive fills in.
+    commit=$(git -C "$root" rev-parse HEAD 2>/dev/null || true)
+    [ -n "$commit" ] || commit=$(sed -n '/^[0-9a-f]\{40\}$/p' "$root/COMMIT" 2>/dev/null || true)
+    echo "commit=${commit:-unknown}"
     echo "ldap_entries=$(grep -c '^dn: ' "$stage/ldap/data.ldif")"
     (cd "$stage" && find . -type f ! -name manifest ! -name complete ! -path './mailbox/*' | sort | while read -r f; do
         echo "sha256 $(sha256sum "$f" | cut -d ' ' -f 1) $f"
