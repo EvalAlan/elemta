@@ -2174,6 +2174,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .chip-ev.dragging, .ev.dragging { pointer-events: none; opacity: .85; box-shadow: var(--shadow); z-index: 5; }
 body.cal-dragging, body.cal-dragging * { cursor: grabbing !important; }
 /* Dragging messages onto a folder. */
+a.inbox-tab.drop-target { background: var(--accent-soft); color: var(--accent-dark); outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 6px 6px 0 0; }
 a.folder.drop-target { background: var(--accent-soft); color: var(--accent-dark); outline: 2px dashed var(--accent); outline-offset: -2px; }
 .drag-ghost { position: fixed; top: -100px; left: 0; padding: 6px 10px; border-radius: 6px; background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 600; }
 .ctx-sep { height: 1px; background: var(--line-soft); margin: 4px 6px; }

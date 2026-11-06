@@ -1482,6 +1482,12 @@
       .filter(function (n) { return n !== exclude; });
   }
 
+  // The inbox tab being shown, empty when the list isn't split into tabs.
+  function currentTab() {
+    var t = $('.inbox-tabs a.inbox-tab[aria-current="page"]');
+    return t ? t.getAttribute("data-category") : "";
+  }
+
   function messageMenu(row) {
     var list = row.closest("ol.messages");
     var folder = list.getAttribute("data-folder"), role = list.getAttribute("data-role");
@@ -1526,6 +1532,18 @@
     items.push({ label: "Move to", sub: function () {
       return folderTargets(folder).map(function (n) { return { label: n, run: act("move", { dest: n }) }; });
     } });
+    // With inbox tabs on, the tab bar lists them. Moving to a tab also
+    // sends the sender's later mail there, as the Tab button does.
+    var tabs = $$(".inbox-tabs a.inbox-tab[data-category]");
+    if (tabs.length) {
+      var current = currentTab();
+      items.push({ label: "Move to tab", sub: function () {
+        return tabs.map(function (t) {
+          var name = t.getAttribute("data-category");
+          return { label: (name === current ? "\u2713 " : "") + t.getAttribute("data-label"), run: act("category", { category: name, tab: current }) };
+        });
+      } });
+    }
     if (role !== "archive") items.push({ label: "Archive", run: act("archive") });
     items.push(role === "quarantine" ? { label: "Release to Inbox", run: act("notjunk") } :
       role === "junk" ? { label: "Not junk", run: act("notjunk") } : { label: "Report junk", run: act("junk") });
@@ -2067,9 +2085,11 @@
   }, true);
 
   // ---- drag messages onto a folder -----------------------------------------
-  // A message row dragged onto a folder in the sidebar moves there, with the
-  // other ticked rows if it was one of them. It posts the bulk Move, so the
-  // page comes back with the usual notice.
+  // A message row dragged onto a folder in the sidebar moves there, and one
+  // dragged onto an inbox tab moves to that tab (and teaches it the sender,
+  // as the Tab button does), with the other ticked rows if it was one of
+  // them. Each posts the bulk action, so the page comes back with the usual
+  // notice.
   var DRAG_TYPE = "application/x-elemta-messages";
   doc.addEventListener("dragstart", function (e) {
     var li = e.target.closest && e.target.closest(".messages li[data-uid]");
@@ -2090,16 +2110,17 @@
     e.dataTransfer.setDragImage(ghost, 10, 10);
     setTimeout(function () { ghost.remove(); }, 0);
   });
+  // A folder in the sidebar, or one of the inbox tabs above the list.
   function folderTarget(e) {
     if (!e.dataTransfer || Array.prototype.indexOf.call(e.dataTransfer.types, DRAG_TYPE) < 0) return null;
-    return e.target.closest && e.target.closest("a.folder[data-folder]");
+    return e.target.closest && e.target.closest("a.folder[data-folder], a.inbox-tab[data-category]");
   }
   doc.addEventListener("dragover", function (e) {
     var f = folderTarget(e);
     if (!f) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    $$("a.folder.drop-target").forEach(function (x) { if (x !== f) x.classList.remove("drop-target"); });
+    $$(".drop-target").forEach(function (x) { if (x !== f) x.classList.remove("drop-target"); });
     f.classList.add("drop-target");
   });
   doc.addEventListener("dragleave", function (e) {
@@ -2113,10 +2134,17 @@
     f.classList.remove("drop-target");
     var m;
     try { m = JSON.parse(e.dataTransfer.getData(DRAG_TYPE)); } catch (err) { return; }
+    if (!m || !m.uids.length) return;
+    var back = m.back || "/mail?f=" + encodeURIComponent(m.folder);
+    if (f.hasAttribute("data-category")) {
+      var cat = f.getAttribute("data-category"), current = currentTab();
+      if (cat !== current) submitPost("/mail/action", { f: m.folder, uid: m.uids, op: "category", category: cat, tab: current, back: back });
+      return;
+    }
     var dest = f.getAttribute("data-folder");
-    if (!m || !m.uids.length || dest === m.folder) return;
-    submitPost("/mail/action", { f: m.folder, uid: m.uids, op: "move", dest: dest, back: m.back || "/mail?f=" + encodeURIComponent(m.folder) });
+    if (dest === m.folder) return;
+    submitPost("/mail/action", { f: m.folder, uid: m.uids, op: "move", dest: dest, back: back });
   });
-  doc.addEventListener("dragend", function () { $$("a.folder.drop-target").forEach(function (x) { x.classList.remove("drop-target"); }); });
+  doc.addEventListener("dragend", function () { $$(".drop-target").forEach(function (x) { x.classList.remove("drop-target"); }); });
 
 })();
