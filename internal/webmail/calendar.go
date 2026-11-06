@@ -279,6 +279,23 @@ func (s *Server) buildCalendar(view string, date, today, now time.Time, prefs Se
 	}
 	cv.Calendars = calendarNames(events)
 	cv.NowQ = now.Hour()*4 + now.Minute()/15
+	// Occurrences come out of expand in each event's own zone: UTC for one
+	// saved before the user picked a time zone, the organizer's for an
+	// invitation, whatever an imported file said. The grid reads the hour
+	// and minute off them for the time label and its place in the day, so
+	// they're moved into the viewer's zone first, or a meeting set in London
+	// is drawn at London's hour while its event page, which converts, says
+	// otherwise. All-day events are dates, not instants, and stay as they are.
+	loc := date.Location()
+	inView := func(events []Event, from, to time.Time) []Occurrence {
+		occs := expand(events, from, to)
+		for i := range occs {
+			if !occs[i].Event.AllDay {
+				occs[i].Start, occs[i].End = occs[i].Start.In(loc), occs[i].End.In(loc)
+			}
+		}
+		return occs
+	}
 
 	item := func(o Occurrence, day time.Time) calItem {
 		it := calItem{Occ: o, Class: calClass(o.Event.Calendar), URL: occurrenceURL(o.Event, o.Start)}
@@ -320,7 +337,7 @@ func (s *Server) buildCalendar(view string, date, today, now time.Time, prefs Se
 		for d := gridStart; d.Before(gridEnd); d = d.AddDate(0, 0, 1) {
 			days = append(days, calDay{Date: d, Other: d.Month() != date.Month(), Today: sameDay(d, today), URL: calURL("day", d), NewURL: newEventURL(d, -1)})
 		}
-		fill(days, expand(events, gridStart, gridEnd))
+		fill(days, inView(events, gridStart, gridEnd))
 		for i := range days {
 			// Month cells hold three items; the rest is a "+N more" link.
 			all := append(days[i].AllDay, days[i].Timed...)
@@ -357,7 +374,7 @@ func (s *Server) buildCalendar(view string, date, today, now time.Time, prefs Se
 			d := start.AddDate(0, 0, i)
 			cv.Days = append(cv.Days, calDay{Date: d, Today: sameDay(d, today), URL: calURL("day", d), NewURL: newEventURL(d, -1)})
 		}
-		fill(cv.Days, expand(events, start, start.AddDate(0, 0, n)))
+		fill(cv.Days, inView(events, start, start.AddDate(0, 0, n)))
 		earliest := 24
 		for i := range cv.Days {
 			layoutDay(cv.Days[i].Timed, cv.Days[i].Date)
@@ -381,7 +398,7 @@ func (s *Server) buildCalendar(view string, date, today, now time.Time, prefs Se
 		for d := start; d.Before(end); d = d.AddDate(0, 0, 1) {
 			days = append(days, calDay{Date: d, Today: sameDay(d, today), URL: calURL("day", d)})
 		}
-		fill(days, expand(events, start, end))
+		fill(days, inView(events, start, end))
 		for _, d := range days {
 			if len(d.AllDay)+len(d.Timed) > 0 {
 				d.AllDay = append(d.AllDay, d.Timed...)

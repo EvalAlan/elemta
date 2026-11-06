@@ -460,3 +460,42 @@ func TestGuestRepliesRecordedAutomatically(t *testing.T) {
 		t.Error("event page doesn't show Priya's answer")
 	}
 }
+
+// The grid shows events at the viewer's time, whatever zone they were saved
+// in: here UTC, from before a time zone was set, as an invitation from
+// another zone or an imported file would be. It used to show the saved
+// zone's hour while the event page converted, so the two disagreed.
+func TestCalendarGridUsesTheViewersZone(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	add := func(title, date, start, end string) {
+		t.Helper()
+		resp := postForm(t, h, "/calendar/event", url.Values{
+			"csrf": {csrf}, "op": {"save"}, "summary": {title}, "start_date": {date}, "start_time": {start}, "end_date": {date}, "end_time": {end},
+			"ends": {"never"}, "interval": {"1"}, "calendar": {"Work"}, "reminder": {"15"}, "busy": {"busy"},
+		})
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("save %s = %d", title, resp.StatusCode)
+		}
+	}
+	add("Design review", "2026-10-21", "10:00", "11:00")
+	add("Late call", "2026-10-22", "02:00", "03:00") // 22:00 the evening before, in New York
+	postForm(t, h, "/settings", url.Values{"csrf": {csrf}, "timezone": {"America/New_York"}, "week_start": {"0"}, "clock": {"24"}, "page_size": {"50"}})
+
+	for _, view := range []string{"week", "day"} {
+		_, page := h.get("/calendar?view=" + view + "&date=2026-10-21")
+		if !strings.Contains(page, `<span class="t">06:00</span><strong>Design review`) {
+			t.Errorf("%s view doesn't show the review at 06:00 New York time", view)
+		}
+		if !strings.Contains(page, `<span class="t">22:00</span><strong>Late call`) {
+			t.Errorf("%s view doesn't show the late call at 22:00 on the 21st", view)
+		}
+	}
+	if _, page := h.get("/calendar?view=day&date=2026-10-22"); strings.Contains(page, "Late call") {
+		t.Error("the late call shows on the 22nd, its day in UTC")
+	}
+	_, month := h.get("/calendar?view=month&date=2026-10-21")
+	if !strings.Contains(month, `<span class="t">06:00</span>Design review`) {
+		t.Error("month view doesn't show the review at 06:00")
+	}
+}
