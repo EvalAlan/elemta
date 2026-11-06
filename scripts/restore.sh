@@ -5,10 +5,12 @@
 #
 #   scripts/restore.sh <backup directory> --confirm
 #
-# On a new host, check out the same release, then run this: it puts the
-# secrets back first (they hold the passwords and keys everything else
-# needs), then the data. On a host that has its own .secrets they are kept
-# and the backup's are left alone, unless ELEMTA_RESTORE_SECRETS=true.
+# On a new host, check out the commit the backup records (commit= in its
+# manifest), then run this. It puts the secrets back first (they hold the
+# passwords, the body encryption key and the bucket settings everything else
+# needs) and, finding no stack yet, stops and says to run cloud-deploy.sh and
+# then this again. On a host that has its own .secrets they are kept and the
+# backup's are left alone, unless ELEMTA_RESTORE_SECRETS=true.
 #
 # Mail that arrives while it runs isn't lost: the MTA is stopped first, so
 # sending servers queue it and retry.
@@ -31,10 +33,38 @@ grep '^sha256 ' "$in/manifest" | while read -r _ sum file; do
     [ "$(sha256sum "$in/$file" | cut -d ' ' -f 1)" = "$sum" ] || { echo "restore: checksum differs: $file" >&2; exit 1; }
 done
 
+restored_secrets=false
 if [ ! -d "$secrets" ] || [ "${ELEMTA_RESTORE_SECRETS:-}" = true ]; then
     step "Secrets"
     [ -f "$in/secrets.tar.gz" ] || { echo "restore: decrypt secrets.tar.gz.age into the backup first (age -d)" >&2; exit 1; }
     docker run --rm --network none --user 0 --entrypoint tar -v "$compose_dir:/c" -i alpine:3.22 -C /c -xzf - <"$in/secrets.tar.gz"
+    restored_secrets=true
+fi
+
+# A new host has no stack to restore into: the data goes into the stack's
+# volumes and is restored with its images, which don't exist yet. The way
+# through, proven in a restore rehearsal: the backup's secrets first (just
+# done), then cloud-deploy.sh builds the images and starts an empty stack
+# with them, then this again puts the data in. The empty stack is safe for
+# mail kept in a bucket: the mailbox only ever deletes bodies its database
+# records as unreferenced, and an empty database records none.
+if [ -z "$(docker ps -aq --filter label=com.docker.compose.service=mailbox-server)" ]; then
+    {
+        echo
+        echo "restore: this host has no stack yet, so there is nothing to restore into."
+        if $restored_secrets; then
+            echo "  The backup's secrets are in place now. Next:"
+        else
+            echo "  This host already had $secrets, so the backup's were NOT put back."
+            echo "  On a new host you almost certainly want the backup's: they hold the key"
+            echo "  that decrypts the message bodies and the bucket settings. Move that"
+            echo "  directory aside, or set ELEMTA_RESTORE_SECRETS=true, and run this again."
+            echo "  Then:"
+        fi
+        echo "    1. scripts/cloud-deploy.sh          builds the images and starts an empty stack"
+        echo "    2. scripts/restore.sh $1 --confirm  again, to restore the data into it"
+    } >&2
+    exit 3
 fi
 env_file=$secrets/cloud.env
 files=(-f "$compose_dir/docker-compose.yml" -f "$compose_dir/docker-compose.cloud.yml")

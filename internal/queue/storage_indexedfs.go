@@ -184,6 +184,12 @@ func (b *IndexedFSStorageBackend) Cleanup(retentionHours int) (int, error) {
 		return 0, err
 	}
 
+	// The same enqueue lock files as the plain file backend (see
+	// pruneEnqueueLocks): one per message enqueued, kept until pruned here.
+	if _, err := pruneEnqueueLocks(filepath.Join(b.queueDir, "tmp"), time.Now().Add(-enqueueLockIdleAge)); err != nil {
+		return 0, fmt.Errorf("failed to prune enqueue locks: %w", err)
+	}
+
 	cutoffTime := time.Now().Add(-time.Duration(retentionHours) * time.Hour)
 	toRemove := make([]string, 0)
 	deletedCount := 0
