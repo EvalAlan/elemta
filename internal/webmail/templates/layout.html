@@ -10,7 +10,7 @@
 {{if eq .SettingsTab "security"}}<script src="{{asset "passkey.js"}}" defer></script>{{end}}
 <script src="{{asset "pgp.js"}}" defer></script>
 </head>
-<body data-app="{{.App}}"{{if not .TZSet}} data-detect-tz="1"{{end}}{{with .MailSound}} data-mail-sound="{{.}}"{{end}} data-pgp-worker="{{asset "pgp-worker.js"}}" data-pgp-owner="{{.Session.Address}}" data-csrf="{{.Session.CSRF}}">
+<body data-app="{{.App}}"{{if not .TZSet}} data-detect-tz="1"{{end}}{{with .MailSound}} data-mail-sound="{{.}}"{{end}}{{with .ReminderSound}} data-reminder-sound="{{.}}"{{end}} data-pgp-worker="{{asset "pgp-worker.js"}}" data-pgp-owner="{{.Session.Address}}" data-csrf="{{.Session.CSRF}}">
 <a class="skip" href="#main">Skip to content</a>
 <header class="topbar">
   <a class="brand" href="/mail">{{template "logo"}}<span>Elemta</span></a>

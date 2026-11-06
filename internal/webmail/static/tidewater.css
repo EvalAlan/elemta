@@ -2078,6 +2078,15 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .toast { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
 .toast a { color: var(--ink); font-weight: 600; text-decoration: none; }
 .toast button { align-self: flex-end; }
+/* A reminder is the one toast that must be noticed: thicker accent, a
+   countdown, and a brief nudge when it arrives (not for reduced motion). */
+.toast.reminder { border-left-width: 6px; animation: reminder-in .5s ease-out; }
+.toast.reminder a { font-size: 15px; }
+.reminder-countdown { color: var(--accent-dark); font-weight: 600; }
+.reminder-countdown:empty { display: none; }
+.reminder-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+@keyframes reminder-in { 0% { transform: translateY(12px); opacity: 0; } 60% { transform: translateY(-3px); opacity: 1; } 100% { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .toast.reminder { animation: none; } }
 .notify-enable { padding: 0 10px; text-align: left; }
 .print-body { background: #FFFFFF; color: #0E1726; }
 .print { max-width: 780px; margin: 24px auto; padding: 0 16px; display: flex; flex-direction: column; gap: 16px; }

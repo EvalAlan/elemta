@@ -1006,3 +1006,33 @@ func TestThemeRedirectStaysLocal(t *testing.T) {
 		}
 	}
 }
+
+// A reminder stays listed until its event starts, so a tab opened after it
+// fired still shows it; once the event is well under way it's gone.
+func TestRemindersLastUntilTheEventStarts(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}})
+	add := func(title string, start time.Time, reminder string) {
+		start = start.Truncate(time.Minute)
+		h.post("/calendar/event", url.Values{
+			"csrf": {csrf}, "op": {"save"}, "summary": {title}, "start_date": {start.Format("2006-01-02")}, "start_time": {start.Format("15:04")},
+			"end_date": {start.Add(time.Hour).Format("2006-01-02")}, "end_time": {start.Add(time.Hour).Format("15:04")}, "reminder": {reminder},
+		})
+	}
+	now := time.Now().UTC()
+	add("Fired an hour ago", now.Add(5*time.Minute), "60")
+	add("Long started", now.Add(-30*time.Minute), "60")
+	_, js := h.get("/api/reminders")
+	var list []map[string]any
+	if err := json.Unmarshal([]byte(js), &list); err != nil {
+		t.Fatal(err)
+	}
+	var titles []string
+	for _, r := range list {
+		titles = append(titles, r["title"].(string))
+	}
+	if strings.Join(titles, ",") != "Fired an hour ago" {
+		t.Fatalf("reminders = %v", titles)
+	}
+}

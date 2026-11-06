@@ -807,7 +807,7 @@
   var mailSound = doc.body.getAttribute("data-mail-sound");
   // A browser only lets a page make sound once someone has used that page, and
   // a tab left open and untouched must not save it all up for later.
-  if (mailSound) {
+  if (mailSound || body.getAttribute("data-reminder-sound")) {
     ["pointerdown", "keydown"].forEach(function (kind) {
       doc.addEventListener(kind, function unlock() {
         doc.removeEventListener(kind, unlock, true);
@@ -1162,19 +1162,43 @@
   }
 
   // ---- reminders ---------------------------------------------------------
-  // The server says which reminders are due in the next two hours; each is
-  // shown once, at its time, in the page and (if allowed) as a desktop
-  // notification. Shown keys are remembered for the browser session so a
-  // reload doesn't repeat them.
-  var timers = {};
-  function shownKeys() {
-    try { return JSON.parse(sessionStorage.getItem("reminders-shown") || "{}"); } catch (err) { return {}; }
+  // The server lists the reminders due in the next two hours and keeps each
+  // listed until its event starts. At its time a reminder shows in every open
+  // tab as a card in the corner, flashes the title of a tab in the background
+  // and, in one tab only, plays the reminder sound and shows a desktop
+  // notification. Dismissing or snoozing it in one tab does the same in the
+  // others. That state lives in localStorage, so a reload or a new tab
+  // doesn't bring back a dismissed reminder or ring again for one that rang.
+  var reminderSound = body.getAttribute("data-reminder-sound") || "";
+  var REMINDERS = "elemta-reminders", SNOOZE_MS = 5 * 60 * 1000, BELL_MARK = "🔔 ";
+  var timers = {}, cards = {}, known = {}, memState = {}, flashTimer = null, ticker = null;
+
+  // Each entry is {d: dismissed, s: snoozed until, rang: the due time it
+  // last rang for, t: when it last changed}, all times in milliseconds.
+  function readState() {
+    try {
+      var raw = localStorage.getItem(REMINDERS);
+      if (raw !== null) return JSON.parse(raw) || {};
+    } catch (err) { /* blocked or corrupt: fall back to this tab's copy */ }
+    return memState;
   }
-  function markShown(key) {
-    var s = shownKeys();
-    s[key] = Date.now();
-    try { sessionStorage.setItem("reminders-shown", JSON.stringify(s)); } catch (err) { /* storage full or blocked */ }
+  function writeState(key, change) {
+    var st = readState(), now = Date.now();
+    Object.keys(st).forEach(function (k) { if (now - (st[k].t || 0) > 2 * 86400000) delete st[k]; });
+    var e = st[key] || {};
+    Object.keys(change).forEach(function (k) { e[k] = change[k]; });
+    e.t = now;
+    st[key] = e;
+    memState = st;
+    try { localStorage.setItem(REMINDERS, JSON.stringify(st)); } catch (err) { /* this tab only, then */ }
   }
+  // When the reminder should next show, or null once it's dismissed.
+  function dueAt(r) {
+    var e = readState()[r.key] || {};
+    if (e.d) return null;
+    return Math.max(e.s || 0, r.at * 1000);
+  }
+
   function toastStack() {
     var st = $(".toast-stack");
     if (!st) {
@@ -1186,48 +1210,152 @@
     }
     return st;
   }
-  function showReminder(r) {
-    if (shownKeys()[r.key]) return;
-    markShown(r.key);
+
+  function startsIn(r) {
+    if (r.allday) return "";
+    var m = Math.round((r.start * 1000 - Date.now()) / 60000);
+    if (m >= 60) return "Starts in " + Math.floor(m / 60) + " h" + (m % 60 ? " " + (m % 60) + " min" : "");
+    if (m > 0) return "Starts in " + m + " min";
+    if (m === 0) return "Starting now";
+    return "Started " + (-m) + " min ago";
+  }
+  function tick() {
+    Object.keys(cards).forEach(function (k) {
+      var c = cards[k], line = $(".reminder-countdown", c.el);
+      if (line) line.textContent = startsIn(c.r);
+    });
+  }
+
+  // While a reminder is up and the tab isn't in view, the tab's title
+  // flashes a bell. A prefix rather than a saved title, so the unread count
+  // the mail page writes into the title carries on working underneath.
+  function flashTitle() {
+    if (flashTimer || !doc.hidden) return;
+    flashTimer = setInterval(function () {
+      doc.title = doc.title.indexOf(BELL_MARK) === 0 ? doc.title.slice(BELL_MARK.length) : BELL_MARK + doc.title;
+    }, 1000);
+  }
+  function stopFlash() {
+    clearInterval(flashTimer);
+    flashTimer = null;
+    if (doc.title.indexOf(BELL_MARK) === 0) doc.title = doc.title.slice(BELL_MARK.length);
+  }
+  doc.addEventListener("visibilitychange", function () {
+    if (!doc.hidden) stopFlash(); else if (Object.keys(cards).length) flashTitle();
+  });
+
+  function dropCard(key) {
+    var c = cards[key];
+    if (!c) return;
+    c.el.remove();
+    delete cards[key];
+    if (!Object.keys(cards).length) { stopFlash(); clearInterval(ticker); ticker = null; }
+  }
+
+  // tone overrides the saved sound, for trying one out from Settings.
+  function showReminder(r, at, tone) {
+    if (cards[r.key]) return;
     var t = doc.createElement("div");
-    t.className = "toast";
+    t.className = "toast reminder";
+    t.setAttribute("role", "alert");
     var a = doc.createElement("a");
     a.href = r.url;
     a.textContent = r.title;
     var p = doc.createElement("span");
     p.className = "small muted";
     p.textContent = r.when + (r.where ? " · " + r.where : "");
-    var b = doc.createElement("button");
-    b.className = "button small-button";
-    b.type = "button";
-    b.textContent = "Dismiss";
-    b.addEventListener("click", function () { t.remove(); });
-    t.appendChild(a); t.appendChild(p); t.appendChild(b);
+    var cd = doc.createElement("span");
+    cd.className = "small reminder-countdown";
+    var actions = doc.createElement("div");
+    actions.className = "reminder-actions";
+    var button = function (label, run) {
+      var b = doc.createElement("button");
+      b.className = "button small-button";
+      b.type = "button";
+      b.textContent = label;
+      b.addEventListener("click", run);
+      actions.appendChild(b);
+    };
+    button("Snooze 5 min", function () { snoozeReminder(r.key); });
+    button("Dismiss", function () { dismissReminder(r.key); });
+    t.append(a, p, cd, actions);
     toastStack().appendChild(t);
+    cards[r.key] = { el: t, r: r };
+    tick();
+    if (!ticker) ticker = setInterval(tick, 30000);
+    flashTitle();
+
+    // Every tab shows the card, but only the first to get here rings and
+    // notifies, and only once each time the reminder comes due.
+    if ((readState()[r.key] || {}).rang === at) return;
+    writeState(r.key, { rang: at });
+    var sound = tone === undefined ? reminderSound : tone;
+    if (sound) {
+      if (audio && audio.state !== "running") { try { audio.resume(); } catch (err) { /* no sound, then */ } }
+      playTone(sound);
+    }
     if (window.Notification && Notification.permission === "granted") {
       try {
-        var n = new Notification(r.title, { body: r.when + (r.where ? " · " + r.where : ""), tag: r.key });
+        // requireInteraction: a reminder that slips away after a few seconds,
+        // unseen, is no reminder.
+        var n = new Notification(r.title, { body: r.when + (r.where ? " · " + r.where : ""), tag: r.key, requireInteraction: true });
         n.onclick = function () { window.focus(); location.href = r.url; };
       } catch (err) { /* some browsers only allow notifications from a service worker */ }
     }
   }
+
+  function schedule(r) {
+    known[r.key] = r;
+    clearTimeout(timers[r.key]);
+    delete timers[r.key];
+    var at = dueAt(r);
+    if (at === null) { dropCard(r.key); return; }
+    var wait = at - Date.now();
+    if (wait <= 0) { showReminder(r, at); return; }
+    dropCard(r.key); // snoozed in another tab
+    timers[r.key] = setTimeout(function () { showReminder(r, at); }, wait);
+  }
+  function snoozeReminder(key) {
+    writeState(key, { s: Date.now() + SNOOZE_MS });
+    dropCard(key);
+    if (known[key]) schedule(known[key]);
+  }
+  function dismissReminder(key) {
+    writeState(key, { d: 1 });
+    clearTimeout(timers[key]);
+    dropCard(key);
+  }
+  // Another tab dismissed or snoozed something.
+  window.addEventListener("storage", function (e) {
+    if (e.key !== REMINDERS) return;
+    Object.keys(known).forEach(function (k) { schedule(known[k]); });
+    Object.keys(cards).forEach(function (k) {
+      var st = readState()[k] || {};
+      if (!known[k] && (st.d || st.s > Date.now())) dropCard(k);
+    });
+  });
+
   function loadReminders() {
     fetch("/api/reminders", { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : []; })
-      .then(function (list) {
-        var now = Date.now();
-        list.forEach(function (r) {
-          if (timers[r.key] || shownKeys()[r.key]) return;
-          var wait = r.at * 1000 - now;
-          if (wait <= 0) { showReminder(r); return; }
-          timers[r.key] = setTimeout(function () { showReminder(r); }, wait);
-        });
-      })
+      .then(function (list) { list.forEach(schedule); })
       .catch(function () {});
   }
   if (csrf) {
     loadReminders();
     setInterval(loadReminders, 10 * 60 * 1000);
+  }
+  // Settings: show what a reminder looks and sounds like, with the tone
+  // picked but not yet saved.
+  var tryReminder = $("[data-reminder-test]");
+  if (tryReminder) {
+    tryReminder.addEventListener("click", function () {
+      var now = Date.now(), choice = $("#reminder_sound");
+      var r = { key: "try-" + now, at: now / 1000, start: now / 1000 + 15 * 60, title: "Example reminder",
+        when: "In 15 minutes", where: "This is how a reminder looks", url: "/calendar" };
+      known[r.key] = r;
+      showReminder(r, now, choice && choice.value !== "none" ? choice.value : "");
+    });
   }
 
   // ---- calendar ----------------------------------------------------------

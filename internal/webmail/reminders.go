@@ -27,6 +27,7 @@ type reminderJSON struct {
 	When    string `json:"when"`
 	Where   string `json:"where,omitempty"`
 	URL     string `json:"url"`
+	AllDay  bool   `json:"allday,omitempty"` // no "starts in" countdown for these
 }
 
 func (s *Server) remindersAPI(w http.ResponseWriter, r *http.Request, sess *Session) {
@@ -48,7 +49,12 @@ func (s *Server) remindersAPI(w http.ResponseWriter, r *http.Request, sess *Sess
 			continue
 		}
 		fire := o.Start.Add(-time.Duration(e.Reminder) * time.Minute)
-		if fire.Before(now.Add(-10*time.Minute)) || fire.After(now.Add(reminderWindow)) {
+		// A reminder stays in the list until a little after its event starts,
+		// not just for a moment after it fires: a tab opened or reloaded in
+		// between still shows one that wasn't dismissed. The page keeps
+		// track of what was dismissed and what already rang.
+		if fire.After(now.Add(reminderWindow)) ||
+			(fire.Before(now.Add(-10*time.Minute)) && o.Start.Before(now.Add(-10*time.Minute))) {
 			continue
 		}
 		when := clock(h24, o.Start.In(loc))
@@ -59,7 +65,7 @@ func (s *Server) remindersAPI(w http.ResponseWriter, r *http.Request, sess *Sess
 		}
 		out = append(out, reminderJSON{
 			Key: e.UID + "@" + strconv.FormatInt(o.Start.Unix(), 10), FireAt: fire.Unix(), StartAt: o.Start.Unix(),
-			Title: e.Summary, When: when, Where: e.Location, URL: eventURL(e.UID, o.Start),
+			Title: e.Summary, When: when, Where: e.Location, URL: eventURL(e.UID, o.Start), AllDay: e.AllDay,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")

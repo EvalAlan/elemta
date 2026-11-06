@@ -51,6 +51,11 @@ type Settings struct {
 	// MailSound is the tone played when new mail reaches the inbox, or empty
 	// for none. The names are in mailSounds, and the sounds are in app.js.
 	MailSound string `json:"mail_sound,omitempty"`
+	// ReminderSound is the tone an event reminder plays: empty for the
+	// default, "none" for silence, or one of mailSounds. Unlike new mail it
+	// is on by default, because a reminder nobody notices has failed at its
+	// one job, while a chime for every message soon grates.
+	ReminderSound string `json:"reminder_sound,omitempty"`
 	// MailCalendar keeps messages at a reading width and shows the calendar
 	// panel beside them on wide screens. Off, a message uses the full pane.
 	MailCalendar bool `json:"mail_calendar,omitempty"`
@@ -78,6 +83,30 @@ func validMailSound(v string) string {
 		}
 	}
 	return ""
+}
+
+// defaultReminderSound is the tone a reminder plays until someone picks
+// another.
+const defaultReminderSound = "bell"
+
+// ReminderTone is the tone reminders play, or empty for none.
+func (p Settings) ReminderTone() string {
+	switch p.ReminderSound {
+	case "":
+		return defaultReminderSound
+	case "none":
+		return ""
+	}
+	return validMailSound(p.ReminderSound)
+}
+
+// validReminderSound keeps what the form may store: a listed tone, "none",
+// or empty for the default.
+func validReminderSound(v string) string {
+	if v == "none" {
+		return v
+	}
+	return validMailSound(v)
 }
 
 // GroupConversations reports whether lists are grouped by thread.
@@ -543,6 +572,7 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	p.MailCalendar = r.PostFormValue("mail_calendar") == "1"
 	p.InboxTabs = r.PostFormValue("inbox_tabs") == "1"
 	p.MailSound = validMailSound(r.PostFormValue("mail_sound"))
+	p.ReminderSound = validReminderSound(r.PostFormValue("reminder_sound"))
 	switch v := r.PostFormValue("calendar_view"); v {
 	case "month", "week", "day", "agenda":
 		p.CalendarView = v

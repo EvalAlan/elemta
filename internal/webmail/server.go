@@ -440,6 +440,8 @@ type view struct {
 	Clock24 bool
 	// MailSound is the new-mail tone, empty for none.
 	MailSound string
+	// ReminderSound is the event reminder tone, empty for none.
+	ReminderSound string
 	// TZSet is false until the user has a time zone, which tells the page
 	// to report the browser's.
 	TZSet bool
@@ -467,6 +469,7 @@ func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
 		// about their mail.
 		if pv.Session.AdminActor == "" {
 			pv.MailSound = cached.MailSound
+			pv.ReminderSound = cached.ReminderTone()
 		}
 		if pv.App == "" {
 			pv.App = "mail"
