@@ -974,6 +974,12 @@
       case "u": case "r": case "a": case "f": case "s": case "e": case "#":
         if (!clickKey(k)) return;
         break;
+      case "z":
+        // Undo the move the notice reports, while it still offers to.
+        var undo = $(".undo-form button");
+        if (!undo) return;
+        undo.click();
+        break;
       default: return;
     }
     e.preventDefault();

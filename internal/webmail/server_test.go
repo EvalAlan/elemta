@@ -134,11 +134,16 @@ func (f *fakeStore) SetFlags(_ context.Context, _ string, uids []uint32, flags [
 	}
 	return nil
 }
-func (f *fakeStore) Move(_ context.Context, _ string, uids []uint32, dest string) error {
+func (f *fakeStore) Move(_ context.Context, _ string, uids []uint32, dest string) ([]uint32, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var moved []uint32
 	for _, u := range uids {
 		f.moved[u] = dest
+		// As a server reports COPYUID: new UIDs in the destination.
+		moved = append(moved, u+1000)
 	}
-	return nil
+	return moved, nil
 }
 func (f *fakeStore) Delete(_ context.Context, _ string, uids []uint32) error {
 	f.deleted = append(f.deleted, uids...)
@@ -520,12 +525,13 @@ func TestActionsNeedCSRF(t *testing.T) {
 	h := newHarness(t)
 	csrf := h.login()
 	resp := h.post("/mail/action", url.Values{"f": {"INBOX"}, "uid": {"7"}, "op": {"delete"}})
-	if resp.StatusCode != http.StatusForbidden || len(h.store.deleted) != 0 {
-		t.Fatalf("delete without CSRF: status %d deleted %v", resp.StatusCode, h.store.deleted)
+	if resp.StatusCode != http.StatusForbidden || len(h.store.deleted) != 0 || h.store.moved[7] != "" {
+		t.Fatalf("delete without CSRF: status %d deleted %v moved %v", resp.StatusCode, h.store.deleted, h.store.moved)
 	}
+	// Deleting from the inbox moves to Trash (undoably).
 	resp = h.post("/mail/action", url.Values{"csrf": {csrf}, "f": {"INBOX"}, "uid": {"7"}, "op": {"delete"}})
-	if resp.StatusCode != http.StatusSeeOther || len(h.store.deleted) != 1 {
-		t.Fatalf("delete with CSRF: status %d deleted %v", resp.StatusCode, h.store.deleted)
+	if resp.StatusCode != http.StatusSeeOther || h.store.moved[7] != "Trash" {
+		t.Fatalf("delete with CSRF: status %d moved %v", resp.StatusCode, h.store.moved)
 	}
 	resp = h.post("/mail/action", url.Values{"csrf": {csrf}, "f": {"INBOX"}, "uid": {"7"}, "op": {"junk"}})
 	if resp.StatusCode != http.StatusSeeOther || h.store.moved[7] != "Junk" {

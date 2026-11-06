@@ -173,12 +173,17 @@ func TestIMAPStoreReadFlagMoveDelete(t *testing.T) {
 		t.Fatalf("flags = %+v", p.Messages[0])
 	}
 
-	if err := st.Move(ctx, "INBOX", []uint32{uid}, "Projects"); err != nil {
+	movedTo, err := st.Move(ctx, "INBOX", []uint32{uid}, "Projects")
+	if err != nil {
 		t.Fatal(err)
 	}
 	p, _ = st.List(ctx, "Projects", ListQuery{Page: 1, PageSize: 10})
 	if len(p.Messages) != 1 {
 		t.Fatalf("Projects after move = %+v", p.Messages)
+	}
+	// The UIDs in the destination, from COPYUID, are what Undo moves back.
+	if len(movedTo) != 1 || movedTo[0] != p.Messages[0].UID {
+		t.Fatalf("Move reported %v, the message is UID %d in Projects", movedTo, p.Messages[0].UID)
 	}
 
 	// Delete outside Trash moves to Trash; inside Trash it's permanent.
