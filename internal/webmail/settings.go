@@ -51,6 +51,9 @@ type Settings struct {
 	// MailSound is the tone played when new mail reaches the inbox, or empty
 	// for none. The names are in mailSounds, and the sounds are in app.js.
 	MailSound string `json:"mail_sound,omitempty"`
+	// UndoSend is how many seconds Send waits, with an Undo, before the
+	// message goes: empty for the default (sendlater.go), "0" for off.
+	UndoSend string `json:"undo_send,omitempty"`
 	// ReminderSound is the tone an event reminder plays: empty for the
 	// default, "none" for silence, or one of mailSounds. Unlike new mail it
 	// is on by default, because a reminder nobody notices has failed at its
@@ -572,6 +575,9 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	p.MailCalendar = r.PostFormValue("mail_calendar") == "1"
 	p.InboxTabs = r.PostFormValue("inbox_tabs") == "1"
 	p.MailSound = validMailSound(r.PostFormValue("mail_sound"))
+	if v, ok := r.PostForm["undo_send"]; ok {
+		p.UndoSend = validUndoSend(v[0])
+	}
 	p.ReminderSound = validReminderSound(r.PostFormValue("reminder_sound"))
 	switch v := r.PostFormValue("calendar_view"); v {
 	case "month", "week", "day", "agenda":

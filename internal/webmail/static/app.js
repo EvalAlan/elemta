@@ -985,6 +985,28 @@
     e.preventDefault();
   });
 
+  // ---- undo send ---------------------------------------------------------
+  // A message waiting out its undo delay counts down in its notice, then
+  // says it's gone. The server sends it whatever this page does; the
+  // countdown is only what the person sees.
+  var sending = $("[data-send-left]");
+  if (sending) {
+    var sendAt = Date.now() + (+sending.getAttribute("data-send-left")) * 1000;
+    var sendStatus = $("[data-send-status]", sending);
+    var sendTick = function () {
+      var left = Math.ceil((sendAt - Date.now()) / 1000);
+      if (left > 0) {
+        sendStatus.textContent = "Sending in " + left + (left === 1 ? " second…" : " seconds…");
+        setTimeout(sendTick, 250);
+        return;
+      }
+      sendStatus.textContent = "Message sent.";
+      var form = $(".undo-form", sending);
+      if (form) form.remove();
+    };
+    sendTick();
+  }
+
   // ---- refresh -----------------------------------------------------------
   // The refresh link reloads the list (which also checks the server for new
   // mail); the spin shows it was pressed while the page loads.

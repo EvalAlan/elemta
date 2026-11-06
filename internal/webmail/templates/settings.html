@@ -24,6 +24,10 @@
       <textarea id="signature" name="signature" rows="5">{{.Prefs.Signature}}</textarea>
       <span></span>
       <label class="checkline"><input type="checkbox" name="signature_above" value="1"{{if .Prefs.SignatureAbove}} checked{{end}}> In replies, put the signature above the quoted message</label>
+      <label for="undo_send">Undo send</label>
+      <select id="undo_send" name="undo_send">
+        {{$us := .Prefs.UndoSendSeconds}}{{range .Prefs.UndoSendOptions}}<option value="{{.}}"{{if eq . $us}} selected{{end}}>{{if eq . 0}}Off: send at once{{else}}{{.}} seconds{{end}}</option>{{end}}
+      </select>
     </div>
     <div class="card form-grid">
       <h2 class="card-title">Appearance</h2>

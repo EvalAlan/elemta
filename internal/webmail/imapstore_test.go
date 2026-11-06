@@ -207,11 +207,12 @@ func TestIMAPStoreAppendCreatesRoleFolder(t *testing.T) {
 	cfg := startIMAP(t)
 	st := dialTest(t, cfg)
 	ctx := context.Background()
-	if err := st.Append(ctx, RoleSent, testMessage(1, "Sent copy"), true, false); err != nil {
+	if _, err := st.Append(ctx, RoleSent, testMessage(1, "Sent copy"), true, false); err != nil {
 		t.Fatal(err)
 	}
 	// There is no Drafts folder yet; Append must create it.
-	if err := st.Append(ctx, RoleDrafts, testMessage(2, "Draft"), true, true); err != nil {
+	draftUID, err := st.Append(ctx, RoleDrafts, testMessage(2, "Draft"), true, true)
+	if err != nil {
 		t.Fatal(err)
 	}
 	p, err := st.List(ctx, "Drafts", ListQuery{Page: 1, PageSize: 10})
@@ -220,6 +221,10 @@ func TestIMAPStoreAppendCreatesRoleFolder(t *testing.T) {
 	}
 	if len(p.Messages) != 1 || !p.Messages[0].Draft || !p.Messages[0].Seen {
 		t.Fatalf("Drafts = %+v", p.Messages)
+	}
+	// APPENDUID: undo send finds its draft by this.
+	if draftUID != p.Messages[0].UID {
+		t.Errorf("Append reported UID %d, the draft is %d", draftUID, p.Messages[0].UID)
 	}
 	p, _ = st.List(ctx, "Sent", ListQuery{Page: 1, PageSize: 10})
 	if len(p.Messages) != 1 || p.Messages[0].Subject != "Sent copy" {
