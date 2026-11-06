@@ -156,12 +156,26 @@ scripts/restore.sh /var/backups/elemta/<directory> --confirm
 ```
 
 It stops the MTA first, so mail arriving meanwhile waits at the sending
-servers and is retried, then restores the mailbox, directory, queue and
-configuration and starts everything again. On a new host: install Docker,
-check out the backup's release, decrypt the secrets archive if it is
-encrypted, and run it; with no `.secrets` yet it restores those first. Then
-run `scripts/cloud-deploy.sh` once so Caddy fetches a certificate and the
-renewal timer is installed.
+servers and is retried, then restores the mailbox, directory, queue,
+configuration and spam filter and starts everything again. Bodies kept in a
+bucket (`BACKUP_BODIES=external`) stay where they are.
+
+On a new host:
+
+1. Install Docker and check out the commit the backup records (`commit=` in
+   its `manifest`). Don't create `.secrets` yourself: the backup's hold the
+   body encryption key and the bucket settings, and fresh ones can't read
+   the mail.
+2. Run `scripts/restore.sh <directory> --confirm`. It puts the secrets back,
+   finds no stack yet, and stops, saying so.
+3. Run `scripts/cloud-deploy.sh`. It builds the images and starts an empty
+   stack with the restored secrets. That is safe with mail in a bucket: the
+   mailbox only deletes bodies its database records as unreferenced, and an
+   empty database records none.
+4. Run `scripts/restore.sh <directory> --confirm` again to restore the data.
+5. Point DNS at the new host, and put back
+   `/etc/elemta/secrets/backup-storage.env` (it isn't in the backup), then
+   run `scripts/cloud-deploy.sh` once more to install the backup timer.
 
 Drilled on the development server: a backup restored over the live stack came
 back with the same messages, flags and bodies (identical fingerprint), the
