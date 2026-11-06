@@ -226,7 +226,10 @@ type Mailstore interface {
 	Raw(ctx context.Context, folder string, uid uint32, maxBytes int64) ([]byte, error)
 	// SetFlags adds (on) or removes flags and tags on messages.
 	SetFlags(ctx context.Context, folder string, uids []uint32, flags []string, on bool) error
-	Move(ctx context.Context, folder string, uids []uint32, dest string) error
+	// Move moves messages to dest and returns their UIDs there, when the
+	// server reports them (UIDPLUS), so the move can be undone. A nil slice
+	// with a nil error means it moved them without saying where.
+	Move(ctx context.Context, folder string, uids []uint32, dest string) ([]uint32, error)
 	// Delete moves messages to Trash, or removes them for good when they are
 	// already in Trash or Junk (or there is no Trash folder).
 	Delete(ctx context.Context, folder string, uids []uint32) error

@@ -127,6 +127,9 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	lq.Sort, lq.Reverse, lq.Page, lq.PageSize, lq.Category = ls.Sort, ls.Reverse, ls.Page, s.pageSize(sess), ls.Tab
 
 	v := view{Title: ls.Folder, Session: sess, Folder: ls.Folder, Query: ls.Query, List: &ls, Notice: notices[q.Get("n")], Remote: remote}
+	if u, ok := decodeUndo(q.Get("undo"), time.Now()); ok && v.Notice != "" {
+		v.Undo = &u
+	}
 	v.SharedMailboxes = s.sharedMailboxes(r.Context(), sess)
 	if s.prefsCached(sess).MailCalendar {
 		v.Calendar = s.mailCalendar(r.Context(), sess)
@@ -580,6 +583,13 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 		return
 	}
 	notice := ""
+	// undo is where a move sent the messages, for the notice's Undo button.
+	var undo *undoMove
+	moved := func(dest string, newUIDs []uint32) {
+		if len(newUIDs) > 0 {
+			undo = &undoMove{From: dest, To: folder, UIDs: newUIDs}
+		}
+	}
 	var learn []string // senders whose tab the user just chose
 	var learnCat mailcategory.Category
 	// leaves is true for operations after which the open message is no
@@ -622,29 +632,58 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 			return nil
 		case "delete":
 			notice, leaves = plural("deleted", len(uids)), true
-			return st.Delete(ctx, folder, uids)
+			// To Trash is a move, and undoable; in Trash (or with no Trash)
+			// it's for good, and Delete does that.
+			trash, err := roleFolderName(ctx, st, RoleTrash)
+			if err != nil {
+				return err
+			}
+			if trash == "" || trash == folder {
+				return st.Delete(ctx, folder, uids)
+			}
+			newUIDs, err := st.Move(ctx, folder, uids, trash)
+			moved(trash, newUIDs)
+			return err
 		case "move":
 			dest := r.PostFormValue("dest")
 			if dest == "" || dest == folder {
 				return nil
 			}
 			notice, leaves = plural("moved", len(uids)), true
-			return st.Move(ctx, folder, uids, dest)
+			newUIDs, err := st.Move(ctx, folder, uids, dest)
+			moved(dest, newUIDs)
+			return err
+		case "undo":
+			// The notice's Undo: the same messages back where they came
+			// from. Not itself undoable; moving them again is.
+			dest := r.PostFormValue("dest")
+			if dest == "" || dest == folder {
+				return nil
+			}
+			notice, leaves = "undone", true
+			_, err := st.Move(ctx, folder, uids, dest)
+			return err
 		case "junk":
 			notice, leaves = plural("moved", len(uids)), true
 			if err := st.SetFlags(ctx, folder, uids, []string{"$Junk"}, true); err != nil {
 				return err
 			}
-			return moveToRole(ctx, st, folder, uids, RoleJunk)
+			dest, newUIDs, err := moveToRole(ctx, st, folder, uids, RoleJunk)
+			moved(dest, newUIDs)
+			return err
 		case "notjunk":
 			notice, leaves = plural("moved", len(uids)), true
 			if err := st.SetFlags(ctx, folder, uids, []string{"$NotJunk"}, true); err != nil {
 				return err
 			}
-			return st.Move(ctx, folder, uids, "INBOX")
+			newUIDs, err := st.Move(ctx, folder, uids, "INBOX")
+			moved("INBOX", newUIDs)
+			return err
 		case "archive":
 			notice, leaves = plural("archived", len(uids)), true
-			return moveToRole(ctx, st, folder, uids, RoleArchive)
+			dest, newUIDs, err := moveToRole(ctx, st, folder, uids, RoleArchive)
+			moved(dest, newUIDs)
+			return err
 		case "empty":
 			notice = "emptied"
 			return st.EmptyFolder(ctx, folder)
@@ -673,10 +712,106 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 	if notice != "" {
 		back = setParam(back, "n", notice)
 	}
+	if undo != nil {
+		back = setParam(back, "undo", undo.encode(time.Now()))
+	} else {
+		back = dropParam(back, "undo")
+	}
 	redirectLocal(w, r, back)
 }
 
 var errBadTag = errors.New("webmail: invalid tag")
+
+// undoMove is a move to put back: the messages now at UIDs in From go back
+// to To. It travels in the redirect's address, not in the session, so the
+// Undo button works whichever webmail process serves the next page and
+// survives a restart, and nothing is kept for undos nobody takes.
+type undoMove struct {
+	From, To string
+	UIDs     []uint32
+}
+
+// undoWindow is how long a move can be undone from its notice. Long enough
+// to notice a slip; short enough that a reload or a bookmark doesn't offer
+// to undo something from yesterday.
+const undoWindow = 2 * time.Minute
+
+// maxUndoUIDs keeps the address a sensible length. A bigger move (a whole
+// folder's worth) is undone by moving the messages back by hand.
+const maxUndoUIDs = 500
+
+// encode packs u, stamped with now, as <unix>.<from>.<to>.<uid,uid...>, the
+// folder names base64url-encoded since they can hold any character.
+func (u undoMove) encode(now time.Time) string {
+	if len(u.UIDs) == 0 || len(u.UIDs) > maxUndoUIDs {
+		return ""
+	}
+	ids := make([]string, len(u.UIDs))
+	for i, id := range u.UIDs {
+		ids[i] = strconv.FormatUint(uint64(id), 10)
+	}
+	b := base64.RawURLEncoding
+	return strconv.FormatInt(now.Unix(), 10) + "." + b.EncodeToString([]byte(u.From)) + "." +
+		b.EncodeToString([]byte(u.To)) + "." + strings.Join(ids, ",")
+}
+
+// decodeUndo reads an undo token, refusing a malformed or expired one. It
+// grants nothing: the move it describes is posted back with the session's
+// CSRF token and checked like any other, on the user's own folders.
+func decodeUndo(s string, now time.Time) (undoMove, bool) {
+	parts := strings.Split(s, ".")
+	if len(parts) != 4 {
+		return undoMove{}, false
+	}
+	at, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return undoMove{}, false
+	}
+	if age := now.Sub(time.Unix(at, 0)); age < 0 || age > undoWindow {
+		return undoMove{}, false
+	}
+	b := base64.RawURLEncoding
+	from, err1 := b.DecodeString(parts[1])
+	to, err2 := b.DecodeString(parts[2])
+	if err1 != nil || err2 != nil || len(from) == 0 || len(to) == 0 {
+		return undoMove{}, false
+	}
+	u := undoMove{From: string(from), To: string(to)}
+	for _, p := range strings.Split(parts[3], ",") {
+		id, ok := parseUID(p)
+		if !ok {
+			return undoMove{}, false
+		}
+		u.UIDs = append(u.UIDs, id)
+	}
+	if len(u.UIDs) == 0 || len(u.UIDs) > maxUndoUIDs {
+		return undoMove{}, false
+	}
+	return u, true
+}
+
+// UIDList is the UIDs as the action form posts them.
+func (u undoMove) UIDList() string {
+	ids := make([]string, len(u.UIDs))
+	for i, id := range u.UIDs {
+		ids[i] = strconv.FormatUint(uint64(id), 10)
+	}
+	return strings.Join(ids, ",")
+}
+
+// roleFolderName is the account's folder with that role, or empty.
+func roleFolderName(ctx context.Context, st Mailstore, role Role) (string, error) {
+	folders, err := st.Folders(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, f := range folders {
+		if f.Role == role {
+			return f.Name, nil
+		}
+	}
+	return "", nil
+}
 
 func plural(notice string, n int) string {
 	if n > 1 {
@@ -712,24 +847,24 @@ var defaultFolderRoles = []Role{RoleDrafts, RoleSent, RoleJunk, RoleTrash}
 
 // moveToRole moves messages to the folder with role, creating it under its
 // default name when the account has none (Archive, usually).
-func moveToRole(ctx context.Context, st Mailstore, folder string, uids []uint32, role Role) error {
-	folders, err := st.Folders(ctx)
+// moveToRole moves messages to the folder with that role, creating it if
+// the account has none, and returns the folder and the messages' UIDs there.
+func moveToRole(ctx context.Context, st Mailstore, folder string, uids []uint32, role Role) (string, []uint32, error) {
+	name, err := roleFolderName(ctx, st, role)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	for _, f := range folders {
-		if f.Role == role {
-			return st.Move(ctx, folder, uids, f.Name)
+	if name == "" {
+		name = defaultRoleNames[role]
+		if name == "" {
+			return "", nil, ErrNotFound
+		}
+		if err := st.CreateFolder(ctx, name); err != nil && !errors.Is(err, ErrExists) {
+			return "", nil, err
 		}
 	}
-	name := defaultRoleNames[role]
-	if name == "" {
-		return ErrNotFound
-	}
-	if err := st.CreateFolder(ctx, name); err != nil && !errors.Is(err, ErrExists) {
-		return err
-	}
-	return st.Move(ctx, folder, uids, name)
+	moved, err := st.Move(ctx, folder, uids, name)
+	return name, moved, err
 }
 
 // ---- folders ---------------------------------------------------------------

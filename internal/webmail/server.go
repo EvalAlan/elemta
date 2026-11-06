@@ -417,12 +417,14 @@ type view struct {
 	Query           string
 	List            *listState
 	Notice          string
-	Problem         string
-	Page            *Page
-	Message         *Message
-	Body            *sanitizeResult
-	Remote          bool
-	Tags            []string
+	// Undo puts back the move the notice reports, for a couple of minutes.
+	Undo    *undoMove
+	Problem string
+	Page    *Page
+	Message *Message
+	Body    *sanitizeResult
+	Remote  bool
+	Tags    []string
 	// InboxTabs is the tab bar over the inbox, when tabs are on.
 	InboxTabs []InboxTab
 	Thread    []Related
@@ -541,6 +543,7 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"inbox-sorted":           "Your inbox is sorted into tabs.",
 	"tab-rule-removed":       "Tab rule removed.",
 	"moved":                  "Message moved.",
+	"undone":                 "Moved back.",
 	"moved-many":             "Messages moved.",
 	"archived":               "Message archived.",
 	"archived-many":          "Messages archived.",

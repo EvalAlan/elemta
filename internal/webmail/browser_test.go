@@ -1090,3 +1090,25 @@ func TestBrowserMoveMessageToTab(t *testing.T) {
 		t.Error("dropping on Promotions didn't move the message there")
 	}
 }
+
+// Delete with the keyboard, then undo with it: # deletes the open message,
+// the notice offers Undo, and z takes it.
+func TestBrowserUndoDelete(t *testing.T) {
+	b := newBrowser(t)
+	b.login()
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX&uid=7")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".reader .toolbar")`)
+	b.run(chromedp.KeyEvent("#"))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".notice .undo-form button")`)
+	if got := evalAs[string](b, `document.querySelector(".notice").textContent`); !strings.Contains(got, "Message deleted.") {
+		t.Errorf("notice = %q", got)
+	}
+	b.run(chromedp.KeyEvent("z"))
+	b.waitFor(`document.readyState === "complete" && (document.querySelector(".notice") || {}).textContent === "Moved back."`)
+	b.h.store.mu.Lock()
+	back := b.h.store.moved[1007]
+	b.h.store.mu.Unlock()
+	if back != "INBOX" {
+		t.Errorf("undo moved the message to %q, want INBOX", back)
+	}
+}

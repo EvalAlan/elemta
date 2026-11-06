@@ -605,20 +605,30 @@ func (s *imapStore) SetFlags(ctx context.Context, folder string, uids []uint32, 
 	return nil
 }
 
-func (s *imapStore) Move(ctx context.Context, folder string, uids []uint32, dest string) error {
+func (s *imapStore) Move(ctx context.Context, folder string, uids []uint32, dest string) ([]uint32, error) {
 	if len(uids) == 0 {
-		return nil
+		return nil, nil
 	}
 	if _, err := s.selectFolder(folder); err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := s.c.Move(uidSet(uids), dest).Wait(); err != nil {
+	data, err := s.c.Move(uidSet(uids), dest).Wait()
+	if err != nil {
 		if isNo(err) {
-			return ErrNotFound
+			return nil, ErrNotFound
 		}
-		return fmt.Errorf("webmail: move to %q: %w", dest, err)
+		return nil, fmt.Errorf("webmail: move to %q: %w", dest, err)
 	}
-	return nil
+	// COPYUID: where each message landed, which is what undoing needs.
+	var moved []uint32
+	if set, ok := data.DestUIDs.(imap.UIDSet); ok {
+		if nums, ok := set.Nums(); ok {
+			for _, u := range nums {
+				moved = append(moved, uint32(u))
+			}
+		}
+	}
+	return moved, nil
 }
 
 func (s *imapStore) Delete(ctx context.Context, folder string, uids []uint32) error {
@@ -630,7 +640,8 @@ func (s *imapStore) Delete(ctx context.Context, folder string, uids []uint32) er
 		return err
 	}
 	if trash != "" && trash != folder {
-		return s.Move(ctx, folder, uids, trash)
+		_, err := s.Move(ctx, folder, uids, trash)
+		return err
 	}
 	return s.expunge(folder, uids)
 }
