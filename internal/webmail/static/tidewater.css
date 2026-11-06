@@ -1476,11 +1476,14 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .panes { display: flex; flex: 1; align-items: stretch; min-height: 0; }
 .list { flex: 0 0 400px; min-width: 0; background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
 .list-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); min-height: 56px; }
-.inbox-tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
-.inbox-tab { padding: 10px 10px 9px; color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; }
+/* Five tabs with unread counts have to fit the list's width, or the last
+   one is cut off: tight padding, and spare room shared out between them. A
+   strip that still overflows (huge counts, large text) scrolls sideways. */
+.inbox-tabs { display: flex; padding: 0 6px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.inbox-tab { flex: 1 0 auto; text-align: center; padding: 10px 6px 9px; color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; }
 .inbox-tab:hover { color: var(--ink); }
 .inbox-tab[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
-.inbox-tab .tab-count { margin-left: 4px; padding: 0 6px; border-radius: 999px; font-size: 11px; background: var(--accent-soft); color: var(--accent-dark); }
+.inbox-tab .tab-count { margin-left: 3px; padding: 0 5px; border-radius: 999px; font-size: 11px; background: var(--accent-soft); color: var(--accent-dark); }
 /* Five inbox tabs, with unread counts, don't fit the usual 400px list. Below
    1101px the list already takes the full width. */
 @media screen and (min-width: 1101px) {
@@ -1809,10 +1812,16 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
   body[data-app="mail"]:has(.panes) .shell { flex: 1 1 auto; min-height: 0; }
   body[data-app="mail"]:has(.panes) .sidebar { overflow-y: auto; }
   body[data-app="mail"]:has(.panes) .content { min-height: 0; }
-  body[data-app="mail"] .panes > .list, body[data-app="mail"] .panes > .reader { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
-  body[data-app="mail"] .list-head { position: sticky; top: 0; z-index: 2; background: var(--surface); }
-  body[data-app="mail"] .bulk-bar { position: sticky; top: 56px; z-index: 2; }
-  body[data-app="mail"] .row-wrap { scroll-margin-top: 64px; }
+  /* Only the rows scroll. The heading, the inbox tabs and the bulk bar stay
+     put above them; when the whole list scrolled, its scrollbar ran up
+     beside the tabs, took their width and cut the last one off. */
+  body[data-app="mail"] .panes > .list { overflow: hidden; }
+  body[data-app="mail"] .panes > .list > .bulk { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  body[data-app="mail"] .panes > .list .list-scroll, body[data-app="mail"] .panes > .reader { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  body[data-app="mail"] .list-scroll { flex: 1 1 auto; min-height: 0; }
+  /* Everything above the rows keeps its height. The tab strip scrolls
+     sideways, and a flex item that scrolls may otherwise shrink to nothing. */
+  body[data-app="mail"] .panes > .list > .bulk > :not(.list-scroll) { flex: none; }
 }
 
 /* Middle widths: the folder tree plus one pane at a time. */

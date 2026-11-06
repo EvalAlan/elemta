@@ -1078,7 +1078,7 @@
   var opening = 0;
 
   function revealSelected() {
-    var row = $(".messages .selected"), list = row && row.closest(".list");
+    var row = $(".messages .selected"), list = row && row.closest(".list-scroll");
     // Only where the list is its own scroller: elsewhere this would move the page.
     if (list && window.getComputedStyle(list).overflowY !== "visible") row.scrollIntoView({ block: "nearest" });
   }
