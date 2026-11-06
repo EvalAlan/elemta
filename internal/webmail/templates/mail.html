@@ -51,6 +51,7 @@
         <button class="button" name="op" value="category">Move to tab</button>
         {{end}}
       </div>
+    <div class="list-scroll">
     {{with .Page}}
       {{if and (not .Messages) (not $.Conversations)}}
         <p class="empty">{{if $.Query}}No messages match your search.{{else}}This folder is empty.{{end}}</p>
@@ -107,6 +108,7 @@
       </nav>
       {{end}}
     {{end}}
+    </div>
     </form>
     {{/* Outside #bulk: forms can't nest, and an inner </form> would end the bulk form early. */}}
     <form id="conv-toggle" action="/settings/conversations" method="post" hidden>

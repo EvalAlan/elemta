@@ -349,8 +349,8 @@ func TestBrowserReadingPaneKeepsThePage(t *testing.T) {
 	b := newBrowser(t)
 	seedLongInbox(b, nil)
 	b.login()
-	evalAs[bool](b, `window.__samePage = true; document.querySelector(".list").scrollTop = 1500; true`)
-	if got := evalAs[int](b, `document.querySelector(".list").scrollTop`); got == 0 {
+	evalAs[bool](b, `window.__samePage = true; document.querySelector(".list-scroll").scrollTop = 1500; true`)
+	if got := evalAs[int](b, `document.querySelector(".list-scroll").scrollTop`); got == 0 {
 		t.Fatal("the list does not scroll by itself")
 	}
 	b.clickRow(35)
@@ -364,7 +364,7 @@ func TestBrowserReadingPaneKeepsThePage(t *testing.T) {
 	if !evalAs[bool](b, `document.title.includes("Message 36")`) {
 		t.Errorf("title = %q", evalAs[string](b, `document.title`))
 	}
-	if got := evalAs[int](b, `document.querySelector(".list").scrollTop`); got < 1000 {
+	if got := evalAs[int](b, `document.querySelector(".list-scroll").scrollTop`); got < 1000 {
 		t.Errorf("list scrolled to %d, want it where it was", got)
 	}
 	if !evalAs[bool](b, `(() => { const r = document.querySelector("li.selected").getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight + 1 })()`) {
@@ -864,4 +864,29 @@ func TestBrowserEventReminder(t *testing.T) {
 	b.waitFor(`document.readyState === "complete"`)
 	b.run(chromedp.Evaluate[chromedp.Void](`window.notes = 0; document.querySelector("[data-reminder-test]").click()`, chromedp.EvalAsValue))
 	b.waitFor(`!!` + card + ` && window.notes > 0`)
+}
+
+// Only the rows scroll: the heading and the inbox tabs stay in view, and the
+// five tabs with unread counts fit the list without the last being cut off.
+func TestBrowserInboxTabsFitAndStay(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	if err := b.h.store.PutObject(context.Background(), CollSettings, Object{ID: settingsID, ContentType: "application/json", Data: []byte(`{"inbox_tabs":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	b.login()
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX&tab=promotions")))
+	b.waitFor(`!!document.querySelector(".inbox-tabs") && document.readyState === "complete"`)
+	// Counts like a real inbox's, two digits on the widest tabs.
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelectorAll(".inbox-tab").forEach((a, i) => { a.querySelector(".tab-count")?.remove(); const n = [0, 1, 20, 14, 3][i]; if (n) a.insertAdjacentHTML("beforeend", ' <span class="tab-count mono">' + n + '</span>'); })`, chromedp.EvalAsValue))
+	if w := evalAs[[]int](b, `(() => { const n = document.querySelector(".inbox-tabs"); return [n.scrollWidth, n.clientWidth] })()`); w[0] > w[1] {
+		t.Errorf("the tabs need %dpx but have %d: the last one is cut off", w[0], w[1])
+	}
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelector(".list-scroll").scrollTop = 1500`, chromedp.EvalAsValue))
+	if evalAs[int](b, `document.querySelector(".list-scroll").scrollTop`) == 0 {
+		t.Fatal("the rows don't scroll by themselves")
+	}
+	if !evalAs[bool](b, `(() => { const r = document.querySelector(".inbox-tabs").getBoundingClientRect(); return r.height > 30 && r.top > 0 && r.bottom < innerHeight })()`) {
+		t.Error("the inbox tabs scrolled away or collapsed")
+	}
 }
