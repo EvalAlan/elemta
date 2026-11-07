@@ -55,9 +55,11 @@ type Service struct {
 	dir        directoryCache
 	dirMail    directoryMail
 	// push sends notifications to browsers (push.go); nil when off.
-	push   *pusher
-	ctx    context.Context
-	cancel context.CancelFunc
+	push *pusher
+	// folders wakes idle IMAP sessions when their folder changes (notify.go).
+	folders *folderHub
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 func Open(ctx context.Context, c Config, log *slog.Logger) (*Service, error) {
@@ -123,6 +125,7 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	if !c.Push.Disabled {
 		s.push = newPusher(ctx, e, log)
 	}
+	s.folders = newFolderHub(log)
 	s.srs = srs.FromEnv()
 	if s.mailDirectory() != nil {
 		e.directoryClasses = s.directoryClasses
@@ -306,6 +309,8 @@ func (s *Service) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func() { defer wg.Done(); s.push.run(s.ctx) }()
 	}
+	wg.Add(1)
+	go func() { defer wg.Done(); s.folders.run(s.ctx, s.metadataDSN()) }()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
