@@ -93,6 +93,26 @@ optional.
   connection verifies that the configured number of synchronous standbys
   flushed the commit. This also covers uncertain commit-wait cancellation.
 
+## Idle sessions and the directory, at scale
+
+- **IDLE waits for a notification.** A trigger on `mailbox_folders` sends a
+  Postgres notification whenever a folder changes, from any writer. Each
+  mailbox server holds one LISTEN connection and wakes only the sessions
+  watching that folder, so an idle session costs the database nothing.
+  - Sessions also check on their own every five minutes or so, in case a
+    notification was lost.
+  - If the LISTEN connection is down, they fall back to checking every second,
+    as before, and the log says so.
+- **Directory connections are pooled**, and answers are cached for
+  `[auth] cache_seconds`, 30 by default (`-1` turns caching off). The cache
+  holds what the directory says about an address, and that a password was
+  accepted, keyed by an HMAC, never the password itself.
+  - A changed password, suspension or forward takes up to that long to apply
+    everywhere.
+  - A wrong password is never cached.
+
+Past one database, see [Mailbox cells](mailbox-cells.md).
+
 ## Daily Compose development
 
 With the existing normal Compose stack running:

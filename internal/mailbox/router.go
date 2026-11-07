@@ -122,10 +122,10 @@ func (c RouterConfig) WithDefaults() RouterConfig {
 		c.Auth.CacheSeconds = 30
 	}
 	if c.Auth.BindDNEnv == "" {
-		c.Auth.BindDNEnv = "ELEMTA_LDAP_BIND_DN"
+		c.Auth.BindDNEnv = "ELEMTA_MAILBOX_LDAP_DN"
 	}
 	if c.Auth.BindPasswordEnv == "" {
-		c.Auth.BindPasswordEnv = "ELEMTA_LDAP_BIND_PASSWORD"
+		c.Auth.BindPasswordEnv = "ELEMTA_MAILBOX_LDAP_PASSWORD"
 	}
 	if c.Router.DefaultCell == "" && len(c.Cells) > 0 {
 		c.Router.DefaultCell = c.Cells[0].Name

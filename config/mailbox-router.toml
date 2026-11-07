@@ -25,8 +25,8 @@ default_cell = "a"
 # max_message_mb = 50
 
 # The directory, read for placement only: the router never checks a
-# password. Bind credentials come from ELEMTA_LDAP_BIND_DN and
-# ELEMTA_LDAP_BIND_PASSWORD unless named otherwise.
+# password. Bind credentials come from ELEMTA_MAILBOX_LDAP_DN and
+# ELEMTA_MAILBOX_LDAP_PASSWORD, as for the mailbox service.
 [auth]
 ldap_url = "ldap://elemta-ldap:389"
 ldap_base = "ou=people,dc=example,dc=com"

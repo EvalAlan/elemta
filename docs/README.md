@@ -23,6 +23,7 @@ are in the [CHANGELOG](../CHANGELOG.md).
 
 - [Mailbox Service](mailbox-service.md): IMAP, POP3, LMTP, Sieve and ManageSieve, storage, backups
 - [Mailbox Engine Architecture](mailbox-engine-architecture.md): design and scaling targets
+- [Mailbox Cells](mailbox-cells.md): mailboxes split across independent cells behind a router, and moving a mailbox between them
 
 ## Webmail
 
