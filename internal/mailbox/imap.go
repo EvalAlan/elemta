@@ -1081,6 +1081,7 @@ func (s *imapSession) pollFull(w *imapserver.UpdateWriter, allowExpunge bool) er
 	}
 	return nil
 }
+
 // Idle waits for the folder to change. A notification from the database
 // wakes it (notify.go); it also checks on its own now and then, in case
 // one was lost, and every second while notifications aren't working.

@@ -162,6 +162,10 @@ type AuthConfig struct {
 	BindDNEnv       string `toml:"ldap_bind_dn_env"`
 	BindPasswordEnv string `toml:"ldap_bind_password_env"`
 	DefaultDomain   string `toml:"default_domain"`
+	// CacheSeconds is how long directory answers and accepted passwords
+	// are kept (ldap_pool.go): a changed password or suspension takes up
+	// to this long to apply everywhere. 30 by default; -1 turns caching off.
+	CacheSeconds int `toml:"cache_seconds"`
 }
 type LimitsConfig struct {
 	MaxConnections      int `toml:"max_connections"`
@@ -236,6 +240,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.Server.HTTPListen == "" {
 		c.Server.HTTPListen = ":8080"
+	}
+	if c.Auth.CacheSeconds == 0 {
+		c.Auth.CacheSeconds = 30
 	}
 	if c.Metadata.MaxConnections == 0 {
 		c.Metadata.MaxConnections = 8
@@ -319,6 +326,9 @@ func (c Config) Validate() error {
 		return errors.New("public STARTTLS listeners require tls_cert and tls_key")
 	}
 
+	if c.Auth.CacheSeconds > 3600 {
+		return errors.New("auth.cache_seconds must be at most 3600")
+	}
 	if c.Metadata.MaxConnections < 2 || c.Metadata.MaxConnections > 100 {
 		return errors.New("metadata max_connections must be between 2 and 100")
 	}

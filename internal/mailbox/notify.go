@@ -25,8 +25,9 @@ package mailbox
 
 import (
 	"context"
+	"crypto/rand"
 	"log/slog"
-	"math/rand/v2"
+	"math/big"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -91,7 +92,7 @@ func (h *folderHub) subscribe(folder int64) (<-chan struct{}, func()) {
 // interval is how long an idle session waits between its own checks.
 func (h *folderHub) interval() time.Duration {
 	if h != nil && h.live.Load() {
-		return idleFallback + rand.N(fallbackJitter)
+		return idleFallback + jitter(fallbackJitter)
 	}
 	return idlePollUnwatched
 }
@@ -120,17 +121,6 @@ func (h *folderHub) signal(ch chan struct{}) {
 		h.wakeups.Add(1)
 	default: // already due to check
 	}
-}
-
-// watching is the number of sessions watching some folder.
-func (h *folderHub) watching() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	n := 0
-	for _, set := range h.watch {
-		n += len(set)
-	}
-	return n
 }
 
 // notification is what the hub needs from a LISTEN connection; pq's
@@ -198,4 +188,13 @@ func (h *folderHub) serve(ctx context.Context, l notificationSource, connected <
 			h.wake(id)
 		}
 	}
+}
+
+// jitter is a random duration under max.
+func jitter(max time.Duration) time.Duration {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return max / 2
+	}
+	return time.Duration(n.Int64())
 }

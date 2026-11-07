@@ -295,3 +295,14 @@ func (m mapAuth) Resolve(_ context.Context, u string) (Account, error) {
 	}
 	return a, nil
 }
+
+// watching is the number of sessions watching some folder.
+func (h *folderHub) watching() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, set := range h.watch {
+		n += len(set)
+	}
+	return n
+}
