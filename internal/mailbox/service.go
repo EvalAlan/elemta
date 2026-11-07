@@ -247,9 +247,11 @@ func (s *Service) Run(ctx context.Context) error {
 	errs := make(chan error, 7)
 	var wg sync.WaitGroup
 	start := func(fn func() error) { wg.Add(1); go func() { defer wg.Done(); errs <- fn() }() }
-	start(func() error { return s.imap.Serve(&limitedListener{Listener: listeners[0], slots: slots}) })
-	start(func() error { return s.lmtp.Serve(&limitedListener{Listener: listeners[1], slots: slots}) })
-	start(func() error { return s.http.Serve(listeners[2]) })
+	// Taken out first: listeners grows below while these goroutines run.
+	imapLn, lmtpLn, httpLn := listeners[0], listeners[1], listeners[2]
+	start(func() error { return s.imap.Serve(&limitedListener{Listener: imapLn, slots: slots}) })
+	start(func() error { return s.lmtp.Serve(&limitedListener{Listener: lmtpLn, slots: slots}) })
+	start(func() error { return s.http.Serve(httpLn) })
 	for _, endpoint := range []struct {
 		addr     string
 		serve    func(net.Listener) error
