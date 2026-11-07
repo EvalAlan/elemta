@@ -32,6 +32,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -237,8 +238,13 @@ func newRouter(c RouterConfig, place placer, log *slog.Logger) (*Router, error) 
 	return r, nil
 }
 
-// cellFor finds the cell of address.
+// cellFor finds the cell of address. A sign-in as "user|mailbox" opens a
+// shared mailbox, which is where the session must go; sharing works
+// within a cell, so the user is there too.
 func (r *Router) cellFor(ctx context.Context, address string) (*routerCell, error) {
+	if _, mailbox, shared := strings.Cut(address, "|"); shared {
+		address = mailbox
+	}
 	name, err := r.place.CellOf(ctx, address)
 	if err != nil {
 		return nil, err

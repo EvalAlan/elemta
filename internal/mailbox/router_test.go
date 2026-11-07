@@ -615,3 +615,49 @@ func TestCellRefusesOtherCellsMailboxes(t *testing.T) {
 		t.Fatalf("unplaced, in a cell that isn't the default: %v", err)
 	}
 }
+
+// A shared mailbox is opened by signing in as "user|mailbox"; the session
+// belongs in the mailbox's cell.
+func TestRouterCellForSharedMailbox(t *testing.T) {
+	r, err := newRouter(RouterConfig{Router: RouterServerConfig{DefaultCell: "a"}, Cells: []CellConfig{{Name: "a"}, {Name: "b"}}},
+		mapPlacer{"@b.example": "b"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for user, want := range map[string]string{"x@b.example": "b", "x@a.example|team@b.example": "b", "x@b.example|team@a.example": "a", "y@elsewhere": "a"} {
+		cell, err := r.cellFor(context.Background(), user)
+		if err != nil || cell.Name != want {
+			t.Errorf("cellFor(%s) = %v %v, want %s", user, cell, err, want)
+		}
+	}
+}
+
+// The webmail may also use STARTTLS on the internal listener, and a
+// password that needs a literal.
+func TestRouterIMAPStartTLS(t *testing.T) {
+	rig := newRouterRig(t)
+	client, err := imapclient.DialStartTLS(rig.cfg.Router.IMAPListen, &imapclient.Options{TLSConfig: rig.tlsConfig(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	if err := client.Login("alice@a.example", "testpass").Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	// A shared-mailbox style user name with a quote and a backslash is
+	// refused by the cell, not mangled by the router.
+	c2, err := imapclient.DialInsecure(rig.cfg.Router.IMAPListen, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c2.Close() }()
+	if err := c2.Login(`al"i\ce@a.example`, "pass\r\nword").Wait(); err == nil {
+		t.Fatal("an odd user name signed in")
+	}
+	if err := c2.Login("alice@a.example", "testpass").Wait(); err != nil {
+		t.Fatalf("after a refusal: %v", err)
+	}
+}
