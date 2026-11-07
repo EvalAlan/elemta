@@ -55,7 +55,12 @@ type Service struct {
 	dir        directoryCache
 	dirMail    directoryMail
 	// push sends notifications to browsers (push.go); nil when off.
-	push   *pusher
+	push *pusher
+	// folders wakes idle IMAP sessions when their folder changes (notify.go).
+	folders *folderHub
+	// cells says where mailboxes are placed, when this is one cell of
+	// several (cells.go).
+	cells  placer
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -107,7 +112,7 @@ func Open(ctx context.Context, c Config, log *slog.Logger) (*Service, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("mailbox initialization: %w", err)
 	}
-	srv, err := newService(c, engine, domainStatusAuth{LDAPAuth{Config: c.Auth}, engine}, log)
+	srv, err := newService(c, engine, domainStatusAuth{NewLDAPAuth(c.Auth), engine}, log)
 	if err != nil {
 		_ = bodies.Close()
 		_ = db.Close()
@@ -122,6 +127,13 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 	s := &Service{receiveSlots: make(chan struct{}, c.Limits.MaxConcurrentBodies), cfg: c, engine: e, auth: auth, log: log, ctx: ctx, cancel: cancel, adminToken: os.Getenv(c.Admin.TokenEnv), abuse: abuse.New("mailbox", os.Getenv("VALKEY_ADDR"), log)}
 	if !c.Push.Disabled {
 		s.push = newPusher(ctx, e, log)
+	}
+	s.folders = newFolderHub(log)
+	if c.Cell.Name != "" {
+		if dir, ok := s.Placement(); ok {
+			s.cells = dir
+		}
+		e.placed = s.inCell
 	}
 	s.srs = srs.FromEnv()
 	if s.mailDirectory() != nil {
@@ -235,9 +247,11 @@ func (s *Service) Run(ctx context.Context) error {
 	errs := make(chan error, 7)
 	var wg sync.WaitGroup
 	start := func(fn func() error) { wg.Add(1); go func() { defer wg.Done(); errs <- fn() }() }
-	start(func() error { return s.imap.Serve(&limitedListener{Listener: listeners[0], slots: slots}) })
-	start(func() error { return s.lmtp.Serve(&limitedListener{Listener: listeners[1], slots: slots}) })
-	start(func() error { return s.http.Serve(listeners[2]) })
+	// Taken out first: listeners grows below while these goroutines run.
+	imapLn, lmtpLn, httpLn := listeners[0], listeners[1], listeners[2]
+	start(func() error { return s.imap.Serve(&limitedListener{Listener: imapLn, slots: slots}) })
+	start(func() error { return s.lmtp.Serve(&limitedListener{Listener: lmtpLn, slots: slots}) })
+	start(func() error { return s.http.Serve(httpLn) })
 	for _, endpoint := range []struct {
 		addr     string
 		serve    func(net.Listener) error
@@ -306,6 +320,8 @@ func (s *Service) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func() { defer wg.Done(); s.push.run(s.ctx) }()
 	}
+	wg.Add(1)
+	go func() { defer wg.Done(); s.folders.run(s.ctx, s.metadataDSN()) }()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

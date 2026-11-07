@@ -374,3 +374,14 @@ CREATE TABLE IF NOT EXISTS mailbox_push_reminders (
     PRIMARY KEY (account, key)
 );
 CREATE INDEX IF NOT EXISTS mailbox_push_reminders_due ON mailbox_push_reminders(fire_at) WHERE NOT sent;
+-- A folder's MODSEQ moves on every change to it. The notification wakes the
+-- IMAP sessions idling on it, on every mailbox server (notify.go), instead
+-- of each asking the database once a second.
+CREATE OR REPLACE FUNCTION mailbox_folder_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM pg_notify('elemta_folder', NEW.id::text);
+  RETURN NULL;
+END
+$$;
+CREATE OR REPLACE TRIGGER mailbox_folder_changed AFTER UPDATE OF modseq ON mailbox_folders
+  FOR EACH ROW WHEN (NEW.modseq IS DISTINCT FROM OLD.modseq) EXECUTE FUNCTION mailbox_folder_changed();

@@ -28,7 +28,8 @@ func TestLDAPDirectoryMail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	// Closed after the cleanups below that use it (cleanups run last first).
+	t.Cleanup(func() { _ = c.Close() })
 	if err := c.Bind(admin, pw); err != nil {
 		t.Fatal(err)
 	}

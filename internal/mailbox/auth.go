@@ -24,7 +24,50 @@ type Authenticator interface {
 	// that: it refuses disabled accounts like unknown ones.
 	Exists(context.Context, string) (bool, error)
 }
-type LDAPAuth struct{ Config AuthConfig }
+type LDAPAuth struct {
+	Config AuthConfig
+	// Pools and cache (ldap_pool.go); NewLDAPAuth makes them. Without them
+	// every call dials afresh and nothing is cached.
+	search, binds *ldapPool
+	cache         *ldapCache
+}
+
+// NewLDAPAuth keeps directory connections for reuse and caches answers
+// for cfg.CacheSeconds.
+func NewLDAPAuth(cfg AuthConfig) LDAPAuth {
+	a := LDAPAuth{Config: cfg}
+	a.search = &ldapPool{open: a.bound}
+	a.binds = &ldapPool{open: a.dial}
+	a.cache = newLDAPCache(time.Duration(cfg.CacheSeconds) * time.Second)
+	return a
+}
+
+// withService runs fn on a connection bound as the mailbox service.
+func (a LDAPAuth) withService(fn func(*ldap.Conn) error) error {
+	if a.search == nil {
+		c, err := a.bound()
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		return fn(c)
+	}
+	return a.search.do(fn)
+}
+
+// checkPassword binds as dn with password on a connection kept for that.
+func (a LDAPAuth) checkPassword(dn, password string) error {
+	bind := func(c *ldap.Conn) error { return c.Bind(dn, password) }
+	if a.binds == nil {
+		c, err := a.dial()
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		return bind(c)
+	}
+	return a.binds.do(bind)
+}
 
 func (a LDAPAuth) dial() (*ldap.Conn, error) {
 	u, err := url.Parse(a.Config.LDAPURL)
@@ -49,11 +92,35 @@ func (a LDAPAuth) lookup(ctx context.Context, address string, delivery bool) (Ac
 	if !strings.Contains(address, "@") || len(address) > 320 {
 		return Account{}, "", ErrCredentials
 	}
-	c, err := a.bound()
-	if err != nil {
-		return Account{}, "", err
+	key := "l:" + address
+	if delivery {
+		key = "d:" + address
 	}
-	defer c.Close()
+	if e, ok := a.cache.get(key); ok {
+		if !e.ok {
+			return Account{}, "", ErrCredentials
+		}
+		return e.account, e.dn, nil
+	}
+	var account Account
+	var dn string
+	err := a.withService(func(c *ldap.Conn) error {
+		var err error
+		account, dn, err = a.search1(c, address, delivery)
+		return err
+	})
+	switch {
+	case err == nil:
+		a.cache.put(key, cached{account: account, dn: dn, ok: true})
+	case errors.Is(err, ErrCredentials):
+		a.cache.put(key, cached{})
+	}
+	return account, dn, err
+}
+
+// search1 finds the one account entry for address.
+func (a LDAPAuth) search1(c *ldap.Conn, address string, delivery bool) (Account, string, error) {
+	var err error
 	escaped := ldap.EscapeFilter(address)
 	filter := strings.Replace(a.Config.LDAPFilter, "%s", escaped, 1)
 	if delivery {
@@ -125,17 +192,21 @@ func (a LDAPAuth) Login(ctx context.Context, user, password string) (Account, er
 	if err != nil {
 		return Account{}, err
 	}
-	c, err := a.dial()
-	if err != nil {
-		return Account{}, err
+	var key string
+	if a.cache != nil {
+		key = a.cache.password(account.Address, password)
+		if e, ok := a.cache.get(key); ok && e.dn == dn {
+			return account, nil
+		}
 	}
-	defer c.Close()
-	if err = c.Bind(dn, password); err != nil {
+	if err = a.checkPassword(dn, password); err != nil {
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 			return Account{}, ErrCredentials
 		}
 		return Account{}, err
 	}
+	// Only a password the directory accepted is remembered.
+	a.cache.put(key, cached{dn: dn, ok: true})
 	return account, nil
 }
 func (a LDAPAuth) Resolve(ctx context.Context, address string) (Account, error) {
@@ -147,24 +218,26 @@ func (a LDAPAuth) Exists(ctx context.Context, address string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	c, err := a.dial()
+	address = strings.ToLower(address)
+	key := "e:" + address
+	if e, ok := a.cache.get(key); ok {
+		return e.ok, nil
+	}
+	var found bool
+	err := a.withService(func(c *ldap.Conn) error {
+		result, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 5, false,
+			"(|(mail="+ldap.EscapeFilter(address)+")(mailAlternateAddress="+ldap.EscapeFilter(address)+"))", []string{"dn"}, nil))
+		if err != nil {
+			return err
+		}
+		found = len(result.Entries) > 0
+		return nil
+	})
 	if err != nil {
 		return false, err
 	}
-	defer c.Close()
-	dn, pw := os.Getenv(a.Config.BindDNEnv), os.Getenv(a.Config.BindPasswordEnv)
-	if dn == "" || pw == "" {
-		return false, errors.New("LDAP service credentials are required")
-	}
-	if err = c.Bind(dn, pw); err != nil {
-		return false, err
-	}
-	result, err := c.Search(ldap.NewSearchRequest(a.Config.LDAPBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 5, false,
-		"(|(mail="+ldap.EscapeFilter(strings.ToLower(address))+")(mailAlternateAddress="+ldap.EscapeFilter(strings.ToLower(address))+"))", []string{"dn"}, nil))
-	if err != nil {
-		return false, err
-	}
-	return len(result.Entries) > 0, nil
+	a.cache.put(key, cached{ok: found})
+	return found, nil
 }
 
 // statusAllows applies an account's directory status (accountStatus):

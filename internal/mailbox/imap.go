@@ -1081,20 +1081,43 @@ func (s *imapSession) pollFull(w *imapserver.UpdateWriter, allowExpunge bool) er
 	}
 	return nil
 }
+
+// Idle waits for the folder to change. A notification from the database
+// wakes it (notify.go); it also checks on its own now and then, in case
+// one was lost, and every second while notifications aren't working.
 func (s *imapSession) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	hub := s.service.folders
+	var changed <-chan struct{}
+	if hub != nil && s.folder.ID != 0 {
+		ch, unsubscribe := hub.subscribe(s.folder.ID)
+		defer unsubscribe()
+		changed = ch
+	}
+	// Anything that changed between the last command and subscribing.
+	if err := s.Poll(w, true); err != nil {
+		return err
+	}
+	timer := time.NewTimer(hub.interval())
+	defer timer.Stop()
 	for {
 		select {
 		case <-stop:
 			return nil
 		case <-s.ctx.Done():
 			return nil
-		case <-ticker.C:
-			if err := s.Poll(w, true); err != nil {
-				return err
+		case <-changed:
+		case <-timer.C:
+		}
+		if err := s.Poll(w, true); err != nil {
+			return err
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
 			}
 		}
+		timer.Reset(hub.interval())
 	}
 }
 

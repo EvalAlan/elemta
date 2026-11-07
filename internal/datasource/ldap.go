@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
@@ -17,7 +18,12 @@ import (
 
 // LDAP implements the DataSource interface for LDAP directories
 type LDAP struct {
-	config    Config
+	config Config
+	// mu guards conn and connected. One connection serves every SMTP
+	// session at once (go-ldap multiplexes operations on it); only
+	// replacing it needs the lock, and each operation takes the current
+	// one (current) so a replacement never pulls it from under another.
+	mu        sync.Mutex
 	conn      *ldap.Conn
 	connected bool
 	baseDN    string
@@ -119,6 +125,12 @@ func (l *LDAP) dial() (*ldap.Conn, error) {
 
 // Connect establishes a connection to the LDAP server
 func (l *LDAP) Connect() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.connectLocked()
+}
+
+func (l *LDAP) connectLocked() error {
 	if l.connected {
 		return nil
 	}
@@ -144,6 +156,8 @@ func (l *LDAP) Connect() error {
 
 // Close closes the connection to the LDAP server
 func (l *LDAP) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if !l.connected {
 		return nil
 	}
@@ -157,7 +171,23 @@ func (l *LDAP) Close() error {
 
 // IsConnected returns true if the datasource is connected
 func (l *LDAP) IsConnected() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return l.connected
+}
+
+// current is the connection to use for one operation.
+func (l *LDAP) current() *ldap.Conn {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.conn
+}
+
+// lostConnection says whether err means the connection is gone, so the
+// operation is worth one more try on a new one.
+func lostConnection(err error) bool {
+	var le *ldap.Error
+	return errors.As(err, &le) && le.ResultCode == ldap.ErrorNetwork
 }
 
 // Name returns the name of the datasource
@@ -175,7 +205,7 @@ func (l *LDAP) Type() string {
 // would either store the password in the clear or need a hash chosen here,
 // and passwords people choose need a slow hash the directory is configured for.
 func (l *LDAP) setPassword(dn, password string) error {
-	_, err := l.conn.PasswordModify(ldap.NewPasswordModifyRequest(dn, "", password))
+	_, err := l.current().PasswordModify(ldap.NewPasswordModifyRequest(dn, "", password))
 	return err
 }
 
@@ -184,36 +214,56 @@ func (l *LDAP) getUserDN(username string) string {
 	return fmt.Sprintf("uid=%s,%s", ldap.EscapeFilter(username), l.userDN)
 }
 
-// ensureConnection checks if the LDAP connection is still alive and reconnects if needed
+// ensureConnection replaces the connection once it has closed (the
+// directory restarted, or dropped it while idle). It used to search the
+// directory before every operation to find out, doubling the load; go-ldap
+// marks a connection closing as soon as its reader sees it end, and an
+// operation that still meets a dead one is tried once more (lostConnection).
 func (l *LDAP) ensureConnection() error {
-	// Try a simple search to check if connection is alive
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.conn != nil && !l.conn.IsClosing() {
+		return nil
+	}
 	if l.conn != nil {
-		testSearch := ldap.NewSearchRequest(
-			l.baseDN,
-			ldap.ScopeBaseObject,
-			ldap.NeverDerefAliases,
-			1, 5, false,
-			"(objectClass=*)",
-			[]string{"dn"},
-			nil,
-		)
-		_, err := l.conn.Search(testSearch)
-		if err == nil {
-			// Connection is alive
-			return nil
-		}
-		// Connection is dead, close it
-		_ = l.conn.Close() // Ignore error on cleanup
+		_ = l.conn.Close()
+	}
+	l.connected = false
+	return l.connectLocked()
+}
+
+// replaceConnection drops c if it is still the current connection and
+// connects again, after an operation found it dead.
+func (l *LDAP) replaceConnection(c *ldap.Conn) error {
+	l.mu.Lock()
+	if l.conn == c {
+		_ = c.Close()
 		l.connected = false
 	}
+	l.mu.Unlock()
+	return l.ensureConnection()
+}
 
-	// Reconnect
-	return l.Connect()
+// search runs one search, once more on a new connection if the first
+// found it dead.
+func (l *LDAP) search(req *ldap.SearchRequest) (*ldap.SearchResult, error) {
+	c := l.current()
+	if c == nil {
+		return nil, ErrNotConnected
+	}
+	res, err := c.Search(req)
+	if lostConnection(err) {
+		if rerr := l.replaceConnection(c); rerr != nil {
+			return nil, err
+		}
+		return l.current().Search(req)
+	}
+	return res, err
 }
 
 // Authenticate verifies credentials against the LDAP server
 func (l *LDAP) Authenticate(ctx context.Context, username, password string) (bool, error) {
-	if !l.connected {
+	if !l.IsConnected() {
 		return false, ErrNotConnected
 	}
 
@@ -244,7 +294,7 @@ func (l *LDAP) Authenticate(ctx context.Context, username, password string) (boo
 		nil,
 	)
 
-	searchResult, err := l.conn.Search(searchRequest)
+	searchResult, err := l.search(searchRequest)
 	if err != nil {
 		return false, fmt.Errorf("failed to search for user: %w", err)
 	}
@@ -280,7 +330,7 @@ func (l *LDAP) Authenticate(ctx context.Context, username, password string) (boo
 
 // GetUser retrieves user information from the LDAP server
 func (l *LDAP) GetUser(ctx context.Context, username string) (User, error) {
-	if !l.connected {
+	if !l.IsConnected() {
 		return User{}, ErrNotConnected
 	}
 
@@ -298,7 +348,7 @@ func (l *LDAP) GetUser(ctx context.Context, username string) (User, error) {
 		nil,
 	)
 
-	searchResult, err := l.conn.Search(searchRequest)
+	searchResult, err := l.search(searchRequest)
 	if err != nil {
 		return User{}, fmt.Errorf("failed to search for user: %w", err)
 	}
@@ -354,7 +404,7 @@ func (l *LDAP) GetUser(ctx context.Context, username string) (User, error) {
 		nil,
 	)
 
-	groupResult, err := l.conn.Search(groupSearchRequest)
+	groupResult, err := l.search(groupSearchRequest)
 	if err != nil {
 		return user, fmt.Errorf("failed to search for user groups: %w", err)
 	}
@@ -383,7 +433,7 @@ func (l *LDAP) GetUser(ctx context.Context, username string) (User, error) {
 
 // ListUsers retrieves a list of users from the LDAP server
 func (l *LDAP) ListUsers(ctx context.Context, filter map[string]interface{}, limit, offset int) ([]User, error) {
-	if !l.connected {
+	if !l.IsConnected() {
 		return nil, ErrNotConnected
 	}
 
@@ -411,7 +461,7 @@ func (l *LDAP) ListUsers(ctx context.Context, filter map[string]interface{}, lim
 		nil,
 	)
 
-	searchResult, err := l.conn.Search(searchRequest)
+	searchResult, err := l.search(searchRequest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search for users: %w", err)
 	}
@@ -465,7 +515,7 @@ func (l *LDAP) ListUsers(ctx context.Context, filter map[string]interface{}, lim
 			nil,
 		)
 
-		groupResult, err := l.conn.Search(groupSearchRequest)
+		groupResult, err := l.search(groupSearchRequest)
 		if err != nil {
 			return users, fmt.Errorf("failed to search for user groups: %w", err)
 		}
@@ -497,7 +547,7 @@ func (l *LDAP) ListUsers(ctx context.Context, filter map[string]interface{}, lim
 
 // CreateUser creates a new user in the LDAP server
 func (l *LDAP) CreateUser(ctx context.Context, user User) error {
-	if !l.connected {
+	if !l.IsConnected() {
 		return ErrNotConnected
 	}
 
@@ -510,7 +560,7 @@ func (l *LDAP) CreateUser(ctx context.Context, user User) error {
 		nil,
 	)
 
-	searchResult, err := l.conn.Search(searchRequest)
+	searchResult, err := l.search(searchRequest)
 	if err != nil {
 		return fmt.Errorf("failed to search for existing user: %w", err)
 	}
@@ -570,14 +620,14 @@ func (l *LDAP) CreateUser(ctx context.Context, user User) error {
 	}
 
 	// Execute the add request
-	if err := l.conn.Add(addRequest); err != nil {
+	if err := l.current().Add(addRequest); err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
 	if user.Password != "" {
 		userDN := l.getUserDN(user.Username)
 		if err := l.setPassword(userDN, user.Password); err != nil {
 			// Not left behind without the password the caller asked for.
-			return errors.Join(fmt.Errorf("failed to set password: %w", err), l.conn.Del(ldap.NewDelRequest(userDN, nil)))
+			return errors.Join(fmt.Errorf("failed to set password: %w", err), l.current().Del(ldap.NewDelRequest(userDN, nil)))
 		}
 	}
 
@@ -592,7 +642,7 @@ func (l *LDAP) CreateUser(ctx context.Context, user User) error {
 			nil,
 		)
 
-		groupResult, err := l.conn.Search(groupSearchRequest)
+		groupResult, err := l.search(groupSearchRequest)
 		if err != nil {
 			return fmt.Errorf("failed to search for group: %w", err)
 		}
@@ -605,7 +655,7 @@ func (l *LDAP) CreateUser(ctx context.Context, user User) error {
 			groupAddRequest.Attribute("cn", []string{groupName})
 			groupAddRequest.Attribute("member", []string{l.getUserDN(user.Username)})
 
-			if err := l.conn.Add(groupAddRequest); err != nil {
+			if err := l.current().Add(groupAddRequest); err != nil {
 				return fmt.Errorf("failed to create group: %w", err)
 			}
 		} else {
@@ -614,7 +664,7 @@ func (l *LDAP) CreateUser(ctx context.Context, user User) error {
 			modifyRequest := ldap.NewModifyRequest(groupDN, nil)
 			modifyRequest.Add("member", []string{l.getUserDN(user.Username)})
 
-			if err := l.conn.Modify(modifyRequest); err != nil {
+			if err := l.current().Modify(modifyRequest); err != nil {
 				return fmt.Errorf("failed to add user to group: %w", err)
 			}
 		}
@@ -625,7 +675,7 @@ func (l *LDAP) CreateUser(ctx context.Context, user User) error {
 
 // UpdateUser updates an existing user in the LDAP server
 func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
-	if !l.connected {
+	if !l.IsConnected() {
 		return ErrNotConnected
 	}
 
@@ -638,7 +688,7 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 		nil,
 	)
 
-	searchResult, err := l.conn.Search(searchRequest)
+	searchResult, err := l.search(searchRequest)
 	if err != nil {
 		return fmt.Errorf("failed to search for existing user: %w", err)
 	}
@@ -690,7 +740,7 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 
 	// Execute the modify request
 	if len(modifyRequest.Changes) > 0 {
-		if err := l.conn.Modify(modifyRequest); err != nil {
+		if err := l.current().Modify(modifyRequest); err != nil {
 			return fmt.Errorf("failed to update user: %w", err)
 		}
 	}
@@ -710,7 +760,7 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 		nil,
 	)
 
-	groupResult, err := l.conn.Search(groupSearchRequest)
+	groupResult, err := l.search(groupSearchRequest)
 	if err != nil {
 		return fmt.Errorf("failed to search for user groups: %w", err)
 	}
@@ -734,7 +784,7 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 			modifyRequest := ldap.NewModifyRequest(groupDN, nil)
 			modifyRequest.Delete("member", []string{userDN})
 
-			if err := l.conn.Modify(modifyRequest); err != nil {
+			if err := l.current().Modify(modifyRequest); err != nil {
 				return fmt.Errorf("failed to remove user from group: %w", err)
 			}
 		}
@@ -753,7 +803,7 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 				nil,
 			)
 
-			groupResult, err := l.conn.Search(groupSearchRequest)
+			groupResult, err := l.search(groupSearchRequest)
 			if err != nil {
 				return fmt.Errorf("failed to search for group: %w", err)
 			}
@@ -766,7 +816,7 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 				groupAddRequest.Attribute("cn", []string{groupName})
 				groupAddRequest.Attribute("member", []string{userDN})
 
-				if err := l.conn.Add(groupAddRequest); err != nil {
+				if err := l.current().Add(groupAddRequest); err != nil {
 					return fmt.Errorf("failed to create group: %w", err)
 				}
 			} else {
@@ -775,7 +825,7 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 				modifyRequest := ldap.NewModifyRequest(groupDN, nil)
 				modifyRequest.Add("member", []string{userDN})
 
-				if err := l.conn.Modify(modifyRequest); err != nil {
+				if err := l.current().Modify(modifyRequest); err != nil {
 					return fmt.Errorf("failed to add user to group: %w", err)
 				}
 			}
@@ -787,7 +837,7 @@ func (l *LDAP) UpdateUser(ctx context.Context, user User) error {
 
 // DeleteUser deletes a user from the LDAP server
 func (l *LDAP) DeleteUser(ctx context.Context, username string) error {
-	if !l.connected {
+	if !l.IsConnected() {
 		return ErrNotConnected
 	}
 
@@ -800,7 +850,7 @@ func (l *LDAP) DeleteUser(ctx context.Context, username string) error {
 		nil,
 	)
 
-	searchResult, err := l.conn.Search(searchRequest)
+	searchResult, err := l.search(searchRequest)
 	if err != nil {
 		return fmt.Errorf("failed to search for existing user: %w", err)
 	}
@@ -820,7 +870,7 @@ func (l *LDAP) DeleteUser(ctx context.Context, username string) error {
 		nil,
 	)
 
-	groupResult, err := l.conn.Search(groupSearchRequest)
+	groupResult, err := l.search(groupSearchRequest)
 	if err != nil {
 		return fmt.Errorf("failed to search for user groups: %w", err)
 	}
@@ -829,14 +879,14 @@ func (l *LDAP) DeleteUser(ctx context.Context, username string) error {
 		modifyRequest := ldap.NewModifyRequest(groupEntry.DN, nil)
 		modifyRequest.Delete("member", []string{userDN})
 
-		if err := l.conn.Modify(modifyRequest); err != nil {
+		if err := l.current().Modify(modifyRequest); err != nil {
 			return fmt.Errorf("failed to remove user from group: %w", err)
 		}
 	}
 
 	// Delete the user
 	deleteRequest := ldap.NewDelRequest(userDN, nil)
-	if err := l.conn.Del(deleteRequest); err != nil {
+	if err := l.current().Del(deleteRequest); err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
 	}
 
@@ -845,7 +895,7 @@ func (l *LDAP) DeleteUser(ctx context.Context, username string) error {
 
 // Query executes a custom query against the LDAP server
 func (l *LDAP) Query(ctx context.Context, query string, args ...interface{}) (interface{}, error) {
-	if !l.connected {
+	if !l.IsConnected() {
 		return nil, ErrNotConnected
 	}
 
@@ -895,7 +945,7 @@ func (l *LDAP) Query(ctx context.Context, query string, args ...interface{}) (in
 	)
 
 	// Execute search
-	searchResult, err := l.conn.Search(searchRequest)
+	searchResult, err := l.search(searchRequest)
 	if err != nil {
 		return nil, fmt.Errorf("LDAP query failed: %w", err)
 	}

@@ -1,0 +1,41 @@
+# The cell router in front of cells a and b (cells.yaml).
+[router]
+imap_listen = ":1143"
+imaps_listen = ":10993"
+pop3_listen = ":1110"
+sieve_listen = ":4190"
+lmtp_listen = ":2424"
+http_listen = ":8080"
+tls_cert = "/etc/elemta/tls/cert.pem"
+tls_key = "/etc/elemta/tls/key.pem"
+# The dev cluster's pod network and the host (k3s's load balancer arrives
+# from the node's address).
+internal_networks = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"]
+default_cell = "a"
+max_connections = 20000
+
+[auth]
+ldap_url = "ldap://elemta-ldap:389"
+ldap_base = "ou=people,dc=example,dc=com"
+default_domain = "a.test"
+cache_seconds = 30
+
+[[cell]]
+name = "a"
+imaps = "mailbox-a:10993"
+pop3 = "mailbox-a:1110"
+sieve = "mailbox-a:4190"
+lmtp = "mailbox-a:2424"
+http = "http://mailbox-a:8080"
+tls_server_name = "mailbox-a"
+tls_ca_file = "/etc/elemta/tls/cert.pem"
+
+[[cell]]
+name = "b"
+imaps = "mailbox-b:10993"
+pop3 = "mailbox-b:1110"
+sieve = "mailbox-b:4190"
+lmtp = "mailbox-b:2424"
+http = "http://mailbox-b:8080"
+tls_server_name = "mailbox-b"
+tls_ca_file = "/etc/elemta/tls/cert.pem"

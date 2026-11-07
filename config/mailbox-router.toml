@@ -1,0 +1,58 @@
+# The mailbox cell router (elemta mailbox-router): one front door for
+# mailboxes split across cells. See docs/mailbox-cells.md.
+#
+# Point everything that talked to the mailbox service (mail apps, the
+# webmail, the MTA's LMTP, the admin console) at the router instead. Each
+# cell is a complete mailbox service of its own; list the routers in each
+# cell's [server] proxy_protocol_from so the cells see clients' addresses.
+
+[router]
+imap_listen = ":1143"          # the webmail: plaintext from internal_networks only
+imap_starttls_listen = ":143"  # mail apps: TLS before sign-in
+imaps_listen = ":993"
+pop3_listen = ":110"
+sieve_listen = ":4190"
+lmtp_listen = ":2424"          # the MTA, from internal_networks only
+http_listen = ":8080"          # the webmail and admin console, internal only
+tls_cert = "/etc/elemta/tls/cert.pem"
+tls_key = "/etc/elemta/tls/key.pem"
+# tls_sni_dir = "/etc/elemta/tls/sni"
+# proxy_protocol_from = ["10.0.0.0/8"]   # load balancers in front of the router
+internal_networks = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"]
+# Mailboxes without a placement (elemtaMailboxCell) live here.
+default_cell = "a"
+# max_connections = 10000
+# max_message_mb = 50
+
+# The directory, read for placement only: the router never checks a
+# password. Bind credentials come from ELEMTA_MAILBOX_LDAP_DN and
+# ELEMTA_MAILBOX_LDAP_PASSWORD, as for the mailbox service.
+[auth]
+ldap_url = "ldap://elemta-ldap:389"
+ldap_base = "ou=people,dc=example,dc=com"
+default_domain = "example.com"
+# Placements are cached this long; a moved mailbox is routed to its new
+# cell within it. -1 turns caching off.
+cache_seconds = 30
+
+# One table per cell: how the router reaches the cell's mailbox servers,
+# usually through a Service or load balancer in front of them.
+[[cell]]
+name = "a"
+imaps = "mailbox-a:10993"
+pop3 = "mailbox-a:1110"
+sieve = "mailbox-a:4190"
+lmtp = "mailbox-a:2424"
+http = "http://mailbox-a:8080"
+# The name on the cell's certificate, and a CA to trust beyond the system's.
+tls_server_name = "mail.example.com"
+# tls_ca_file = "/etc/elemta/tls/cells-ca.pem"
+
+[[cell]]
+name = "b"
+imaps = "mailbox-b:10993"
+pop3 = "mailbox-b:1110"
+sieve = "mailbox-b:4190"
+lmtp = "mailbox-b:2424"
+http = "http://mailbox-b:8080"
+tls_server_name = "mail.example.com"
