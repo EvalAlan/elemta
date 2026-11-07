@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -88,6 +89,30 @@ func TestFolderHubWakesWatchers(t *testing.T) {
 	if !src.closed || h.interval() != idlePollUnwatched {
 		t.Error("stopping should close the listener and go back to polling")
 	}
+}
+
+// The Compose deployment gives the mailbox servers PGHOST and friends and
+// no DSN; notifications must still come on there.
+func TestFolderHubConnectsFromPGEnvironment(t *testing.T) {
+	dsn := os.Getenv("ELEMTA_TEST_MAILBOX_DSN")
+	if dsn == "" {
+		t.Skip("ELEMTA_TEST_MAILBOX_DSN not set")
+	}
+	env := map[string]string{"host": "PGHOST", "port": "PGPORT", "dbname": "PGDATABASE", "user": "PGUSER", "password": "PGPASSWORD", "sslmode": "PGSSLMODE"}
+	for _, kv := range strings.Fields(dsn) {
+		k, v, ok := strings.Cut(kv, "=")
+		if name := env[k]; ok && name != "" {
+			t.Setenv(name, v)
+		} else {
+			t.Skipf("DSN setting %q has no PG variable here", kv)
+		}
+	}
+	h := newFolderHub(slog.Default())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); h.run(ctx, "") }()
+	defer func() { cancel(); <-done }()
+	waitFor(t, "the listener", func() bool { return h.live.Load() })
 }
 
 // A session idling on one mailbox server hears about mail appended through

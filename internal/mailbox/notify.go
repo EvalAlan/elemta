@@ -131,11 +131,11 @@ type notificationSource interface {
 	Close() error
 }
 
-// run holds the LISTEN connection until ctx ends.
+// run holds the LISTEN connection until ctx ends. An empty dsn is not "no
+// database": like the engine's own sql.Open, pq then connects with the
+// PGHOST/PGUSER/... environment, which is how the Compose deployment
+// configures the mailbox servers.
 func (h *folderHub) run(ctx context.Context, dsn string) {
-	if dsn == "" {
-		return
-	}
 	connected := make(chan struct{}, 1)
 	l := pq.NewListener(dsn, time.Second, time.Minute, func(ev pq.ListenerEventType, err error) {
 		switch ev {
