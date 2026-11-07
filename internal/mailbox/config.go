@@ -32,6 +32,9 @@ type Config struct {
 	// service teaches Rspamd, it never asks it for a verdict.
 	SpamLearning SpamLearningConfig `toml:"spam_learning"`
 	Push         PushConfig         `toml:"push"`
+	// Cell names the cell this service is, when mailboxes are split across
+	// cells (cells.go); empty for a single cell.
+	Cell MailboxCellConfig `toml:"cell"`
 }
 
 // PushConfig controls notifications to people's browsers (push.go).
@@ -381,4 +384,14 @@ func directoryBase(base string) string {
 		return base
 	}
 	return (&ldap.DN{RDNs: dn.RDNs[1:]}).String()
+}
+
+// MailboxCellConfig says which cell a mailbox service is. With a name
+// set, the service serves only mailboxes placed in it (and, if it is the
+// default cell, those placed nowhere), so a router with a stale placement
+// gets a temporary failure rather than an empty new mailbox in the old
+// cell.
+type MailboxCellConfig struct {
+	Name    string `toml:"name"`
+	Default bool   `toml:"default"`
 }

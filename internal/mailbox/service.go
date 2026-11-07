@@ -58,8 +58,11 @@ type Service struct {
 	push *pusher
 	// folders wakes idle IMAP sessions when their folder changes (notify.go).
 	folders *folderHub
-	ctx     context.Context
-	cancel  context.CancelFunc
+	// cells says where mailboxes are placed, when this is one cell of
+	// several (cells.go).
+	cells  placer
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func Open(ctx context.Context, c Config, log *slog.Logger) (*Service, error) {
@@ -126,6 +129,12 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 		s.push = newPusher(ctx, e, log)
 	}
 	s.folders = newFolderHub(log)
+	if c.Cell.Name != "" {
+		if dir, ok := s.Placement(); ok {
+			s.cells = dir
+		}
+		e.placed = s.inCell
+	}
 	s.srs = srs.FromEnv()
 	if s.mailDirectory() != nil {
 		e.directoryClasses = s.directoryClasses

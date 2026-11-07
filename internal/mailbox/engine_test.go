@@ -212,8 +212,9 @@ func TestEngineConcurrentAndDurable(t *testing.T) {
 		t.Fatal(err)
 	}
 	again, err := other.Append(ctx, a.ID, "INBOX", []byte("retry"), nil, time.Time{}, "delivery-1")
-	if err != nil || result != again {
-		t.Fatalf("retry result: %v %v", again, err)
+	// The retry answers with the first delivery's UID, and says it was one.
+	if err != nil || result.Validity != again.Validity || result.UID != again.UID || result.Duplicate || !again.Duplicate {
+		t.Fatalf("retry result: %v then %v %v", result, again, err)
 	}
 	if _, err := other.Append(ctx, a.ID, "INBOX", []byte("different"), nil, time.Time{}, "delivery-1"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("retry conflict: %v", err)
@@ -233,7 +234,7 @@ func TestEngineConcurrentAndDurable(t *testing.T) {
 		t.Fatalf("expunge: %v %v", removed, err)
 	}
 	again, err = e.Append(ctx, a.ID, "INBOX", []byte("retry"), nil, time.Time{}, "delivery-1")
-	if err != nil || again != result {
+	if err != nil || again.Validity != result.Validity || again.UID != result.UID || !again.Duplicate {
 		t.Fatal("retry resurrected moved/deleted delivery")
 	}
 	if err := e.DeleteFolder(ctx, a.ID, "Archive"); err != nil {

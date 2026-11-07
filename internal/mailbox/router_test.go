@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -119,6 +120,11 @@ func newTestCell(t *testing.T, name, address, certFile, keyFile string) *testCel
 		}
 	})
 	waitFor(t, "cell "+name+" to listen", func() bool {
+		select {
+		case err := <-done:
+			t.Fatalf("cell %s stopped: %v", name, err)
+		default:
+		}
 		c, err := net.Dial("tcp", cfg.Server.HTTPListen)
 		if err == nil {
 			_ = c.Close()
@@ -554,5 +560,58 @@ func TestRouterExampleConfig(t *testing.T) {
 	}
 	if len(c.Cells) != 2 || c.Router.DefaultCell != "a" || c.Auth.CacheSeconds != 30 {
 		t.Errorf("config = %+v", c)
+	}
+}
+
+// A cell serves only the mailboxes placed in it: with a stale placement
+// (a move under way) a delivery is deferred and a sign-in refused, and no
+// empty mailbox appears in the wrong cell.
+func TestCellRefusesOtherCellsMailboxes(t *testing.T) {
+	e, a := testEngine(t)
+	cfg := Config{}.WithDefaults()
+	cfg.Server.AllowPlaintextAuth = true
+	cfg.Server.LMTPAllowedNetworks = []string{"127.0.0.0/8"}
+	cfg.Cell = MailboxCellConfig{Name: "a"}
+	service, imapAddr, lmtpAddr := startTestService(t, e, a, cfg)
+	placement := mapPlacer{a.Address: "b"}
+	service.cells = placement
+
+	conn, err := net.Dial("tcp", lmtpAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := smtp.NewClientLMTP(conn)
+	defer func() { _ = c.Close() }()
+	if err := c.Hello("mta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Mail("x@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	err = c.Rcpt(a.Address, nil)
+	if se, ok := err.(*smtp.SMTPError); !ok || se.Code/100 != 4 {
+		t.Fatalf("delivery to a mailbox placed elsewhere: %v", err)
+	}
+	client, err := imapclient.DialInsecure(imapAddr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	if err := client.Login(a.Address, "testpass").Wait(); err == nil {
+		t.Fatal("signed in to a mailbox placed in another cell")
+	}
+	// Placed here (or nowhere, in the default cell), it works.
+	placement[a.Address] = "a"
+	if err := client.Login(a.Address, "testpass").Wait(); err != nil {
+		t.Fatalf("placed here: %v", err)
+	}
+	delete(placement, a.Address)
+	service.cfg.Cell.Default = true
+	if err := e.EnsureAccount(context.Background(), a); err != nil {
+		t.Fatalf("unplaced, in the default cell: %v", err)
+	}
+	service.cfg.Cell.Default = false
+	if err := e.EnsureAccount(context.Background(), a); !errors.Is(err, ErrOtherCell) {
+		t.Fatalf("unplaced, in a cell that isn't the default: %v", err)
 	}
 }

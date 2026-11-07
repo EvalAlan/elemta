@@ -94,6 +94,9 @@ type Engine struct {
 	// spamLearnPerDay is the per-account limit on moves queued for Rspamd
 	// to learn from (spam_learn.go); zero while learning is off.
 	spamLearnPerDay int
+	// placed refuses an account placed in another cell (Service.inCell);
+	// nil when mailboxes aren't split into cells.
+	placed func(ctx context.Context, address string) error
 }
 
 func NewEngine(ctx context.Context, db *sql.DB, bodies BodyStore, c Config) (*Engine, error) {
@@ -273,6 +276,11 @@ func (e *Engine) EnsureAccount(ctx context.Context, a Account) error {
 	defer cancel()
 	if a.ID == "" || a.Address == "" || a.Quota < 0 {
 		return errors.New("invalid account identity")
+	}
+	if e.placed != nil {
+		if err := e.placed(ctx, a.Address); err != nil {
+			return err
+		}
 	}
 	// Every RCPT and login lands here. When the account is already as the
 	// directory describes it, a read answers without taking the account
@@ -562,6 +570,9 @@ func (e *Engine) Append(ctx context.Context, account, name string, raw []byte, f
 		return err
 	})
 	if err != nil || duplicate {
+		// A retry caught here is as much a duplicate as one caught later:
+		// callers rely on it (push notifies only for new mail).
+		result.Duplicate = duplicate
 		return result, err
 	}
 	reserved = true

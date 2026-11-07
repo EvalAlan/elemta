@@ -159,3 +159,23 @@ func (a LDAPAuth) SetCell(ctx context.Context, address, cell string) error {
 
 // errNoCell is a placement naming a cell the router doesn't know.
 var errNoCell = errors.New("mailbox placed in an unknown cell")
+
+// ErrOtherCell is a mailbox placed in another cell: a router's placement
+// was out of date (a move in progress). Sign-ins and deliveries get a
+// temporary failure and are retried, by then through the right cell.
+var ErrOtherCell = errors.New("mailbox is in another cell")
+
+// inCell checks that address is placed in this service's cell.
+func (s *Service) inCell(ctx context.Context, address string) error {
+	if s.cells == nil {
+		return nil
+	}
+	cell, err := s.cells.CellOf(ctx, address)
+	if err != nil {
+		return err
+	}
+	if cell == s.cfg.Cell.Name || (cell == "" && s.cfg.Cell.Default) {
+		return nil
+	}
+	return ErrOtherCell
+}
