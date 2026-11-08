@@ -2438,3 +2438,11 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 @media (max-width: 720px) {
   .compose-from .push { display: none; }
 }
+/* The message toolbar with its words doesn't fit the reading pane of a
+   three-pane window at common laptop widths, and wrapped in two. app.js
+   ("message toolbar on one row") adds .compact when it would wrap, and the
+   buttons show their icons; the words stay as each button's accessible name
+   and its tooltip. Measured, not a width breakpoint, because how wide the
+   words are depends on the fonts the computer has. */
+.toolbar.compact .button:has(.tb-label) > .icon { display: inline-block; }
+.toolbar.compact .tb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
