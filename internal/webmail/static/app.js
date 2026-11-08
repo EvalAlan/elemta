@@ -1797,6 +1797,17 @@
         });
       } });
     }
+    // Snooze: the bulk bar's presets, which the page renders only where
+    // snoozing makes sense (not Drafts, not Scheduled, not a shared mailbox).
+    var snoozeChoices = $$("[data-snooze-choice]");
+    if (snoozeChoices.length) {
+      items.push({ label: "Snooze", sub: function () {
+        return snoozeChoices.map(function (b) {
+          var when = $(".muted", b);
+          return { label: b.getAttribute("data-snooze-choice") + (when ? " \u00b7 " + when.textContent : ""), run: act("snooze", { until: b.value.slice("snooze@".length) }) };
+        });
+      } });
+    }
     if (role !== "archive") items.push({ label: "Archive", run: act("archive") });
     items.push(role === "quarantine" ? { label: "Release to Inbox", run: act("notjunk") } :
       role === "junk" ? { label: "Not junk", run: act("notjunk") } : { label: "Report junk", run: act("junk") });

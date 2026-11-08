@@ -321,6 +321,8 @@ func (s *Service) Run(ctx context.Context) error {
 		go func() { defer wg.Done(); s.push.run(s.ctx) }()
 	}
 	wg.Add(1)
+	go func() { defer wg.Done(); s.runScheduled(s.ctx) }()
+	wg.Add(1)
 	go func() { defer wg.Done(); s.folders.run(s.ctx, s.metadataDSN()) }()
 	wg.Add(1)
 	go func() {

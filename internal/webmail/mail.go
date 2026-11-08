@@ -252,6 +252,7 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	if v.Message != nil {
 		s.decorateMessage(r.Context(), sess, &v)
 	}
+	s.decorateLater(r.Context(), sess, &v)
 	s.render(w, "mail.html", http.StatusOK, v)
 }
 
@@ -588,6 +589,9 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 	s.pages.forgetRaw(sess.ID)
 	if len(uids) == 0 && op != "empty" && op != "readall" {
 		redirectLocal(w, r, back)
+		return
+	}
+	if s.laterAction(w, r, sess, folder, op, uids, back) {
 		return
 	}
 	notice := ""

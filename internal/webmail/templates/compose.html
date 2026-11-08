@@ -102,6 +102,18 @@
   <div class="field" data-pgp-passphrase hidden><label class="field-label" for="pgp-unlock">Passphrase</label><input id="pgp-unlock" name="pgp_passphrase" type="password" autocomplete="off"></div>
   <div class="actions">
     <button class="button primary" type="submit" name="op" value="send" data-submit-key>Send</button>
+    {{with $.Later}}{{if .Schedule}}
+    <details class="menu send-later">
+      <summary class="button" title="Send later">{{template "icon-clock"}}<span class="tb-label">Send later</span></summary>
+      <div class="menu-body">
+        <p class="small muted">Send it</p>
+        {{range .Schedule}}<button class="menu-item" type="submit" name="schedule" value="{{.Value}}">{{.Label}} <span class="muted">{{.When}}</span></button>{{end}}
+        <label class="small muted" for="schedule-at">Or pick a date and time</label>
+        <input id="schedule-at" type="datetime-local" name="schedule_at">
+        <button class="button" type="submit" name="schedule" value="custom">Schedule</button>
+      </div>
+    </details>
+    {{end}}{{end}}
     <button class="button" type="submit" name="op" value="save" formnovalidate>Save draft</button>
     <a class="button ghost danger push" href="/mail" data-discard>Discard</a>
   </div>

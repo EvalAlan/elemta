@@ -1212,3 +1212,44 @@ func TestBrowserPushSettings(t *testing.T) {
 		t.Errorf("push calls = %v", f.pushCalls)
 	}
 }
+
+// With Encrypt ticked, Send later must seal the message in the browser as
+// Send does. Here there is no key to seal with, so nothing may reach the
+// mailbox service: before pgp.js knew about Send later, the form posted the
+// message readable and it was scheduled unencrypted.
+func TestBrowserScheduleSendKeepsEncryption(t *testing.T) {
+	b := newBrowser(t)
+	f := &fakeSecurity{}
+	api := httptest.NewServer(f.handler(t))
+	t.Cleanup(api.Close)
+	b.h.server.security = newSecurityClient(api.URL)
+	b.run(
+		chromedp.Navigate(b.url("/login")),
+		chromedp.SendKeys(chromedp.ID("user"), "dana"),
+		chromedp.SendKeys(chromedp.ID("password"), "secret"),
+		chromedp.Submit(chromedp.ID("password")),
+		chromedp.WaitVisible(chromedp.CSS(`[data-ctx="message"]`)),
+		chromedp.Navigate(b.url("/compose")),
+		chromedp.WaitVisible(chromedp.CSS(".send-later summary")),
+		chromedp.SendKeys(chromedp.ID("to"), "priya@northwind.example"),
+		chromedp.SendKeys(chromedp.ID("subject"), "Secret plans"),
+	)
+	b.run(chromedp.Evaluate[chromedp.Void](`(() => {
+		const t = document.querySelector("[data-pgp-toggle]");
+		t.checked = true;
+		t.dispatchEvent(new Event("change", { bubbles: true }));
+		document.querySelector(".send-later").open = true;
+	})()`, chromedp.EvalAsValue))
+	b.run(chromedp.Click(chromedp.CSS(`.send-later button[name="schedule"]`)))
+	b.waitFor(`(() => { const s = document.querySelector("[data-pgp-status]"); return s && !s.hidden && s.textContent.trim() !== ""; })()`)
+	time.Sleep(500 * time.Millisecond)
+	f.mu.Lock()
+	calls := len(f.laterCalls)
+	f.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("Send later with Encrypt on reached the mailbox service %d times without encryption", calls)
+	}
+	if !evalAs[bool](b, `location.pathname === "/compose"`) {
+		t.Error("left the editor without sending")
+	}
+}

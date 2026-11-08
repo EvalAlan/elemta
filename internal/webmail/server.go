@@ -429,6 +429,8 @@ type view struct {
 	Undo *undoMove
 	// PendingSend is a message waiting out its undo delay (sendlater.go).
 	PendingSend *pendingNotice
+	// Later is scheduled send and snooze on the mail page (schedule.go).
+	Later *laterView
 	// SendFailures are delayed sends that didn't go, said once.
 	SendFailures []string
 	Problem      string
@@ -565,6 +567,13 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"moved-many":             "Messages moved.",
 	"archived":               "Message archived.",
 	"archived-many":          "Messages archived.",
+	"scheduled":              "Message scheduled. It waits in Scheduled until it goes.",
+	"rescheduled":            "Send time changed.",
+	"sending-now":            "Sending now.",
+	"snoozed":                "Message snoozed.",
+	"snoozed-many":           "Messages snoozed.",
+	"unsnoozed":              "Message is back.",
+	"unsnoozed-many":         "Messages are back.",
 	"emptied":                "Folder emptied.",
 	"all-read":               "All messages marked read.",
 	"loggedout":              "You've signed out.",

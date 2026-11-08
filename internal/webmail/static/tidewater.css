@@ -2312,6 +2312,11 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 @media (min-width: 721px) {
   /* The toolbar's icons are for phones; computers keep the words. */
   .toolbar .button:has(.tb-label) > .icon { display: none; }
+  /* Except where the icon says it as well (More's dots, Snooze's clock),
+     which keeps the row to one line in a three-pane window. */
+  .toolbar .button.icon-only:has(.tb-label) > .icon { display: inline-block; }
+  .toolbar .button.icon-only .tb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .toolbar .snooze-tb .menu-body { left: auto; right: 0; min-width: 260px; }
 }
 @media (max-width: 720px) {
   .topbar { flex-wrap: nowrap; gap: 6px; padding: 6px max(8px, env(safe-area-inset-right)) 6px max(8px, env(safe-area-inset-left)); }
@@ -2400,4 +2405,19 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
   .table.stack td[data-label]:not(:first-child)::before { content: attr(data-label) ": "; color: var(--muted); }
   .table.stack td:first-child { font-weight: 600; }
   .table.stack td.num { width: auto; }
+}
+/* Scheduled send and snooze (schedule.go). */
+.later-banner { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; padding: 10px 14px; border-radius: var(--radius); background: var(--accent-soft); color: var(--ink); }
+.later-banner .icon { flex: none; color: var(--accent); }
+.later-banner form { margin-left: auto; }
+.row .later-time { color: var(--accent); white-space: nowrap; }
+.menu-body input[type="datetime-local"] { min-height: 36px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); padding: 0 8px; max-width: 100%; }
+.menu-body .menu-item .muted { margin-left: 8px; }
+.send-later .menu-body { min-width: 260px; }
+/* Compose's buttons sit at the bottom of the page: open upward. */
+.send-later .menu-body { top: auto; bottom: calc(100% + 4px); right: auto; left: 0; }
+/* On a phone, Send later is its clock, so compose's buttons stay one row;
+   the label stays as the button's accessible name. */
+@media (max-width: 720px) {
+  .send-later .tb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }

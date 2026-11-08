@@ -75,6 +75,10 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 			if strings.HasPrefix(r.URL.Path, "/v1/security/pgp") {
 				limit = 3 * maxPGPKey // a key pair, armored
 			}
+			if r.URL.Path == "/v1/scheduled" && r.Method == http.MethodPost {
+				// The message itself, base64 in JSON.
+				limit = s.engine.MaxBytes/3*4 + 1<<16
+			}
 			if r.URL.Path == "/v1/push/reminders" {
 				limit = 1 << 19 // maxPushReminders of them
 			}
@@ -312,6 +316,106 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		}
 		return map[string]string{"address": address, "token": token}, nil
 	})
+	// Scheduled send and snooze (scheduled.go). Scheduling needs the
+	// account's own password, as every change here does; sending later
+	// doesn't, which is why it happens on this side.
+	handle("POST /v1/scheduled", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			From   string    `json:"from"`
+			To     []string  `json:"to"`
+			SendAt time.Time `json:"send_at"`
+			Raw    []byte    `json:"raw"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if s.cfg.Sieve.SubmitAddr == "" {
+			return nil, errScheduleUnavailable
+		}
+		if err := checkScheduleTime(in.SendAt, time.Now()); err != nil {
+			return nil, err
+		}
+		rcpts, err := checkScheduleRecipients(in.To)
+		if err != nil {
+			return nil, err
+		}
+		if len(in.Raw) == 0 {
+			return nil, errBadRequest
+		}
+		if ok, err := s.maySendAs(r.Context(), a.account, in.From); err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, &requestError{"you can't send as " + clip(in.From, 80)}
+		}
+		uid, err := s.engine.ScheduleSend(r.Context(), a.account.ID, in.Raw, strings.ToLower(strings.TrimSpace(in.From)), rcpts, in.SendAt)
+		if errors.Is(err, ErrQuota) {
+			return nil, &requestError{"your mailbox is full"}
+		}
+		return map[string]any{"uid": uid, "folder": scheduledFolder}, err
+	})
+	handle("GET /v1/scheduled", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		list, err := s.engine.ScheduledSends(r.Context(), a.account.ID)
+		return map[string]any{"folder": scheduledFolder, "scheduled": list}, err
+	})
+	handle("POST /v1/scheduled/reschedule", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			UID    uint32    `json:"uid"`
+			SendAt time.Time `json:"send_at"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if err := checkScheduleTime(in.SendAt, time.Now()); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.engine.RescheduleSend(r.Context(), a.account.ID, in.UID, in.SendAt)
+	})
+	handle("POST /v1/scheduled/cancel", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			UID uint32 `json:"uid"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		folder, uid, err := s.engine.CancelSend(r.Context(), a.account.ID, in.UID)
+		return map[string]any{"folder": folder, "uid": uid}, err
+	})
+	handle("POST /v1/snooze", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			Folder string    `json:"folder"`
+			UIDs   []uint32  `json:"uids"`
+			Until  time.Time `json:"until"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if in.Folder == "" || len(in.UIDs) == 0 || len(in.UIDs) > 500 {
+			return nil, errBadRequest
+		}
+		if !in.Until.After(time.Now()) || in.Until.After(time.Now().Add(maxScheduleAhead)) {
+			return nil, &requestError{"pick a time within the next year"}
+		}
+		uids, err := s.engine.Snooze(r.Context(), a.account.ID, in.Folder, in.UIDs, in.Until)
+		return map[string]any{"folder": snoozedFolder, "uids": uids}, err
+	})
+	handle("GET /v1/snooze", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		list, err := s.engine.Snoozes(r.Context(), a.account.ID)
+		return map[string]any{"folder": snoozedFolder, "snoozed": list}, err
+	})
+	handle("POST /v1/snooze/cancel", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		var in struct {
+			UIDs []uint32 `json:"uids"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if len(in.UIDs) == 0 || len(in.UIDs) > 500 {
+			return nil, errBadRequest
+		}
+		back, err := s.engine.Unsnooze(r.Context(), a.account.ID, in.UIDs)
+		return map[string]any{"back": back}, err
+	})
+
 	// Notifications to the user's browsers (push.go). Without push, the
 	// webmail is told there is no key and doesn't offer them.
 	handle("GET /v1/push", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {

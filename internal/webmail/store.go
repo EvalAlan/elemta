@@ -24,6 +24,8 @@ const (
 	RoleQuarantine Role = "quarantine"
 	RoleTrash      Role = "trash"
 	RoleArchive    Role = "archive"
+	// RoleScheduled and RoleSnoozed (schedule.go) are folders the mailbox
+	// service creates on first use, as it does Quarantine.
 )
 
 // Folder is one mailbox in the user's folder tree.
