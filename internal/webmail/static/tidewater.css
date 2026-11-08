@@ -2401,3 +2401,21 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
   .table.stack td:first-child { font-weight: 600; }
   .table.stack td.num { width: auto; }
 }
+
+/* Swiping a message row on a phone (app.js "swipe a message row"). The row
+   slides over the strip, so it needs a background of its own while it moves.
+   pan-y leaves vertical scrolling to the browser and sideways to the script. */
+@media (max-width: 720px) {
+  ol.messages { position: relative; }
+  ol.messages > li.row-wrap { touch-action: pan-y; }
+  ol.messages > li.row-wrap.swiping { position: relative; z-index: 1; background: var(--surface); }
+}
+.swipe-hint { position: absolute; left: 0; right: 0; display: flex; align-items: center; padding: 0 24px; font-weight: 600; color: var(--muted); background: var(--surface-2); }
+.swipe-hint.to-left { justify-content: flex-end; }
+.swipe-hint.ready.accent { background: var(--accent); color: var(--on-accent); }
+.swipe-hint.ready.danger { background: var(--danger-soft); color: var(--danger); }
+/* Compose on a phone: the From row's "Change name or signature" link wrapped
+   onto a line of its own. Settings is a tap away in the account menu. */
+@media (max-width: 720px) {
+  .compose-from .push { display: none; }
+}

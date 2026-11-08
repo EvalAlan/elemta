@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/device"
 )
@@ -195,5 +197,95 @@ func TestBrowserPhoneDrawerAndMenus(t *testing.T) {
 	b.run(chromedp.Click(chromedp.CSS(`.toolbar summary[title="More"]`)))
 	if !evalAs[bool](b, `[...document.querySelectorAll(".toolbar details[open] a")].some(a => a.textContent === "Reply all" && a.getBoundingClientRect().width > 0)`) {
 		t.Error("Reply all isn't in More on a phone")
+	}
+
+	// Compose: From is one line, not two.
+	b.run(chromedp.Navigate(b.url("/compose")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".compose-from")`)
+	if h := evalAs[float64](b, `document.querySelector(".compose-from").getBoundingClientRect().height`); h > 60 {
+		t.Errorf("compose's From row is %.0fpx tall: more than one line", h)
+	}
+}
+
+// TestBrowserPhoneSwipeRows swipes message rows with real touch events, as a
+// phone sends them: right marks read, left archives, and a short swipe or a
+// scroll does nothing.
+func TestBrowserPhoneSwipeRows(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.h.store.mu.Lock()
+	b.h.store.folders = append(b.h.store.folders, Folder{Name: "Archive", Display: "Archive", Role: RoleArchive, Selectable: true})
+	b.h.store.mu.Unlock()
+	b.login()
+	b.run(chromedp.Emulate(device.IPhone13))
+	open := func() {
+		b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+		b.waitFor(`document.readyState === "complete" && !!document.querySelector("ol.messages li[data-uid]")`)
+	}
+	// touch drags from the middle of row n (0-based) by dx, dy in steps.
+	touch := func(n int, dx, dy float64) {
+		r := evalAs[[]float64](b, fmt.Sprintf(`(() => { const r = document.querySelectorAll("ol.messages > li[data-uid]")[%d].getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`, n))
+		x, y := r[0], r[1]
+		send := func(kind input.DispatchTouchEventType, points ...*input.TouchPoint) {
+			if points == nil {
+				points = []*input.TouchPoint{}
+			}
+			b.run(chromedp.Func(func(ctx context.Context, tg *chromedp.Target) error {
+				_, err := cdp.Call(ctx, tg, input.DispatchTouchEvent, input.DispatchTouchEventParams{Type: kind, TouchPoints: points})
+				return err
+			}))
+		}
+		send(input.DispatchTouchEventTypeTouchStart, &input.TouchPoint{X: x, Y: y})
+		for i := 1; i <= 10; i++ {
+			send(input.DispatchTouchEventTypeTouchMove, &input.TouchPoint{X: x + dx*float64(i)/10, Y: y + dy*float64(i)/10})
+		}
+		send(input.DispatchTouchEventTypeTouchEnd)
+	}
+	uidOf := func(n int) uint32 {
+		return uint32(evalAs[float64](b, fmt.Sprintf(`+document.querySelectorAll("ol.messages > li[data-uid]")[%d].getAttribute("data-uid")`, n)))
+	}
+	reloads := func(do func()) {
+		b.run(chromedp.Evaluate[chromedp.Void](`window.__beforeSwipe = true`, chromedp.EvalAsValue))
+		do()
+		b.waitFor(`!window.__beforeSwipe && document.readyState === "complete"`)
+	}
+	stays := func(what string, do func()) {
+		b.run(chromedp.Evaluate[chromedp.Void](`window.__beforeSwipe = true`, chromedp.EvalAsValue))
+		do()
+		time.Sleep(600 * time.Millisecond)
+		if !evalAs[bool](b, `!!window.__beforeSwipe && location.search === "?f=INBOX"`) {
+			t.Fatalf("%s acted on the row", what)
+		}
+		if tr := evalAs[string](b, `document.querySelector("ol.messages > li[data-uid]").style.transform`); tr != "" {
+			t.Errorf("%s left the row at %q", what, tr)
+		}
+		if evalAs[int](b, `document.querySelectorAll(".swipe-hint").length`) != 0 {
+			t.Errorf("%s left the action strip behind", what)
+		}
+	}
+
+	open()
+	first := uidOf(0)
+	stays("a short swipe", func() { touch(0, -60, 0) })
+	stays("a scroll", func() { touch(0, 15, 250) })
+
+	reloads(func() { touch(0, 250, 0) })
+	b.h.store.mu.Lock()
+	read := b.h.store.seen[first]
+	b.h.store.mu.Unlock()
+	if !read {
+		t.Errorf("swiping right didn't mark message %d read", first)
+	}
+
+	open()
+	reloads(func() { touch(0, -250, 0) })
+	b.h.store.mu.Lock()
+	dest := b.h.store.moved[first]
+	b.h.store.mu.Unlock()
+	if dest != "Archive" {
+		t.Errorf("swiping left moved message %d to %q, want Archive", first, dest)
+	}
+	if !evalAs[bool](b, `document.body.textContent.includes("Undo")`) {
+		t.Error("no Undo after archiving with a swipe")
 	}
 }
