@@ -14,6 +14,14 @@ Sign in at your server's address with your full email address and password.
 - **Shared mailboxes:** when someone grants you access, choose the mailbox in
   the Mail sidebar. You can read and organize its mail. If your grant includes
   sending, new messages use its address; otherwise they use your own.
+- **Send later:** the clock beside Send. Pick a time, and the message waits
+  in the Scheduled folder and goes then, whether or not you're signed in.
+  Open it there to send it now, change the time, or edit it (it goes back to
+  Drafts). Deleting it from Scheduled, here or in a mail app, cancels it. If
+  it can't be sent, it goes back to Drafts and a note in your inbox says why.
+- **Snooze:** the clock on a message, or Snooze on the selected ones. The
+  message moves to the Snoozed folder and comes back, unread, where it was at
+  the time you picked. Unsnooze brings it back now.
 - **On a phone:** swipe a message left to archive it (in Archive and Trash,
   to delete it), or right to mark it read or unread. Undo in the notice puts
   an archived or deleted message back.

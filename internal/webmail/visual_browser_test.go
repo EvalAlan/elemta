@@ -5,6 +5,7 @@ package webmail
 import (
 	"context"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -287,5 +288,46 @@ func TestBrowserPhoneSwipeRows(t *testing.T) {
 	}
 	if !evalAs[bool](b, `document.body.textContent.includes("Undo")`) {
 		t.Error("no Undo after archiving with a swipe")
+	}
+}
+
+// Send later and Snooze on a phone: compose's buttons stay one row and the
+// menu opens on screen (upward, from the bottom bar); the message toolbar
+// stays one row, Snooze being in More there.
+func TestBrowserPhoneLaterMenus(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	f := &fakeSecurity{}
+	api := httptest.NewServer(f.handler(t))
+	t.Cleanup(api.Close)
+	b.h.server.security = newSecurityClient(api.URL)
+	b.run(chromedp.Emulate(device.IPhone13))
+	b.run(
+		chromedp.Navigate(b.url("/login")),
+		chromedp.SendKeys(chromedp.ID("user"), "dana"),
+		chromedp.SendKeys(chromedp.ID("password"), "secret"),
+		chromedp.Submit(chromedp.ID("password")),
+		chromedp.WaitVisible(chromedp.CSS(`[data-ctx="message"]`)),
+		chromedp.Navigate(b.url("/compose")),
+		chromedp.WaitVisible(chromedp.CSS(".send-later summary")),
+	)
+	if h := evalAs[float64](b, `document.querySelector(".compose .actions, form .actions").getBoundingClientRect().height`); h > 70 {
+		t.Errorf("compose's buttons are %.0fpx tall: more than one row", h)
+	}
+	b.run(chromedp.Click(chromedp.CSS(".send-later summary")))
+	r := evalAs[[]float64](b, `(() => { const r = document.querySelector(".send-later .menu-body").getBoundingClientRect(); return [r.top, r.bottom, r.left, r.right, innerHeight, innerWidth]; })()`)
+	if r[0] < 0 || r[1] > r[4] || r[2] < 0 || r[3] > r[5] {
+		t.Errorf("the Send later menu is off screen: top %.0f bottom %.0f left %.0f right %.0f in %.0fx%.0f", r[0], r[1], r[2], r[3], r[5], r[4])
+	}
+	for _, p := range evalAs[[]string](b, layoutCheck) {
+		t.Error("compose: " + p)
+	}
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX&uid=101")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".reader .toolbar")`)
+	if h := evalAs[float64](b, `document.querySelector(".reader .toolbar").getBoundingClientRect().height`); h > 60 {
+		t.Errorf("the message toolbar is %.0fpx tall with Snooze: more than one row", h)
+	}
+	if !evalAs[bool](b, `[...document.querySelectorAll(".toolbar .menu-body button")].some(x => x.textContent.startsWith("Snooze: ") && getComputedStyle(x).display !== "none")`) {
+		t.Error("Snooze isn't in More on a phone")
 	}
 }

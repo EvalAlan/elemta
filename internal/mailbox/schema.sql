@@ -385,3 +385,35 @@ END
 $$;
 CREATE OR REPLACE TRIGGER mailbox_folder_changed AFTER UPDATE OF modseq ON mailbox_folders
   FOR EACH ROW WHEN (NEW.modseq IS DISTINCT FROM OLD.modseq) EXECUTE FUNCTION mailbox_folder_changed();
+-- Scheduled send and snooze (scheduled.go). Each row names a message by its
+-- place, and the foreign key is the point: a move is an insert and a delete,
+-- so deleting the message or moving it out of Scheduled or Snoozed, from any
+-- client, removes the row and cancels it. claimed_until stops two mailbox
+-- servers acting on the same row; a claim that outlives its server lapses.
+CREATE TABLE IF NOT EXISTS mailbox_scheduled_sends (
+    folder bigint NOT NULL,
+    uid bigint NOT NULL,
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    send_at timestamptz NOT NULL,
+    mail_from text NOT NULL,
+    rcpts text[] NOT NULL,
+    attempts integer NOT NULL DEFAULT 0,
+    last_error text NOT NULL DEFAULT '',
+    claimed_until timestamptz,
+    PRIMARY KEY (folder, uid),
+    FOREIGN KEY (folder, uid) REFERENCES mailbox_messages(folder, uid) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS mailbox_scheduled_sends_due ON mailbox_scheduled_sends(send_at);
+CREATE INDEX IF NOT EXISTS mailbox_scheduled_sends_account ON mailbox_scheduled_sends(account);
+CREATE TABLE IF NOT EXISTS mailbox_snoozes (
+    folder bigint NOT NULL,
+    uid bigint NOT NULL,
+    account text NOT NULL REFERENCES mailbox_accounts(id) ON DELETE CASCADE,
+    until timestamptz NOT NULL,
+    return_to text NOT NULL,
+    claimed_until timestamptz,
+    PRIMARY KEY (folder, uid),
+    FOREIGN KEY (folder, uid) REFERENCES mailbox_messages(folder, uid) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS mailbox_snoozes_due ON mailbox_snoozes(until);
+CREATE INDEX IF NOT EXISTS mailbox_snoozes_account ON mailbox_snoozes(account);

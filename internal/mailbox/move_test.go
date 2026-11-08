@@ -199,3 +199,55 @@ func TestMoveAccount(t *testing.T) {
 		t.Fatalf("redo: %+v %v", r, err)
 	}
 }
+
+// What is scheduled or snoozed moves with the account, and from the moment
+// the source is read-only only the destination acts on it.
+func TestMoveAccountCarriesScheduledAndSnoozed(t *testing.T) {
+	ctx := context.Background()
+	src, dst := cellEngine(t, false), cellEngine(t, true)
+	a := Account{ID: uuid.NewString(), Address: "later@example.com"}
+	if err := src.EnsureAccount(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	sendAt := time.Now().Add(-time.Second).Truncate(time.Millisecond)
+	if _, err := src.ScheduleSend(ctx, a.ID, []byte("Subject: s\r\n\r\ns\r\n"), a.Address, []string{"x@example.net"}, sendAt); err != nil {
+		t.Fatal(err)
+	}
+	res, err := src.Append(ctx, a.ID, "INBOX", []byte("Subject: z\r\n\r\nz\r\n"), nil, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().Add(-time.Second).Truncate(time.Millisecond)
+	if _, err := src.Snooze(ctx, a.ID, "INBOX", []uint32{res.UID}, until); err != nil {
+		t.Fatal(err)
+	}
+	r, err := MoveAccount(ctx, src, dst, a.Address, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Rows["mailbox_scheduled_sends"] != 1 || r.Rows["mailbox_snoozes"] != 1 {
+		t.Errorf("rows moved: %v", r.Rows)
+	}
+	sends, err := dst.ScheduledSends(ctx, a.ID)
+	if err != nil || len(sends) != 1 || !sends[0].SendAt.Equal(sendAt) || sends[0].From != a.Address {
+		t.Fatalf("scheduled in the destination: %+v, %v", sends, err)
+	}
+	snoozes, err := dst.Snoozes(ctx, a.ID)
+	if err != nil || len(snoozes) != 1 || snoozes[0].ReturnTo != "INBOX" || !snoozes[0].Until.Equal(until) {
+		t.Fatalf("snoozed in the destination: %+v, %v", snoozes, err)
+	}
+	// Both are due. The read-only source claims neither; the destination
+	// claims both.
+	if d, err := src.claimDueSends(ctx); err != nil || len(d) != 0 {
+		t.Errorf("the source claimed sends %v (%v)", d, err)
+	}
+	if d, err := src.claimDueSnoozes(ctx); err != nil || len(d) != 0 {
+		t.Errorf("the source claimed snoozes %v (%v)", d, err)
+	}
+	if d, err := dst.claimDueSends(ctx); err != nil || len(d) != 1 || d[0].folder != scheduledFolder {
+		t.Errorf("the destination claimed sends %+v (%v)", d, err)
+	}
+	if d, err := dst.claimDueSnoozes(ctx); err != nil || len(d) != 1 || d[0].folder != snoozedFolder {
+		t.Errorf("the destination claimed snoozes %+v (%v)", d, err)
+	}
+}

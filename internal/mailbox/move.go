@@ -157,6 +157,21 @@ func MoveAccount(ctx context.Context, src, dst *Engine, address string, progress
 		}
 		r.Messages += n
 	}
+	// Scheduled sends and snoozes name their message by folder ID, so they
+	// follow it folder by folder, after it. Any claim is left behind: the
+	// source account is read-only from here, and the scheduler skips
+	// read-only accounts, so only the new cell acts on them.
+	for _, table := range []string{"mailbox_scheduled_sends", "mailbox_snoozes"} {
+		total := 0
+		for old, folder := range folders {
+			n, err := copyRows(ctx, src.DB, tx, table, "folder=$1", []any{old}, map[string]bool{"claimed_until": true}, map[string]string{"folder": fmt.Sprint(folder)})
+			if err != nil {
+				return r, fmt.Errorf("%s: %w", table, err)
+			}
+			total += n
+		}
+		r.Rows[table] = total
+	}
 	passkeys := map[string]string{}
 	for _, t := range moveTables {
 		arg := any(id)

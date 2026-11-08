@@ -37,6 +37,16 @@
         {{if isRole .Folder .Folders "quarantine"}}<button class="button" name="op" value="notjunk">Release</button>{{else if isRole .Folder .Folders "junk"}}<button class="button" name="op" value="notjunk">Not junk</button>{{else}}<button class="button" name="op" value="junk">Junk</button>{{end}}
         {{if not (isRole .Folder .Folders "archive")}}<button class="button" name="op" value="archive">Archive</button>{{end}}
         <button class="button danger" name="op" value="delete" data-confirm="{{if isRole .Folder .Folders "trash"}}Delete the selected messages for good?{{end}}">Delete</button>
+        {{if and .Later (snoozable .Folder .Folders)}}
+        <details class="menu snooze-menu">
+          <summary class="button">{{template "icon-clock"}}Snooze</summary>
+          <div class="menu-body">
+            <p class="small muted">Snooze until</p>
+            {{range .Later.Snooze}}<button class="menu-item" name="op" value="snooze@{{.Value}}" data-snooze-choice="{{.Label}}">{{.Label}} <span class="muted">{{.When}}</span></button>{{end}}
+          </div>
+        </details>
+        {{end}}
+        {{if and .Later (isRole .Folder .Folders "snoozed")}}<button class="button" name="op" value="unsnooze">Unsnooze</button>{{end}}
         <label class="visually-hidden" for="bulk-dest">Move selected to</label>
         <select id="bulk-dest" name="dest" class="compact">
           <option value="">Move to…</option>
@@ -70,7 +80,7 @@
               {{if .HasAttachment}}<span class="marker" title="Has attachments">{{template "icon-clip"}}</span>{{end}}
               {{if .Latest.Answered}}<span class="marker" title="Replied">{{template "icon-reply"}}</span>{{end}}
               {{if .Flagged}}<span class="flag" aria-label="Flagged">{{template "icon-star"}}</span>{{end}}
-              <time class="mono muted" datetime="{{.Latest.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Latest.Date}}</time>
+              {{with laterTime $.Later .Latest.UID}}<span class="mono later-time">{{$.Later.Verb}} {{.}}</span>{{else}}<time class="mono muted" datetime="{{.Latest.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Latest.Date}}</time>{{end}}
             </span>
             <span class="subject">{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
             {{if .Latest.Tags}}<span class="tags">{{range .Latest.Tags}}<span class="tag {{tagClass .}}">{{.}}</span>{{end}}</span>{{end}}
@@ -90,7 +100,7 @@
               {{if .Answered}}<span class="marker" title="Replied">{{template "icon-reply"}}</span>{{end}}
               {{if .Forwarded}}<span class="marker" title="Forwarded">{{template "icon-forward"}}</span>{{end}}
               {{if .Flagged}}<span class="flag" aria-label="Flagged">{{template "icon-star"}}</span>{{end}}
-              <time class="mono muted" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Date}}</time>
+              {{with laterTime $.Later .UID}}<span class="mono later-time">{{$.Later.Verb}} {{.}}</span>{{else}}<time class="mono muted" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Date}}</time>{{end}}
             </span>
             <span class="subject">{{if .Draft}}<span class="draft-mark">Draft</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
             {{if .Tags}}<span class="tags">{{range .Tags}}<span class="tag {{tagClass .}}">{{.}}</span>{{end}}</span>{{end}}
@@ -128,6 +138,22 @@
       <a class="button back" href="{{$.List.URL}}" data-key="u">{{template "icon-back"}}<span>Back</span></a>
       {{if isRole .Folder $.Folders "drafts"}}
       <a class="button primary-soft" href="{{composeURL "draft" .Folder .UID}}" data-key="r">Edit draft</a>
+      {{else if and $.Later (isRole .Folder $.Folders "scheduled")}}
+      <form action="/mail/action" method="post" class="inline">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+        <button class="button primary-soft" name="op" value="send-now">Send now</button>
+        <button class="button" name="op" value="unschedule" title="Stop it and open it as a draft">Edit</button>
+      </form>
+      <details class="menu">
+        <summary class="button" title="Change the time">{{template "icon-clock"}}<span class="tb-label">Change time</span></summary>
+        <form class="menu-body" action="/mail/action" method="post">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="reschedule"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+          {{range $.Later.Schedule}}<button class="menu-item" name="until" value="{{.Value}}">{{.Label}} <span class="muted">{{.When}}</span></button>{{end}}
+          <label class="small muted" for="resched-at">Or pick a date and time</label>
+          <input id="resched-at" type="datetime-local" name="until_local">
+          <button class="button" name="until" value="custom">Change</button>
+        </form>
+      </details>
       {{else}}
       {{if not $.Session.AdminActor}}
       <a class="button" href="{{composeURL "reply" .Folder .UID}}" data-key="r" title="Reply">{{template "icon-reply"}}<span class="tb-label">Reply</span></a>
@@ -137,10 +163,23 @@
       {{end}}
       <form action="/mail/action" method="post" class="inline">
         <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
-        {{if not (isRole .Folder $.Folders "archive")}}<button class="button" name="op" value="archive" data-key="e" title="Archive">{{template "icon-archive"}}<span class="tb-label">Archive</span></button>{{end}}
+        {{if not (or (isRole .Folder $.Folders "archive") (isRole .Folder $.Folders "scheduled"))}}<button class="button" name="op" value="archive" data-key="e" title="Archive">{{template "icon-archive"}}<span class="tb-label">Archive</span></button>{{end}}
         <button class="button danger" name="op" value="delete" data-key="#" data-confirm="{{if isRole .Folder $.Folders "trash"}}Delete this message for good?{{end}}" title="Delete">{{template "icon-trash"}}<span class="tb-label">Delete</span></button>
-        {{if .Flagged}}<button class="button wide-only" name="op" value="unflag" data-key="s" title="Unflag">{{template "icon-star"}}<span class="tb-label">Unflag</span></button>{{else}}<button class="button wide-only" name="op" value="flag" data-key="s" title="Flag">{{template "icon-star"}}<span class="tb-label">Flag</span></button>{{end}}
+        {{if not (isRole .Folder $.Folders "scheduled")}}{{if .Flagged}}<button class="button wide-only" name="op" value="unflag" data-key="s" title="Unflag">{{template "icon-star"}}<span class="tb-label">Unflag</span></button>{{else}}<button class="button wide-only" name="op" value="flag" data-key="s" title="Flag">{{template "icon-star"}}<span class="tb-label">Flag</span></button>{{end}}{{end}}
       </form>
+      {{if and $.Later (snoozable .Folder $.Folders)}}
+      <details class="menu wide-only snooze-tb">
+        <summary class="button icon-only" title="Snooze">{{template "icon-clock"}}<span class="tb-label">Snooze</span></summary>
+        <form class="menu-body" action="/mail/action" method="post">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="op" value="snooze"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
+          <p class="small muted">Snooze until</p>
+          {{range $.Later.Snooze}}<button class="menu-item" name="until" value="{{.Value}}">{{.Label}} <span class="muted">{{.When}}</span></button>{{end}}
+          <label class="small muted" for="snooze-at">Or pick a date and time</label>
+          <input id="snooze-at" type="datetime-local" name="until_local">
+          <button class="button" name="until" value="custom">Snooze</button>
+        </form>
+      </details>
+      {{end}}
       <details class="menu">
         <summary class="button" title="Move">{{template "icon-folder"}}<span class="tb-label">Move</span></summary>
         <form class="menu-body" action="/mail/action" method="post">
@@ -163,7 +202,7 @@
       </details>
       {{end}}
       <details class="menu">
-        <summary class="button" title="More">{{template "icon-more"}}<span class="tb-label">More</span></summary>
+        <summary class="button icon-only" title="More">{{template "icon-more"}}<span class="tb-label">More</span></summary>
         <div class="menu-body">
           {{if and (not $.Session.AdminActor) (not (isRole .Folder $.Folders "drafts"))}}
           <a class="narrow-only" href="{{composeURL "replyall" .Folder .UID}}">Reply all</a>
@@ -173,6 +212,7 @@
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="uid" value="{{.UID}}"><input type="hidden" name="back" value="{{$.List.MessageURL .UID}}">
             {{if .Flagged}}<button class="menu-item narrow-only" name="op" value="unflag">Unflag</button>{{else}}<button class="menu-item narrow-only" name="op" value="flag">Flag</button>{{end}}
             <button class="menu-item" name="op" value="unread">Mark unread</button>
+            {{if and $.Later (snoozable .Folder $.Folders)}}{{range $.Later.Snooze}}<button class="menu-item narrow-only" name="op" value="snooze@{{.Value}}">Snooze: {{.Label}}</button>{{end}}{{end}}
             {{if isRole .Folder $.Folders "quarantine"}}<button class="menu-item" name="op" value="notjunk">Release to Inbox</button>{{else if isRole .Folder $.Folders "junk"}}<button class="menu-item" name="op" value="notjunk">Not junk</button>{{else}}<button class="menu-item" name="op" value="junk">Report junk</button>{{end}}
           </form>
           {{if and .From (not $.Session.AdminActor)}}
@@ -192,6 +232,18 @@
       </span>
     </div>
     <div class="message">
+      {{with $.Later}}{{if .When}}
+      <div class="later-banner" role="status">
+        {{template "icon-clock"}}
+        <span>{{if eq .Kind "scheduled"}}Sends {{.When}}.{{else}}Snoozed until {{.When}}.{{end}}{{with .Problem}} <strong>{{.}}</strong>{{end}}</span>
+        {{if eq .Kind "snoozed"}}
+        <form action="/mail/action" method="post" class="inline push">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="f" value="{{$.Message.Folder}}"><input type="hidden" name="uid" value="{{$.Message.UID}}"><input type="hidden" name="back" value="{{$.List.URL}}">
+          <button class="button" name="op" value="unsnooze">Unsnooze</button>
+        </form>
+        {{end}}
+      </div>
+      {{end}}{{end}}
       <h2 data-message-subject>{{if .HighPriority}}<span class="priority" title="High priority">!</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</h2>
       {{if $.Thread}}<p class="small muted thread-note">{{add (len $.Thread) 1}} messages in this conversation</p>{{end}}
       {{range $.ThreadBefore}}{{template "thread-card" (threadCard . $)}}{{end}}

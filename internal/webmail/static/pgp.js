@@ -358,7 +358,10 @@
     };
     form.addEventListener("submit", function (event) {
       var button = event.submitter;
-      if (!toggle.checked || !button || button.value !== "send") return;
+      // Send later goes out encrypted too: sealed here, like Send. Without
+      // this a scheduled message would skip encryption and go out readable.
+      var later = button && button.name === "schedule";
+      if (!toggle.checked || !button || (button.value !== "send" && !later)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       show(status, "Encrypting…");
@@ -386,6 +389,7 @@
           data.set("subject", "...");
           data.set("format", "text");
           data.set("op", "send");
+          if (later) data.set("schedule", button.value);
           data.delete("pgp_passphrase");
           data.set("pgp_message", out.message);
           return fetch(form.action, { method: "POST", body: data, credentials: "same-origin" }).then(function (r) {
