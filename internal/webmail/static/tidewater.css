@@ -2438,3 +2438,14 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 @media (max-width: 720px) {
   .compose-from .push { display: none; }
 }
+/* The message toolbar needs about 685px with its words (745px with the Tab
+   button), and the reading pane is narrower than that in a three-pane window
+   at common laptop widths, where the row wrapped in two. Below 780px of pane
+   the buttons show their icons; the words stay as each button's accessible
+   name and its tooltip. Measured on the pane, not the window, so it follows
+   the pane however the window is split. */
+.reader { container: reader / inline-size; }
+@container reader (max-width: 779px) {
+  .toolbar .button:has(.tb-label) > .icon { display: inline-block; }
+  .toolbar .tb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}

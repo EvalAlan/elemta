@@ -331,3 +331,24 @@ func TestBrowserPhoneLaterMenus(t *testing.T) {
 		t.Error("Snooze isn't in More on a phone")
 	}
 }
+
+// The message toolbar stays one row at common computer widths. At 1280 and
+// 1300 it wrapped in two, because the reading pane of a three-pane window
+// is narrower than the buttons with their words; there they show icons.
+func TestBrowserDesktopToolbarOneRow(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.login()
+	for _, w := range []int64{1024, 1280, 1300, 1366, 1440, 1920} {
+		b.run(chromedp.EmulateViewport(w, 800))
+		b.run(chromedp.Navigate(b.url("/mail?f=INBOX&uid=105")))
+		b.waitFor(`document.readyState === "complete" && !!document.querySelector(".reader .toolbar")`)
+		if h := evalAs[float64](b, `document.querySelector(".reader .toolbar").getBoundingClientRect().height`); h > 60 {
+			t.Errorf("at %dpx the message toolbar is %.0fpx tall: more than one row", w, h)
+		}
+		// Icon or word, each button still says what it does.
+		if missing := evalAs[int](b, `[...document.querySelectorAll(".reader .toolbar .button")].filter(x => x.getBoundingClientRect().width > 0 && !(x.textContent.trim() || x.title)).length`); missing > 0 {
+			t.Errorf("at %dpx %d toolbar buttons have neither a name nor a title", w, missing)
+		}
+	}
+}
