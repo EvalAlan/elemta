@@ -1,6 +1,6 @@
 # Elemta Changelog
 
-## v0.8.0 (unreleased)
+## v0.8.0 (2026-11-08)
 
 The webmail works on phones now, with its own layout, notifications that arrive
 with the browser closed, and swipe actions. Users can schedule a message, snooze
