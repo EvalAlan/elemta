@@ -176,6 +176,10 @@ type AccountView struct {
 	Effective Effective     `json:"effective"`
 	// Held counts messages kept under legal hold.
 	Held int `json:"held"`
+	// UserOff are the protocols the account's owner turned off for
+	// themselves in the webmail (IMAP, POP3), on top of what the class
+	// allows. Without it the console showed them as on.
+	UserOff []string `json:"user_off,omitempty"`
 }
 
 // Account returns an account's stored policy and its effective policy.

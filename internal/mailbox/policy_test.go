@@ -235,6 +235,15 @@ func TestAdminAPI(t *testing.T) {
 	if code != http.StatusOK || out["class"] != name || out["quota_bytes"].(float64) != 1048576 {
 		t.Fatalf("effective = %d %v", code, out)
 	}
+	// The user's own choice to turn IMAP off shows next to the class's.
+	if err := e.SetProtocol(context.Background(), a, mailpolicy.IMAP, false); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = e.DB.Exec(`DELETE FROM mailbox_security WHERE account=$1`, a.ID) })
+	code, out = call(local, "GET", "/v1/admin/accounts/"+a.Address+"/policy", "admin-secret", "")
+	if off, _ := out["user_off"].([]any); code != http.StatusOK || len(off) != 1 || off[0] != "imap" {
+		t.Fatalf("account view user_off = %d %v", code, out["user_off"])
+	}
 	if code, _ := call(local, "GET", "/v1/admin/effective?address=nobody@example.com", "admin-secret", ""); code != http.StatusNotFound {
 		t.Fatalf("effective for an unknown address = %d", code)
 	}

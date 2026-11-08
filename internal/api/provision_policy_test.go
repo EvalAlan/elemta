@@ -25,6 +25,8 @@ type fakeMailboxAdmin struct {
 	audit   []mailpolicy.AuditEntry
 	queries []string // audit queries received
 	access  []string
+	// userOff are protocols each account's owner turned off themselves.
+	userOff map[string][]string
 }
 
 func (f *fakeMailboxAdmin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +81,7 @@ func (f *fakeMailboxAdmin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		eff := mailpolicy.Builtin()
 		eff.Address, eff.Class = a, f.policy[a].Class
 		eff.LegalHold = f.held[a]
-		_ = enc.Encode(mailpolicy.AccountView{Policy: f.policy[a], Effective: eff})
+		_ = enc.Encode(mailpolicy.AccountView{Policy: f.policy[a], Effective: eff, UserOff: f.userOff[a]})
 	case strings.HasPrefix(p, "accounts/") && strings.HasSuffix(p, "/purge"):
 		a := strings.TrimSuffix(strings.TrimPrefix(p, "accounts/"), "/purge")
 		f.purged = append(f.purged, a)
