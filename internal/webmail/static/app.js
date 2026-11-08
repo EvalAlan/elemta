@@ -2495,4 +2495,28 @@
     if (swipe && e.pointerId === swipe.id) endSwipe(false);
   });
 
+  // ---- message toolbar on one row ------------------------------------------
+  // With its words the toolbar can be wider than the reading pane (a
+  // three-pane window on a laptop), and it wrapped in two. When it would
+  // wrap, .compact shows the buttons' icons instead (tidewater.css). It's
+  // measured rather than set at a width, because the words' width depends on
+  // the fonts installed. The pane is watched, not the toolbar, so switching
+  // the class can't set off another measurement.
+  var msgToolbar = $(".reader .toolbar");
+  if (msgToolbar && window.ResizeObserver) {
+    var fitToolbar = function () {
+      msgToolbar.classList.toggle("compact", false);
+      if (phone.matches) return; // phones always show icons
+      var tops = $$(".button, summary, .nav-arrows", msgToolbar)
+        .map(function (el) { return el.getBoundingClientRect(); })
+        .filter(function (r) { return r.width > 0; })
+        .map(function (r) { return r.top; });
+      if (tops.length && Math.max.apply(null, tops) - Math.min.apply(null, tops) > 8) {
+        msgToolbar.classList.toggle("compact", true);
+      }
+    };
+    new ResizeObserver(fitToolbar).observe(msgToolbar.closest(".reader"));
+    if (doc.fonts && doc.fonts.ready) doc.fonts.ready.then(fitToolbar);
+  }
+
 })();

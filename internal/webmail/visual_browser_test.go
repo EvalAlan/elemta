@@ -339,16 +339,27 @@ func TestBrowserDesktopToolbarOneRow(t *testing.T) {
 	b := newBrowser(t)
 	seedLongInbox(b, nil)
 	b.login()
+	// wide stands in for a computer whose fonts set the words wider than
+	// this one's, as CI's do: a fixed breakpoint passed here and failed there.
+	const wide = `document.querySelectorAll(".toolbar .tb-label").forEach(e => { e.style.letterSpacing = "2px"; })`
 	for _, w := range []int64{1024, 1280, 1300, 1366, 1440, 1920} {
-		b.run(chromedp.EmulateViewport(w, 800))
-		b.run(chromedp.Navigate(b.url("/mail?f=INBOX&uid=105")))
-		b.waitFor(`document.readyState === "complete" && !!document.querySelector(".reader .toolbar")`)
-		if h := evalAs[float64](b, `document.querySelector(".reader .toolbar").getBoundingClientRect().height`); h > 60 {
-			t.Errorf("at %dpx the message toolbar is %.0fpx tall: more than one row", w, h)
-		}
-		// Icon or word, each button still says what it does.
-		if missing := evalAs[int](b, `[...document.querySelectorAll(".reader .toolbar .button")].filter(x => x.getBoundingClientRect().width > 0 && !(x.textContent.trim() || x.title)).length`); missing > 0 {
-			t.Errorf("at %dpx %d toolbar buttons have neither a name nor a title", w, missing)
+		for _, wider := range []bool{false, true} {
+			b.run(chromedp.EmulateViewport(w, 800))
+			b.run(chromedp.Navigate(b.url("/mail?f=INBOX&uid=105")))
+			b.waitFor(`document.readyState === "complete" && !!document.querySelector(".reader .toolbar")`)
+			if wider {
+				b.run(chromedp.Evaluate[chromedp.Void](wide, chromedp.EvalAsValue))
+				// The words changed, not the pane: resize to measure again.
+				b.run(chromedp.EmulateViewport(w-1, 800))
+			}
+			time.Sleep(100 * time.Millisecond)
+			if h := evalAs[float64](b, `document.querySelector(".reader .toolbar").getBoundingClientRect().height`); h > 60 {
+				t.Errorf("at %dpx (wider words %v) the message toolbar is %.0fpx tall: more than one row", w, wider, h)
+			}
+			// Icon or word, each button still says what it does.
+			if missing := evalAs[int](b, `[...document.querySelectorAll(".reader .toolbar .button")].filter(x => x.getBoundingClientRect().width > 0 && !(x.textContent.trim() || x.title)).length`); missing > 0 {
+				t.Errorf("at %dpx %d toolbar buttons have neither a name nor a title", w, missing)
+			}
 		}
 	}
 }
