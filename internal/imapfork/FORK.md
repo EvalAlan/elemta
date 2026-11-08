@@ -18,6 +18,8 @@ Changes from upstream:
   `store.go`, `status.go`, `search.go` and `enable.go`.
 - `imapserver/conn.go`: dispatch for the commands above.
 - `imapserver/capability.go`: advertise them.
+- `imapserver/search.go`: an unknown search key or a bad date answers
+  BAD [CLIENTBUG] instead of NO [SERVERBUG].
 - `imapserver/message.go`: keyed struct literals, so `go vet` passes.
 - `#nosec G115` notes on five deliberate integer conversions (UTF-7 byte
   splitting in `internal/utf7/encoder.go`, and IMAP number32 sizes and

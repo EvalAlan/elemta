@@ -22,6 +22,9 @@ Sign in at your server's address with your full email address and password.
 - **Snooze:** the clock on a message, or Snooze on the selected ones. The
   message moves to the Snoozed folder and comes back, unread, where it was at
   the time you picked. Unsnooze brings it back now.
+- **On a phone:** swipe a message left to archive it (in Archive and Trash,
+  to delete it), or right to mark it read or unread. Undo in the notice puts
+  an archived or deleted message back.
 - **Search:** the box at the top searches the current folder. It also takes
   `from:`, `subject:`, `is:unread` and `has:attachment`.
 - **Calendar, Contacts and Tasks:** in the top bar. An invitation sent to you

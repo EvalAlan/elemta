@@ -21,11 +21,12 @@ import (
 // found out on the day it's needed, which is the worst day to find out.
 
 const (
-	// backupWarnAfter allows a daily run to be late, or to fail once and
-	// be fixed before the next, without raising anything.
-	backupWarnAfter = 36 * time.Hour
-	// backupCriticalAfter is two missed days: no longer a hiccup.
-	backupCriticalAfter = 72 * time.Hour
+	// Backups run every 6 hours. backupWarnAfter allows one run to be late
+	// or to fail without raising anything; a second miss is worth a look.
+	backupWarnAfter = 14 * time.Hour
+	// backupCriticalAfter is a day and a half: most of a week's worth of
+	// runs missed, no longer a hiccup.
+	backupCriticalAfter = 36 * time.Hour
 	// drillWarnAfter is two missed weekly drills.
 	drillWarnAfter = 15 * 24 * time.Hour
 )
@@ -112,7 +113,7 @@ func (s *Server) backupStatus(now time.Time) BackupStatus {
 		st.Message = fmt.Sprintf("The last run failed; the last good backup is %s old. %s", humanAge(age), run.Message)
 	case age > backupWarnAfter:
 		st.Status = "warning"
-		st.Message = fmt.Sprintf("The last backup is %s old; one runs every day.", humanAge(age))
+		st.Message = fmt.Sprintf("The last backup is %s old; one runs every 6 hours.", humanAge(age))
 	default:
 		st.Status = "ok"
 		st.Message = run.Message
