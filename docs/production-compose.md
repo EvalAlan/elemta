@@ -93,7 +93,7 @@ versions at least as long as you keep backups, because the mailbox deletes
 a removed message's body `body_grace_hours` later and an older backup still
 refers to it.
 
-### Off-site, daily
+### Off-site
 
 `scripts/backup-offsite.sh` does all of it on a schedule: a backup with the
 bodies left in their bucket, a restore drill once a week, then the whole
