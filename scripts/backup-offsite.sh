@@ -1,5 +1,5 @@
 #!/bin/sh
-# Backs up the stack and keeps the backup off the server. Run daily by the
+# Backs up the stack and keeps the backup off the server. Run every 6 hours by the
 # elemta-backup timer, which scripts/cloud-deploy.sh installs when the
 # settings file below exists; run it by hand the same way.
 #
@@ -17,9 +17,10 @@
 #   3. elemta backup upload: encrypts it to the age public key and uploads it
 #      as it's encrypted. No sealed copy is written here, and nothing beyond
 #      the mailbox image is needed on the host.
-#   4. elemta backup prune: keeps the newest backup of each of the last 14
-#      days and 8 weeks (BACKUP_KEEP_DAILY, BACKUP_KEEP_WEEKLY). The bucket's
-#      versioning keeps what's pruned a while longer.
+#   4. elemta backup prune: keeps every backup from the last 48 hours, and
+#      the newest of each of the last 14 days and 8 weeks
+#      (BACKUP_KEEP_RECENT, BACKUP_KEEP_DAILY, BACKUP_KEEP_WEEKLY). The
+#      bucket's versioning keeps what's pruned a while longer.
 #   5. Deletes the local, unencrypted backup.
 #
 # The result goes to backup-status.json in the runtime configuration volume,
@@ -107,7 +108,7 @@ bytes=$(echo "$out" | sed -n 's/^uploaded [^ ]* (\([0-9]*\) bytes)$/\1/p' | tail
 stage=prune
 echo "== Prune"
 docker run --rm --user 0 --env-file "$env_file" "$image" backup prune \
-    --daily "${BACKUP_KEEP_DAILY:-14}" --weekly "${BACKUP_KEEP_WEEKLY:-8}"
+    --recent "${BACKUP_KEEP_RECENT:-48h}" --daily "${BACKUP_KEEP_DAILY:-14}" --weekly "${BACKUP_KEEP_WEEKLY:-8}"
 
 now >"$work/last-success"
 stage="done"

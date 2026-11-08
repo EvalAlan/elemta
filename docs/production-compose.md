@@ -98,9 +98,10 @@ refers to it.
 `scripts/backup-offsite.sh` does all of it on a schedule: a backup with the
 bodies left in their bucket, a restore drill once a week, then the whole
 backup encrypted with age and uploaded to a separate bucket as it is
-encrypted, keeping the newest of each of the last 14 days and 8 weeks.
-`scripts/cloud-deploy.sh` installs it as the `elemta-backup` timer (daily at
-03:00 UTC) once this root-only file exists:
+encrypted, keeping every backup from the last 48 hours and the newest of
+each of the last 14 days and 8 weeks. `scripts/cloud-deploy.sh` installs it
+as the `elemta-backup` timer (every 6 hours: 03:00, 09:00, 15:00 and 21:00
+UTC) once this root-only file exists:
 
 ```sh
 sudo install -m 600 -o root -g root /dev/null /etc/elemta/secrets/backup-storage.env
