@@ -4,7 +4,7 @@ go 1.26.10
 
 require (
 	blitiri.com.ar/go/spf v1.6.0
-	filippo.io/age v1.2.1
+	filippo.io/age v1.3.2
 	github.com/BurntSushi/toml v1.6.0
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/chromedp/cdproto v0.158.6
@@ -55,6 +55,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
