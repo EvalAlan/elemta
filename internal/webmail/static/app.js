@@ -2400,4 +2400,88 @@
   });
   doc.addEventListener("dragend", function () { $$(".drop-target").forEach(function (x) { x.classList.remove("drop-target"); }); });
 
+  // ---- swipe a message row (phones) ----------------------------------------
+  // On a phone the list has no hover toolbar and the checkboxes are small, so
+  // the two commonest actions go on a swipe: left archives (deletes in
+  // Archive and Trash, where archiving means nothing), right toggles read.
+  // Archive and delete come back with the Undo notice, which is what makes a
+  // gesture this easy to trigger acceptable. Touch only: a mouse already has
+  // drag to folder, and the row stays a link for a tap.
+  //
+  // The row slides over a strip that names the action. The strip sits in the
+  // list behind the row rather than inside it, because the row is what moves.
+  var SWIPE_START = 10, SWIPE_COMMIT = 0.3; // px to decide; share of width to act
+  var swipe = null;
+
+  function swipeAction(row, dx) {
+    var list = row.closest("ol.messages"), role = list.getAttribute("data-role");
+    if (dx < 0) {
+      if (role === "trash") return { op: "delete", label: "Delete", cls: "danger", leaves: true, confirm: "Delete this message for good?" };
+      if (role === "archive") return { op: "delete", label: "Delete", cls: "danger", leaves: true };
+      return { op: "archive", label: "Archive", cls: "accent", leaves: true };
+    }
+    var seen = row.hasAttribute("data-seen");
+    return { op: seen ? "unread" : "read", label: seen ? "Mark unread" : "Mark read", cls: "accent" };
+  }
+
+  function endSwipe(commit) {
+    var s = swipe;
+    swipe = null;
+    if (!s || !s.started) return;
+    var row = s.row, width = row.offsetWidth;
+    var act = commit ? swipeAction(row, s.dx) : null;
+    if (act && act.confirm && !window.confirm(act.confirm)) act = null;
+    row.classList.remove("swiping");
+    row.style.transition = "transform 0.18s ease-out";
+    row.style.transform = act && act.leaves ? "translateX(" + (s.dx < 0 ? -width : width) + "px)" : "";
+    // The tap that ends a swipe mustn't also open the message.
+    s.row.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); }, { capture: true, once: true });
+    setTimeout(function () {
+      s.hint.remove();
+      row.style.transition = "";
+      if (!act) { row.style.transform = ""; return; }
+      var list = row.closest("ol.messages");
+      submitPost("/mail/action", { f: list.getAttribute("data-folder"), uid: [row.getAttribute("data-uid")], op: act.op, back: list.getAttribute("data-back") });
+    }, 180);
+  }
+
+  doc.addEventListener("pointerdown", function (e) {
+    if (e.pointerType !== "touch" || !phone.matches || !csrf || swipe) return;
+    var row = e.target.closest && e.target.closest("ol.messages > li.row-wrap[data-uid]");
+    if (!row || e.target.closest("input, label, button")) return;
+    swipe = { row: row, id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, started: false };
+  });
+  doc.addEventListener("pointermove", function (e) {
+    var s = swipe;
+    if (!s || e.pointerId !== s.id) return;
+    var dx = e.clientX - s.x0, dy = e.clientY - s.y0;
+    if (!s.started) {
+      if (Math.abs(dy) > SWIPE_START && Math.abs(dy) >= Math.abs(dx)) { swipe = null; return; } // a scroll
+      if (Math.abs(dx) < SWIPE_START) return;
+      s.started = true;
+      var list = s.row.closest("ol.messages");
+      s.hint = doc.createElement("div");
+      s.hint.className = "swipe-hint";
+      s.hint.setAttribute("aria-hidden", "true");
+      s.hint.style.top = s.row.offsetTop + "px";
+      s.hint.style.height = s.row.offsetHeight + "px";
+      list.appendChild(s.hint);
+      s.row.classList.add("swiping");
+      try { s.row.setPointerCapture(e.pointerId); } catch (_) { /* already released */ }
+    }
+    s.dx = dx;
+    var act = swipeAction(s.row, dx), ready = Math.abs(dx) >= s.row.offsetWidth * SWIPE_COMMIT;
+    s.hint.textContent = act.label;
+    s.hint.className = "swipe-hint " + act.cls + (dx < 0 ? " to-left" : " to-right") + (ready ? " ready" : "");
+    s.row.style.transform = "translateX(" + dx + "px)";
+  });
+  doc.addEventListener("pointerup", function (e) {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    endSwipe(Math.abs(swipe.dx) >= swipe.row.offsetWidth * SWIPE_COMMIT);
+  });
+  // The browser took the touch for a scroll after all.
+  doc.addEventListener("pointercancel", function (e) {
+    if (swipe && e.pointerId === swipe.id) endSwipe(false);
+  });
+
 })();
