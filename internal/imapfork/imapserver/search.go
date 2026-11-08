@@ -1,6 +1,7 @@
 package imapserver
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -276,7 +277,13 @@ func readSearchKeyWithAtom(criteria *imap.SearchCriteria, dec *imapwire.Decoder,
 		}
 		t, err := internal.ExpectDate(dec)
 		if err != nil {
-			return err
+			// A date that doesn't parse is the client's mistake: BAD, not
+			// the NO [SERVERBUG] a plain error turns into in conn.go.
+			var decErr *imapwire.DecoderExpectError
+			if errors.As(err, &decErr) {
+				return err
+			}
+			return newClientBugError("Syntax error: bad date in " + key)
 		}
 		var dateCriteria imap.SearchCriteria
 		switch key {
@@ -348,7 +355,9 @@ func readSearchKeyWithAtom(criteria *imap.SearchCriteria, dec *imapwire.Decoder,
 	default:
 		seqSet, err := imapwire.ParseSeqSet(key)
 		if err != nil {
-			return err
+			// Anything not recognised above lands here, so this is usually an
+			// unknown search key rather than a bad sequence set.
+			return newClientBugError("Syntax error: unknown search key " + key)
 		}
 		criteria.SeqNum = append(criteria.SeqNum, seqSet)
 	}
