@@ -458,6 +458,10 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		if err := s.engine.DeletePasskeys(r.Context(), a.ID); err != nil {
 			return nil, err
 		}
+		// Nor a stranger's browser, still being shown the new mail.
+		if err := s.engine.DeletePushSubscriptions(r.Context(), a.ID); err != nil {
+			return nil, err
+		}
 		return map[string]bool{"ok": true}, nil
 	})
 	handle("POST /v1/admin/accounts/{address}/purge", func(r *http.Request) (any, error) {

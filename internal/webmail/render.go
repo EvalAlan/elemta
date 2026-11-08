@@ -136,9 +136,7 @@ var templateFuncs = template.FuncMap{
 	"rawURL": func(folder string, uid uint32) string {
 		return "/mail/raw?" + url.Values{"f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}}.Encode()
 	},
-	"composeURL": func(mode, folder string, uid uint32) string {
-		return "/compose?" + url.Values{"mode": {mode}, "f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}}.Encode()
-	},
+	"composeURL":  composeURL,
 	"contactsURL": contactsURL,
 	"hasPrefix":   strings.HasPrefix,
 	"trimPrefix": func(s, prefix string) string {
@@ -223,6 +221,13 @@ var templateFuncs = template.FuncMap{
 			}
 		}
 		return false
+	},
+	"snoozable": snoozable,
+	"laterTime": func(lv *laterView, uid uint32) string {
+		if lv == nil {
+			return ""
+		}
+		return lv.Times[uid]
 	},
 	"folderLabel": func(name string, folders []Folder) string {
 		for _, f := range folders {
@@ -384,4 +389,8 @@ func parseAuthResults(header string) []AuthCheck {
 		out = append(out, AuthCheck{Method: method, Result: res, Pass: res == "pass"})
 	}
 	return out
+}
+
+func composeURL(mode, folder string, uid uint32) string {
+	return "/compose?" + url.Values{"mode": {mode}, "f": {folder}, "uid": {strconv.FormatUint(uint64(uid), 10)}}.Encode()
 }

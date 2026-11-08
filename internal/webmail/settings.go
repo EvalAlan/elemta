@@ -51,6 +51,14 @@ type Settings struct {
 	// MailSound is the tone played when new mail reaches the inbox, or empty
 	// for none. The names are in mailSounds, and the sounds are in app.js.
 	MailSound string `json:"mail_sound,omitempty"`
+	// UndoSend is how many seconds Send waits, with an Undo, before the
+	// message goes: empty for the default (sendlater.go), "0" for off.
+	UndoSend string `json:"undo_send,omitempty"`
+	// ReminderSound is the tone an event reminder plays: empty for the
+	// default, "none" for silence, or one of mailSounds. Unlike new mail it
+	// is on by default, because a reminder nobody notices has failed at its
+	// one job, while a chime for every message soon grates.
+	ReminderSound string `json:"reminder_sound,omitempty"`
 	// MailCalendar keeps messages at a reading width and shows the calendar
 	// panel beside them on wide screens. Off, a message uses the full pane.
 	MailCalendar bool `json:"mail_calendar,omitempty"`
@@ -78,6 +86,30 @@ func validMailSound(v string) string {
 		}
 	}
 	return ""
+}
+
+// defaultReminderSound is the tone a reminder plays until someone picks
+// another.
+const defaultReminderSound = "bell"
+
+// ReminderTone is the tone reminders play, or empty for none.
+func (p Settings) ReminderTone() string {
+	switch p.ReminderSound {
+	case "":
+		return defaultReminderSound
+	case "none":
+		return ""
+	}
+	return validMailSound(p.ReminderSound)
+}
+
+// validReminderSound keeps what the form may store: a listed tone, "none",
+// or empty for the default.
+func validReminderSound(v string) string {
+	if v == "none" {
+		return v
+	}
+	return validMailSound(v)
 }
 
 // GroupConversations reports whether lists are grouped by thread.
@@ -120,7 +152,7 @@ func paletteFromCookie(r *http.Request) string {
 
 func validPalette(p string) string {
 	switch p {
-	case "tidewater", "forest", "plum", "sand", "graphite":
+	case "tidewater", "forest", "plum", "sand", "graphite", "ocean", "rose", "ember", "arctic", "contrast":
 		return p
 	}
 	return ""
@@ -289,6 +321,8 @@ var commonZones = []string{
 }
 
 type settingsView struct {
+	// Push is the notifications card (webpush.go); nil hides it.
+	Push             *pushSettings
 	CanRecover       bool
 	RecoveryEmail    string
 	Prefs            Settings
@@ -338,6 +372,9 @@ type settingsView struct {
 // noticeCards places each settings notice in the card it is about. The
 // cards' ids match the anchors their forms and redirects return to.
 var noticeCards = map[string]string{
+	"push-saved":           "notifications",
+	"push-off":             "notifications",
+	"push-removed":         "notifications",
 	"forwarding-saved":     "forwarding",
 	"inbox-sorted":         "tabs",
 	"categorize-failed":    "tabs",
@@ -460,6 +497,11 @@ func (s *Server) settingsView(r *http.Request, sess *Session, tab string) (view,
 		v.Settings.CanRecover = true
 		v.Settings.RecoveryEmail = rec.Email
 	}
+	if tab == "devices" {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		v.Settings.Push = s.pushSettingsFor(ctx, sess)
+		cancel()
+	}
 	if s.security != nil && (tab == "security" || tab == "devices") {
 		// The rest of the page works without the mailbox service's API, so
 		// its absence is shown on the card rather than failing the page.
@@ -543,6 +585,10 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	p.MailCalendar = r.PostFormValue("mail_calendar") == "1"
 	p.InboxTabs = r.PostFormValue("inbox_tabs") == "1"
 	p.MailSound = validMailSound(r.PostFormValue("mail_sound"))
+	if v, ok := r.PostForm["undo_send"]; ok {
+		p.UndoSend = validUndoSend(v[0])
+	}
+	p.ReminderSound = validReminderSound(r.PostFormValue("reminder_sound"))
 	switch v := r.PostFormValue("calendar_view"); v {
 	case "month", "week", "day", "agenda":
 		p.CalendarView = v

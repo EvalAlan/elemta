@@ -1,5 +1,119 @@
 # Elemta Changelog
 
+## v0.8.0 (2026-11-08)
+
+The webmail works on phones now, with its own layout, notifications that arrive
+with the browser closed, and swipe actions. Users can schedule a message, snooze
+one, undo a send, move or delete, drag events on the calendar and get reminders
+for them. Administrators get encrypted off-site backups every six hours with a
+weekly restore drill, and the mailbox service scales further: idle IMAP clients
+cost the database nothing, directory sign-ins are pooled and cached, and
+mailboxes can be split across independent cells.
+
+### Upgrade notes
+
+- **Schema changes apply on start and are additive.** New tables hold Web Push
+  devices and reminders, scheduled sends and snoozes, and a trigger announces
+  folder changes. v0.7.0 runs on the upgraded database.
+- **The directory gains an attribute.** `scripts/cloud-deploy.sh` adds
+  `elemtaMailboxCell` to the LDAP schema (`scripts/ldap-schema.sh`). It is unused
+  unless you set up cells.
+- **Directory answers are cached for 30 seconds.** The mailbox service now pools
+  its LDAP connections and remembers a successful sign-in and an account's
+  details for `[auth] cache_seconds`. A changed password, a suspension or a new
+  forward can take up to that long to apply everywhere. A wrong password is
+  never cached, and `cache_seconds = -1` turns the cache off.
+- **People stay signed in to the webmail for 30 days.** Closing the browser no
+  longer signs them out; a session ends after 30 days without use, at sign-out,
+  or when the password changes, which also signs out every other session.
+  `stay_signed_in` under `[webmail]` sets the length, and `"0"` goes back to
+  sessions that end with the browser.
+- **Off-site backups are set up by a file you write.** Once
+  `/etc/elemta/secrets/backup-storage.env` exists (bucket, keys and an age public
+  key; see "Off-site backups" in
+  [docs/production-compose.md](docs/production-compose.md)),
+  `scripts/cloud-deploy.sh` installs a timer that backs up every 6 hours. Without
+  it nothing changes.
+- **Scheduled send needs `[sieve] submit_addr`.** Scheduled mail goes out the way
+  vacation replies do. Without a submission address the webmail still offers
+  Send later, and the mailbox service refuses to schedule.
+- **Web Push needs outbound HTTPS** from the mailbox service to the browsers'
+  push services. `[push] disabled = true` in the mailbox configuration turns it
+  off, and the webmail then doesn't offer it.
+- **Rolling back to v0.7.0:** mail waiting in Scheduled isn't sent and snoozed mail
+  doesn't come back, because v0.7.0 doesn't know about them; the messages stay in
+  those folders, and moving them by hand works. Phones stop getting notifications.
+  Nothing else needs undoing.
+
+### What's new
+
+- **A phone layout.** Under 720 pixels the webmail has a slim top bar, the apps
+  at the bottom, folders in a drawer and a button for a new message, instead of
+  the computer's layout stacked in one column. The message toolbar fits one row,
+  tables become cards, and the calendar opens on the day.
+- **Swipe a message on a phone:** left to archive (to delete, in Archive and Trash),
+  right to mark it read or unread.
+- **Notifications with the browser closed.** Under Settings, Mail apps and sync,
+  each phone or computer can have new mail and calendar reminders pushed to it
+  (RFC 8030 Web Push, encrypted end to end to the browser). New mail arriving
+  together is announced once. The webmail can be installed as an app.
+- **Send later.** Compose's clock sends a message at a chosen time, whether or
+  not anyone is signed in. It waits in a Scheduled folder, where it can be sent
+  now, moved to another time, or edited; deleting it there, from any mail app,
+  cancels it. A message that can't be sent goes back to Drafts with a note in the
+  inbox. Encrypted messages are encrypted before they're scheduled.
+- **Snooze.** A message, or a selection, can be put away until later today,
+  tomorrow, the weekend, next week or any time, and comes back unread to the
+  folder it left.
+- **Undo send.** Send waits 10 seconds, with an Undo button, before the message
+  goes (Settings, General; 0 turns it off). The message is kept in Drafts
+  meanwhile, so a restart can't lose it.
+- **Undo move and delete.** Moving, archiving, deleting and reporting junk offer
+  Undo for two minutes.
+- **The calendar.** A click on an event shows it in a bubble; double-click opens
+  it. Drag an event to move it, or its edge to change its length; dragging an
+  occurrence of a repeating event moves that occurrence. Click an empty slot to
+  add one quickly. Reminders now ring in the webmail with a card to snooze or
+  dismiss, and a sound that can be chosen or turned off.
+- **Drag messages** onto a folder, or onto an inbox tab, and "Move to tab" in the
+  right-click menu.
+- **Five more colour themes:** ocean, rose, ember, arctic and high contrast, with a
+  live preview, all checked for readable contrast in light and dark.
+- **Encrypted off-site backups.** `elemta backup upload`, `prune` and `list` seal a
+  backup to an age public key as it uploads, so the server never holds the key
+  that opens it. The timer runs every 6 hours, keeps every backup from the last
+  48 hours and the newest of each of the last 14 days and 8 weeks, and runs a
+  restore drill weekly. The admin console's Health page says when the last
+  backup and drill ran, and warns when backups stop. Message bodies already in
+  S3 stay there, so a backup is a few megabytes.
+- **Idle IMAP clients cost the database nothing.** IMAP IDLE now waits for a
+  Postgres notification instead of asking every second. In testing, 5000 idle
+  sessions went from 5,524 queries a second to none.
+- **Mailbox cells.** Mailboxes can be split across independent mailbox
+  services, each with its own database, behind `elemta mailbox-router`, which
+  sends each sign-in and each delivery to the right one.
+  `elemta mailbox move-account` moves a mailbox between cells keeping its UIDs.
+  See [docs/mailbox-cells.md](docs/mailbox-cells.md).
+
+### Fixes
+
+- **Events showed at the wrong hour.** The calendar placed a timed event at its own
+  time zone's hour rather than the reader's, so an invitation from another zone
+  sat in the wrong slot.
+- **Unusual sign-in alerts** no longer report impossible travel between places a
+  user has signed in from before or within 1000 km of each other, and the
+  once-an-hour limit on repeat alerts now works.
+- **A message with an unknown transfer encoding** (as some spam has) said the mail
+  server didn't respond. It now opens, showing what can be read.
+- **IMAP `SEARCH` with an unknown key or a bad date** answered `NO [SERVERBUG]`;
+  it now answers `BAD`, as a syntax error should.
+- **The inbox tabs were cut off** in a narrow message list.
+- **Restoring onto a fresh server** failed before any container existed, and the
+  queue left temporary files behind; both are fixed.
+- **The SMTP server's directory connection** could be used by two sign-ins at once
+  and wasn't safely reconnected after the directory restarted.
+- **Security:** `klauspost/compress` updated for GO-2026-6865.
+
 ## v0.7.0 (2026-11-03)
 
 Users gain encrypted mail with PGP, passkeys, a spam quarantine, inbox tabs, shared

@@ -4,8 +4,8 @@
 # throwaway containers and every message's body is there with its checksum
 # (scripts/mailbox-restore-drill.sh), the directory loads into a throwaway
 # directory server with as many entries as were exported, and the queue,
-# configuration and secrets archives are readable and hold what a restore
-# needs.
+# configuration, spam filter and secrets archives are readable and hold
+# what a restore needs.
 #
 #   scripts/restore-drill.sh <backup directory>
 set -eu
@@ -47,7 +47,11 @@ echo "== MTA and secrets"
 for f in mta/elemta_queue.tar.gz mta/elemta_config.tar.gz; do
     tar -tzf "$in/$f" >/dev/null
 done
-tar -tzf "$in/mta/elemta_config.tar.gz" | grep -q 'elemta.toml$' || { echo "No elemta.toml in the runtime configuration" >&2; exit 1; }
+tar -tzf "$in/mta/elemta_config.tar.gz" | grep 'elemta.toml$' >/dev/null || { echo "No elemta.toml in the runtime configuration" >&2; exit 1; }
+if [ -d "$in/rspamd" ]; then
+    tar -tzf "$in/rspamd/rspamd_valkey_data.tar.gz" | grep 'dump.rdb$' >/dev/null || { echo "The spam filter's Valkey snapshot is missing" >&2; exit 1; }
+    tar -tzf "$in/rspamd/rspamd_data.tar.gz" >/dev/null
+fi
 if [ -f "$in/secrets.tar.gz" ]; then
     list=$(tar -tzf "$in/secrets.tar.gz")
     for need in mailbox.env mailbox-postgres.env mailbox-tls/cert.pem; do

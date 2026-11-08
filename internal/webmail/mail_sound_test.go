@@ -32,3 +32,35 @@ func TestMailSoundIsSavedAndReachesThePage(t *testing.T) {
 		t.Fatal("an unlisted value was kept")
 	}
 }
+
+// Reminders ring unless someone turns them off, unlike new mail.
+func TestReminderSoundDefaultsOnAndCanBeTurnedOff(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	save := func(sound string) {
+		t.Helper()
+		form := url.Values{"csrf": {csrf}, "reminder_sound": {sound}, "week_start": {"0"}, "clock": {"24"}, "page_size": {"50"}}
+		if resp := h.post("/settings", form); resp.StatusCode >= 400 {
+			t.Fatalf("save %q: status %d", sound, resp.StatusCode)
+		}
+	}
+	if _, page := h.get("/calendar"); !strings.Contains(page, `data-reminder-sound="`+defaultReminderSound+`"`) {
+		t.Fatal("reminders are silent by default")
+	}
+	save("none")
+	if _, page := h.get("/calendar"); strings.Contains(page, "data-reminder-sound") {
+		t.Fatal("None still rings")
+	}
+	if _, page := h.get("/settings"); !strings.Contains(page, `<option value="none" selected>`) {
+		t.Fatal("settings don't show None")
+	}
+	save("ping")
+	if _, page := h.get("/calendar"); !strings.Contains(page, `data-reminder-sound="ping"`) {
+		t.Fatal("the page doesn't carry the choice")
+	}
+	// An unlisted value falls back to the default rather than reaching the page.
+	save(`"><script>`)
+	if _, page := h.get("/calendar"); !strings.Contains(page, `data-reminder-sound="`+defaultReminderSound+`"`) {
+		t.Fatal("an unlisted value was kept")
+	}
+}

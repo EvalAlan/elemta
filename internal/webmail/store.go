@@ -24,6 +24,8 @@ const (
 	RoleQuarantine Role = "quarantine"
 	RoleTrash      Role = "trash"
 	RoleArchive    Role = "archive"
+	// RoleScheduled and RoleSnoozed (schedule.go) are folders the mailbox
+	// service creates on first use, as it does Quarantine.
 )
 
 // Folder is one mailbox in the user's folder tree.
@@ -226,7 +228,10 @@ type Mailstore interface {
 	Raw(ctx context.Context, folder string, uid uint32, maxBytes int64) ([]byte, error)
 	// SetFlags adds (on) or removes flags and tags on messages.
 	SetFlags(ctx context.Context, folder string, uids []uint32, flags []string, on bool) error
-	Move(ctx context.Context, folder string, uids []uint32, dest string) error
+	// Move moves messages to dest and returns their UIDs there, when the
+	// server reports them (UIDPLUS), so the move can be undone. A nil slice
+	// with a nil error means it moved them without saying where.
+	Move(ctx context.Context, folder string, uids []uint32, dest string) ([]uint32, error)
 	// Delete moves messages to Trash, or removes them for good when they are
 	// already in Trash or Junk (or there is no Trash folder).
 	Delete(ctx context.Context, folder string, uids []uint32) error
@@ -234,7 +239,8 @@ type Mailstore interface {
 	Expunge(ctx context.Context, folder string, uids []uint32) error
 	// Append stores a message (a sent copy or a draft) in the folder with the
 	// given role, creating that folder if the account has none.
-	Append(ctx context.Context, role Role, raw []byte, seen, draft bool) error
+	// It returns the message's UID there when the server reports it, or 0.
+	Append(ctx context.Context, role Role, raw []byte, seen, draft bool) (uint32, error)
 
 	CreateFolder(ctx context.Context, name string) error
 	// EnsureFolders creates a folder for each role the account lacks, under

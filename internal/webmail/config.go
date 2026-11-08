@@ -67,8 +67,15 @@ type Config struct {
 	// signs in, and sends, as dana@<default_domain>.
 	DefaultDomain string `toml:"default_domain"`
 
-	// SessionTTL is how long an idle session stays valid ("8h" by default).
+	// SessionTTL is how long an idle session stays valid ("8h" by default)
+	// when StaySignedIn is off.
 	SessionTTL string `toml:"session_ttl"`
+
+	// StaySignedIn keeps people signed in, through closing the browser, for
+	// this long after they last used the webmail ("720h", 30 days, by
+	// default). "0" turns it off: the cookie then lasts only until the
+	// browser closes and a session ends after SessionTTL idle.
+	StaySignedIn string `toml:"stay_signed_in"`
 
 	// SecureCookies marks session cookies Secure. Unset means true; set it
 	// to false only when the webmail is served over plain HTTP in dev.
@@ -172,6 +179,7 @@ type Config struct {
 const (
 	defaultListen       = ":8027"
 	defaultSessionTTL   = 8 * time.Hour
+	defaultStaySignedIn = 30 * 24 * time.Hour
 	defaultMaxUploadMB  = 25
 	defaultPageSize     = 50
 	defaultMaxMessageMB = 50
@@ -210,6 +218,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.SessionTTL == "" {
 		c.SessionTTL = defaultSessionTTL.String()
+	}
+	if c.StaySignedIn == "" {
+		c.StaySignedIn = defaultStaySignedIn.String()
 	}
 	if c.SecureCookies == nil {
 		secure := true
@@ -301,6 +312,9 @@ func (c Config) Validate() error {
 	if _, err := time.ParseDuration(c.SessionTTL); err != nil {
 		errs = append(errs, fmt.Errorf("webmail: session_ttl %q: %w", c.SessionTTL, err))
 	}
+	if d, err := time.ParseDuration(c.StaySignedIn); err != nil || d < 0 {
+		errs = append(errs, fmt.Errorf("webmail: stay_signed_in %q must be a duration such as \"720h\", or \"0\" for off", c.StaySignedIn))
+	}
 	return errors.Join(errs...)
 }
 
@@ -311,6 +325,22 @@ func (c Config) sessionTTL() time.Duration {
 		return defaultSessionTTL
 	}
 	return d
+}
+
+// staySignedIn is how long a remembered sign-in lasts after its last use,
+// or zero when the sign-in ends with the browser.
+func (c Config) staySignedIn() time.Duration {
+	d, err := time.ParseDuration(c.StaySignedIn)
+	if err != nil || d < 0 {
+		return 0
+	}
+	return d
+}
+
+// idleTTL is how long a session lasts unused: long enough for a remembered
+// sign-in when that's on, so the session outlives the cookie never.
+func (c Config) idleTTL() time.Duration {
+	return max(c.sessionTTL(), c.staySignedIn())
 }
 
 // location is the default time zone; Validate guarantees it loads.

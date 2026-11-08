@@ -461,8 +461,48 @@ AccuracySec=2s
 [Install]
 WantedBy=timers.target
 EOF
+# Off-site backups (scripts/backup-offsite.sh), once their settings are in
+# place: the bucket and the age public key, in a root-only file the operator
+# writes. Until then nothing is installed, and the Health page says backups
+# aren't set up. As root: the job runs docker and reads that file.
+backup_env=/etc/elemta/secrets/backup-storage.env
+bk=/etc/systemd/system/elemta-backup
+backup_timer=""
+if sudo test -f "$backup_env"; then
+    step "Off-site backups"
+    sudo tee "$bk.service" >/dev/null <<EOF
+[Unit]
+Description=Back up Elemta and keep the backup off the server
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=$root/scripts/backup-offsite.sh
+# A backup is reads and a few large writes; it shouldn't slow mail down.
+Nice=10
+IOSchedulingClass=idle
+EOF
+    sudo tee "$bk.timer" >/dev/null <<EOF
+[Unit]
+Description=Elemta off-site backup, every 6 hours
+
+[Timer]
+# Every 6 hours, so a lost server loses at most that much mail metadata
+# (bodies are in their own versioned bucket). A run takes about a minute.
+OnCalendar=*-*-* 03,09,15,21:00:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    backup_timer=elemta-backup.timer
+    echo "Every 6 hours from 03:00 UTC; run one now with: sudo systemctl start elemta-backup"
+fi
 sudo systemctl daemon-reload
-sudo systemctl enable --now elemta-cert-sync.timer elemta-cert-sync.path elemta-abuse-firewall.timer >/dev/null 2>&1
+# shellcheck disable=SC2086 # backup_timer is empty or one unit name
+sudo systemctl enable --now elemta-cert-sync.timer elemta-cert-sync.path elemta-abuse-firewall.timer $backup_timer >/dev/null 2>&1
 
 dkim_p=$(sudo openssl pkey -in "$dkim_key" -pubout -outform der 2>/dev/null | base64 -w0)
 ip4=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')

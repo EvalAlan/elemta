@@ -1,0 +1,358 @@
+# Two mailbox cells behind the cell router, on a dev cluster, for trying
+# and measuring cells (docs/mailbox-cells.md). scripts/k8s-cells-dev.sh
+# makes the secrets and the directory's entries, applies this and waits.
+#
+#   directory      elemta-ldap (one node; placements live on its entries)
+#   cell a         mailbox-a (the default cell) on pg-a, bodies on bodies-a
+#   cell b         mailbox-b on pg-b, bodies on bodies-b
+#   router         two replicas in front of both, published on the host
+#
+# Each cell is one mailbox server here; in production a cell is several
+# behind a Service, sharing its Postgres and an object store. The bodies
+# are ReadWriteOnce volumes, which the move Job mounts beside the cells on
+# this single-node cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: elemta-cells
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elemta-ldap
+  namespace: elemta-cells
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: elemta-ldap }
+  template:
+    metadata:
+      labels: { app: elemta-ldap }
+    spec:
+      containers:
+        - name: ldap
+          image: localhost:5000/elemta-ldap:scaling
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: LDAP_BASE_DN
+              value: dc=example,dc=com
+            - name: LDAP_ORGANISATION
+              value: Example Cells
+            - name: LDAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: elemta-cells, key: ldap-admin-password } }
+          ports:
+            - { name: ldap, containerPort: 389 }
+          readinessProbe:
+            tcpSocket: { port: ldap }
+            periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elemta-ldap
+  namespace: elemta-cells
+spec:
+  selector: { app: elemta-ldap }
+  ports:
+    - { name: ldap, port: 389, targetPort: ldap }
+---
+# One Postgres per cell. pg_stat_statements is on so the load checks can
+# see which queries idle sessions run.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pg-a
+  namespace: elemta-cells
+spec:
+  serviceName: pg-a
+  replicas: 1
+  selector:
+    matchLabels: { app: pg-a }
+  template:
+    metadata:
+      labels: { app: pg-a }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          args: ["-c", "shared_preload_libraries=pg_stat_statements", "-c", "max_connections=200"]
+          env:
+            - { name: POSTGRES_DB, value: mailbox }
+            - { name: POSTGRES_USER, value: mailbox }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: elemta-cells, key: pg-password } }
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "mailbox", "-d", "mailbox"] }
+            periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pg-a
+  namespace: elemta-cells
+spec:
+  selector: { app: pg-a }
+  ports:
+    - { name: postgres, port: 5432, targetPort: postgres }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pg-b
+  namespace: elemta-cells
+spec:
+  serviceName: pg-b
+  replicas: 1
+  selector:
+    matchLabels: { app: pg-b }
+  template:
+    metadata:
+      labels: { app: pg-b }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          args: ["-c", "shared_preload_libraries=pg_stat_statements", "-c", "max_connections=200"]
+          env:
+            - { name: POSTGRES_DB, value: mailbox }
+            - { name: POSTGRES_USER, value: mailbox }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: elemta-cells, key: pg-password } }
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "mailbox", "-d", "mailbox"] }
+            periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pg-b
+  namespace: elemta-cells
+spec:
+  selector: { app: pg-b }
+  ports:
+    - { name: postgres, port: 5432, targetPort: postgres }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bodies-a
+  namespace: elemta-cells
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bodies-b
+  namespace: elemta-cells
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailbox-a
+  namespace: elemta-cells
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mailbox-a }
+  template:
+    metadata:
+      labels: { app: mailbox-a }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1001, runAsGroup: 1001, fsGroup: 1001 }
+      containers:
+        - name: mailbox
+          image: localhost:5000/elemta-mailbox:scaling
+          imagePullPolicy: IfNotPresent
+          args: ["mailbox", "--config", "/etc/cells/mailbox-a.toml"]
+          envFrom:
+            - secretRef: { name: elemta-cells-env }
+          ports:
+            - { name: imap, containerPort: 1143 }
+            - { name: imaps, containerPort: 10993 }
+            - { name: pop3, containerPort: 1110 }
+            - { name: lmtp, containerPort: 2424 }
+            - { name: sieve, containerPort: 4190 }
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 3
+          volumeMounts:
+            - { name: config, mountPath: /etc/cells, readOnly: true }
+            - { name: tls, mountPath: /etc/elemta/tls, readOnly: true }
+            - { name: bodies, mountPath: /var/lib/elemta/bodies-a }
+      volumes:
+        - { name: config, configMap: { name: elemta-cells-config } }
+        - { name: tls, secret: { secretName: elemta-cells-tls } }
+        - { name: bodies, persistentVolumeClaim: { claimName: bodies-a } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailbox-b
+  namespace: elemta-cells
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mailbox-b }
+  template:
+    metadata:
+      labels: { app: mailbox-b }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1001, runAsGroup: 1001, fsGroup: 1001 }
+      containers:
+        - name: mailbox
+          image: localhost:5000/elemta-mailbox:scaling
+          imagePullPolicy: IfNotPresent
+          args: ["mailbox", "--config", "/etc/cells/mailbox-b.toml"]
+          envFrom:
+            - secretRef: { name: elemta-cells-env }
+          ports:
+            - { name: imap, containerPort: 1143 }
+            - { name: imaps, containerPort: 10993 }
+            - { name: pop3, containerPort: 1110 }
+            - { name: lmtp, containerPort: 2424 }
+            - { name: sieve, containerPort: 4190 }
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 3
+          volumeMounts:
+            - { name: config, mountPath: /etc/cells, readOnly: true }
+            - { name: tls, mountPath: /etc/elemta/tls, readOnly: true }
+            - { name: bodies, mountPath: /var/lib/elemta/bodies-b }
+      volumes:
+        - { name: config, configMap: { name: elemta-cells-config } }
+        - { name: tls, secret: { secretName: elemta-cells-tls } }
+        - { name: bodies, persistentVolumeClaim: { claimName: bodies-b } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailbox-a
+  namespace: elemta-cells
+spec:
+  selector: { app: mailbox-a }
+  ports:
+    - { name: imaps, port: 10993, targetPort: imaps }
+    - { name: pop3, port: 1110, targetPort: pop3 }
+    - { name: lmtp, port: 2424, targetPort: lmtp }
+    - { name: sieve, port: 4190, targetPort: sieve }
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailbox-b
+  namespace: elemta-cells
+spec:
+  selector: { app: mailbox-b }
+  ports:
+    - { name: imaps, port: 10993, targetPort: imaps }
+    - { name: pop3, port: 1110, targetPort: pop3 }
+    - { name: lmtp, port: 2424, targetPort: lmtp }
+    - { name: sieve, port: 4190, targetPort: sieve }
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: router
+  namespace: elemta-cells
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: router }
+  template:
+    metadata:
+      labels: { app: router }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1001, runAsGroup: 1001 }
+      containers:
+        - name: router
+          image: localhost:5000/elemta-mailbox:scaling
+          imagePullPolicy: IfNotPresent
+          args: ["mailbox-router", "--config", "/etc/cells/router.toml"]
+          envFrom:
+            - secretRef: { name: elemta-cells-env }
+          ports:
+            - { name: imap, containerPort: 1143 }
+            - { name: imaps, containerPort: 10993 }
+            - { name: pop3, containerPort: 1110 }
+            - { name: lmtp, containerPort: 2424 }
+            - { name: sieve, containerPort: 4190 }
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 3
+          volumeMounts:
+            - { name: config, mountPath: /etc/cells, readOnly: true }
+            - { name: tls, mountPath: /etc/elemta/tls, readOnly: true }
+      volumes:
+        - { name: config, configMap: { name: elemta-cells-config } }
+        - { name: tls, secret: { secretName: elemta-cells-tls } }
+---
+# Published on the host's high ports, so it doesn't collide with the dev
+# stack: 21143 IMAP, 21993 IMAPS, 21110 POP3, 21424 LMTP, 21190 ManageSieve,
+# 21080 HTTP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: router
+  namespace: elemta-cells
+spec:
+  type: LoadBalancer
+  selector: { app: router }
+  ports:
+    - { name: imap, port: 21143, targetPort: imap }
+    - { name: imaps, port: 21993, targetPort: imaps }
+    - { name: pop3, port: 21110, targetPort: pop3 }
+    - { name: lmtp, port: 21424, targetPort: lmtp }
+    - { name: sieve, port: 21190, targetPort: sieve }
+    - { name: http, port: 21080, targetPort: http }
+---
+# Shared abuse state for the cells and routers (sign-in limits, blocks),
+# as Valkey is for the mailbox servers in the other stacks.
+# scripts/k8s-cells-dev.sh load-policy sets it to log only, so a load test
+# from one address isn't refused at 25 connections.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: valkey
+  namespace: elemta-cells
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: valkey }
+  template:
+    metadata:
+      labels: { app: valkey }
+    spec:
+      containers:
+        - name: valkey
+          image: localhost:5000/valkey:8-alpine
+          ports:
+            - { name: valkey, containerPort: 6379 }
+          readinessProbe:
+            tcpSocket: { port: valkey }
+            periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: elemta-cells
+spec:
+  selector: { app: valkey }
+  ports:
+    - { name: valkey, port: 6379, targetPort: valkey }

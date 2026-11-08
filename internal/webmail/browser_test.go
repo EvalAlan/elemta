@@ -16,8 +16,11 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,9 +28,14 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/log"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/device"
+
+	"github.com/EvalAlan/elemta/internal/mailcategory"
 )
 
 type browser struct {
@@ -200,6 +208,28 @@ func TestBrowserThemeToggle(t *testing.T) {
 	}
 }
 
+// Choosing a colour scheme in Settings repaints the page at once, without
+// saving: a reload shows the saved choice again.
+func TestBrowserSchemePreview(t *testing.T) {
+	b := newBrowser(t)
+	b.login()
+	b.run(chromedp.Navigate(b.url("/settings")), chromedp.WaitVisible(chromedp.ID("palette")))
+	b.waitFor(`document.readyState === "complete"`)
+	b.run(chromedp.SetValue(chromedp.ID("palette"), "ember"),
+		chromedp.Evaluate[chromedp.Void](`document.getElementById("palette").dispatchEvent(new Event("change"))`))
+	if got := evalAs[string](b, `document.documentElement.getAttribute("data-palette") || ""`); got != "ember" {
+		t.Fatalf("preview palette = %q, want ember", got)
+	}
+	accent := evalAs[string](b, `getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()`)
+	if accent == "" || strings.EqualFold(accent, "#2563EB") {
+		t.Fatalf("the scheme's colours didn't apply: --accent = %q", accent)
+	}
+	b.run(chromedp.Reload(), chromedp.WaitVisible(chromedp.ID("palette")))
+	if got := evalAs[string](b, `document.documentElement.getAttribute("data-palette") || ""`); got == "ember" {
+		t.Fatal("an unsaved preview survived a reload")
+	}
+}
+
 func TestBrowserContextMenu(t *testing.T) {
 	b := newBrowser(t)
 	b.login()
@@ -325,8 +355,8 @@ func TestBrowserReadingPaneKeepsThePage(t *testing.T) {
 	b := newBrowser(t)
 	seedLongInbox(b, nil)
 	b.login()
-	evalAs[bool](b, `window.__samePage = true; document.querySelector(".list").scrollTop = 1500; true`)
-	if got := evalAs[int](b, `document.querySelector(".list").scrollTop`); got == 0 {
+	evalAs[bool](b, `window.__samePage = true; document.querySelector(".list-scroll").scrollTop = 1500; true`)
+	if got := evalAs[int](b, `document.querySelector(".list-scroll").scrollTop`); got == 0 {
 		t.Fatal("the list does not scroll by itself")
 	}
 	b.clickRow(35)
@@ -340,7 +370,7 @@ func TestBrowserReadingPaneKeepsThePage(t *testing.T) {
 	if !evalAs[bool](b, `document.title.includes("Message 36")`) {
 		t.Errorf("title = %q", evalAs[string](b, `document.title`))
 	}
-	if got := evalAs[int](b, `document.querySelector(".list").scrollTop`); got < 1000 {
+	if got := evalAs[int](b, `document.querySelector(".list-scroll").scrollTop`); got < 1000 {
 		t.Errorf("list scrolled to %d, want it where it was", got)
 	}
 	if !evalAs[bool](b, `(() => { const r = document.querySelector("li.selected").getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight + 1 })()`) {
@@ -695,5 +725,531 @@ func TestBrowserNewMailRings(t *testing.T) {
 	b.run(chromedp.Evaluate[chromedp.Void](`localStorage.setItem("elemta-mail-sound", String(Date.now()))`, chromedp.EvalAsValue))
 	if n := step(counts(7, 5)); n != first {
 		t.Fatal("a second tab rang as well")
+	}
+}
+
+// One click on an event shows its details in a bubble and stays on the
+// calendar; a double click opens the event page.
+func TestBrowserEventBubble(t *testing.T) {
+	b := newBrowser(t)
+	csrf := b.h.login()
+	resp := b.h.post("/calendar/event", url.Values{
+		"csrf": {csrf}, "op": {"save"}, "summary": {"Design review"}, "location": {"Room 4"},
+		"start_date": {"2026-10-21"}, "start_time": {"10:00"}, "end_date": {"2026-10-21"}, "end_time": {"11:00"},
+		"ends": {"never"}, "interval": {"1"}, "calendar": {"Work"}, "reminder": {"15"}, "busy": {"busy"},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save = %d", resp.StatusCode)
+	}
+	b.login()
+	const week = "/calendar?view=week&date=2026-10-21"
+	b.run(chromedp.Navigate(b.url(week)), chromedp.WaitVisible(chromedp.CSS(`.ev[data-ctx="event"]`)))
+	b.waitFor(`document.readyState === "complete"`)
+	ev := func() *chromedp.Node {
+		ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+		defer cancel()
+		nodes, err := chromedp.Run(ctx, chromedp.Nodes(chromedp.CSS(`.ev[data-ctx="event"]`), chromedp.NodeVisible))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return nodes[0]
+	}
+
+	b.run(chromedp.MouseClickNode(ev()))
+	b.waitFor(`!!document.querySelector(".event-peek .event-view")`)
+	if got := evalAs[string](b, `location.pathname + location.search`); got != week {
+		t.Errorf("a single click left the calendar for %s", got)
+	}
+	text := evalAs[string](b, `document.querySelector(".event-peek").textContent`)
+	for _, want := range []string{"Design review", "Room 4", "Open", "Edit", "Delete"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("bubble %q lacks %q", text, want)
+		}
+	}
+	if !evalAs[bool](b, `(() => { const p = document.querySelector(".event-peek").getBoundingClientRect(), e = document.querySelector(".ev").getBoundingClientRect(); return p.left >= e.right || p.right <= e.left || p.top >= e.bottom || p.bottom <= e.top })()`) {
+		t.Error("the bubble covers the event it belongs to")
+	}
+	// Escape closes it and puts the keyboard back on the event.
+	b.run(chromedp.KeyEvent("\x1b"))
+	b.waitFor(`!document.querySelector(".event-peek") && document.activeElement.matches(".ev")`)
+	// So does a click elsewhere.
+	b.run(chromedp.MouseClickNode(ev()))
+	b.waitFor(`!!document.querySelector(".event-peek .event-view")`)
+	b.run(chromedp.MouseClickXY(5, 5))
+	b.waitFor(`!document.querySelector(".event-peek")`)
+
+	// A double click as a mouse sends it: one click, then a second that
+	// counts two.
+	n := ev()
+	b.run(chromedp.MouseClickNode(n), chromedp.MouseClickNode(n, chromedp.ClickCount(2)))
+	b.waitFor(`location.pathname === "/calendar/event" && !!document.querySelector(".event-view h2")`)
+	if text := evalAs[string](b, `document.querySelector(".event-view h2").textContent`); !strings.Contains(text, "Design review") {
+		t.Errorf("double click opened %q", text)
+	}
+}
+
+// A due reminder shows as a card and rings once; a reload shows it again
+// without ringing; snooze hides it until the snooze runs out, when it rings
+// again; dismiss keeps it away. Settings can show an example.
+func TestBrowserEventReminder(t *testing.T) {
+	b := newBrowser(t)
+	csrf := b.h.login()
+	b.h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "week_start": {"0"}, "clock": {"24"}, "page_size": {"50"}})
+	start := time.Now().UTC().Add(10 * time.Minute).Truncate(time.Minute)
+	resp := b.h.post("/calendar/event", url.Values{
+		"csrf": {csrf}, "op": {"save"}, "summary": {"Budget call"}, "location": {"Room 2"},
+		"start_date": {start.Format("2006-01-02")}, "start_time": {start.Format("15:04")},
+		"end_date": {start.Add(time.Hour).Format("2006-01-02")}, "end_time": {start.Add(time.Hour).Format("15:04")},
+		"ends": {"never"}, "interval": {"1"}, "calendar": {"Work"}, "reminder": {"15"}, "busy": {"busy"},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save = %d", resp.StatusCode)
+	}
+	// Signing in lands on the inbox, which already shows and rings the
+	// reminder. The first page after the stub goes in starts afresh, before
+	// any of its own scripts run.
+	b.login()
+	fresh := `if (!sessionStorage.getItem("fresh")) { localStorage.clear(); sessionStorage.setItem("fresh", "1"); }`
+	b.run(chromedp.Func(func(ctx context.Context, tg *chromedp.Target) error {
+		_, err := cdp.Call(ctx, tg, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{Source: stubAudio + ";" + fresh})
+		return err
+	}))
+	const card = `document.querySelector(".toast.reminder")`
+	open := func() {
+		t.Helper()
+		b.run(chromedp.Navigate(b.url("/calendar")))
+		b.waitFor(`!!` + card)
+	}
+	// stays checks for a while that no card comes, since its absence has no
+	// moment to wait for.
+	stays := func(why string) {
+		t.Helper()
+		b.waitFor(`document.readyState === "complete"`)
+		for range 10 {
+			if evalAs[bool](b, `!!`+card) {
+				t.Fatal(why)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	open()
+	text := evalAs[string](b, card+`.textContent`)
+	for _, want := range []string{"Budget call", "Room 2", "Starts in", "Snooze", "Dismiss"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("reminder %q lacks %q", text, want)
+		}
+	}
+	if n := evalAs[int](b, `window.notes`); n == 0 {
+		t.Error("the reminder didn't ring")
+	}
+
+	open()
+	if n := evalAs[int](b, `window.notes`); n != 0 {
+		t.Error("a reload rang the same reminder again")
+	}
+
+	b.run(chromedp.Evaluate[chromedp.Void](card+`.querySelector("button").click()`, chromedp.EvalAsValue)) // Snooze
+	b.waitFor(`!` + card)
+	b.run(chromedp.Navigate(b.url("/calendar")))
+	stays("a snoozed reminder came back at once")
+
+	// The snooze runs out: back, and ringing.
+	b.run(chromedp.Evaluate[chromedp.Void](`(() => { const s = JSON.parse(localStorage.getItem("elemta-reminders")); for (const k in s) if (s[k].s) s[k].s = Date.now() - 1000; localStorage.setItem("elemta-reminders", JSON.stringify(s)); })()`, chromedp.EvalAsValue))
+	open()
+	if n := evalAs[int](b, `window.notes`); n == 0 {
+		t.Error("the reminder didn't ring after its snooze")
+	}
+
+	b.run(chromedp.Evaluate[chromedp.Void](card+`.querySelectorAll("button")[1].click()`, chromedp.EvalAsValue)) // Dismiss
+	b.waitFor(`!` + card)
+	b.run(chromedp.Navigate(b.url("/calendar")))
+	stays("a dismissed reminder came back")
+
+	b.run(chromedp.Navigate(b.url("/settings")), chromedp.WaitVisible(chromedp.CSS(`[data-reminder-test]`)))
+	b.waitFor(`document.readyState === "complete"`)
+	b.run(chromedp.Evaluate[chromedp.Void](`window.notes = 0; document.querySelector("[data-reminder-test]").click()`, chromedp.EvalAsValue))
+	b.waitFor(`!!` + card + ` && window.notes > 0`)
+}
+
+// Only the rows scroll: the heading and the inbox tabs stay in view, and the
+// five tabs with unread counts fit the list without the last being cut off.
+func TestBrowserInboxTabsFitAndStay(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	if err := b.h.store.PutObject(context.Background(), CollSettings, Object{ID: settingsID, ContentType: "application/json", Data: []byte(`{"inbox_tabs":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	b.login()
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX&tab=promotions")))
+	b.waitFor(`!!document.querySelector(".inbox-tabs") && document.readyState === "complete"`)
+	// Counts like a real inbox's, two digits on the widest tabs.
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelectorAll(".inbox-tab").forEach((a, i) => { a.querySelector(".tab-count")?.remove(); const n = [0, 1, 20, 14, 3][i]; if (n) a.insertAdjacentHTML("beforeend", ' <span class="tab-count mono">' + n + '</span>'); })`, chromedp.EvalAsValue))
+	if w := evalAs[[]int](b, `(() => { const n = document.querySelector(".inbox-tabs"); return [n.scrollWidth, n.clientWidth] })()`); w[0] > w[1] {
+		t.Errorf("the tabs need %dpx but have %d: the last one is cut off", w[0], w[1])
+	}
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelector(".list-scroll").scrollTop = 1500`, chromedp.EvalAsValue))
+	if evalAs[int](b, `document.querySelector(".list-scroll").scrollTop`) == 0 {
+		t.Fatal("the rows don't scroll by themselves")
+	}
+	if !evalAs[bool](b, `(() => { const r = document.querySelector(".inbox-tabs").getBoundingClientRect(); return r.height > 30 && r.top > 0 && r.bottom < innerHeight })()`) {
+		t.Error("the inbox tabs scrolled away or collapsed")
+	}
+}
+
+// dragMouse presses at one point, moves in steps as a hand would, and lets
+// go at another.
+func (b *browser) dragMouse(x0, y0, x1, y1 float64) {
+	b.t.Helper()
+	steps := []chromedp.Action[chromedp.Void]{chromedp.MouseEvent(input.DispatchMouseEventTypeMousePressed, x0, y0, chromedp.ButtonLeft, chromedp.ClickCount(1))}
+	for i := 1; i <= 6; i++ {
+		f := float64(i) / 6
+		steps = append(steps, chromedp.MouseEvent(input.DispatchMouseEventTypeMouseMoved, x0+(x1-x0)*f, y0+(y1-y0)*f, chromedp.ButtonLeft))
+	}
+	steps = append(steps, chromedp.MouseEvent(input.DispatchMouseEventTypeMouseReleased, x1, y1, chromedp.ButtonLeft, chromedp.ClickCount(1)))
+	b.run(steps...)
+}
+
+// calendarBrowser signs in with a UTC time zone, so times on the page are
+// the times saved, and returns a function that saves events.
+func calendarBrowser(t *testing.T) (*browser, func(url.Values)) {
+	b := newBrowser(t)
+	csrf := b.h.login()
+	b.h.post("/settings", url.Values{"csrf": {csrf}, "timezone": {"UTC"}, "week_start": {"0"}, "clock": {"24"}, "page_size": {"50"}})
+	save := func(f url.Values) {
+		t.Helper()
+		f.Set("csrf", csrf)
+		f.Set("op", "save")
+		if resp := b.h.post("/calendar/event", f); resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("save %s = %d", f.Get("summary"), resp.StatusCode)
+		}
+	}
+	b.login()
+	return b, save
+}
+
+// gridShows reports whether the week or day grid has the event at that
+// time on that day.
+func gridShows(date, at, title string) string {
+	return fmt.Sprintf(`[...document.querySelectorAll('.daycol[data-date=%q] .ev')].some(e => e.querySelector(".t").textContent.trim() === %q && e.textContent.includes(%q))`, date, at, title)
+}
+
+func TestBrowserCalendarQuickAdd(t *testing.T) {
+	b, _ := calendarBrowser(t)
+	b.run(chromedp.Navigate(b.url("/calendar?view=week&date=2026-10-21")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".daycol[data-date]")`)
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelector('.daycol[data-date="2026-10-21"] .slot[data-hour="10"]').click()`, chromedp.EvalAsValue))
+	b.waitFor(`document.activeElement && document.activeElement.matches(".event-quick-add input[name=summary]")`)
+	if got := evalAs[string](b, `document.querySelector(".event-quick-add").textContent`); !strings.Contains(got, "10:00") || !strings.Contains(got, "More options") {
+		t.Errorf("quick add bubble = %q", got)
+	}
+	if !evalAs[bool](b, `location.pathname === "/calendar"`) {
+		t.Fatal("clicking an hour left the calendar")
+	}
+	b.run(chromedp.SendKeys(chromedp.CSS(".event-quick-add input[name=summary]"), "Lunch with Sam\r"))
+	b.waitFor(gridShows("2026-10-21", "10:00", "Lunch with Sam"))
+
+	// An empty part of a month day adds an all-day event.
+	b.run(chromedp.Navigate(b.url("/calendar?view=month&date=2026-10-21")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector('.month .day[data-date="2026-10-24"]')`)
+	box := evalAs[[]float64](b, `(() => { const r = document.querySelector('.month .day[data-date="2026-10-24"]').getBoundingClientRect(); return [r.left + r.width / 2, r.bottom - 10] })()`)
+	b.run(chromedp.MouseClickXY(box[0], box[1]))
+	b.waitFor(`!!document.querySelector(".event-quick-add input[name=summary]")`)
+	if got := evalAs[string](b, `document.querySelector(".event-quick-add").textContent`); !strings.Contains(got, "All day") {
+		t.Errorf("month quick add = %q", got)
+	}
+	b.run(chromedp.SendKeys(chromedp.CSS(".event-quick-add input[name=summary]"), "Garden party\r"))
+	b.waitFor(`[...document.querySelectorAll('.month .day[data-date="2026-10-24"] .chip-ev')].some(c => c.textContent.includes("Garden party") && !c.classList.contains("timed"))`)
+}
+
+func TestBrowserCalendarDragMovesAndResizes(t *testing.T) {
+	b, save := calendarBrowser(t)
+	save(url.Values{"summary": {"Design review"}, "start_date": {"2026-10-21"}, "start_time": {"10:00"}, "end_date": {"2026-10-21"}, "end_time": {"11:00"}})
+	open := func() {
+		b.run(chromedp.Navigate(b.url("/calendar?view=week&date=2026-10-21")))
+		b.waitFor(`document.readyState === "complete" && !!document.querySelector(".ev-resize")`)
+		// Nine o'clock at the top, so the hours used here are on screen.
+		b.run(chromedp.Evaluate[chromedp.Void](`(() => { const g = document.querySelector(".time-grid"); g.scrollTop = document.querySelector('.daycol .slot[data-hour="9"]').offsetTop; })()`, chromedp.EvalAsValue))
+	}
+	// dropAndReload drags, then waits for the page to reload with the saved
+	// change. The dragged event looks right before the save finishes, and a
+	// navigation started then is cancelled by the reload that follows it.
+	dropAndReload := func(p []float64) {
+		t.Helper()
+		b.run(chromedp.Evaluate[chromedp.Void](`window.__beforeDrop = true`, chromedp.EvalAsValue))
+		b.dragMouse(p[0], p[1], p[2], p[3])
+		b.waitFor(`!window.__beforeDrop && document.readyState === "complete"`)
+	}
+	open()
+	// Grab the event 6px below its top and drop it on Thursday at 14:00.
+	p := evalAs[[]float64](b, `(() => {
+		const e = document.querySelector(".ev").getBoundingClientRect();
+		const col = document.querySelector('.daycol[data-date="2026-10-22"]').getBoundingClientRect();
+		const hour = col.height / 24;
+		return [e.left + e.width / 2, e.top + 6, col.left + col.width / 2, col.top + 14 * hour + 6];
+	})()`)
+	dropAndReload(p)
+	b.waitFor(gridShows("2026-10-22", "14:00", "Design review"))
+	if evalAs[bool](b, `!!document.querySelector(".event-peek")`) {
+		t.Error("the drag also opened the event bubble")
+	}
+
+	// Its bottom edge dragged an hour down: 14:00 to 16:00.
+	open()
+	p = evalAs[[]float64](b, `(() => {
+		const h = document.querySelector('.daycol[data-date="2026-10-22"] .ev .ev-resize').getBoundingClientRect();
+		const col = document.querySelector('.daycol[data-date="2026-10-22"]').getBoundingClientRect();
+		return [h.left + h.width / 2, h.top + h.height / 2, h.left + h.width / 2, h.top + h.height / 2 + col.height / 24];
+	})()`)
+	dropAndReload(p)
+	b.waitFor(`(() => { const e = document.querySelector('.daycol[data-date="2026-10-22"] .ev'); return !!e && Math.abs(e.getBoundingClientRect().height - 2 * document.querySelector(".daycol").getBoundingClientRect().height / 24) < 4 })()`)
+	_, ics := b.h.get("/calendar/export")
+	if !strings.Contains(ics, "DTSTART:20261022T140000Z") || !strings.Contains(ics, "DTEND:20261022T160000Z") {
+		t.Errorf("stored event after move and resize:\n%s", ics)
+	}
+
+	// In the month, a chip dragged to another day keeps its time.
+	b.run(chromedp.Navigate(b.url("/calendar?view=month&date=2026-10-21")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector('.month .day[data-date="2026-10-22"] .chip-ev')`)
+	p = evalAs[[]float64](b, `(() => {
+		const c = document.querySelector('.month .day[data-date="2026-10-22"] .chip-ev').getBoundingClientRect();
+		const d = document.querySelector('.month .day[data-date="2026-10-27"]').getBoundingClientRect();
+		return [c.left + 20, c.top + c.height / 2, d.left + d.width / 2, d.top + d.height / 2];
+	})()`)
+	dropAndReload(p)
+	b.waitFor(`[...document.querySelectorAll('.month .day[data-date="2026-10-27"] .chip-ev')].some(c => c.textContent.includes("14:00") && c.textContent.includes("Design review"))`)
+}
+
+func TestBrowserDragMessagesToFolder(t *testing.T) {
+	b := newBrowser(t)
+	b.login()
+	// Drag and drop as the browser reports it: one DataTransfer from the
+	// row's dragstart to the folder's drop.
+	b.run(chromedp.Evaluate[chromedp.Void](`(() => {
+		window.__beforeDrop = true;
+		const dt = new DataTransfer();
+		const row = document.querySelector(".messages li[data-uid] a.row");
+		const folder = document.querySelector('a.folder[data-folder="Junk"]');
+		row.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }));
+		folder.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+		folder.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+	})()`, chromedp.EvalAsValue))
+	b.waitFor(`!window.__beforeDrop && document.readyState === "complete"`)
+	b.h.store.mu.Lock()
+	dest := b.h.store.moved[7]
+	b.h.store.mu.Unlock()
+	if dest != "Junk" {
+		t.Errorf("message 7 moved to %q, want Junk", dest)
+	}
+}
+
+// With inbox tabs on, a message moves to a tab from its right-click menu or
+// by being dragged onto the tab.
+func TestBrowserMoveMessageToTab(t *testing.T) {
+	b := newBrowser(t)
+	if err := b.h.store.PutObject(context.Background(), CollSettings, Object{ID: settingsID, ContentType: "application/json", Data: []byte(`{"inbox_tabs":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	b.login()
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".inbox-tabs a.inbox-tab[data-category]")`)
+	hasKeyword := func(c mailcategory.Category) bool {
+		b.h.store.mu.Lock()
+		defer b.h.store.mu.Unlock()
+		return b.h.store.flags[7][c.Keyword()]
+	}
+
+	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+	nodes, err := chromedp.Run(ctx, chromedp.Nodes(chromedp.CSS(`[data-ctx="message"]`), chromedp.NodeVisible))
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.run(chromedp.MouseClickNode(nodes[0], chromedp.ButtonRight), chromedp.WaitVisible(chromedp.CSS(".ctx-menu")))
+	b.run(chromedp.Evaluate[chromedp.Void](`[...document.querySelectorAll(".ctx-menu .ctx-item")].find(e => e.textContent.startsWith("Move to tab")).click()`, chromedp.EvalAsValue))
+	labels := evalAs[[]string](b, `[...document.querySelectorAll(".ctx-menu .ctx-item")].map(e => e.textContent)`)
+	if strings.Join(labels, "|") != "✓ Primary|Social|Promotions|Updates|Forums" {
+		t.Errorf("tab menu = %q", labels)
+	}
+	b.run(chromedp.Evaluate[chromedp.Void](`window.__before = true; [...document.querySelectorAll(".ctx-menu .ctx-item")].find(e => e.textContent === "Social").click()`, chromedp.EvalAsValue))
+	b.waitFor(`!window.__before && document.readyState === "complete"`)
+	if !hasKeyword(mailcategory.Social) {
+		t.Error("the menu didn't move the message to Social")
+	}
+
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".messages li[data-uid] a.row")`)
+	b.run(chromedp.Evaluate[chromedp.Void](`(() => {
+		window.__before = true;
+		const dt = new DataTransfer();
+		const row = document.querySelector(".messages li[data-uid] a.row");
+		const tab = document.querySelector('a.inbox-tab[data-category="promotions"]');
+		row.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }));
+		tab.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+		tab.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+	})()`, chromedp.EvalAsValue))
+	b.waitFor(`!window.__before && document.readyState === "complete"`)
+	if !hasKeyword(mailcategory.Promotions) || hasKeyword(mailcategory.Social) {
+		t.Error("dropping on Promotions didn't move the message there")
+	}
+}
+
+// Delete with the keyboard, then undo with it: # deletes the open message,
+// the notice offers Undo, and z takes it.
+func TestBrowserUndoDelete(t *testing.T) {
+	b := newBrowser(t)
+	b.login()
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX&uid=7")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".reader .toolbar")`)
+	b.run(chromedp.KeyEvent("#"))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".notice .undo-form button")`)
+	if got := evalAs[string](b, `document.querySelector(".notice").textContent`); !strings.Contains(got, "Message deleted.") {
+		t.Errorf("notice = %q", got)
+	}
+	b.run(chromedp.KeyEvent("z"))
+	b.waitFor(`document.readyState === "complete" && (document.querySelector(".notice") || {}).textContent === "Moved back."`)
+	b.h.store.mu.Lock()
+	back := b.h.store.moved[1007]
+	b.h.store.mu.Unlock()
+	if back != "INBOX" {
+		t.Errorf("undo moved the message to %q, want INBOX", back)
+	}
+}
+
+// Send counts down with an Undo; Undo goes back to the draft, and a send
+// left alone says it's gone and goes.
+func TestBrowserUndoSend(t *testing.T) {
+	defaultUndoSend = 2
+	t.Cleanup(func() { defaultUndoSend = 0 })
+	b := newBrowser(t)
+	b.h.sub.sent = make(chan struct{}, 1)
+	b.login()
+	send := func() {
+		b.run(chromedp.Navigate(b.url("/compose")), chromedp.WaitVisible(chromedp.ID("to")),
+			chromedp.SendKeys(chromedp.ID("to"), "priya@northwind.example"),
+			chromedp.SendKeys(chromedp.CSS(`input[name="subject"]`), "Kickoff"),
+			chromedp.Click(chromedp.CSS(`button[name="op"][value="send"]`)))
+		b.waitFor(`document.readyState === "complete" && !!document.querySelector("[data-send-left]")`)
+	}
+
+	send()
+	b.waitFor(`/Sending in \d/.test(document.querySelector("[data-send-status]").textContent)`)
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelector(".undo-form button").click()`, chromedp.EvalAsValue))
+	b.waitFor(`location.pathname === "/compose" && location.search.includes("mode=draft")`)
+	select {
+	case <-b.h.sub.sent:
+		t.Fatal("an undone message was sent")
+	case <-time.After(2500 * time.Millisecond):
+	}
+
+	send()
+	b.waitFor(`document.querySelector("[data-send-status]").textContent === "Message sent." && !document.querySelector(".undo-form")`)
+	select {
+	case <-b.h.sub.sent:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the message wasn't sent")
+	}
+}
+
+// Notifications: the settings card offers them where the browser can show
+// them, the service worker is in place, and signing out with them on still
+// signs out (taking this browser's subscription with it).
+func TestBrowserPushSettings(t *testing.T) {
+	b := newBrowser(t)
+	f := &fakeSecurity{pushKey: "BEXAMPLEKEY", pushDevices: []pushDevice{{ID: 3, Endpoint: "https://fcm.googleapis.com/fcm/send/other", Label: "Chrome on Android", Mail: "all", Reminders: true}}}
+	api := httptest.NewServer(f.handler(t))
+	t.Cleanup(api.Close)
+	b.h.server.security = newSecurityClient(api.URL)
+	// The fake mailbox service knows dana.
+	b.run(
+		chromedp.Navigate(b.url("/login")),
+		chromedp.SendKeys(chromedp.ID("user"), "dana"),
+		chromedp.SendKeys(chromedp.ID("password"), "secret"),
+		chromedp.Submit(chromedp.ID("password")),
+		chromedp.WaitVisible(chromedp.CSS(`[data-ctx="message"]`)),
+	)
+	b.waitFor(`document.readyState === "complete" && !document.body.hasAttribute("data-detect-tz")`)
+	b.run(chromedp.Navigate(b.url("/settings/devices")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector("[data-push-form]") && !document.querySelector("[data-push-form]").hidden`)
+	if got := evalAs[string](b, `document.querySelector("[data-push-save]").textContent`); got != "Turn on for this device" {
+		t.Errorf("button = %q", got)
+	}
+	if !evalAs[bool](b, `document.querySelector("[data-this-device]").hidden`) {
+		t.Error("another device is marked as this one")
+	}
+	b.waitFor(`window.__sw === true || (navigator.serviceWorker.getRegistration().then(r => { window.__sw = !!r && r.scope === location.origin + "/"; }), false)`)
+	// Readable and within the window, on a desktop and a phone, light and dark.
+	for _, width := range []struct {
+		name string
+		set  chromedp.Action[chromedp.Void]
+	}{{"desktop", chromedp.EmulateViewport(1400, 900)}, {"phone", chromedp.Emulate(device.IPhone13)}} {
+		b.run(width.set)
+		for _, theme := range []string{"light", "dark"} {
+			b.run(chromedp.Evaluate[chromedp.Void](`document.documentElement.setAttribute("data-theme", "`+theme+`"); document.getElementById("notifications").scrollIntoView()`, chromedp.EvalAsValue))
+			for _, p := range evalAs[[]string](b, layoutCheck) {
+				t.Errorf("%s/%s: %s", width.name, theme, p)
+			}
+			if dir := os.Getenv("ELEMTA_SCREENSHOTS"); dir != "" {
+				if png, err := chromedp.Run(b.ctx, chromedp.CaptureScreenshot()); err == nil {
+					_ = os.WriteFile(filepath.Join(dir, "push-"+width.name+"-"+theme+".png"), png, 0o600)
+				}
+			}
+		}
+	}
+	b.run(chromedp.EmulateViewport(1400, 900))
+
+	// Signing out with notifications marked on asks the server to forget
+	// this browser's subscription, then signs out.
+	b.run(chromedp.Evaluate[chromedp.Void](`localStorage.setItem("elemta-push", JSON.stringify({endpoint: "https://fcm.googleapis.com/fcm/send/mine", mail: "all"}))`, chromedp.EvalAsValue))
+	b.run(chromedp.Click(chromedp.CSS(`form[data-logout] button`)))
+	b.waitFor(`location.pathname === "/login"`)
+	if evalAs[bool](b, `localStorage.getItem("elemta-push") !== null`) {
+		t.Error("the push state outlived signing out")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.pushCalls) != 1 || f.pushCalls[0]["endpoint"] != "https://fcm.googleapis.com/fcm/send/mine" {
+		t.Errorf("push calls = %v", f.pushCalls)
+	}
+}
+
+// With Encrypt ticked, Send later must seal the message in the browser as
+// Send does. Here there is no key to seal with, so nothing may reach the
+// mailbox service: before pgp.js knew about Send later, the form posted the
+// message readable and it was scheduled unencrypted.
+func TestBrowserScheduleSendKeepsEncryption(t *testing.T) {
+	b := newBrowser(t)
+	f := &fakeSecurity{}
+	api := httptest.NewServer(f.handler(t))
+	t.Cleanup(api.Close)
+	b.h.server.security = newSecurityClient(api.URL)
+	b.run(
+		chromedp.Navigate(b.url("/login")),
+		chromedp.SendKeys(chromedp.ID("user"), "dana"),
+		chromedp.SendKeys(chromedp.ID("password"), "secret"),
+		chromedp.Submit(chromedp.ID("password")),
+		chromedp.WaitVisible(chromedp.CSS(`[data-ctx="message"]`)),
+		chromedp.Navigate(b.url("/compose")),
+		chromedp.WaitVisible(chromedp.CSS(".send-later summary")),
+		chromedp.SendKeys(chromedp.ID("to"), "priya@northwind.example"),
+		chromedp.SendKeys(chromedp.ID("subject"), "Secret plans"),
+	)
+	b.run(chromedp.Evaluate[chromedp.Void](`(() => {
+		const t = document.querySelector("[data-pgp-toggle]");
+		t.checked = true;
+		t.dispatchEvent(new Event("change", { bubbles: true }));
+		document.querySelector(".send-later").open = true;
+	})()`, chromedp.EvalAsValue))
+	b.run(chromedp.Click(chromedp.CSS(`.send-later button[name="schedule"]`)))
+	b.waitFor(`(() => { const s = document.querySelector("[data-pgp-status]"); return s && !s.hidden && s.textContent.trim() !== ""; })()`)
+	time.Sleep(500 * time.Millisecond)
+	f.mu.Lock()
+	calls := len(f.laterCalls)
+	f.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("Send later with Encrypt on reached the mailbox service %d times without encryption", calls)
+	}
+	if !evalAs[bool](b, `location.pathname === "/compose"`) {
+		t.Error("left the editor without sending")
 	}
 }

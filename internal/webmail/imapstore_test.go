@@ -173,12 +173,17 @@ func TestIMAPStoreReadFlagMoveDelete(t *testing.T) {
 		t.Fatalf("flags = %+v", p.Messages[0])
 	}
 
-	if err := st.Move(ctx, "INBOX", []uint32{uid}, "Projects"); err != nil {
+	movedTo, err := st.Move(ctx, "INBOX", []uint32{uid}, "Projects")
+	if err != nil {
 		t.Fatal(err)
 	}
 	p, _ = st.List(ctx, "Projects", ListQuery{Page: 1, PageSize: 10})
 	if len(p.Messages) != 1 {
 		t.Fatalf("Projects after move = %+v", p.Messages)
+	}
+	// The UIDs in the destination, from COPYUID, are what Undo moves back.
+	if len(movedTo) != 1 || movedTo[0] != p.Messages[0].UID {
+		t.Fatalf("Move reported %v, the message is UID %d in Projects", movedTo, p.Messages[0].UID)
 	}
 
 	// Delete outside Trash moves to Trash; inside Trash it's permanent.
@@ -202,11 +207,12 @@ func TestIMAPStoreAppendCreatesRoleFolder(t *testing.T) {
 	cfg := startIMAP(t)
 	st := dialTest(t, cfg)
 	ctx := context.Background()
-	if err := st.Append(ctx, RoleSent, testMessage(1, "Sent copy"), true, false); err != nil {
+	if _, err := st.Append(ctx, RoleSent, testMessage(1, "Sent copy"), true, false); err != nil {
 		t.Fatal(err)
 	}
 	// There is no Drafts folder yet; Append must create it.
-	if err := st.Append(ctx, RoleDrafts, testMessage(2, "Draft"), true, true); err != nil {
+	draftUID, err := st.Append(ctx, RoleDrafts, testMessage(2, "Draft"), true, true)
+	if err != nil {
 		t.Fatal(err)
 	}
 	p, err := st.List(ctx, "Drafts", ListQuery{Page: 1, PageSize: 10})
@@ -215,6 +221,10 @@ func TestIMAPStoreAppendCreatesRoleFolder(t *testing.T) {
 	}
 	if len(p.Messages) != 1 || !p.Messages[0].Draft || !p.Messages[0].Seen {
 		t.Fatalf("Drafts = %+v", p.Messages)
+	}
+	// APPENDUID: undo send finds its draft by this.
+	if draftUID != p.Messages[0].UID {
+		t.Errorf("Append reported UID %d, the draft is %d", draftUID, p.Messages[0].UID)
 	}
 	p, _ = st.List(ctx, "Sent", ListQuery{Page: 1, PageSize: 10})
 	if len(p.Messages) != 1 || p.Messages[0].Subject != "Sent copy" {

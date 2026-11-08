@@ -207,11 +207,15 @@ func roleOf(name string, attrs []imap.MailboxAttr) Role {
 		return RoleTrash
 	case "archive":
 		return RoleArchive
+	case "scheduled":
+		return RoleScheduled
+	case "snoozed":
+		return RoleSnoozed
 	}
 	return RoleNone
 }
 
-var roleOrder = map[Role]int{RoleInbox: 0, RoleDrafts: 1, RoleSent: 2, RoleArchive: 3, RoleJunk: 4, RoleQuarantine: 5, RoleTrash: 6}
+var roleOrder = map[Role]int{RoleInbox: 0, RoleSnoozed: 1, RoleDrafts: 2, RoleScheduled: 3, RoleSent: 4, RoleArchive: 5, RoleJunk: 6, RoleQuarantine: 7, RoleTrash: 8}
 
 // sortFolders puts the special folders first in a fixed order, then the rest
 // by name, which keeps a parent directly above its children. Children of a
@@ -605,20 +609,30 @@ func (s *imapStore) SetFlags(ctx context.Context, folder string, uids []uint32, 
 	return nil
 }
 
-func (s *imapStore) Move(ctx context.Context, folder string, uids []uint32, dest string) error {
+func (s *imapStore) Move(ctx context.Context, folder string, uids []uint32, dest string) ([]uint32, error) {
 	if len(uids) == 0 {
-		return nil
+		return nil, nil
 	}
 	if _, err := s.selectFolder(folder); err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := s.c.Move(uidSet(uids), dest).Wait(); err != nil {
+	data, err := s.c.Move(uidSet(uids), dest).Wait()
+	if err != nil {
 		if isNo(err) {
-			return ErrNotFound
+			return nil, ErrNotFound
 		}
-		return fmt.Errorf("webmail: move to %q: %w", dest, err)
+		return nil, fmt.Errorf("webmail: move to %q: %w", dest, err)
 	}
-	return nil
+	// COPYUID: where each message landed, which is what undoing needs.
+	var moved []uint32
+	if set, ok := data.DestUIDs.(imap.UIDSet); ok {
+		if nums, ok := set.Nums(); ok {
+			for _, u := range nums {
+				moved = append(moved, uint32(u))
+			}
+		}
+	}
+	return moved, nil
 }
 
 func (s *imapStore) Delete(ctx context.Context, folder string, uids []uint32) error {
@@ -630,7 +644,8 @@ func (s *imapStore) Delete(ctx context.Context, folder string, uids []uint32) er
 		return err
 	}
 	if trash != "" && trash != folder {
-		return s.Move(ctx, folder, uids, trash)
+		_, err := s.Move(ctx, folder, uids, trash)
+		return err
 	}
 	return s.expunge(folder, uids)
 }
@@ -828,18 +843,18 @@ func orAll(list []imap.SearchCriteria) imap.SearchCriteria {
 // defaultRoleNames are the folders Append creates when an account has none.
 var defaultRoleNames = map[Role]string{RoleSent: "Sent", RoleDrafts: "Drafts", RoleTrash: "Trash", RoleJunk: "Junk", RoleArchive: "Archive"}
 
-func (s *imapStore) Append(ctx context.Context, role Role, raw []byte, seen, draft bool) error {
+func (s *imapStore) Append(ctx context.Context, role Role, raw []byte, seen, draft bool) (uint32, error) {
 	name, err := s.roleFolder(ctx, role)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if name == "" {
 		name = defaultRoleNames[role]
 		if name == "" {
-			return fmt.Errorf("webmail: no folder for role %q", role)
+			return 0, fmt.Errorf("webmail: no folder for role %q", role)
 		}
 		if err := s.ensureFolder(name); err != nil {
-			return err
+			return 0, err
 		}
 		s.folders = nil
 	}
@@ -850,8 +865,7 @@ func (s *imapStore) Append(ctx context.Context, role Role, raw []byte, seen, dra
 	if draft {
 		flags = append(flags, imap.FlagDraft)
 	}
-	_, err = s.appendRaw(name, raw, flags)
-	return err
+	return s.appendRaw(name, raw, flags)
 }
 
 // ensureFolder creates name if it doesn't exist.

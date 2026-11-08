@@ -18,6 +18,8 @@ import (
 type fakeSubmission struct {
 	mu   sync.Mutex
 	sent []sentMail
+	// refuse, when set, is the answer to every RCPT.
+	refuse *smtp.SMTPError
 }
 
 type sentMail struct {
@@ -34,6 +36,12 @@ type fakeSubmitSession struct {
 
 func (s *fakeSubmitSession) Mail(from string, _ *smtp.MailOptions) error { s.from = from; return nil }
 func (s *fakeSubmitSession) Rcpt(to string, _ *smtp.RcptOptions) error {
+	s.f.mu.Lock()
+	refuse := s.f.refuse
+	s.f.mu.Unlock()
+	if refuse != nil {
+		return refuse
+	}
 	s.to = append(s.to, to)
 	return nil
 }

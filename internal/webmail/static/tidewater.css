@@ -74,13 +74,13 @@
   --chrome-line: #263349;
   --chrome-accent: #60A5FA;
   --chrome-placeholder: #7C8BA1;
-  --on-accent: #FFFFFF;
+  --on-accent: #0A0F1A; /* dark on the light-blue accent: white was 3.7:1 */
   --line: #263349;
   --line-soft: #1B2537;
   --accent: #3B82F6;
   --accent-dark: #60A5FA;
   /* Button hover: darker for white text, lighter for the dark teal text. */
-  --accent-hover: #2563EB;
+  --accent-hover: #60A5FA;
   --accent-soft: #172A4A;
   --danger: #F87171;
   --danger-soft: #3B1518;
@@ -116,13 +116,13 @@
     --chrome-line: #263349;
     --chrome-accent: #60A5FA;
     --chrome-placeholder: #7C8BA1;
-    --on-accent: #FFFFFF;
+    --on-accent: #0A0F1A; /* dark on the light-blue accent: white was 3.7:1 */
     --line: #263349;
     --line-soft: #1B2537;
     --accent: #3B82F6;
     --accent-dark: #60A5FA;
     /* Button hover: darker for white text, lighter for the dark teal text. */
-    --accent-hover: #2563EB;
+    --accent-hover: #60A5FA;
     --accent-soft: #172A4A;
     --danger: #F87171;
     --danger-soft: #3B1518;
@@ -767,6 +767,624 @@
   }
 }
 
+/* The palettes below were generated with every text colour checked against
+   its background: 4.5:1 or better (WCAG AA), 7:1 for High contrast. */
+
+/* Ocean: cool blue ground, one deep cyan accent. */
+:root[data-palette="ocean"] {
+  --ground: #EEF4F8;
+  --surface: #FFFFFF;
+  --surface-2: #F6FAFC;
+  --ink: #0B1B2B;
+  --muted: #435668;
+  --chrome: #FFFFFF;
+  --chrome-2: #E3EDF4;
+  --chrome-fg: #0B1B2B;
+  --chrome-muted: #435668;
+  --chrome-strong: #0B1B2B;
+  --chrome-line: #D3E0EA;
+  --chrome-accent: #0B6A8C;
+  --chrome-placeholder: #5F7384;
+  --on-accent: #FFFFFF;
+  --line: #D3E0EA;
+  --line-soft: #E3EDF4;
+  --accent: #0B6A8C;
+  --accent-dark: #08506A;
+  --accent-hover: #08506A;
+  --accent-soft: #DDEFF6;
+  --danger: #B3261E;
+  --danger-soft: #FBE9E7;
+  --pass-fg: #166534;
+  --pass-bg: #DCFCE7;
+  --warn-fg: #92400E;
+  --warn-bg: #FEF3C7;
+  --flag: #B45309;
+  --shadow: 0 8px 24px rgba(15, 23, 42, .12);
+  --c0-bg: #DDEFF6; --c0-fg: #08506A;
+  --c1-bg: #E4ECFA; --c1-fg: #1F4FA8;
+  --c2-bg: #F3E8FB; --c2-fg: #6B2C91;
+  --c3-bg: #FBE9E7; --c3-fg: #9A2A1F;
+  --c4-bg: #FBF0D9; --c4-fg: #7A4E0A;
+  --c5-bg: #E9E7FB; --c5-fg: #3D2F9E;
+  --c6-bg: #FCE7F1; --c6-fg: #96285E;
+  --c7-bg: #E8EBEF; --c7-fg: #2F3A4A;
+  color-scheme: light;
+}
+
+:root[data-palette="ocean"][data-theme="dark"] {
+  --ground: #08121B;
+  --surface: #0F1B26;
+  --surface-2: #0B1620;
+  --ink: #E3ECF3;
+  --muted: #97A9B8;
+  --chrome: #0A1620;
+  --chrome-2: #162533;
+  --chrome-fg: #ECF3F8;
+  --chrome-muted: #C0CFDB;
+  --chrome-strong: #FFFFFF;
+  --chrome-line: #1E2E3D;
+  --chrome-accent: #7FD3EC;
+  --chrome-placeholder: #7D91A1;
+  --on-accent: #04131A;
+  --line: #243647;
+  --line-soft: #162533;
+  --accent: #2BA3C7;
+  --accent-dark: #7FD3EC;
+  --accent-hover: #7FD3EC;
+  --accent-soft: #0F2E3B;
+  --danger: #F08A80;
+  --danger-soft: #3A1714;
+  --pass-fg: #8FD9AE;
+  --pass-bg: #12301F;
+  --warn-fg: #F2C879;
+  --warn-bg: #33270F;
+  --flag: #F2C879;
+  --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  --c0-bg: #0F2E3B; --c0-fg: #7FD3EC;
+  --c1-bg: #16264A; --c1-fg: #9DBBF5;
+  --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+  --c3-bg: #3A1714; --c3-fg: #F5A49B;
+  --c4-bg: #33270F; --c4-fg: #F2C879;
+  --c5-bg: #211E4A; --c5-fg: #B3ACF5;
+  --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+  --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="ocean"]:not([data-theme="light"]) {
+    --ground: #08121B;
+    --surface: #0F1B26;
+    --surface-2: #0B1620;
+    --ink: #E3ECF3;
+    --muted: #97A9B8;
+    --chrome: #0A1620;
+    --chrome-2: #162533;
+    --chrome-fg: #ECF3F8;
+    --chrome-muted: #C0CFDB;
+    --chrome-strong: #FFFFFF;
+    --chrome-line: #1E2E3D;
+    --chrome-accent: #7FD3EC;
+    --chrome-placeholder: #7D91A1;
+    --on-accent: #04131A;
+    --line: #243647;
+    --line-soft: #162533;
+    --accent: #2BA3C7;
+    --accent-dark: #7FD3EC;
+    --accent-hover: #7FD3EC;
+    --accent-soft: #0F2E3B;
+    --danger: #F08A80;
+    --danger-soft: #3A1714;
+    --pass-fg: #8FD9AE;
+    --pass-bg: #12301F;
+    --warn-fg: #F2C879;
+    --warn-bg: #33270F;
+    --flag: #F2C879;
+    --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+    --c0-bg: #0F2E3B; --c0-fg: #7FD3EC;
+    --c1-bg: #16264A; --c1-fg: #9DBBF5;
+    --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+    --c3-bg: #3A1714; --c3-fg: #F5A49B;
+    --c4-bg: #33270F; --c4-fg: #F2C879;
+    --c5-bg: #211E4A; --c5-fg: #B3ACF5;
+    --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+    --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+    color-scheme: dark;
+  }
+}
+
+/* Rose: blush ground, one raspberry accent. */
+:root[data-palette="rose"] {
+  --ground: #F9F1F3;
+  --surface: #FFFFFF;
+  --surface-2: #FCF7F8;
+  --ink: #2A1218;
+  --muted: #5E4A50;
+  --chrome: #FFFFFF;
+  --chrome-2: #F3E5E9;
+  --chrome-fg: #2A1218;
+  --chrome-muted: #5E4A50;
+  --chrome-strong: #2A1218;
+  --chrome-line: #EBD9DE;
+  --chrome-accent: #B0255A;
+  --chrome-placeholder: #7A6369;
+  --on-accent: #FFFFFF;
+  --line: #EBD9DE;
+  --line-soft: #F3E5E9;
+  --accent: #B0255A;
+  --accent-dark: #861A44;
+  --accent-hover: #861A44;
+  --accent-soft: #FBE3EB;
+  --danger: #B3261E;
+  --danger-soft: #FBE9E7;
+  --pass-fg: #166534;
+  --pass-bg: #DCFCE7;
+  --warn-fg: #92400E;
+  --warn-bg: #FEF3C7;
+  --flag: #B45309;
+  --shadow: 0 8px 24px rgba(15, 23, 42, .12);
+  --c0-bg: #FBE3EB; --c0-fg: #861A44;
+  --c1-bg: #E4ECFA; --c1-fg: #1F4FA8;
+  --c2-bg: #F3E8FB; --c2-fg: #6B2C91;
+  --c3-bg: #FBE9E7; --c3-fg: #9A2A1F;
+  --c4-bg: #FBF0D9; --c4-fg: #7A4E0A;
+  --c5-bg: #E9E7FB; --c5-fg: #3D2F9E;
+  --c6-bg: #FCE7F1; --c6-fg: #96285E;
+  --c7-bg: #E8EBEF; --c7-fg: #2F3A4A;
+  color-scheme: light;
+}
+
+:root[data-palette="rose"][data-theme="dark"] {
+  --ground: #160B0F;
+  --surface: #211217;
+  --surface-2: #1B0E13;
+  --ink: #F2E4E8;
+  --muted: #B79FA6;
+  --chrome: #1A0D12;
+  --chrome-2: #2E1A21;
+  --chrome-fg: #F7EAEE;
+  --chrome-muted: #D9C3CA;
+  --chrome-strong: #FFFFFF;
+  --chrome-line: #3A222B;
+  --chrome-accent: #F5A3C1;
+  --chrome-placeholder: #9A8188;
+  --on-accent: #1E0710;
+  --line: #40262F;
+  --line-soft: #2E1A21;
+  --accent: #E0608F;
+  --accent-dark: #F5A3C1;
+  --accent-hover: #F5A3C1;
+  --accent-soft: #3D1626;
+  --danger: #F08A80;
+  --danger-soft: #3A1714;
+  --pass-fg: #8FD9AE;
+  --pass-bg: #12301F;
+  --warn-fg: #F2C879;
+  --warn-bg: #33270F;
+  --flag: #F2C879;
+  --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  --c0-bg: #3D1626; --c0-fg: #F5A3C1;
+  --c1-bg: #16264A; --c1-fg: #9DBBF5;
+  --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+  --c3-bg: #3A1714; --c3-fg: #F5A49B;
+  --c4-bg: #33270F; --c4-fg: #F2C879;
+  --c5-bg: #211E4A; --c5-fg: #B3ACF5;
+  --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+  --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="rose"]:not([data-theme="light"]) {
+    --ground: #160B0F;
+    --surface: #211217;
+    --surface-2: #1B0E13;
+    --ink: #F2E4E8;
+    --muted: #B79FA6;
+    --chrome: #1A0D12;
+    --chrome-2: #2E1A21;
+    --chrome-fg: #F7EAEE;
+    --chrome-muted: #D9C3CA;
+    --chrome-strong: #FFFFFF;
+    --chrome-line: #3A222B;
+    --chrome-accent: #F5A3C1;
+    --chrome-placeholder: #9A8188;
+    --on-accent: #1E0710;
+    --line: #40262F;
+    --line-soft: #2E1A21;
+    --accent: #E0608F;
+    --accent-dark: #F5A3C1;
+    --accent-hover: #F5A3C1;
+    --accent-soft: #3D1626;
+    --danger: #F08A80;
+    --danger-soft: #3A1714;
+    --pass-fg: #8FD9AE;
+    --pass-bg: #12301F;
+    --warn-fg: #F2C879;
+    --warn-bg: #33270F;
+    --flag: #F2C879;
+    --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+    --c0-bg: #3D1626; --c0-fg: #F5A3C1;
+    --c1-bg: #16264A; --c1-fg: #9DBBF5;
+    --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+    --c3-bg: #3A1714; --c3-fg: #F5A49B;
+    --c4-bg: #33270F; --c4-fg: #F2C879;
+    --c5-bg: #211E4A; --c5-fg: #B3ACF5;
+    --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+    --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+    color-scheme: dark;
+  }
+}
+
+/* Ember: warm stone ground, one terracotta accent. */
+:root[data-palette="ember"] {
+  --ground: #F7F2EE;
+  --surface: #FFFFFF;
+  --surface-2: #FBF8F5;
+  --ink: #24170F;
+  --muted: #5C4B40;
+  --chrome: #FFFFFF;
+  --chrome-2: #F0E7E0;
+  --chrome-fg: #24170F;
+  --chrome-muted: #5C4B40;
+  --chrome-strong: #24170F;
+  --chrome-line: #E6D9CE;
+  --chrome-accent: #B4461C;
+  --chrome-placeholder: #776357;
+  --on-accent: #FFFFFF;
+  --line: #E6D9CE;
+  --line-soft: #F0E7E0;
+  --accent: #B4461C;
+  --accent-dark: #8A3414;
+  --accent-hover: #8A3414;
+  --accent-soft: #FBE6DB;
+  --danger: #B3261E;
+  --danger-soft: #FBE9E7;
+  --pass-fg: #166534;
+  --pass-bg: #DCFCE7;
+  --warn-fg: #92400E;
+  --warn-bg: #FEF3C7;
+  --flag: #B45309;
+  --shadow: 0 8px 24px rgba(15, 23, 42, .12);
+  --c0-bg: #FBE6DB; --c0-fg: #8A3414;
+  --c1-bg: #E4ECFA; --c1-fg: #1F4FA8;
+  --c2-bg: #F3E8FB; --c2-fg: #6B2C91;
+  --c3-bg: #FBE9E7; --c3-fg: #9A2A1F;
+  --c4-bg: #FBF0D9; --c4-fg: #7A4E0A;
+  --c5-bg: #E9E7FB; --c5-fg: #3D2F9E;
+  --c6-bg: #FCE7F1; --c6-fg: #96285E;
+  --c7-bg: #E8EBEF; --c7-fg: #2F3A4A;
+  color-scheme: light;
+}
+
+:root[data-palette="ember"][data-theme="dark"] {
+  --ground: #140D09;
+  --surface: #1F1510;
+  --surface-2: #19110C;
+  --ink: #F1E6DE;
+  --muted: #B5A194;
+  --chrome: #180F0B;
+  --chrome-2: #2C1E16;
+  --chrome-fg: #F6ECE5;
+  --chrome-muted: #D8C6BA;
+  --chrome-strong: #FFFFFF;
+  --chrome-line: #37271D;
+  --chrome-accent: #F5B48D;
+  --chrome-placeholder: #998477;
+  --on-accent: #1F0C03;
+  --line: #3D2C21;
+  --line-soft: #2C1E16;
+  --accent: #E07A45;
+  --accent-dark: #F5B48D;
+  --accent-hover: #F5B48D;
+  --accent-soft: #3A1C0E;
+  --danger: #F08A80;
+  --danger-soft: #3A1714;
+  --pass-fg: #8FD9AE;
+  --pass-bg: #12301F;
+  --warn-fg: #F2C879;
+  --warn-bg: #33270F;
+  --flag: #F2C879;
+  --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  --c0-bg: #3A1C0E; --c0-fg: #F5B48D;
+  --c1-bg: #16264A; --c1-fg: #9DBBF5;
+  --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+  --c3-bg: #3A1714; --c3-fg: #F5A49B;
+  --c4-bg: #33270F; --c4-fg: #F2C879;
+  --c5-bg: #211E4A; --c5-fg: #B3ACF5;
+  --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+  --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="ember"]:not([data-theme="light"]) {
+    --ground: #140D09;
+    --surface: #1F1510;
+    --surface-2: #19110C;
+    --ink: #F1E6DE;
+    --muted: #B5A194;
+    --chrome: #180F0B;
+    --chrome-2: #2C1E16;
+    --chrome-fg: #F6ECE5;
+    --chrome-muted: #D8C6BA;
+    --chrome-strong: #FFFFFF;
+    --chrome-line: #37271D;
+    --chrome-accent: #F5B48D;
+    --chrome-placeholder: #998477;
+    --on-accent: #1F0C03;
+    --line: #3D2C21;
+    --line-soft: #2C1E16;
+    --accent: #E07A45;
+    --accent-dark: #F5B48D;
+    --accent-hover: #F5B48D;
+    --accent-soft: #3A1C0E;
+    --danger: #F08A80;
+    --danger-soft: #3A1714;
+    --pass-fg: #8FD9AE;
+    --pass-bg: #12301F;
+    --warn-fg: #F2C879;
+    --warn-bg: #33270F;
+    --flag: #F2C879;
+    --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+    --c0-bg: #3A1C0E; --c0-fg: #F5B48D;
+    --c1-bg: #16264A; --c1-fg: #9DBBF5;
+    --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+    --c3-bg: #3A1714; --c3-fg: #F5A49B;
+    --c4-bg: #33270F; --c4-fg: #F2C879;
+    --c5-bg: #211E4A; --c5-fg: #B3ACF5;
+    --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+    --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+    color-scheme: dark;
+  }
+}
+
+/* Arctic: ice-grey ground, one steel blue accent. */
+:root[data-palette="arctic"] {
+  --ground: #EFF2F6;
+  --surface: #FFFFFF;
+  --surface-2: #F7F9FB;
+  --ink: #1B2430;
+  --muted: #4C5867;
+  --chrome: #FFFFFF;
+  --chrome-2: #E5EAF0;
+  --chrome-fg: #1B2430;
+  --chrome-muted: #4C5867;
+  --chrome-strong: #1B2430;
+  --chrome-line: #D8DFE8;
+  --chrome-accent: #3D5F8A;
+  --chrome-placeholder: #687484;
+  --on-accent: #FFFFFF;
+  --line: #D8DFE8;
+  --line-soft: #E5EAF0;
+  --accent: #3D5F8A;
+  --accent-dark: #2D4868;
+  --accent-hover: #2D4868;
+  --accent-soft: #E1E9F3;
+  --danger: #B3261E;
+  --danger-soft: #FBE9E7;
+  --pass-fg: #166534;
+  --pass-bg: #DCFCE7;
+  --warn-fg: #92400E;
+  --warn-bg: #FEF3C7;
+  --flag: #B45309;
+  --shadow: 0 8px 24px rgba(15, 23, 42, .12);
+  --c0-bg: #E1E9F3; --c0-fg: #2D4868;
+  --c1-bg: #E4ECFA; --c1-fg: #1F4FA8;
+  --c2-bg: #F3E8FB; --c2-fg: #6B2C91;
+  --c3-bg: #FBE9E7; --c3-fg: #9A2A1F;
+  --c4-bg: #FBF0D9; --c4-fg: #7A4E0A;
+  --c5-bg: #E9E7FB; --c5-fg: #3D2F9E;
+  --c6-bg: #FCE7F1; --c6-fg: #96285E;
+  --c7-bg: #E8EBEF; --c7-fg: #2F3A4A;
+  color-scheme: light;
+}
+
+:root[data-palette="arctic"][data-theme="dark"] {
+  --ground: #0E1218;
+  --surface: #161C24;
+  --surface-2: #12171E;
+  --ink: #E4E9EF;
+  --muted: #9EA9B6;
+  --chrome: #11161D;
+  --chrome-2: #1F2731;
+  --chrome-fg: #ECF0F5;
+  --chrome-muted: #C5CEDA;
+  --chrome-strong: #FFFFFF;
+  --chrome-line: #28313D;
+  --chrome-accent: #B5CDEA;
+  --chrome-placeholder: #8792A0;
+  --on-accent: #0B1420;
+  --line: #2E3846;
+  --line-soft: #1F2731;
+  --accent: #7FA3CF;
+  --accent-dark: #B5CDEA;
+  --accent-hover: #B5CDEA;
+  --accent-soft: #1C2B3D;
+  --danger: #F08A80;
+  --danger-soft: #3A1714;
+  --pass-fg: #8FD9AE;
+  --pass-bg: #12301F;
+  --warn-fg: #F2C879;
+  --warn-bg: #33270F;
+  --flag: #F2C879;
+  --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  --c0-bg: #1C2B3D; --c0-fg: #B5CDEA;
+  --c1-bg: #16264A; --c1-fg: #9DBBF5;
+  --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+  --c3-bg: #3A1714; --c3-fg: #F5A49B;
+  --c4-bg: #33270F; --c4-fg: #F2C879;
+  --c5-bg: #211E4A; --c5-fg: #B3ACF5;
+  --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+  --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="arctic"]:not([data-theme="light"]) {
+    --ground: #0E1218;
+    --surface: #161C24;
+    --surface-2: #12171E;
+    --ink: #E4E9EF;
+    --muted: #9EA9B6;
+    --chrome: #11161D;
+    --chrome-2: #1F2731;
+    --chrome-fg: #ECF0F5;
+    --chrome-muted: #C5CEDA;
+    --chrome-strong: #FFFFFF;
+    --chrome-line: #28313D;
+    --chrome-accent: #B5CDEA;
+    --chrome-placeholder: #8792A0;
+    --on-accent: #0B1420;
+    --line: #2E3846;
+    --line-soft: #1F2731;
+    --accent: #7FA3CF;
+    --accent-dark: #B5CDEA;
+    --accent-hover: #B5CDEA;
+    --accent-soft: #1C2B3D;
+    --danger: #F08A80;
+    --danger-soft: #3A1714;
+    --pass-fg: #8FD9AE;
+    --pass-bg: #12301F;
+    --warn-fg: #F2C879;
+    --warn-bg: #33270F;
+    --flag: #F2C879;
+    --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+    --c0-bg: #1C2B3D; --c0-fg: #B5CDEA;
+    --c1-bg: #16264A; --c1-fg: #9DBBF5;
+    --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+    --c3-bg: #3A1714; --c3-fg: #F5A49B;
+    --c4-bg: #33270F; --c4-fg: #F2C879;
+    --c5-bg: #211E4A; --c5-fg: #B3ACF5;
+    --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+    --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+    color-scheme: dark;
+  }
+}
+
+/* High contrast: black text, strong lines and a vivid accent, for low vision or bright light. */
+:root[data-palette="contrast"] {
+  --ground: #FFFFFF;
+  --surface: #FFFFFF;
+  --surface-2: #F5F5F5;
+  --ink: #000000;
+  --muted: #2B2B2B;
+  --chrome: #FFFFFF;
+  --chrome-2: #EBEBEB;
+  --chrome-fg: #000000;
+  --chrome-muted: #2B2B2B;
+  --chrome-strong: #000000;
+  --chrome-line: #6B6B6B;
+  --chrome-accent: #0039A6;
+  --chrome-placeholder: #4A4A4A;
+  --on-accent: #FFFFFF;
+  --line: #6B6B6B;
+  --line-soft: #EBEBEB;
+  --accent: #0039A6;
+  --accent-dark: #002A7A;
+  --accent-hover: #002A7A;
+  --accent-soft: #E0E8FA;
+  --danger: #9B0000;
+  --danger-soft: #FFE5E5;
+  --pass-fg: #00501F;
+  --pass-bg: #DFF5E6;
+  --warn-fg: #6B2E00;
+  --warn-bg: #FFF0D6;
+  --flag: #7A3B00;
+  --shadow: 0 8px 24px rgba(15, 23, 42, .12);
+  --c0-bg: #E0E8FA; --c0-fg: #002A7A;
+  --c1-bg: #E4ECFA; --c1-fg: #1F4FA8;
+  --c2-bg: #F3E8FB; --c2-fg: #6B2C91;
+  --c3-bg: #FBE9E7; --c3-fg: #9A2A1F;
+  --c4-bg: #FBF0D9; --c4-fg: #7A4E0A;
+  --c5-bg: #E9E7FB; --c5-fg: #3D2F9E;
+  --c6-bg: #FCE7F1; --c6-fg: #96285E;
+  --c7-bg: #E8EBEF; --c7-fg: #2F3A4A;
+  color-scheme: light;
+}
+
+:root[data-palette="contrast"][data-theme="dark"] {
+  --ground: #000000;
+  --surface: #0A0A0A;
+  --surface-2: #050505;
+  --ink: #FFFFFF;
+  --muted: #D6D6D6;
+  --chrome: #000000;
+  --chrome-2: #1A1A1A;
+  --chrome-fg: #FFFFFF;
+  --chrome-muted: #E6E6E6;
+  --chrome-strong: #FFFFFF;
+  --chrome-line: #8A8A8A;
+  --chrome-accent: #B8D8FF;
+  --chrome-placeholder: #BDBDBD;
+  --on-accent: #000000;
+  --line: #8A8A8A;
+  --line-soft: #2A2A2A;
+  --accent: #7CB8FF;
+  --accent-dark: #B8D8FF;
+  --accent-hover: #B8D8FF;
+  --accent-soft: #0D2A4D;
+  --danger: #FF8A80;
+  --danger-soft: #3D0000;
+  --pass-fg: #7DF0A8;
+  --pass-bg: #00290F;
+  --warn-fg: #FFD27A;
+  --warn-bg: #2E1F00;
+  --flag: #FFD27A;
+  --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  --c0-bg: #0D2A4D; --c0-fg: #B8D8FF;
+  --c1-bg: #16264A; --c1-fg: #9DBBF5;
+  --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+  --c3-bg: #3A1714; --c3-fg: #F5A49B;
+  --c4-bg: #33270F; --c4-fg: #F2C879;
+  --c5-bg: #211E4A; --c5-fg: #B3ACF5;
+  --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+  --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="contrast"]:not([data-theme="light"]) {
+    --ground: #000000;
+    --surface: #0A0A0A;
+    --surface-2: #050505;
+    --ink: #FFFFFF;
+    --muted: #D6D6D6;
+    --chrome: #000000;
+    --chrome-2: #1A1A1A;
+    --chrome-fg: #FFFFFF;
+    --chrome-muted: #E6E6E6;
+    --chrome-strong: #FFFFFF;
+    --chrome-line: #8A8A8A;
+    --chrome-accent: #B8D8FF;
+    --chrome-placeholder: #BDBDBD;
+    --on-accent: #000000;
+    --line: #8A8A8A;
+    --line-soft: #2A2A2A;
+    --accent: #7CB8FF;
+    --accent-dark: #B8D8FF;
+    --accent-hover: #B8D8FF;
+    --accent-soft: #0D2A4D;
+    --danger: #FF8A80;
+    --danger-soft: #3D0000;
+    --pass-fg: #7DF0A8;
+    --pass-bg: #00290F;
+    --warn-fg: #FFD27A;
+    --warn-bg: #2E1F00;
+    --flag: #FFD27A;
+    --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+    --c0-bg: #0D2A4D; --c0-fg: #B8D8FF;
+    --c1-bg: #16264A; --c1-fg: #9DBBF5;
+    --c2-bg: #2C1840; --c2-fg: #D3A8F0;
+    --c3-bg: #3A1714; --c3-fg: #F5A49B;
+    --c4-bg: #33270F; --c4-fg: #F2C879;
+    --c5-bg: #211E4A; --c5-fg: #B3ACF5;
+    --c6-bg: #3A1528; --c6-fg: #F3A3C8;
+    --c7-bg: #222C3A; --c7-fg: #C5CDD8;
+    color-scheme: dark;
+  }
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body { background: var(--ground); color: var(--ink); font: 14px/1.45 var(--font); }
@@ -850,6 +1468,9 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .content { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .notice, .problem, .banner { margin: 12px 16px 0; padding: 10px 14px; border-radius: var(--radius); }
 .notice { background: var(--accent-soft); color: var(--accent-dark); }
+/* The Undo button sits at the end of the notice that reports the move. */
+.notice .undo-form { display: inline; margin-left: 10px; }
+.notice .undo-form .button { vertical-align: baseline; }
 .problem { background: var(--danger-soft); color: var(--danger); }
 .banner { background: var(--warn-bg); color: var(--warn-fg); margin: 0; }
 .banner.subtle { background: var(--line-soft); color: var(--muted); }
@@ -858,11 +1479,14 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .panes { display: flex; flex: 1; align-items: stretch; min-height: 0; }
 .list { flex: 0 0 400px; min-width: 0; background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
 .list-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); min-height: 56px; }
-.inbox-tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
-.inbox-tab { padding: 10px 10px 9px; color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; }
+/* Five tabs with unread counts have to fit the list's width, or the last
+   one is cut off: tight padding, and spare room shared out between them. A
+   strip that still overflows (huge counts, large text) scrolls sideways. */
+.inbox-tabs { display: flex; padding: 0 6px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.inbox-tab { flex: 1 0 auto; text-align: center; padding: 10px 6px 9px; color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; }
 .inbox-tab:hover { color: var(--ink); }
 .inbox-tab[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
-.inbox-tab .tab-count { margin-left: 4px; padding: 0 6px; border-radius: 999px; font-size: 11px; background: var(--accent-soft); color: var(--accent-dark); }
+.inbox-tab .tab-count { margin-left: 3px; padding: 0 5px; border-radius: 999px; font-size: 11px; background: var(--accent-soft); color: var(--accent-dark); }
 /* Five inbox tabs, with unread counts, don't fit the usual 400px list. Below
    1101px the list already takes the full width. */
 @media screen and (min-width: 1101px) {
@@ -1008,7 +1632,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .form-grid > label, .form-grid > .label { color: var(--muted); }
 .form-grid input[type="text"], .form-grid input[type="email"], .form-grid input[type="tel"], .form-grid input[type="url"], .form-grid input[type="date"], .form-grid input[type="time"], .form-grid input[type="number"], .form-grid select, .form-grid textarea, .pair input { min-height: 38px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; width: 100%; max-width: 520px; }
 .form-grid textarea { padding: 8px 10px; resize: vertical; font: inherit; }
-.form-grid select { width: auto; }
+.form-grid select { width: auto; max-width: 100%; }
 .form-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .pair { display: flex; gap: 8px; max-width: 520px; }
 .pair select { flex: 0 0 auto; }
@@ -1073,6 +1697,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .login .button { margin-top: 16px; }
 .login .notice, .login .problem { margin: 0; }
 .login-links { margin: 0; text-align: center; }
+.login-note { margin: 0; text-align: center; }
 .login-footer { margin: 0; color: var(--muted); font-size: 13px; text-align: center; }
 .login-footer a, .about a { color: inherit; }
 
@@ -1191,10 +1816,16 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
   body[data-app="mail"]:has(.panes) .shell { flex: 1 1 auto; min-height: 0; }
   body[data-app="mail"]:has(.panes) .sidebar { overflow-y: auto; }
   body[data-app="mail"]:has(.panes) .content { min-height: 0; }
-  body[data-app="mail"] .panes > .list, body[data-app="mail"] .panes > .reader { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
-  body[data-app="mail"] .list-head { position: sticky; top: 0; z-index: 2; background: var(--surface); }
-  body[data-app="mail"] .bulk-bar { position: sticky; top: 56px; z-index: 2; }
-  body[data-app="mail"] .row-wrap { scroll-margin-top: 64px; }
+  /* Only the rows scroll. The heading, the inbox tabs and the bulk bar stay
+     put above them; when the whole list scrolled, its scrollbar ran up
+     beside the tabs, took their width and cut the last one off. */
+  body[data-app="mail"] .panes > .list { overflow: hidden; }
+  body[data-app="mail"] .panes > .list > .bulk { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  body[data-app="mail"] .panes > .list .list-scroll, body[data-app="mail"] .panes > .reader { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  body[data-app="mail"] .list-scroll { flex: 1 1 auto; min-height: 0; }
+  /* Everything above the rows keeps its height. The tab strip scrolls
+     sideways, and a flex item that scrolls may otherwise shrink to nothing. */
+  body[data-app="mail"] .panes > .list > .bulk > :not(.list-scroll) { flex: none; }
 }
 
 /* Middle widths: the folder tree plus one pane at a time. */
@@ -1223,7 +1854,10 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
   .message, .event-view { padding: 16px; }
   .compose { margin: 0; border-radius: 0; border-left: 0; border-right: 0; }
   .page { margin: 12px; }
-  .form-grid { grid-template-columns: 1fr; }
+  /* minmax(0, ...): a plain 1fr can't shrink below its widest child, and a
+     select is as wide as its longest option, which pushed Settings past a
+     phone's width. */
+  .form-grid { grid-template-columns: minmax(0, 1fr); }
   .month .day { min-height: 72px; }
   .chip-ev .t { display: none; }
   .agenda-item { grid-template-columns: 90px 10px 1fr; }
@@ -1460,6 +2094,15 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .toast { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
 .toast a { color: var(--ink); font-weight: 600; text-decoration: none; }
 .toast button { align-self: flex-end; }
+/* A reminder is the one toast that must be noticed: thicker accent, a
+   countdown, and a brief nudge when it arrives (not for reduced motion). */
+.toast.reminder { border-left-width: 6px; animation: reminder-in .5s ease-out; }
+.toast.reminder a { font-size: 15px; }
+.reminder-countdown { color: var(--accent-dark); font-weight: 600; }
+.reminder-countdown:empty { display: none; }
+.reminder-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+@keyframes reminder-in { 0% { transform: translateY(12px); opacity: 0; } 60% { transform: translateY(-3px); opacity: 1; } 100% { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .toast.reminder { animation: none; } }
 .notify-enable { padding: 0 10px; text-align: left; }
 .print-body { background: #FFFFFF; color: #0E1726; }
 .print { max-width: 780px; margin: 24px auto; padding: 0 16px; display: flex; flex-direction: column; gap: 16px; }
@@ -1490,12 +2133,12 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .theme-toggle { border: 0; background: none; cursor: pointer; padding: 0; }
 .cal-toggle button { border: 0; background: none; cursor: pointer; padding: 0; }
 .cal-toggle button:hover, .cal-toggle button[aria-pressed="true"] { background: var(--chrome-2); color: var(--chrome-strong); }
-.theme-toggle .icon-sun { display: none; }
-:root[data-theme="dark"] .theme-toggle .icon-sun { display: inline; }
-:root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+[data-theme-toggle] .icon-sun { display: none; }
+:root[data-theme="dark"] [data-theme-toggle] .icon-sun { display: inline; }
+:root[data-theme="dark"] [data-theme-toggle] .icon-moon { display: none; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .theme-toggle .icon-sun { display: inline; }
-  :root:not([data-theme="light"]) .theme-toggle .icon-moon { display: none; }
+  :root:not([data-theme="light"]) [data-theme-toggle] .icon-sun { display: inline; }
+  :root:not([data-theme="light"]) [data-theme-toggle] .icon-moon { display: none; }
 }
 .source-page { max-width: 1100px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .source-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
@@ -1508,13 +2151,45 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .ctx-item:hover, .ctx-item:focus { background: var(--accent-soft); color: var(--accent-dark); outline: none; }
 .ctx-item.danger { color: var(--danger); }
 .ctx-item.danger:hover, .ctx-item.danger:focus { background: var(--danger-soft); color: var(--danger); }
+/* The event bubble: the event page's card, compacted to sit beside an event. */
+.event-peek { position: fixed; z-index: 65; width: min(360px, calc(100vw - 16px)); max-height: min(70vh, 520px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.event-peek:focus { outline: none; }
+.event-peek .peek-loading { margin: 0; padding: 16px 40px 16px 16px; }
+.event-peek .event-view { padding: 14px 16px 10px; gap: 8px; max-width: none; }
+.event-peek .event-view h2 { font-size: 16px; margin: 0; padding-right: 24px; overflow-wrap: anywhere; }
+.event-peek .event-view .when { font-size: 13px; margin: 0; }
+.event-peek .event-view p { margin: 0; }
+.event-peek .details { gap: 4px 14px; font-size: 13px; }
+.event-peek .text-body { max-height: 9em; overflow-y: auto; font-size: 13px; }
+.event-peek .peek-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 16px 14px; border-top: 1px solid var(--line); }
+.event-peek .peek-actions form.inline { display: contents; }
+.peek-close { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; }
+.peek-close:hover, .peek-close:focus-visible { background: var(--accent-soft); color: var(--accent-dark); outline: none; }
+/* Quick add: a title box in the event bubble, beside the hour or day picked. */
+.event-quick-add-form { display: flex; flex-direction: column; gap: 8px; padding-top: 14px; }
+.event-quick-add-form input[type="text"] { font: inherit; font-size: 16px; padding: 8px 10px; margin: 0 44px 0 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.event-quick-add-form input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.event-quick-add-form p { margin: 0 16px; }
+.event-quick-add-form .peek-actions .button { min-height: 36px; }
+.event-quick-add-problem { color: var(--danger); }
+.daycol .slot.picked, .month .day.picked, .allday-row .cell.picked { background: var(--accent-soft); }
+/* Dragging events. The dragged one lets the pointer through, so the day or
+   column under it can be found. */
+.daycol .ev, .month .chip-ev, .allday-row .chip-ev { user-select: none; -webkit-user-select: none; }
+.ev-resize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
+.chip-ev.dragging, .ev.dragging { pointer-events: none; opacity: .85; box-shadow: var(--shadow); z-index: 5; }
+body.cal-dragging, body.cal-dragging * { cursor: grabbing !important; }
+/* Dragging messages onto a folder. */
+a.inbox-tab.drop-target { background: var(--accent-soft); color: var(--accent-dark); outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 6px 6px 0 0; }
+a.folder.drop-target { background: var(--accent-soft); color: var(--accent-dark); outline: 2px dashed var(--accent); outline-offset: -2px; }
+.drag-ghost { position: fixed; top: -100px; left: 0; padding: 6px 10px; border-radius: 6px; background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 600; }
 .ctx-sep { height: 1px; background: var(--line-soft); margin: 4px 6px; }
 .tb-group { display: inline-flex; align-items: center; gap: 2px; padding-right: 6px; margin-right: 2px; border-right: 1px solid var(--line); }
 .tb-select { min-height: 30px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); padding: 0 4px; font-size: 13px; max-width: 120px; }
 .tb-color { position: relative; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
 .tb-color input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0; }
 .tb-a { font-weight: 700; text-decoration: underline; text-decoration-color: #c0392b; text-decoration-thickness: 3px; }
-.tb-hl { color: #e6c700; }
+.tb-hl { color: #e6c700; } /* a colour sample, not text */
 .tb.danger { color: var(--danger); }
 .image-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line-soft); }
 .editor img { max-width: 100%; height: auto; cursor: pointer; }
@@ -1621,3 +2296,145 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 .availability .fb-summary.conflict { color: var(--warn-fg); }
 .mailbox-switch{display:grid;gap:.35rem;margin-bottom:1rem}.mailbox-switch label{font-size:.8rem;color:var(--muted)}.mailbox-switch select{width:100%;min-width:0}
 .admin-access-banner{padding:.65rem 1rem;background:var(--warn-bg,#fff3cf);color:var(--warn-fg,#5b3900);font-weight:600;text-align:center;border-bottom:1px solid var(--line)}
+
+/* Notifications card: the form sits below its introduction. */
+.push-form { margin-top: 14px; }
+
+/* ---- Phones ------------------------------------------------------------
+   A phone gets a layout of its own rather than the computer's stacked in a
+   column: one slim top bar (folders, search, account), the apps in a bar
+   along the bottom where a thumb reaches, the New button floating above
+   it, and the sidebar in a drawer. What remains of the screen is mail.
+   Above 720px nothing here applies. */
+.account-menu, .narrow-only { display: none; }
+.drawer-toggle { border: 0; background: none; cursor: pointer; padding: 0; color: var(--chrome-fg); }
+@media (min-width: 721px) { .drawer-toggle, .drawer-backdrop { display: none; } }
+@media (min-width: 721px) {
+  /* The toolbar's icons are for phones; computers keep the words. */
+  .toolbar .button:has(.tb-label) > .icon { display: none; }
+  /* Except where the icon says it as well (More's dots, Snooze's clock),
+     which keeps the row to one line in a three-pane window. */
+  .toolbar .button.icon-only:has(.tb-label) > .icon { display: inline-block; }
+  .toolbar .button.icon-only .tb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .toolbar .snooze-tb .menu-body { left: auto; right: 0; min-width: 260px; }
+}
+@media (max-width: 720px) {
+  .topbar { flex-wrap: nowrap; gap: 6px; padding: 6px max(8px, env(safe-area-inset-right)) 6px max(8px, env(safe-area-inset-left)); }
+  .brand span { display: none; }
+  .search { flex: 1 1 auto; min-width: 0; padding: 0 10px; }
+  .search input { min-height: 38px; font-size: 16px; } /* 16px stops iOS zooming in on focus */
+  .search-spacer { flex: 1 1 auto; }
+  .account > :not(.account-menu) { display: none; }
+  .account-menu { display: block; }
+  .account-menu > summary { cursor: pointer; }
+  .account-menu .menu-body { min-width: 220px; }
+  .account-menu .menu-body a, .account-menu .menu-item { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+  .account-address { margin: 0; padding: 4px 10px 8px; border-bottom: 1px solid var(--line-soft); overflow: hidden; text-overflow: ellipsis; }
+
+  /* The apps along the bottom. */
+  .apps { position: fixed; z-index: 30; left: 0; right: 0; bottom: 0; order: 0; width: auto; overflow: visible; gap: 0;
+    padding: 4px max(4px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+    background: var(--chrome); border-top: 1px solid var(--chrome-line); }
+  .apps a { flex: 1; flex-direction: column; gap: 2px; padding: 6px 0; font-size: 11px; line-height: 1.2; }
+  .apps a .icon { width: 22px; height: 22px; }
+  .apps a span { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+  .apps a[aria-current="page"] { background: transparent; color: var(--chrome-accent, var(--chrome-strong)); font-weight: 600; }
+  body { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+
+  /* The sidebar as a drawer, once the script can open it. */
+  .has-drawer .sidebar { position: fixed; z-index: 40; top: 0; bottom: 0; left: -100%; width: min(84vw, 320px); padding: 16px 12px calc(16px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    overflow-y: auto; background: var(--surface); border: 0; box-shadow: var(--shadow); visibility: hidden; transition: left .2s ease, visibility 0s .2s; }
+  .has-drawer.drawer-open .sidebar { left: 0; visibility: visible; transition: left .2s ease; }
+  .has-drawer .sidebar .folders { flex-direction: column; overflow: visible; }
+  .has-drawer .sidebar .folder { min-height: 44px; }
+  .has-drawer .sidebar .manage, .has-drawer .sidebar .import, .has-drawer .sidebar .cal-legend, .has-drawer .sidebar .mini, .has-drawer .sidebar h3, .has-drawer .sidebar .sidebar-title { display: revert; }
+  .has-drawer .sidebar .mini { display: table; }
+  .drawer-backdrop { position: fixed; z-index: 35; inset: 0; background: rgb(0 0 0 / .4); }
+  @media (prefers-reduced-motion: reduce) { .has-drawer .sidebar { transition: none; } }
+
+  /* The New button floats above the app bar. It sits in the sidebar, but a
+     fixed element isn't hidden or moved with its drawer. */
+  .has-drawer .sidebar > .button.primary.block { position: fixed; z-index: 30; right: max(16px, env(safe-area-inset-right)); bottom: calc(76px + env(safe-area-inset-bottom)); left: auto;
+    width: 56px; height: 56px; min-height: 0; padding: 0; border-radius: 16px; box-shadow: var(--shadow); visibility: visible; font-size: 0; gap: 0; }
+  .has-drawer .sidebar > .button.primary.block .icon { width: 24px; height: 24px; }
+  .has-drawer.drawer-open .sidebar > .button.primary.block,
+  body:has(.panes.has-message, .compose, .event-form, .contact-form) .sidebar > .button.primary.block { display: none; }
+
+  /* A message: one row of icons, then the message. */
+  .toolbar { flex-wrap: nowrap; gap: 2px; padding: 6px 8px; position: sticky; top: 0; z-index: 5; background: var(--surface); }
+  .toolbar .button { min-width: 42px; min-height: 42px; padding: 0 9px; border-color: transparent; background: transparent; }
+  .toolbar .button.primary-soft { border-color: transparent; }
+  .toolbar .tb-label, .toolbar .back > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .toolbar .menu-body { left: auto; right: 0; }
+  .toolbar .menu:first-of-type .menu-body { left: auto; right: auto; }
+  .wide-only, .nav-arrows { display: none; }
+  .narrow-only { display: block; }
+  .menu-body a.narrow-only { display: block; }
+  .message { padding: 12px 16px 24px; gap: 12px; }
+  .message > h2 { font-size: 20px; }
+
+  /* The calendar's controls in one row: arrows, the title, the views. */
+  .cal-head { flex-wrap: wrap; gap: 6px; padding: 8px 12px; }
+  .cal-head h1 { order: -1; flex: 1 0 100%; margin: 0 0 2px; font-size: 18px; }
+  .cal-head .button { min-height: 36px; padding: 0 8px; }
+  .cal-head .segmented { flex: 1 1 auto; min-width: 0; margin-left: 0; }
+  .cal-head .segmented a { flex: 1 1 0; min-width: 0; padding: 8px 2px; text-align: center; font-size: 13px; }
+
+  /* Composing: the formatting buttons in one row that scrolls sideways. */
+  .editor-toolbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 4px 8px; }
+  .editor-toolbar::-webkit-scrollbar { display: none; }
+  .editor-toolbar .tb-group { flex: none; }
+  .editor-toolbar .push { margin-left: 0; }
+  /* The common buttons first; the style, font and size pickers after. */
+  .editor-toolbar .tb-group:has(.tb-select) { order: 1; }
+  .editor-toolbar .push { order: 2; }
+  /* Writing takes the screen: no app bar, and Send stays in reach at the
+     foot instead of below the attachments and options. */
+  body:has(form.compose) .apps { display: none; }
+  body:has(form.compose) { padding-bottom: 0; }
+  .compose .actions { position: sticky; bottom: 0; z-index: 5; margin: 0; padding: 10px max(16px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    background: var(--surface); border-top: 1px solid var(--line); }
+
+  /* Tables become a card per row; the script labels each cell from its
+     column's heading. */
+  .table.stack thead { display: none; }
+  .table.stack, .table.stack tbody, .table.stack tr, .table.stack td { display: block; width: auto; }
+  .table.stack tr { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); }
+  .table.stack tr:last-child { border-bottom: 0; }
+  .table.stack td { padding: 2px 0; border: 0; text-align: left; white-space: normal; }
+  .table.stack td[data-label]:not(:first-child)::before { content: attr(data-label) ": "; color: var(--muted); }
+  .table.stack td:first-child { font-weight: 600; }
+  .table.stack td.num { width: auto; }
+}
+/* Scheduled send and snooze (schedule.go). */
+.later-banner { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; padding: 10px 14px; border-radius: var(--radius); background: var(--accent-soft); color: var(--ink); }
+.later-banner .icon { flex: none; color: var(--accent); }
+.later-banner form { margin-left: auto; }
+.row .later-time { color: var(--accent); white-space: nowrap; }
+.menu-body input[type="datetime-local"] { min-height: 36px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); padding: 0 8px; max-width: 100%; }
+.menu-body .menu-item .muted { margin-left: 8px; }
+.send-later .menu-body { min-width: 260px; }
+/* Compose's buttons sit at the bottom of the page: open upward. */
+.send-later .menu-body { top: auto; bottom: calc(100% + 4px); right: auto; left: 0; }
+/* On a phone, Send later is its clock, so compose's buttons stay one row;
+   the label stays as the button's accessible name. */
+@media (max-width: 720px) {
+  .send-later .tb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+/* Swiping a message row on a phone (app.js "swipe a message row"). The row
+   slides over the strip, so it needs a background of its own while it moves.
+   pan-y leaves vertical scrolling to the browser and sideways to the script. */
+@media (max-width: 720px) {
+  ol.messages { position: relative; }
+  ol.messages > li.row-wrap { touch-action: pan-y; }
+  ol.messages > li.row-wrap.swiping { position: relative; z-index: 1; background: var(--surface); }
+}
+.swipe-hint { position: absolute; left: 0; right: 0; display: flex; align-items: center; padding: 0 24px; font-weight: 600; color: var(--muted); background: var(--surface-2); }
+.swipe-hint.to-left { justify-content: flex-end; }
+.swipe-hint.ready.accent { background: var(--accent); color: var(--on-accent); }
+.swipe-hint.ready.danger { background: var(--danger-soft); color: var(--danger); }
+/* Compose on a phone: the From row's "Change name or signature" link wrapped
+   onto a line of its own. Settings is a tap away in the account menu. */
+@media (max-width: 720px) {
+  .compose-from .push { display: none; }
+}

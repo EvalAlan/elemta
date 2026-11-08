@@ -884,6 +884,11 @@ func (fs *FileStorageBackend) Cleanup(hours int) (int, error) {
 	} else if pruned > 0 {
 		deleted += pruned
 	}
+	// Enqueue lock files, one per message ever enqueued until these were
+	// pruned. Not counted in deleted: they aren't messages.
+	if _, err := pruneEnqueueLocks(filepath.Join(fs.queueDir, "tmp"), time.Now().Add(-enqueueLockIdleAge)); err != nil {
+		return deleted, fmt.Errorf("failed to prune enqueue locks: %w", err)
+	}
 
 	for _, q := range []QueueType{Active, Deferred, Hold, Failed} {
 		dir, err := openChildDir(root, string(q), false)

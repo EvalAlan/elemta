@@ -35,6 +35,10 @@ ldap_url = "ldap://elemta-ldap:389"
 ldap_base = "ou=people,dc=example,dc=com"
 ldap_user_filter = "(&(objectClass=posixAccount)(mail=%s))"
 default_domain = "example.com"
+# Directory answers and accepted passwords are kept this long, so sign-ins
+# and deliveries don't each ask the directory; a changed password or a
+# suspension takes up to this long to apply. -1 turns it off.
+cache_seconds = 30
 
 [limits]
 max_connections = 256

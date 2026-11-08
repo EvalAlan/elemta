@@ -2,17 +2,19 @@
 <html lang="en"{{with .Theme}} data-theme="{{.}}"{{end}}{{with .Palette}} data-palette="{{.}}"{{end}}>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+{{template "app-meta"}}
 <title>{{if .Title}}{{.Title}} · {{end}}Elemta Mail</title>
 <link rel="stylesheet" href="{{asset "tidewater.css"}}">
 <script src="{{asset "app.js"}}" defer></script>
 {{if eq .SettingsTab "security"}}<script src="{{asset "passkey.js"}}" defer></script>{{end}}
 <script src="{{asset "pgp.js"}}" defer></script>
 </head>
-<body data-app="{{.App}}"{{if not .TZSet}} data-detect-tz="1"{{end}}{{with .MailSound}} data-mail-sound="{{.}}"{{end}} data-pgp-worker="{{asset "pgp-worker.js"}}" data-pgp-owner="{{.Session.Address}}" data-csrf="{{.Session.CSRF}}">
+<body data-app="{{.App}}"{{if not .TZSet}} data-detect-tz="1"{{end}}{{with .MailSound}} data-mail-sound="{{.}}"{{end}}{{with .ReminderSound}} data-reminder-sound="{{.}}"{{end}} data-pgp-worker="{{asset "pgp-worker.js"}}" data-pgp-owner="{{.Session.Address}}" data-csrf="{{.Session.CSRF}}">
 <a class="skip" href="#main">Skip to content</a>
 <header class="topbar">
+  <button class="icon-link drawer-toggle" type="button" data-drawer aria-controls="sidebar" aria-expanded="false" title="{{if eq .App "mail"}}Folders{{else}}Menu{{end}}" hidden>{{template "icon-menu"}}<span class="visually-hidden">{{if eq .App "mail"}}Folders{{else}}Menu{{end}}</span></button>
   <a class="brand" href="/mail">{{template "logo"}}<span>Elemta</span></a>
   <nav class="apps" aria-label="Apps">
     <a href="/mail" title="Mail"{{if eq .App "mail"}} aria-current="page"{{end}}>{{template "icon-mail"}}<span>Mail</span></a>
@@ -27,7 +29,7 @@
     <input type="hidden" name="f" value="{{.Folder}}">
     <label class="visually-hidden" for="q">Search this folder</label>
     {{template "icon-search"}}
-    <input id="q" type="search" name="q" value="{{.Query}}" placeholder="Search {{if .Folder}}{{.Folder}}{{else}}mail{{end}} · from: subject: is:unread has:attachment" accesskey="/">
+    <input id="q" type="search" name="q" value="{{.Query}}" placeholder="Search {{if .Folder}}{{.Folder}}{{else}}mail{{end}} · from: subject: is:unread has:attachment" data-short-placeholder="Search {{if .Folder}}{{.Folder}}{{else}}mail{{end}}" accesskey="/">
   </form>
   {{end}}
   <div class="account">
@@ -43,15 +45,32 @@
     </form>
     {{if not .Session.AdminActor}}<a class="icon-link" href="/settings" title="Settings"{{if eq .App "settings"}} aria-current="page"{{end}}>{{template "icon-gear"}}<span class="visually-hidden">Settings</span></a>{{end}}
     <span class="avatar" title="{{.Session.Address}}">{{initials (addrOf .Session.Address)}}</span>
-    <form action="/logout" method="post">
+    <form action="/logout" method="post" data-logout>
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
       <button class="link-button" type="submit">Sign out</button>
     </form>
+    {{/* Phones have room for one control here: the avatar opens the rest. */}}
+    <details class="menu account-menu">
+      <summary class="avatar" title="{{.Session.Address}}">{{initials (addrOf .Session.Address)}}<span class="visually-hidden">Account</span></summary>
+      <div class="menu-body">
+        <p class="small muted account-address">{{.Session.Address}}</p>
+        {{if not .Session.AdminActor}}<a href="/settings">{{template "icon-gear"}}Settings</a>{{end}}
+        <form action="/settings/theme" method="post">
+          <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+          <button class="menu-item" type="submit" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}" data-theme-toggle>{{template "icon-moon"}}{{template "icon-sun"}}<span>Light or dark theme</span></button>
+        </form>
+        <form action="/logout" method="post" data-logout>
+          <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+          <button class="menu-item" type="submit">{{template "icon-signin"}}Sign out</button>
+        </form>
+      </div>
+    </details>
   </div>
 </header>
 {{if .Session.AdminActor}}<div class="admin-access-banner" role="status">Administrator {{.Session.AdminActor}} is viewing {{.Session.Address}}. Sending is disabled. Access ends at {{.Session.AdminExpires.Format "15:04 MST"}}.</div>{{end}}
 <div class="shell">
-  <aside class="sidebar" aria-label="{{if eq .App "mail"}}Folders{{else}}Navigation{{end}}">
+  <div class="drawer-backdrop" data-drawer-close hidden></div>
+  <aside class="sidebar" id="sidebar" aria-label="{{if eq .App "mail"}}Folders{{else}}Navigation{{end}}">
   {{block "sidebar" .}}
     {{if and (not .Session.AdminActor) (or .SharedMailboxes .ActiveMailbox)}}
     <form action="/mail/switch" method="post" class="mailbox-switch">
@@ -85,7 +104,18 @@
   {{end}}
   </aside>
   <main id="main" class="content">
-    {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
+    {{range .SendFailures}}<p class="problem" role="alert">{{.}}</p>{{end}}
+    {{if .Notice}}{{if .PendingSend}}{{with .PendingSend}}<div class="notice" role="status" data-send-left="{{.Left}}"><span data-send-status>Sending…</span>
+      <form class="inline undo-form" action="/compose/undo" method="post">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+        <button class="button small-button" type="submit" title="Undo (z)">Undo</button>
+      </form></div>{{end}}{{else}}{{with .Undo}}<div class="notice" role="status">{{$.Notice}}
+      <form class="inline undo-form" action="/mail/action" method="post">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="undo">
+        <input type="hidden" name="f" value="{{.From}}"><input type="hidden" name="uid" value="{{.UIDList}}"><input type="hidden" name="dest" value="{{.To}}">
+        <input type="hidden" name="back" value="{{if $.List}}{{$.List.URL}}{{else}}/mail{{end}}">
+        <button class="button small-button" type="submit" title="Undo (z)">Undo</button>
+      </form></div>{{else}}<p class="notice" role="status">{{$.Notice}}</p>{{end}}{{end}}{{end}}
     {{template "content" .}}
   </main>
 </div>
@@ -101,6 +131,7 @@
       <dt>s</dt><dd>Flag or unflag</dd>
       <dt>e</dt><dd>Archive</dd>
       <dt>#</dt><dd>Delete</dd>
+      <dt>z</dt><dd>Undo a send, move or delete, just after it</dd>
       <dt>x</dt><dd>Select the current message</dd>
       <dt>/</dt><dd>Search</dd>
       <dt>g then i / c / t / k</dt><dd>Go to Inbox / Calendar / Tasks / Contacts</dd>

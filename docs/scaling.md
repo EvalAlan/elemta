@@ -87,6 +87,11 @@ valkey://:password@s1:26379?addr=s2:26379&addr=s3:26379&master_set=elemta
 
 A password in the URL is the primary's. The Sentinels are reached without one.
 
+## Past one database
+
+Everything above shares one mailbox database. When that is the limit, split
+mailboxes into cells behind a router: [Mailbox cells](mailbox-cells.md).
+
 ## What one host can't do
 
 All of this runs on one host, so it survives containers failing and being

@@ -161,7 +161,11 @@ A stolen password works, so nothing above notices it being used. The Abuse page
 lists successful sign-ins that look wrong for their account:
 
 - **Impossible travel:** faster than 1,000 km/h from the account's last sign-in, and
-  over 500 km, so a free database guessing a neighbouring city doesn't count.
+  over 500 km, so a free database guessing a neighbouring city doesn't count. Within
+  one country the distance has to be over 1,000 km: the database often places a phone
+  on cellular data hundreds of kilometres from the Wi-Fi it just left. A place the
+  account has signed in from in the last 30 days never counts, so switching between
+  home and a phone, or a VPN and home, doesn't raise alerts all day.
 - **New country:** a country the account hasn't signed in from in 90 days. The first
   sign-in an account ever makes sets its baseline and raises nothing.
 

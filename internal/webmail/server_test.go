@@ -113,6 +113,8 @@ func (f *fakeStore) ListThreads(_ context.Context, folder string, q ListQuery) (
 	return ThreadPage{Folder: folder, Conversations: out, Total: len(out), Page: 1, PageSize: q.PageSize}, nil
 }
 func (f *fakeStore) Raw(_ context.Context, _ string, uid uint32, _ int64) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if b, ok := f.raw[uid]; ok {
 		return b, nil
 	}
@@ -134,25 +136,37 @@ func (f *fakeStore) SetFlags(_ context.Context, _ string, uids []uint32, flags [
 	}
 	return nil
 }
-func (f *fakeStore) Move(_ context.Context, _ string, uids []uint32, dest string) error {
+func (f *fakeStore) Move(_ context.Context, _ string, uids []uint32, dest string) ([]uint32, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var moved []uint32
 	for _, u := range uids {
 		f.moved[u] = dest
+		// As a server reports COPYUID: new UIDs in the destination.
+		moved = append(moved, u+1000)
 	}
-	return nil
+	return moved, nil
 }
 func (f *fakeStore) Delete(_ context.Context, _ string, uids []uint32) error {
 	f.deleted = append(f.deleted, uids...)
 	return nil
 }
 func (f *fakeStore) Expunge(_ context.Context, _ string, uids []uint32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.expunged = append(f.expunged, uids...)
 	return nil
 }
-func (f *fakeStore) Append(_ context.Context, role Role, raw []byte, _, _ bool) error {
+func (f *fakeStore) Append(_ context.Context, role Role, raw []byte, _, _ bool) (uint32, error) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.appended[role] = append(f.appended[role], raw)
-	f.mu.Unlock()
-	return nil
+	// As a server reports APPENDUID, and readable again by it.
+	uid := uint32(9000 + len(f.appended[role]))
+	if role == RoleDrafts {
+		f.raw[uid] = raw
+	}
+	return uid, nil
 }
 func (f *fakeStore) CreateFolder(_ context.Context, name string) error {
 	for _, x := range f.folders {
@@ -520,12 +534,13 @@ func TestActionsNeedCSRF(t *testing.T) {
 	h := newHarness(t)
 	csrf := h.login()
 	resp := h.post("/mail/action", url.Values{"f": {"INBOX"}, "uid": {"7"}, "op": {"delete"}})
-	if resp.StatusCode != http.StatusForbidden || len(h.store.deleted) != 0 {
-		t.Fatalf("delete without CSRF: status %d deleted %v", resp.StatusCode, h.store.deleted)
+	if resp.StatusCode != http.StatusForbidden || len(h.store.deleted) != 0 || h.store.moved[7] != "" {
+		t.Fatalf("delete without CSRF: status %d deleted %v moved %v", resp.StatusCode, h.store.deleted, h.store.moved)
 	}
+	// Deleting from the inbox moves to Trash (undoably).
 	resp = h.post("/mail/action", url.Values{"csrf": {csrf}, "f": {"INBOX"}, "uid": {"7"}, "op": {"delete"}})
-	if resp.StatusCode != http.StatusSeeOther || len(h.store.deleted) != 1 {
-		t.Fatalf("delete with CSRF: status %d deleted %v", resp.StatusCode, h.store.deleted)
+	if resp.StatusCode != http.StatusSeeOther || h.store.moved[7] != "Trash" {
+		t.Fatalf("delete with CSRF: status %d moved %v", resp.StatusCode, h.store.moved)
 	}
 	resp = h.post("/mail/action", url.Values{"csrf": {csrf}, "f": {"INBOX"}, "uid": {"7"}, "op": {"junk"}})
 	if resp.StatusCode != http.StatusSeeOther || h.store.moved[7] != "Junk" {

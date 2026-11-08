@@ -27,6 +27,173 @@
     });
   }
 
+  // ---- notifications on this device (Web Push) ------------------------------
+  // The service worker shows what the mail server pushes (static/sw.js). This
+  // page remembers whether this browser is subscribed, so its own pop-ups for
+  // new mail and reminders stand aside and nothing shows twice.
+  var PUSH_KEY = "elemta-push";
+  function pushState() {
+    try { return JSON.parse(localStorage.getItem(PUSH_KEY) || "null"); } catch (err) { return null; }
+  }
+  function setPushState(v) {
+    try {
+      if (v) localStorage.setItem(PUSH_KEY, JSON.stringify(v));
+      else localStorage.removeItem(PUSH_KEY);
+    } catch (err) { /* private mode */ }
+  }
+  function pushHere() {
+    return !!pushState() && !!window.Notification && Notification.permission === "granted";
+  }
+  var pushSupported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  var swReady = null;
+  if ("serviceWorker" in navigator) {
+    swReady = navigator.serviceWorker.register("/sw.js").then(function () { return navigator.serviceWorker.ready; });
+    swReady.catch(function () { /* no worker: no notifications, nothing else lost */ });
+  }
+  function postJSON(url, data) {
+    return fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "X-CSRF-Token": csrf, "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    }).then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    });
+  }
+  function subscriptionBody(sub, prefs) {
+    var j = sub.toJSON();
+    return { endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, mail: prefs.mail, reminders: prefs.reminders, preview: prefs.preview };
+  }
+  // Once a day, tell the server this browser's subscription again: browsers
+  // replace them now and then, and the server forgets ones that stop working.
+  if (pushSupported && swReady && pushState() && body.getAttribute("data-app")) {
+    var pushSaved = pushState();
+    if (!pushSaved.synced || Date.now() - pushSaved.synced > 86400000) {
+      swReady.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+        if (!sub) { setPushState(null); return; }
+        return postJSON("/settings/push", subscriptionBody(sub, pushSaved)).then(function () {
+          pushSaved.synced = Date.now();
+          pushSaved.endpoint = sub.endpoint;
+          setPushState(pushSaved);
+        });
+      }).catch(function () { /* try again next time */ });
+    }
+  }
+  // Signing out stops this browser's notifications, so the next person to
+  // use it doesn't see someone else's mail arriving. There are two sign-out
+  // forms: the top bar's, and the one in a phone's account menu.
+  $$("form[data-logout]").forEach(function (logout) {
+    logout.addEventListener("submit", function (e) {
+      var st = pushState();
+      if (!st || !swReady || logout.hasAttribute("data-push-cleared")) return;
+      e.preventDefault();
+      logout.setAttribute("data-push-cleared", "");
+      var finished = false;
+      var done = function () {
+        if (finished) return;
+        finished = true;
+        setPushState(null);
+        logout.submit();
+      };
+      setTimeout(done, 3000);
+      swReady.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+        var endpoint = sub ? sub.endpoint : st.endpoint;
+        return postJSON("/settings/push/delete", { endpoint: endpoint }).catch(function () {}).then(function () {
+          return sub ? sub.unsubscribe() : null;
+        });
+      }).catch(function () {}).then(done);
+    });
+  });
+  // The settings card.
+  var pushCard = $("#notifications[data-push-key]");
+  if (pushCard) {
+    var standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+    var ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    var pushForm = $("[data-push-form]", pushCard);
+    var pushStatus = $("[data-push-status]", pushCard);
+    var say = function (text) { pushStatus.textContent = text; };
+    if (!pushSupported || !swReady) {
+      $(ios && !standalone ? "[data-push-ios]" : "[data-push-unsupported]", pushCard).hidden = false;
+    } else if (Notification.permission === "denied") {
+      $("[data-push-blocked]", pushCard).hidden = false;
+    } else {
+      pushForm.hidden = false;
+      var keyBytes = function () {
+        var s = pushCard.getAttribute("data-push-key").replace(/-/g, "+").replace(/_/g, "/");
+        var raw = atob(s + "===".slice((s.length + 3) % 4));
+        var out = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+        return out;
+      };
+      var prefs = function () {
+        return { mail: pushForm.elements.mail.value, reminders: pushForm.elements.reminders.checked, preview: pushForm.elements.preview.checked };
+      };
+      var current = null;
+      swReady.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+        current = sub;
+        var known = sub && $$("tr[data-endpoint]", pushCard).filter(function (tr) { return tr.getAttribute("data-endpoint") === sub.endpoint; })[0];
+        if (!sub || !known) {
+          // Not subscribed, or the server dropped it: offer to turn it on.
+          if (!sub) setPushState(null);
+          return;
+        }
+        $("[data-this-device]", known).hidden = false;
+        var st = pushState() || {};
+        if (st.mail) pushForm.elements.mail.value = st.mail;
+        if (st.reminders !== undefined) pushForm.elements.reminders.checked = st.reminders;
+        if (st.preview !== undefined) pushForm.elements.preview.checked = st.preview;
+        $("[data-push-save]", pushCard).textContent = "Save";
+        $("[data-push-test]", pushCard).hidden = false;
+        $("[data-push-off]", pushCard).hidden = false;
+      }).catch(function () {});
+      pushForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        say("");
+        // Asked from the click itself: browsers only allow the question then.
+        Notification.requestPermission().then(function (perm) {
+          if (perm !== "granted") throw new Error(perm === "denied" ? "blocked" : "dismissed");
+          return swReady;
+        }).then(function (reg) {
+          return reg.pushManager.getSubscription().then(function (sub) {
+            return sub || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes() });
+          });
+        }).then(function (sub) {
+          var p = prefs();
+          return postJSON("/settings/push", subscriptionBody(sub, p)).then(function () {
+            p.endpoint = sub.endpoint;
+            p.synced = Date.now();
+            setPushState(p);
+            location.href = "/settings/devices?n=push-saved#notifications";
+          });
+        }).catch(function (err) {
+          if (err && err.message === "blocked") {
+            pushForm.hidden = true;
+            $("[data-push-blocked]", pushCard).hidden = false;
+            return;
+          }
+          say(err && err.message === "dismissed" ? "Notifications weren't allowed. Try again, and choose Allow." : "Notifications couldn't be turned on. Try again in a moment.");
+        });
+      });
+      $("[data-push-test]", pushCard).addEventListener("click", function () {
+        if (!current) return;
+        say("Sending…");
+        postJSON("/settings/push/test", { endpoint: current.endpoint }).then(function () {
+          say("Sent. It should appear in a few seconds.");
+        }).catch(function () { say("The test couldn't be sent. Wait a few seconds and try again."); });
+      });
+      $("[data-push-off]", pushCard).addEventListener("click", function () {
+        if (!current) return;
+        postJSON("/settings/push/delete", { endpoint: current.endpoint }).catch(function () {}).then(function () {
+          return current.unsubscribe();
+        }).then(function () {
+          setPushState(null);
+          location.href = "/settings/devices?n=push-off#notifications";
+        }).catch(function () { say("Notifications couldn't be turned off. Try again in a moment."); });
+      });
+    }
+  }
+
   // ---- confirmations -------------------------------------------------------
   // A button or link with a non-empty data-confirm asks first.
   doc.addEventListener("click", function (e) {
@@ -102,18 +269,88 @@
   // The toggle flips whichever theme is showing, including one that came
   // from the device's setting, applies it at once and saves it in the
   // background. Without script the button's form posts and reloads.
-  var toggle = $("[data-theme-toggle]");
-  if (toggle) {
+  // There are two: the top bar's, and the one in a phone's account menu.
+  var toggles = $$("[data-theme-toggle]");
+  toggles.forEach(function (toggle) {
     toggle.addEventListener("click", function (e) {
       e.preventDefault();
       var current = root.getAttribute("data-theme") ||
         (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
       var next = current === "dark" ? "light" : "dark";
       root.setAttribute("data-theme", next);
-      toggle.value = next === "dark" ? "light" : "dark";
+      toggles.forEach(function (t) { t.value = next === "dark" ? "light" : "dark"; });
       post("/settings/theme", { theme: next });
     });
+  });
+
+  // ---- phone layout --------------------------------------------------------
+  // On a phone the sidebar (folders, the mini calendar, settings' sections)
+  // becomes a drawer behind the top bar's menu button, so the page starts
+  // with mail rather than navigation. Without script it stays a strip above
+  // the content.
+  var phone = window.matchMedia ? window.matchMedia("(max-width: 720px)") : { matches: false };
+  var drawerButton = $("[data-drawer]");
+  var sidebar = $("#sidebar");
+  var backdrop = $("[data-drawer-close]");
+  if (drawerButton && sidebar && backdrop && sidebar.children.length) {
+    root.classList.add("has-drawer");
+    drawerButton.hidden = false;
+    var setDrawer = function (open) {
+      root.classList.toggle("drawer-open", open);
+      drawerButton.setAttribute("aria-expanded", open ? "true" : "false");
+      backdrop.hidden = !open;
+      if (open) {
+        var first = $("[aria-current=page], a, button, select", sidebar);
+        if (first) first.focus({ preventScroll: true });
+      }
+    };
+    drawerButton.addEventListener("click", function () { setDrawer(!root.classList.contains("drawer-open")); });
+    backdrop.addEventListener("click", function () { setDrawer(false); });
+    doc.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && root.classList.contains("drawer-open")) {
+        setDrawer(false);
+        drawerButton.focus();
+      }
+    });
+    // Following a link in the drawer closes it, so Back doesn't reopen it.
+    sidebar.addEventListener("click", function (e) {
+      if (phone.matches && e.target.closest("a[href]")) setDrawer(false);
+    });
   }
+  // The search box's hint of operators doesn't fit a phone's top bar.
+  var searchBox = $("#q[data-short-placeholder]");
+  if (searchBox) {
+    var longHint = searchBox.placeholder;
+    var fitHint = function () { searchBox.placeholder = phone.matches ? searchBox.getAttribute("data-short-placeholder") : longHint; };
+    fitHint();
+    if (phone.addEventListener) phone.addEventListener("change", fitHint);
+  }
+  // Tables of a few columns read as a card per row on a phone (CSS .stack);
+  // each cell is labelled with its column's heading.
+  $$(".page table.table").forEach(function (table) {
+    var heads = $$("thead th", table).map(function (th) { return th.textContent.trim(); });
+    if (!heads.length) return;
+    $$("tbody tr", table).forEach(function (tr) {
+      Array.prototype.forEach.call(tr.cells, function (cell, i) {
+        // A cell of buttons names itself; "Remove: Remove" helps no one.
+        if (heads[i] && !cell.hasAttribute("data-label") && !cell.querySelector("button, form, a.button")) cell.setAttribute("data-label", heads[i]);
+      });
+    });
+    table.classList.add("stack");
+  });
+
+  // ---- appearance preview --------------------------------------------------
+  // Settings' theme and colour scheme repaint the page as they're chosen, so
+  // a scheme can be seen before it's saved. Nothing is stored until the form
+  // is submitted; leaving the page shows the saved choice again.
+  [["#palette", "data-palette"], ["#theme", "data-theme"]].forEach(function (pair) {
+    var select = $(pair[0]);
+    if (!select || !select.form || select.form.id !== "general") return;
+    select.addEventListener("change", function () {
+      if (select.value) root.setAttribute(pair[1], select.value);
+      else root.removeAttribute(pair[1]);
+    });
+  });
 
   // ---- menus -------------------------------------------------------------
   // Menus are <details>, so they open without script; this closes them on
@@ -714,7 +951,8 @@
   }
 
   function notifyNew(added) {
-    if (!doc.hidden || !window.Notification || Notification.permission !== "granted" || !added.length) return;
+    // With notifications on for this device, the service worker shows them.
+    if (!doc.hidden || !window.Notification || Notification.permission !== "granted" || !added.length || pushHere()) return;
     try {
       if (added.length === 1) {
         var n = new Notification(added[0].from.trim() || "New mail", { body: added[0].subject.trim(), tag: "elemta-new-mail" });
@@ -794,7 +1032,7 @@
   var mailSound = doc.body.getAttribute("data-mail-sound");
   // A browser only lets a page make sound once someone has used that page, and
   // a tab left open and untouched must not save it all up for later.
-  if (mailSound) {
+  if (mailSound || body.getAttribute("data-reminder-sound")) {
     ["pointerdown", "keydown"].forEach(function (kind) {
       doc.addEventListener(kind, function unlock() {
         doc.removeEventListener(kind, unlock, true);
@@ -961,10 +1199,38 @@
       case "u": case "r": case "a": case "f": case "s": case "e": case "#":
         if (!clickKey(k)) return;
         break;
+      case "z":
+        // Undo the move the notice reports, while it still offers to.
+        var undo = $(".undo-form button");
+        if (!undo) return;
+        undo.click();
+        break;
       default: return;
     }
     e.preventDefault();
   });
+
+  // ---- undo send ---------------------------------------------------------
+  // A message waiting out its undo delay counts down in its notice, then
+  // says it's gone. The server sends it whatever this page does; the
+  // countdown is only what the person sees.
+  var sending = $("[data-send-left]");
+  if (sending) {
+    var sendAt = Date.now() + (+sending.getAttribute("data-send-left")) * 1000;
+    var sendStatus = $("[data-send-status]", sending);
+    var sendTick = function () {
+      var left = Math.ceil((sendAt - Date.now()) / 1000);
+      if (left > 0) {
+        sendStatus.textContent = "Sending in " + left + (left === 1 ? " second…" : " seconds…");
+        setTimeout(sendTick, 250);
+        return;
+      }
+      sendStatus.textContent = "Message sent.";
+      var form = $(".undo-form", sending);
+      if (form) form.remove();
+    };
+    sendTick();
+  }
 
   // ---- refresh -----------------------------------------------------------
   // The refresh link reloads the list (which also checks the server for new
@@ -1065,7 +1331,7 @@
   var opening = 0;
 
   function revealSelected() {
-    var row = $(".messages .selected"), list = row && row.closest(".list");
+    var row = $(".messages .selected"), list = row && row.closest(".list-scroll");
     // Only where the list is its own scroller: elsewhere this would move the page.
     if (list && window.getComputedStyle(list).overflowY !== "visible") row.scrollIntoView({ block: "nearest" });
   }
@@ -1149,19 +1415,43 @@
   }
 
   // ---- reminders ---------------------------------------------------------
-  // The server says which reminders are due in the next two hours; each is
-  // shown once, at its time, in the page and (if allowed) as a desktop
-  // notification. Shown keys are remembered for the browser session so a
-  // reload doesn't repeat them.
-  var timers = {};
-  function shownKeys() {
-    try { return JSON.parse(sessionStorage.getItem("reminders-shown") || "{}"); } catch (err) { return {}; }
+  // The server lists the reminders due in the next two hours and keeps each
+  // listed until its event starts. At its time a reminder shows in every open
+  // tab as a card in the corner, flashes the title of a tab in the background
+  // and, in one tab only, plays the reminder sound and shows a desktop
+  // notification. Dismissing or snoozing it in one tab does the same in the
+  // others. That state lives in localStorage, so a reload or a new tab
+  // doesn't bring back a dismissed reminder or ring again for one that rang.
+  var reminderSound = body.getAttribute("data-reminder-sound") || "";
+  var REMINDERS = "elemta-reminders", SNOOZE_MS = 5 * 60 * 1000, BELL_MARK = "🔔 ";
+  var timers = {}, cards = {}, known = {}, memState = {}, flashTimer = null, ticker = null;
+
+  // Each entry is {d: dismissed, s: snoozed until, rang: the due time it
+  // last rang for, t: when it last changed}, all times in milliseconds.
+  function readState() {
+    try {
+      var raw = localStorage.getItem(REMINDERS);
+      if (raw !== null) return JSON.parse(raw) || {};
+    } catch (err) { /* blocked or corrupt: fall back to this tab's copy */ }
+    return memState;
   }
-  function markShown(key) {
-    var s = shownKeys();
-    s[key] = Date.now();
-    try { sessionStorage.setItem("reminders-shown", JSON.stringify(s)); } catch (err) { /* storage full or blocked */ }
+  function writeState(key, change) {
+    var st = readState(), now = Date.now();
+    Object.keys(st).forEach(function (k) { if (now - (st[k].t || 0) > 2 * 86400000) delete st[k]; });
+    var e = st[key] || {};
+    Object.keys(change).forEach(function (k) { e[k] = change[k]; });
+    e.t = now;
+    st[key] = e;
+    memState = st;
+    try { localStorage.setItem(REMINDERS, JSON.stringify(st)); } catch (err) { /* this tab only, then */ }
   }
+  // When the reminder should next show, or null once it's dismissed.
+  function dueAt(r) {
+    var e = readState()[r.key] || {};
+    if (e.d) return null;
+    return Math.max(e.s || 0, r.at * 1000);
+  }
+
   function toastStack() {
     var st = $(".toast-stack");
     if (!st) {
@@ -1173,48 +1463,152 @@
     }
     return st;
   }
-  function showReminder(r) {
-    if (shownKeys()[r.key]) return;
-    markShown(r.key);
+
+  function startsIn(r) {
+    if (r.allday) return "";
+    var m = Math.round((r.start * 1000 - Date.now()) / 60000);
+    if (m >= 60) return "Starts in " + Math.floor(m / 60) + " h" + (m % 60 ? " " + (m % 60) + " min" : "");
+    if (m > 0) return "Starts in " + m + " min";
+    if (m === 0) return "Starting now";
+    return "Started " + (-m) + " min ago";
+  }
+  function tick() {
+    Object.keys(cards).forEach(function (k) {
+      var c = cards[k], line = $(".reminder-countdown", c.el);
+      if (line) line.textContent = startsIn(c.r);
+    });
+  }
+
+  // While a reminder is up and the tab isn't in view, the tab's title
+  // flashes a bell. A prefix rather than a saved title, so the unread count
+  // the mail page writes into the title carries on working underneath.
+  function flashTitle() {
+    if (flashTimer || !doc.hidden) return;
+    flashTimer = setInterval(function () {
+      doc.title = doc.title.indexOf(BELL_MARK) === 0 ? doc.title.slice(BELL_MARK.length) : BELL_MARK + doc.title;
+    }, 1000);
+  }
+  function stopFlash() {
+    clearInterval(flashTimer);
+    flashTimer = null;
+    if (doc.title.indexOf(BELL_MARK) === 0) doc.title = doc.title.slice(BELL_MARK.length);
+  }
+  doc.addEventListener("visibilitychange", function () {
+    if (!doc.hidden) stopFlash(); else if (Object.keys(cards).length) flashTitle();
+  });
+
+  function dropCard(key) {
+    var c = cards[key];
+    if (!c) return;
+    c.el.remove();
+    delete cards[key];
+    if (!Object.keys(cards).length) { stopFlash(); clearInterval(ticker); ticker = null; }
+  }
+
+  // tone overrides the saved sound, for trying one out from Settings.
+  function showReminder(r, at, tone) {
+    if (cards[r.key]) return;
     var t = doc.createElement("div");
-    t.className = "toast";
+    t.className = "toast reminder";
+    t.setAttribute("role", "alert");
     var a = doc.createElement("a");
     a.href = r.url;
     a.textContent = r.title;
     var p = doc.createElement("span");
     p.className = "small muted";
     p.textContent = r.when + (r.where ? " · " + r.where : "");
-    var b = doc.createElement("button");
-    b.className = "button small-button";
-    b.type = "button";
-    b.textContent = "Dismiss";
-    b.addEventListener("click", function () { t.remove(); });
-    t.appendChild(a); t.appendChild(p); t.appendChild(b);
+    var cd = doc.createElement("span");
+    cd.className = "small reminder-countdown";
+    var actions = doc.createElement("div");
+    actions.className = "reminder-actions";
+    var button = function (label, run) {
+      var b = doc.createElement("button");
+      b.className = "button small-button";
+      b.type = "button";
+      b.textContent = label;
+      b.addEventListener("click", run);
+      actions.appendChild(b);
+    };
+    button("Snooze 5 min", function () { snoozeReminder(r.key); });
+    button("Dismiss", function () { dismissReminder(r.key); });
+    t.append(a, p, cd, actions);
     toastStack().appendChild(t);
-    if (window.Notification && Notification.permission === "granted") {
+    cards[r.key] = { el: t, r: r };
+    tick();
+    if (!ticker) ticker = setInterval(tick, 30000);
+    flashTitle();
+
+    // Every tab shows the card, but only the first to get here rings and
+    // notifies, and only once each time the reminder comes due.
+    if ((readState()[r.key] || {}).rang === at) return;
+    writeState(r.key, { rang: at });
+    var sound = tone === undefined ? reminderSound : tone;
+    if (sound) {
+      if (audio && audio.state !== "running") { try { audio.resume(); } catch (err) { /* no sound, then */ } }
+      playTone(sound);
+    }
+    if (window.Notification && Notification.permission === "granted" && !pushHere()) {
       try {
-        var n = new Notification(r.title, { body: r.when + (r.where ? " · " + r.where : ""), tag: r.key });
+        // requireInteraction: a reminder that slips away after a few seconds,
+        // unseen, is no reminder.
+        var n = new Notification(r.title, { body: r.when + (r.where ? " · " + r.where : ""), tag: r.key, requireInteraction: true });
         n.onclick = function () { window.focus(); location.href = r.url; };
       } catch (err) { /* some browsers only allow notifications from a service worker */ }
     }
   }
+
+  function schedule(r) {
+    known[r.key] = r;
+    clearTimeout(timers[r.key]);
+    delete timers[r.key];
+    var at = dueAt(r);
+    if (at === null) { dropCard(r.key); return; }
+    var wait = at - Date.now();
+    if (wait <= 0) { showReminder(r, at); return; }
+    dropCard(r.key); // snoozed in another tab
+    timers[r.key] = setTimeout(function () { showReminder(r, at); }, wait);
+  }
+  function snoozeReminder(key) {
+    writeState(key, { s: Date.now() + SNOOZE_MS });
+    dropCard(key);
+    if (known[key]) schedule(known[key]);
+  }
+  function dismissReminder(key) {
+    writeState(key, { d: 1 });
+    clearTimeout(timers[key]);
+    dropCard(key);
+  }
+  // Another tab dismissed or snoozed something.
+  window.addEventListener("storage", function (e) {
+    if (e.key !== REMINDERS) return;
+    Object.keys(known).forEach(function (k) { schedule(known[k]); });
+    Object.keys(cards).forEach(function (k) {
+      var st = readState()[k] || {};
+      if (!known[k] && (st.d || st.s > Date.now())) dropCard(k);
+    });
+  });
+
   function loadReminders() {
     fetch("/api/reminders", { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : []; })
-      .then(function (list) {
-        var now = Date.now();
-        list.forEach(function (r) {
-          if (timers[r.key] || shownKeys()[r.key]) return;
-          var wait = r.at * 1000 - now;
-          if (wait <= 0) { showReminder(r); return; }
-          timers[r.key] = setTimeout(function () { showReminder(r); }, wait);
-        });
-      })
+      .then(function (list) { list.forEach(schedule); })
       .catch(function () {});
   }
   if (csrf) {
     loadReminders();
     setInterval(loadReminders, 10 * 60 * 1000);
+  }
+  // Settings: show what a reminder looks and sounds like, with the tone
+  // picked but not yet saved.
+  var tryReminder = $("[data-reminder-test]");
+  if (tryReminder) {
+    tryReminder.addEventListener("click", function () {
+      var now = Date.now(), choice = $("#reminder_sound");
+      var r = { key: "try-" + now, at: now / 1000, start: now / 1000 + 15 * 60, title: "Example reminder",
+        when: "In 15 minutes", where: "This is how a reminder looks", url: "/calendar" };
+      known[r.key] = r;
+      showReminder(r, now, choice && choice.value !== "none" ? choice.value : "");
+    });
   }
 
   // ---- calendar ----------------------------------------------------------
@@ -1341,6 +1735,12 @@
       .filter(function (n) { return n !== exclude; });
   }
 
+  // The inbox tab being shown, empty when the list isn't split into tabs.
+  function currentTab() {
+    var t = $('.inbox-tabs a.inbox-tab[aria-current="page"]');
+    return t ? t.getAttribute("data-category") : "";
+  }
+
   function messageMenu(row) {
     var list = row.closest("ol.messages");
     var folder = list.getAttribute("data-folder"), role = list.getAttribute("data-role");
@@ -1385,6 +1785,29 @@
     items.push({ label: "Move to", sub: function () {
       return folderTargets(folder).map(function (n) { return { label: n, run: act("move", { dest: n }) }; });
     } });
+    // With inbox tabs on, the tab bar lists them. Moving to a tab also
+    // sends the sender's later mail there, as the Tab button does.
+    var tabs = $$(".inbox-tabs a.inbox-tab[data-category]");
+    if (tabs.length) {
+      var current = currentTab();
+      items.push({ label: "Move to tab", sub: function () {
+        return tabs.map(function (t) {
+          var name = t.getAttribute("data-category");
+          return { label: (name === current ? "\u2713 " : "") + t.getAttribute("data-label"), run: act("category", { category: name, tab: current }) };
+        });
+      } });
+    }
+    // Snooze: the bulk bar's presets, which the page renders only where
+    // snoozing makes sense (not Drafts, not Scheduled, not a shared mailbox).
+    var snoozeChoices = $$("[data-snooze-choice]");
+    if (snoozeChoices.length) {
+      items.push({ label: "Snooze", sub: function () {
+        return snoozeChoices.map(function (b) {
+          var when = $(".muted", b);
+          return { label: b.getAttribute("data-snooze-choice") + (when ? " \u00b7 " + when.textContent : ""), run: act("snooze", { until: b.value.slice("snooze@".length) }) };
+        });
+      } });
+    }
     if (role !== "archive") items.push({ label: "Archive", run: act("archive") });
     items.push(role === "quarantine" ? { label: "Release to Inbox", run: act("notjunk") } :
       role === "junk" ? { label: "Not junk", run: act("notjunk") } : { label: "Report junk", run: act("junk") });
@@ -1519,6 +1942,557 @@
     e.preventDefault();
     var r = m.el.getBoundingClientRect();
     openCtx(m.items, r.left + 16, r.top + r.height / 2, m.title);
+  });
+
+  // ---- event bubble --------------------------------------------------------
+  // A click on an event shows its details in a bubble beside it, so checking
+  // where or when something is doesn't cost leaving the calendar. A double
+  // click, or a click with a modifier, opens the full event page as before.
+  // The bubble is the event page's own card, fetched and lifted out the way
+  // the reading pane is: what it shows, including what a shared private event
+  // hides, is decided by the server once and can't drift from the page.
+  var peek = null, peekToken = 0;
+  var EVENT = 'a[data-ctx="event"]';
+
+  function closePeek(refocus) {
+    peekToken++;
+    if (!peek) return;
+    var from = peek.from;
+    peek.el.remove();
+    if (peek.onclose) peek.onclose();
+    peek = null;
+    if (refocus && from.isConnected) from.focus();
+  }
+
+  // Beside the event if there's room on either side, otherwise below or
+  // above it (a month cell on a phone has no side to spare).
+  function placePeek() {
+    var r = peek.from.getBoundingClientRect(), el = peek.el, p = el.getBoundingClientRect();
+    var w = doc.documentElement.clientWidth, h = window.innerHeight, gap = 8, edge = 8;
+    var clamp = function (v, lo, hi) { return Math.max(lo, Math.min(v, hi)); };
+    var left, top;
+    if (r.right + gap + p.width <= w - edge) left = r.right + gap;
+    else if (r.left - gap - p.width >= edge) left = r.left - gap - p.width;
+    if (left !== undefined) {
+      top = clamp(r.top, edge, h - p.height - edge);
+    } else {
+      left = clamp(r.left, edge, w - p.width - edge);
+      if (r.bottom + gap + p.height <= h - edge) top = r.bottom + gap;
+      else if (r.top - gap - p.height >= edge) top = r.top - gap - p.height;
+      else top = clamp(r.bottom + gap, edge, h - p.height - edge);
+    }
+    el.style.left = Math.max(edge, left) + "px";
+    el.style.top = Math.max(edge, top) + "px";
+  }
+
+  function openPeek(a) {
+    closePeek(false);
+    var token = peekToken;
+    var el = doc.createElement("div");
+    el.className = "event-peek";
+    el.setAttribute("role", "dialog");
+    el.tabIndex = -1;
+    var name = (a.getAttribute("title") || a.textContent).trim();
+    el.setAttribute("aria-label", name);
+    var close = doc.createElement("button");
+    close.type = "button";
+    close.className = "peek-close";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "×";
+    close.addEventListener("click", function () { closePeek(true); });
+    // Shown straight away, so a slow server still answers the click.
+    var loading = doc.createElement("p");
+    loading.className = "muted small peek-loading";
+    loading.textContent = "Loading " + name + "…";
+    el.append(close, loading);
+    el.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { closePeek(true); e.preventDefault(); }
+      // Keys typed here are for the bubble, not the calendar's shortcuts.
+      e.stopPropagation();
+    });
+    body.appendChild(el);
+    peek = { el: el, from: a };
+    placePeek();
+
+    fetch(a.href, { credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok || r.redirected) throw new Error("not an event page");
+        return r.text();
+      })
+      .then(function (html) {
+        if (token !== peekToken) return;
+        var fresh = new DOMParser().parseFromString(html, "text/html");
+        var card = $(".event-view", fresh), bar = $('.toolbar[aria-label="Event actions"]', fresh);
+        if (!card) throw new Error("not an event page");
+        var actions = doc.createElement("div");
+        actions.className = "peek-actions";
+        var open = doc.createElement("a");
+        open.className = "button";
+        open.href = a.href;
+        open.textContent = "Open";
+        actions.appendChild(open);
+        // The page's own Edit, Delete and Hide buttons: their forms carry
+        // the CSRF token and their data-confirm prompts work anywhere.
+        if (bar) Array.prototype.forEach.call(bar.children, function (n) { actions.appendChild(doc.importNode(n, true)); });
+        loading.replaceWith(doc.importNode(card, true), actions);
+        placePeek();
+        el.focus();
+      })
+      .catch(function () {
+        // Signed out, gone or the server failed: the full page says which.
+        if (token === peekToken) location.href = a.href;
+      });
+  }
+
+  doc.addEventListener("click", function (e) {
+    var a = e.target.closest(EVENT);
+    if (peek && !peek.el.contains(e.target) && a !== peek.from) closePeek(false);
+    if (!a || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    // The second click of a double click: the dblclick that follows opens it.
+    if (e.detail > 1) return;
+    if (peek && peek.from === a) closePeek(false); else openPeek(a);
+  });
+  doc.addEventListener("dblclick", function (e) {
+    var a = e.target.closest(EVENT);
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    closePeek(false);
+    location.href = a.href;
+  });
+  // A double click would otherwise select the event's text as it leaves.
+  doc.addEventListener("mousedown", function (e) {
+    if (e.detail > 1 && e.target.closest(EVENT)) e.preventDefault();
+  });
+  doc.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && peek) closePeek(true);
+  });
+  doc.addEventListener("contextmenu", function () { closePeek(false); });
+  // The bubble is placed against the event; once that moves, it points at
+  // nothing. Scrolling inside the bubble itself is fine.
+  window.addEventListener("scroll", function (e) { if (peek && !peek.el.contains(e.target)) closePeek(false); }, true);
+  window.addEventListener("resize", function () { closePeek(false); });
+
+  // ---- quick add ------------------------------------------------------------
+  // A click on an empty hour, or an empty part of a day, asks for a title in
+  // a bubble there instead of leaving for the full form; More options takes
+  // what was typed to the form. The bubble and its closing rules are the
+  // event bubble's.
+  function ymdAdd(ymd, days) {
+    var p = ymd.split("-"), d = new Date(Date.UTC(+p[0], p[1] - 1, +p[2] + days));
+    return d.toISOString().slice(0, 10);
+  }
+  function ymdDiff(from, to) {
+    var a = from.split("-"), b = to.split("-");
+    return Math.round((Date.UTC(+b[0], b[1] - 1, +b[2]) - Date.UTC(+a[0], a[1] - 1, +a[2])) / 86400000);
+  }
+  function hhmm(mins) {
+    var h = Math.floor(mins / 60), m = mins % 60;
+    return (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m;
+  }
+  function dayLabel(ymd) {
+    var p = ymd.split("-");
+    return new Date(+p[0], p[1] - 1, +p[2]).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  }
+
+  // hour is -1 for an all-day event. when is how the slot names its time.
+  function quickAdd(anchor, date, hour, when) {
+    closePeek(false);
+    var el = doc.createElement("div");
+    el.className = "event-peek event-quick-add";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-label", "New event");
+    var close = doc.createElement("button");
+    close.type = "button";
+    close.className = "peek-close";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "×";
+    close.addEventListener("click", function () { closePeek(true); });
+    var form = doc.createElement("form");
+    form.className = "event-quick-add-form";
+    var title = doc.createElement("input");
+    title.type = "text";
+    title.name = "summary";
+    title.maxLength = 500;
+    title.placeholder = "Add a title";
+    title.setAttribute("aria-label", "Title");
+    var whenLine = doc.createElement("p");
+    whenLine.className = "muted small";
+    whenLine.textContent = dayLabel(date) + " · " + (hour < 0 ? "All day" : when);
+    var problem = doc.createElement("p");
+    problem.className = "small event-quick-add-problem";
+    problem.hidden = true;
+    var actions = doc.createElement("div");
+    actions.className = "peek-actions";
+    var save = doc.createElement("button");
+    save.type = "submit";
+    save.className = "button primary";
+    save.textContent = "Save";
+    var more = doc.createElement("a");
+    more.className = "button";
+    more.textContent = "More options";
+    var full = function () {
+      var q = { new: "1", date: date };
+      if (hour < 0) q.allday = "1"; else q.hour = String(hour);
+      if (title.value.trim()) q.title = title.value.trim();
+      return "/calendar/event?" + new URLSearchParams(q);
+    };
+    more.href = full();
+    title.addEventListener("input", function () { more.href = full(); });
+    actions.append(save, more);
+    form.append(title, whenLine, problem, actions);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      save.disabled = true;
+      var f = { op: "save", summary: title.value.trim(), start_date: date, end_date: date,
+        reminder: "15", busy: "busy", ends: "never", interval: "1" };
+      if (hour < 0) {
+        f.allday = "1";
+      } else {
+        f.start_time = hhmm(hour * 60);
+        // An hour long; one starting at 23:00 ends at midnight, the next day.
+        if (hour === 23) { f.end_date = ymdAdd(date, 1); f.end_time = "00:00"; } else f.end_time = hhmm(hour * 60 + 60);
+      }
+      post("/calendar/event", f).then(function (r) {
+        if (!r.ok) throw new Error("not saved");
+        location.reload();
+      }).catch(function () {
+        save.disabled = false;
+        problem.textContent = "The event couldn't be saved. Try More options.";
+        problem.hidden = false;
+      });
+    });
+    el.append(close, form);
+    el.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { closePeek(true); e.preventDefault(); }
+      e.stopPropagation();
+    });
+    body.appendChild(el);
+    anchor.classList.add("picked");
+    peek = { el: el, from: anchor, onclose: function () { anchor.classList.remove("picked"); } };
+    placePeek();
+    title.focus();
+  }
+
+  doc.addEventListener("click", function (e) {
+    if (!csrf || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    var slot = e.target.closest(".daycol .slot");
+    if (slot) {
+      var col = slot.closest(".daycol[data-date]");
+      if (!col) return;
+      e.preventDefault();
+      var hour = +slot.getAttribute("data-hour");
+      var next = slot.nextElementSibling && slot.nextElementSibling.matches(".slot") ? slot.nextElementSibling : null;
+      var label = function (s) { return (s.getAttribute("aria-label") || "").replace(/^New event at /, ""); };
+      quickAdd(slot, col.getAttribute("data-date"), hour, label(slot) + (next ? " – " + label(next) : ""));
+      return;
+    }
+    // The empty part of a month day, or of a day in the week's all-day row.
+    var cell = e.target.closest(".month .day[data-date], .allday-row .cell[data-date]");
+    if (cell && !e.target.closest("a, button")) {
+      e.preventDefault();
+      quickAdd(cell, cell.getAttribute("data-date"), -1, "");
+    }
+  });
+
+  // ---- drag events to move or resize ----------------------------------------
+  // With a mouse, an event can be dragged to another time or day, and a
+  // timed event's bottom edge dragged to change when it ends. Touch keeps
+  // scrolling and uses the form instead: a drag there is a scroll. Nothing
+  // moves until the pointer has travelled a few pixels, so a click or a
+  // double click still opens the bubble or the event.
+  var drag = null, swallowClick = false;
+  $$(".daycol .ev[data-ctx=\"event\"]:not([data-readonly])").forEach(function (a) {
+    var h = doc.createElement("span");
+    h.className = "ev-resize";
+    h.setAttribute("aria-hidden", "true");
+    a.appendChild(h);
+  });
+  // A link drags its address natively, and once the browser starts that it
+  // cancels the pointer events this needs, so it's turned off up front.
+  // The hour slots are links too, and once the dragged event lets the
+  // pointer through, a native drag would start from the slot beneath it.
+  $$(".daycol " + EVENT + ", .month " + EVENT + ", .allday-row " + EVENT + ", .daycol .slot").forEach(function (a) { a.draggable = false; });
+  doc.addEventListener("dragstart", function (e) {
+    if (drag || (e.target.closest && e.target.closest(EVENT))) e.preventDefault();
+  });
+
+  function timeText(mins, like) {
+    var h = Math.floor(mins / 60) % 24, m = mins % 60, mm = (m < 10 ? "0" : "") + m;
+    if (/[ap]m/i.test(like)) return ((h + 11) % 12 + 1) + ":" + mm + (h < 12 ? " AM" : " PM");
+    return (h < 10 ? "0" : "") + h + ":" + mm;
+  }
+
+  doc.addEventListener("pointerdown", function (e) {
+    if (e.pointerType === "touch" || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || !csrf) return;
+    var a = e.target.closest(EVENT);
+    if (!a || a.hasAttribute("data-readonly") || !a.closest(".daycol, .month .day, .allday-row .cell")) return;
+    drag = { a: a, x0: e.clientX, y0: e.clientY, started: false, resize: e.target.classList.contains("ev-resize"),
+      grid: !!a.closest(".daycol"), home: a.parentElement, next: a.nextSibling };
+  });
+
+  function beginDrag(d) {
+    d.started = true;
+    closePeek(false);
+    var a = d.a;
+    a.classList.add("dragging");
+    body.classList.add("cal-dragging");
+    if (d.grid) {
+      var col = a.parentElement, r = a.getBoundingClientRect();
+      d.qh = col.getBoundingClientRect().height / 96;
+      d.q = Math.round(a.offsetTop / d.qh);
+      d.len = Math.max(1, Math.round(r.height / d.qh));
+      d.grab = d.y0 - r.top;
+      d.label = $(".t", a) ? $(".t", a).textContent : "";
+      // Out of its lane, full width, placed by pixels while it moves.
+      a.style.left = "2px"; a.style.right = "2px"; a.style.width = "auto";
+      a.style.top = d.q * d.qh + "px"; a.style.height = d.len * d.qh + "px";
+    } else {
+      d.from = d.home.getAttribute("data-date");
+    }
+  }
+
+  function dragTo(d, x, y) {
+    var a = d.a, under = doc.elementFromPoint(x, y);
+    if (d.grid) {
+      var col = under && under.closest(".daycol[data-date]");
+      if (col && col !== a.parentElement && !d.resize) col.appendChild(a);
+      var top = a.parentElement.getBoundingClientRect().top;
+      if (d.resize) {
+        d.len = Math.max(1, Math.min(96 - d.q, Math.round((y - top) / d.qh) - d.q));
+        a.style.height = d.len * d.qh + "px";
+      } else {
+        d.q = Math.max(0, Math.min(96 - d.len, Math.round((y - d.grab - top) / d.qh)));
+        a.style.top = d.q * d.qh + "px";
+      }
+      var t = $(".t", a);
+      if (t) t.textContent = timeText(d.q * 15, d.label) + (d.resize ? " – " + timeText((d.q + d.len) * 15, d.label) : "");
+    } else {
+      var cell = under && under.closest(".month .day[data-date], .allday-row .cell[data-date]");
+      if (cell && cell !== a.parentElement) cell.insertBefore(a, $(".more", cell));
+    }
+  }
+
+  function undoDrag(d) {
+    var a = d.a;
+    a.classList.remove("dragging");
+    body.classList.remove("cal-dragging");
+    d.home.insertBefore(a, d.next && d.next.parentNode === d.home ? d.next : null);
+    // Property by property: the CSP refuses a style attribute set whole.
+    ["left", "right", "width", "top", "height"].forEach(function (k) { a.style[k] = ""; });
+    if (d.grid && $(".t", a)) $(".t", a).textContent = d.label;
+  }
+
+  function dropDrag(d) {
+    var a = d.a;
+    a.classList.remove("dragging");
+    body.classList.remove("cal-dragging");
+    var f = { op: "move", uid: a.getAttribute("data-uid"), occ: a.getAttribute("data-occ"), owner: a.getAttribute("data-owner") || "" };
+    if (d.grid) {
+      var date = a.parentElement.getAttribute("data-date");
+      f.start_date = date;
+      f.start_time = hhmm(d.q * 15);
+      if (d.resize) {
+        var end = (d.q + d.len) * 15;
+        f.end_date = end >= 1440 ? ymdAdd(date, 1) : date;
+        f.end_time = hhmm(end % 1440);
+      }
+      if (!d.resize && d.home === a.parentElement && f.start_time === a.getAttribute("data-time")) { undoDrag(d); return; }
+    } else {
+      var shift = ymdDiff(d.from, a.parentElement.getAttribute("data-date"));
+      if (!shift) { undoDrag(d); return; }
+      f.start_date = ymdAdd(a.getAttribute("data-day"), shift);
+      if (!a.hasAttribute("data-allday")) f.start_time = a.getAttribute("data-time");
+    }
+    if (a.hasAttribute("data-recurring") && !window.confirm("This event repeats. Move only this occurrence?")) { undoDrag(d); return; }
+    if (a.hasAttribute("data-guests") && !window.confirm("Move this meeting? Its guests will be sent the new time.")) { undoDrag(d); return; }
+    post("/calendar/event", f).then(function (r) {
+      if (r.status === 204) { location.reload(); return; }
+      return r.text().then(function (msg) {
+        window.alert(msg || "The event couldn't be moved.");
+        if (r.ok) location.reload(); else undoDrag(d);
+      });
+    }).catch(function () {
+      window.alert("The event couldn't be moved. Check your connection and try again.");
+      undoDrag(d);
+    });
+  }
+
+  doc.addEventListener("pointermove", function (e) {
+    var d = drag;
+    if (!d) return;
+    if (!d.started) {
+      if (Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) < 5) return;
+      beginDrag(d);
+    }
+    e.preventDefault();
+    dragTo(d, e.clientX, e.clientY);
+  });
+  doc.addEventListener("pointerup", function () {
+    var d = drag;
+    drag = null;
+    if (!d || !d.started) return;
+    // The click this release makes isn't a click on the event.
+    swallowClick = true;
+    setTimeout(function () { swallowClick = false; }, 400);
+    dropDrag(d);
+  });
+  doc.addEventListener("pointercancel", function () { if (drag && drag.started) undoDrag(drag); drag = null; });
+  doc.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && drag && drag.started) { undoDrag(drag); drag = null; e.preventDefault(); }
+  });
+  doc.addEventListener("click", function (e) {
+    if (!swallowClick) return;
+    swallowClick = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+
+  // ---- drag messages onto a folder -----------------------------------------
+  // A message row dragged onto a folder in the sidebar moves there, and one
+  // dragged onto an inbox tab moves to that tab (and teaches it the sender,
+  // as the Tab button does), with the other ticked rows if it was one of
+  // them. Each posts the bulk action, so the page comes back with the usual
+  // notice.
+  var DRAG_TYPE = "application/x-elemta-messages";
+  doc.addEventListener("dragstart", function (e) {
+    var li = e.target.closest && e.target.closest(".messages li[data-uid]");
+    if (!li || !e.dataTransfer) return;
+    var list = li.closest("ol.messages"), box = $("input[name=uid]", li), uids;
+    if (box && box.checked) {
+      uids = $$("input[name=uid]:checked", list).map(function (i) { return i.value; });
+    } else {
+      uids = [li.getAttribute("data-uid")];
+    }
+    e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ folder: list.getAttribute("data-folder"), uids: uids, back: list.getAttribute("data-back") }));
+    e.dataTransfer.effectAllowed = "move";
+    var n = uids.join(",").split(",").length;
+    var ghost = doc.createElement("div");
+    ghost.className = "drag-ghost";
+    ghost.textContent = n === 1 ? "1 message" : n + " messages";
+    body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, 10, 10);
+    setTimeout(function () { ghost.remove(); }, 0);
+  });
+  // A folder in the sidebar, or one of the inbox tabs above the list.
+  function folderTarget(e) {
+    if (!e.dataTransfer || Array.prototype.indexOf.call(e.dataTransfer.types, DRAG_TYPE) < 0) return null;
+    return e.target.closest && e.target.closest("a.folder[data-folder], a.inbox-tab[data-category]");
+  }
+  doc.addEventListener("dragover", function (e) {
+    var f = folderTarget(e);
+    if (!f) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    $$(".drop-target").forEach(function (x) { if (x !== f) x.classList.remove("drop-target"); });
+    f.classList.add("drop-target");
+  });
+  doc.addEventListener("dragleave", function (e) {
+    var f = folderTarget(e);
+    if (f && !f.contains(e.relatedTarget)) f.classList.remove("drop-target");
+  });
+  doc.addEventListener("drop", function (e) {
+    var f = folderTarget(e);
+    if (!f) return;
+    e.preventDefault();
+    f.classList.remove("drop-target");
+    var m;
+    try { m = JSON.parse(e.dataTransfer.getData(DRAG_TYPE)); } catch (err) { return; }
+    if (!m || !m.uids.length) return;
+    var back = m.back || "/mail?f=" + encodeURIComponent(m.folder);
+    if (f.hasAttribute("data-category")) {
+      var cat = f.getAttribute("data-category"), current = currentTab();
+      if (cat !== current) submitPost("/mail/action", { f: m.folder, uid: m.uids, op: "category", category: cat, tab: current, back: back });
+      return;
+    }
+    var dest = f.getAttribute("data-folder");
+    if (dest === m.folder) return;
+    submitPost("/mail/action", { f: m.folder, uid: m.uids, op: "move", dest: dest, back: back });
+  });
+  doc.addEventListener("dragend", function () { $$(".drop-target").forEach(function (x) { x.classList.remove("drop-target"); }); });
+
+  // ---- swipe a message row (phones) ----------------------------------------
+  // On a phone the list has no hover toolbar and the checkboxes are small, so
+  // the two commonest actions go on a swipe: left archives (deletes in
+  // Archive and Trash, where archiving means nothing), right toggles read.
+  // Archive and delete come back with the Undo notice, which is what makes a
+  // gesture this easy to trigger acceptable. Touch only: a mouse already has
+  // drag to folder, and the row stays a link for a tap.
+  //
+  // The row slides over a strip that names the action. The strip sits in the
+  // list behind the row rather than inside it, because the row is what moves.
+  var SWIPE_START = 10, SWIPE_COMMIT = 0.3; // px to decide; share of width to act
+  var swipe = null;
+
+  function swipeAction(row, dx) {
+    var list = row.closest("ol.messages"), role = list.getAttribute("data-role");
+    if (dx < 0) {
+      if (role === "trash") return { op: "delete", label: "Delete", cls: "danger", leaves: true, confirm: "Delete this message for good?" };
+      if (role === "archive") return { op: "delete", label: "Delete", cls: "danger", leaves: true };
+      return { op: "archive", label: "Archive", cls: "accent", leaves: true };
+    }
+    var seen = row.hasAttribute("data-seen");
+    return { op: seen ? "unread" : "read", label: seen ? "Mark unread" : "Mark read", cls: "accent" };
+  }
+
+  function endSwipe(commit) {
+    var s = swipe;
+    swipe = null;
+    if (!s || !s.started) return;
+    var row = s.row, width = row.offsetWidth;
+    var act = commit ? swipeAction(row, s.dx) : null;
+    if (act && act.confirm && !window.confirm(act.confirm)) act = null;
+    row.classList.remove("swiping");
+    row.style.transition = "transform 0.18s ease-out";
+    row.style.transform = act && act.leaves ? "translateX(" + (s.dx < 0 ? -width : width) + "px)" : "";
+    // The tap that ends a swipe mustn't also open the message.
+    s.row.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); }, { capture: true, once: true });
+    setTimeout(function () {
+      s.hint.remove();
+      row.style.transition = "";
+      if (!act) { row.style.transform = ""; return; }
+      var list = row.closest("ol.messages");
+      submitPost("/mail/action", { f: list.getAttribute("data-folder"), uid: [row.getAttribute("data-uid")], op: act.op, back: list.getAttribute("data-back") });
+    }, 180);
+  }
+
+  doc.addEventListener("pointerdown", function (e) {
+    if (e.pointerType !== "touch" || !phone.matches || !csrf || swipe) return;
+    var row = e.target.closest && e.target.closest("ol.messages > li.row-wrap[data-uid]");
+    if (!row || e.target.closest("input, label, button")) return;
+    swipe = { row: row, id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, started: false };
+  });
+  doc.addEventListener("pointermove", function (e) {
+    var s = swipe;
+    if (!s || e.pointerId !== s.id) return;
+    var dx = e.clientX - s.x0, dy = e.clientY - s.y0;
+    if (!s.started) {
+      if (Math.abs(dy) > SWIPE_START && Math.abs(dy) >= Math.abs(dx)) { swipe = null; return; } // a scroll
+      if (Math.abs(dx) < SWIPE_START) return;
+      s.started = true;
+      var list = s.row.closest("ol.messages");
+      s.hint = doc.createElement("div");
+      s.hint.className = "swipe-hint";
+      s.hint.setAttribute("aria-hidden", "true");
+      s.hint.style.top = s.row.offsetTop + "px";
+      s.hint.style.height = s.row.offsetHeight + "px";
+      list.appendChild(s.hint);
+      s.row.classList.add("swiping");
+      try { s.row.setPointerCapture(e.pointerId); } catch (_) { /* already released */ }
+    }
+    s.dx = dx;
+    var act = swipeAction(s.row, dx), ready = Math.abs(dx) >= s.row.offsetWidth * SWIPE_COMMIT;
+    s.hint.textContent = act.label;
+    s.hint.className = "swipe-hint " + act.cls + (dx < 0 ? " to-left" : " to-right") + (ready ? " ready" : "");
+    s.row.style.transform = "translateX(" + dx + "px)";
+  });
+  doc.addEventListener("pointerup", function (e) {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    endSwipe(Math.abs(swipe.dx) >= swipe.row.offsetWidth * SWIPE_COMMIT);
+  });
+  // The browser took the touch for a scroll after all.
+  doc.addEventListener("pointercancel", function (e) {
+    if (swipe && e.pointerId === swipe.id) endSwipe(false);
   });
 
 })();

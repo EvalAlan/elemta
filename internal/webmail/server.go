@@ -49,6 +49,7 @@ type Server struct {
 	pushStreams  map[string]int
 	push         pushHub
 	pages        pageCache
+	sends        *sendQueue
 	tmpl         map[string]*template.Template
 	log          *slog.Logger
 	limiter      *loginLimiter
@@ -106,7 +107,7 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 	}
 	server := &Server{
 		passwords: passwords, mailSettings: mailSettings, recoveryMail: make(chan struct{}, 4),
-		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve,
+		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve, sends: newSendQueue(),
 		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now, dav: newDAVPool(),
 		defaultLoc: cfg.location(),
 	}
@@ -182,7 +183,7 @@ func (s *Server) Close() error {
 // newSessions builds the session manager the config asks for.
 func newSessions(cfg Config) (*SessionManager, error) {
 	if cfg.SessionStore != "valkey" {
-		return NewSessionManager(cfg.sessionTTL())
+		return NewSessionManager(cfg.idleTTL())
 	}
 	addr := cfg.ValkeyAddr
 	if addr == "" {
@@ -199,7 +200,7 @@ func newSessions(cfg Config) (*SessionManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewSharedSessionManager(cfg.sessionTTL(), key, store)
+	return NewSharedSessionManager(cfg.idleTTL(), key, store)
 }
 
 // Sessions exposes the session manager so the caller can run its sweeper.
@@ -212,6 +213,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServerFS(staticFiles()))))
 	// Pages link the SVG icon, but some browsers still ask for /favicon.ico.
 	mux.Handle("GET /favicon.ico", http.RedirectHandler(assetURL("favicon.svg"), http.StatusMovedPermanently))
+	// The service worker and the app manifest (webpush.go).
+	mux.HandleFunc("GET /sw.js", s.serviceWorker)
+	mux.HandleFunc("GET /manifest.webmanifest", s.manifest)
+	mux.HandleFunc("POST /settings/push", s.authed(s.pushSubscribe))
+	mux.HandleFunc("POST /settings/push/delete", s.authed(s.pushDelete))
+	mux.HandleFunc("POST /settings/push/test", s.authed(s.pushTest))
 	mux.HandleFunc("GET /forgot-password", s.forgotPage)
 	mux.HandleFunc("POST /forgot-password", s.forgotSubmit)
 	mux.HandleFunc("GET /reset-password", s.resetPage)
@@ -249,6 +256,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /mail/switch", s.authed(s.switchMailbox))
 	mux.HandleFunc("GET /compose", s.authed(s.composePage))
 	mux.HandleFunc("POST /compose", s.authed(s.composeSubmit))
+	mux.HandleFunc("POST /compose/undo", s.authed(s.undoSend))
 	mux.HandleFunc("GET /folders", s.authed(s.foldersPage))
 	mux.HandleFunc("POST /folders", s.authed(s.foldersSubmit))
 	mux.HandleFunc("GET /folders/retention", s.authed(s.folderRetentionGet))
@@ -358,6 +366,12 @@ func (s *Server) authed(next func(http.ResponseWriter, *http.Request, *Session))
 			http.Error(w, "This administrator session opens mail only.", http.StatusForbidden)
 			return
 		}
+		// The session's idle clock restarts with every request, so the
+		// cookie's does too: a remembered sign-in lasts from last use, not
+		// from signing in. GETs only, which every open page makes as it polls.
+		if r.Method == http.MethodGet && sess.AdminActor == "" && s.cfg.staySignedIn() > 0 {
+			s.setSessionCookie(w, sess)
+		}
 		if r.Method == http.MethodPost {
 			// Cap every request body: attachments plus room for the text
 			// fields and multipart overhead. Without the cap, a large upload
@@ -411,12 +425,20 @@ type view struct {
 	Query           string
 	List            *listState
 	Notice          string
-	Problem         string
-	Page            *Page
-	Message         *Message
-	Body            *sanitizeResult
-	Remote          bool
-	Tags            []string
+	// Undo puts back the move the notice reports, for a couple of minutes.
+	Undo *undoMove
+	// PendingSend is a message waiting out its undo delay (sendlater.go).
+	PendingSend *pendingNotice
+	// Later is scheduled send and snooze on the mail page (schedule.go).
+	Later *laterView
+	// SendFailures are delayed sends that didn't go, said once.
+	SendFailures []string
+	Problem      string
+	Page         *Page
+	Message      *Message
+	Body         *sanitizeResult
+	Remote       bool
+	Tags         []string
 	// InboxTabs is the tab bar over the inbox, when tabs are on.
 	InboxTabs []InboxTab
 	Thread    []Related
@@ -440,6 +462,8 @@ type view struct {
 	Clock24 bool
 	// MailSound is the new-mail tone, empty for none.
 	MailSound string
+	// ReminderSound is the event reminder tone, empty for none.
+	ReminderSound string
 	// TZSet is false until the user has a time zone, which tells the page
 	// to report the browser's.
 	TZSet bool
@@ -467,6 +491,10 @@ func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
 		// about their mail.
 		if pv.Session.AdminActor == "" {
 			pv.MailSound = cached.MailSound
+			pv.ReminderSound = cached.ReminderTone()
+			if s.sends != nil {
+				pv.SendFailures = s.sends.takeFailures(pv.Session.ID)
+			}
 		}
 		if pv.App == "" {
 			pv.App = "mail"
@@ -503,6 +531,11 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, sess *Session, err
 		return
 	case errors.Is(err, ErrTooLarge):
 		status, msg = http.StatusRequestEntityTooLarge, "This message is too large to show here. Download it instead."
+	case errors.Is(err, ErrUnreadable):
+		// Logged: a pattern of these is worth knowing about. The page says what
+		// happened rather than blaming the server, since trying again won't help.
+		s.log.Warn("webmail: message can't be parsed", "path", r.URL.Path, "user", sess.User, "error", err)
+		status, msg = http.StatusUnprocessableEntity, "This message is malformed and can't be shown here. You can still move or delete it from the message list."
 	default:
 		s.log.Warn("webmail: request failed", "path", r.URL.Path, "user", sess.User, "error", err)
 	}
@@ -527,9 +560,20 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"inbox-sorted":           "Your inbox is sorted into tabs.",
 	"tab-rule-removed":       "Tab rule removed.",
 	"moved":                  "Message moved.",
+	"undone":                 "Moved back.",
+	"sending":                "Sending.",
+	"send-undone":            "Not sent. The message is back in the editor, and saved in Drafts.",
+	"send-too-late":          "Too late to undo: that message has been sent.",
 	"moved-many":             "Messages moved.",
 	"archived":               "Message archived.",
 	"archived-many":          "Messages archived.",
+	"scheduled":              "Message scheduled. It waits in Scheduled until it goes.",
+	"rescheduled":            "Send time changed.",
+	"sending-now":            "Sending now.",
+	"snoozed":                "Message snoozed.",
+	"snoozed-many":           "Messages snoozed.",
+	"unsnoozed":              "Message is back.",
+	"unsnoozed-many":         "Messages are back.",
 	"emptied":                "Folder emptied.",
 	"all-read":               "All messages marked read.",
 	"loggedout":              "You've signed out.",
@@ -560,6 +604,9 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"pgp-unpublished":        "Your key is no longer published. Colleagues can still find it.",
 	"passkey-added":          "Passkey added. You can use it next time you sign in.",
 	"passkey-removed":        "Passkey removed.",
+	"push-saved":             "Notifications are on for this device.",
+	"push-off":               "Notifications are off for this device.",
+	"push-removed":           "That device won't get notifications any more.",
 	"calendar-unshared":      "Calendar sharing removed.",
 	"calendar-share-invalid": "Enter the address of someone in your domain, and an access level.",
 	"calendar-share-failed":  "That person couldn't be added. They must have an account in your domain.",
@@ -596,6 +643,8 @@ type loginView struct {
 	User     string
 	Problem  string
 	Notice   string
+	// StayDays is how many days a sign-in is remembered, 0 when it isn't.
+	StayDays int
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int) {
@@ -604,6 +653,18 @@ func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int
 		Name: name, Value: value, Path: "/", MaxAge: maxAge,
 		HttpOnly: true, Secure: *s.cfg.SecureCookies, SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// setSessionCookie gives the browser its session. A remembered sign-in's
+// cookie outlives the browser, for as long as the session lasts unused; an
+// administrator's look into a mailbox never does, since it expires on its own
+// clock anyway.
+func (s *Server) setSessionCookie(w http.ResponseWriter, sess *Session) {
+	maxAge := 0
+	if stay := s.cfg.staySignedIn(); stay > 0 && sess.AdminActor == "" {
+		maxAge = int(stay.Seconds())
+	}
+	s.setCookie(w, sessionCookie, sess.ID, maxAge)
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -626,7 +687,7 @@ func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int,
 		return
 	}
 	s.setCookie(w, preLoginCookie, token, 600)
-	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Passkeys: s.security != nil, Theme: themeFromCookie(r), Palette: paletteFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem})
+	s.render(w, "login.html", status, loginView{Recovery: s.recovery != nil, Passkeys: s.security != nil, Theme: themeFromCookie(r), Palette: paletteFromCookie(r), Token: token, User: user, Notice: notice, Problem: problem, StayDays: int(s.cfg.staySignedIn().Hours() / 24)})
 }
 
 func remoteHost(r *http.Request) string {
@@ -879,7 +940,7 @@ func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWrit
 		return false
 	}
 	s.setCookie(w, preLoginCookie, "", -1)
-	s.setCookie(w, sessionCookie, sess.ID, 0)
+	s.setSessionCookie(w, sess)
 	s.setAppearanceCookies(w, s.prefs(ctx, sess))
 	s.log.Info("webmail: login", "user", user, "ip", s.clientIP(r))
 	if actor == "" {

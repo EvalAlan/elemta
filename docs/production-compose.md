@@ -76,16 +76,70 @@ scripts/restore-drill.sh /var/backups/elemta/<that directory>
 ```
 
 A backup holds the mailbox (Postgres dump and message bodies), the
-directory, the MTA queue and runtime configuration, and `.secrets` (TLS and
-DKIM keys, service passwords and the key that encrypts users' two-step
-verification). Without the secrets a restore loses everyone's two-step
-setup. Set `BACKUP_AGE_RECIPIENT` to an [age](https://age-encryption.org)
-public key to encrypt them in the backup.
+directory, the MTA queue and runtime configuration, what the spam filter has
+learned, and `.secrets` (TLS and DKIM keys, service passwords, the key that
+encrypts users' two-step verification and the key that encrypts message
+bodies). Without the secrets a restore loses everyone's two-step setup and
+can't read encrypted mail. Set `BACKUP_AGE_RECIPIENT` to an
+[age](https://age-encryption.org) public key to encrypt them in the backup.
 
-It runs against the live stack; nothing stops. Schedule it (a systemd timer
-or cron, daily or more often), copy each backup off the host, and keep
-`[maintenance] body_grace_hours` in the mailbox configuration longer than
-the interval between backups.
+It runs against the live stack; nothing stops.
+
+With message bodies in a bucket, `BACKUP_BODIES=external` leaves them out:
+the backup is then a few megabytes whatever the size of the mail, and a
+restore points back at the bodies in the bucket. Only do that with
+versioning on for the bodies bucket and a lifecycle rule that keeps old
+versions at least as long as you keep backups, because the mailbox deletes
+a removed message's body `body_grace_hours` later and an older backup still
+refers to it.
+
+### Off-site
+
+`scripts/backup-offsite.sh` does all of it on a schedule: a backup with the
+bodies left in their bucket, a restore drill once a week, then the whole
+backup encrypted with age and uploaded to a separate bucket as it is
+encrypted, keeping every backup from the last 48 hours and the newest of
+each of the last 14 days and 8 weeks. `scripts/cloud-deploy.sh` installs it
+as the `elemta-backup` timer (every 6 hours: 03:00, 09:00, 15:00 and 21:00
+UTC) once this root-only file exists:
+
+```sh
+sudo install -m 600 -o root -g root /dev/null /etc/elemta/secrets/backup-storage.env
+sudoedit /etc/elemta/secrets/backup-storage.env
+```
+
+```
+BACKUP_S3_ENDPOINT=us-southeast-1.linodeobjects.com
+BACKUP_S3_REGION=us-southeast-1
+BACKUP_S3_BUCKET=example-backups
+BACKUP_S3_ACCESS_KEY_ID=...
+BACKUP_S3_SECRET_ACCESS_KEY=...
+BACKUP_AGE_RECIPIENT=age1...
+```
+
+- Use a bucket of its own, ideally in another region, with versioning on and
+  a lifecycle rule that expires old versions after a few weeks: pruning
+  then can't lose anything at once, and neither can someone who gets the
+  server's key.
+- Give the key access to that bucket only.
+- Make the age key pair on your own machine (`age-keygen -o backup.key`) and
+  put only the public key here. The private key is the only way to open a
+  backup: keep it off the server, in a password manager.
+
+The admin console's Health page shows when the last backup and drill ran and
+warns when a backup is more than a day and a half old, a run failed, or no
+drill has run for two weeks. `journalctl -u elemta-backup` has the detail;
+`sudo systemctl start elemta-backup` runs one now. `elemta backup list` (with
+the same settings in its environment) lists what's in the bucket.
+
+To restore from one, on any machine with the private key:
+
+```sh
+age -d -i backup.key elemta-20261106T030000Z.tar.gz.age | tar -xz
+scripts/restore.sh elemta-20261106T030000Z --confirm
+```
+
+Run `scripts/restore-drill.sh` on it first if you can.
 
 To get one person's mail back rather than restore the whole stack, use
 `scripts/mailbox-restore-account.sh`; see "Restoring one account" in
@@ -103,12 +157,26 @@ scripts/restore.sh /var/backups/elemta/<directory> --confirm
 ```
 
 It stops the MTA first, so mail arriving meanwhile waits at the sending
-servers and is retried, then restores the mailbox, directory, queue and
-configuration and starts everything again. On a new host: install Docker,
-check out the backup's release, decrypt the secrets archive if it is
-encrypted, and run it; with no `.secrets` yet it restores those first. Then
-run `scripts/cloud-deploy.sh` once so Caddy fetches a certificate and the
-renewal timer is installed.
+servers and is retried, then restores the mailbox, directory, queue,
+configuration and spam filter and starts everything again. Bodies kept in a
+bucket (`BACKUP_BODIES=external`) stay where they are.
+
+On a new host:
+
+1. Install Docker and check out the commit the backup records (`commit=` in
+   its `manifest`). Don't create `.secrets` yourself: the backup's hold the
+   body encryption key and the bucket settings, and fresh ones can't read
+   the mail.
+2. Run `scripts/restore.sh <directory> --confirm`. It puts the secrets back,
+   finds no stack yet, and stops, saying so.
+3. Run `scripts/cloud-deploy.sh`. It builds the images and starts an empty
+   stack with the restored secrets. That is safe with mail in a bucket: the
+   mailbox only deletes bodies its database records as unreferenced, and an
+   empty database records none.
+4. Run `scripts/restore.sh <directory> --confirm` again to restore the data.
+5. Point DNS at the new host, and put back
+   `/etc/elemta/secrets/backup-storage.env` (it isn't in the backup), then
+   run `scripts/cloud-deploy.sh` once more to install the backup timer.
 
 Drilled on the development server: a backup restored over the live stack came
 back with the same messages, flags and bodies (identical fingerprint), the

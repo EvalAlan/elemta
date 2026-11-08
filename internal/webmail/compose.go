@@ -56,7 +56,7 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 	prefs := s.prefs(r.Context(), sess)
 	choices := s.fromChoices(r.Context(), sess)
 	cv := &composeView{Mode: q.Get("mode"), To: q.Get("to"), Subject: q.Get("subject"), From: prefs.fromAddress(choices[0]), FromChoices: choices}
-	v := view{Title: "New message", Session: sess, Folder: q.Get("f"), Compose: cv}
+	v := view{Title: "New message", Session: sess, Folder: q.Get("f"), Compose: cv, Notice: notices[q.Get("n")]}
 	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		folders, err := st.Folders(r.Context())
 		if err != nil {
@@ -118,6 +118,7 @@ func (s *Server) composePage(w http.ResponseWriter, r *http.Request, sess *Sessi
 		cv.HTML = template.HTML(textToHTML(cv.Text))
 	}
 	composeCSP(w)
+	v.Later = s.composeLater(r.Context(), sess)
 	s.render(w, "compose.html", http.StatusOK, v)
 }
 
@@ -317,6 +318,9 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	cv.ShowCc = cv.Cc != "" || cv.Bcc != ""
 	saveDraft := r.PostFormValue("op") == "save"
 	v := view{Title: "New message", Session: sess, Compose: cv}
+	// Send later (schedule.go): the menu's preset, or "custom" with a time.
+	var sendAt time.Time
+	scheduling := !saveDraft && r.PostFormValue("schedule") != "" && s.laterOffered(sess)
 
 	again := func(status int, problem string) {
 		_ = s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
@@ -326,6 +330,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		cv.Suggestions = s.addressSuggestions(r.Context(), sess)
 		v.Problem = problem
 		composeCSP(w)
+		v.Later = s.composeLater(r.Context(), sess)
 		s.render(w, "compose.html", status, v)
 	}
 
@@ -452,7 +457,18 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	if !saveDraft {
 		s.stampOrigin(r.Context(), d)
 	}
-	raw, err := d.Build(s.now())
+	built := s.now()
+	if scheduling {
+		var err error
+		sendAt, err = parseLater(r.PostFormValue("schedule"), r.PostFormValue("schedule_at"), s.loc(sess), s.now())
+		if err != nil {
+			again(http.StatusBadRequest, "Pick a time in the future, within a year, to send it.")
+			return
+		}
+		// Dated when it goes, as it would be if sent by hand then.
+		built = sendAt
+	}
+	raw, err := d.Build(built)
 	if err != nil {
 		s.log.Error("webmail: build message", "error", err)
 		again(http.StatusInternalServerError, "The message couldn't be prepared. Try again.")
@@ -461,7 +477,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 
 	if saveDraft {
 		err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-			if err := st.Append(r.Context(), RoleDrafts, raw, true, true); err != nil {
+			if _, err := st.Append(r.Context(), RoleDrafts, raw, true, true); err != nil {
 				return err
 			}
 			return s.dropDraft(r.Context(), st, cv.DraftUID)
@@ -475,10 +491,43 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		return
 	}
 
+	if scheduling {
+		rcpts := d.Recipients()
+		if len(rcpts) == 0 {
+			again(http.StatusBadRequest, "Add a recipient.")
+			return
+		}
+		if err := s.scheduleSend(r.Context(), sess, fromAddress, rcpts, sendAt, raw); err != nil {
+			s.log.Warn("webmail: schedule send", "user", sess.User, "error", err)
+			again(http.StatusBadGateway, laterProblem(err, "Scheduling")+" The message hasn't been lost.")
+			return
+		}
+		// It lives in Scheduled now; the draft it came from goes, as on Send.
+		if err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
+			return s.dropDraft(r.Context(), st, cv.DraftUID)
+		}); err != nil {
+			s.log.Warn("webmail: remove scheduled draft", "user", sess.User, "error", err)
+		}
+		s.rememberRecipients(r.Context(), sess, d)
+		http.Redirect(w, r, folderURL("INBOX", 1, "")+"&n=scheduled", http.StatusSeeOther)
+		return
+	}
+
 	pw, err := s.sessions.password(sess)
 	if err != nil {
 		s.sessions.Destroy(sess.ID)
 		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	// Undo send: saved to Drafts and sent when the delay is up (sendlater.go).
+	if delay := prefs.UndoSendSeconds(); delay > 0 {
+		p, err := s.queueSend(r.Context(), sess, pw, fromAddress, d, raw, cv, time.Duration(delay)*time.Second)
+		if err != nil {
+			s.log.Warn("webmail: queue send", "user", sess.User, "error", err)
+			again(http.StatusBadGateway, "The message couldn't be sent. It hasn't been lost: try Send again.")
+			return
+		}
+		http.Redirect(w, r, folderURL("INBOX", 1, "")+"&n=sending&send="+p.id, http.StatusSeeOther)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
@@ -495,7 +544,7 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 	s.logSent(r.Context(), sess, d, "message")
 	notice := "sent"
 	if err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
-		if err := st.Append(r.Context(), RoleSent, raw, true, false); err != nil {
+		if _, err := st.Append(r.Context(), RoleSent, raw, true, false); err != nil {
 			return err
 		}
 		// Housekeeping after a successful send. Failures here don't undo

@@ -12,9 +12,9 @@
   </div>
   {{if $.Problem}}<p class="problem" role="alert">{{$.Problem}}</p>{{end}}
   {{if gt (len .FromChoices) 1}}
-  <div class="field"><label class="field-label" for="from">From</label><select id="from" name="from">{{range .FromChoices}}<option value="{{.}}"{{if eq . $.Compose.From.Email}} selected{{end}}>{{if $.Compose.From.Name}}{{$.Compose.From.Name}} &lt;{{.}}&gt;{{else}}{{.}}{{end}}</option>{{end}}</select><a class="small push" href="/settings">Change name or signature</a></div>
+  <div class="field compose-from"><label class="field-label" for="from">From</label><select id="from" name="from">{{range .FromChoices}}<option value="{{.}}"{{if eq . $.Compose.From.Email}} selected{{end}}>{{if $.Compose.From.Name}}{{$.Compose.From.Name}} &lt;{{.}}&gt;{{else}}{{.}}{{end}}</option>{{end}}</select><a class="small push" href="/settings">Change name or signature</a></div>
   {{else}}
-  <div class="field"><span class="field-label">From</span><span>{{if .From.Name}}{{.From.Name}} <span class="mono muted">&lt;{{.From.Email}}&gt;</span>{{else}}<span class="mono">{{.From.Email}}</span>{{end}}</span><a class="small push" href="/settings">Change name or signature</a></div>
+  <div class="field compose-from"><span class="field-label">From</span><span>{{if .From.Name}}{{.From.Name}} <span class="mono muted">&lt;{{.From.Email}}&gt;</span>{{else}}<span class="mono">{{.From.Email}}</span>{{end}}</span><a class="small push" href="/settings">Change name or signature</a></div>
   {{end}}
   <div class="field"><label class="field-label" for="to">To</label><input id="to" name="to" type="text" value="{{.To}}" autocomplete="off" data-addresses></div>
   <details class="field-group"{{if .ShowCc}} open{{end}}>
@@ -48,7 +48,7 @@
         <button type="button" class="tb" data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
         <button type="button" class="tb" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
         <label class="tb tb-color" title="Text colour"><span class="tb-a">A</span><input type="color" data-color="foreColor" value="#c0392b" aria-label="Text colour"></label>
-        <label class="tb tb-color" title="Highlight"><span class="tb-hl">▮</span><input type="color" data-color="hiliteColor" value="#fff176" aria-label="Highlight colour"></label>
+        <label class="tb tb-color" title="Highlight"><span class="tb-hl" aria-hidden="true">▮</span><input type="color" data-color="hiliteColor" value="#fff176" aria-label="Highlight colour"></label>
       </span>
       <span class="tb-group">
         <button type="button" class="tb" data-cmd="justifyLeft" title="Align left">⯇</button>
@@ -102,6 +102,18 @@
   <div class="field" data-pgp-passphrase hidden><label class="field-label" for="pgp-unlock">Passphrase</label><input id="pgp-unlock" name="pgp_passphrase" type="password" autocomplete="off"></div>
   <div class="actions">
     <button class="button primary" type="submit" name="op" value="send" data-submit-key>Send</button>
+    {{with $.Later}}{{if .Schedule}}
+    <details class="menu send-later">
+      <summary class="button" title="Send later">{{template "icon-clock"}}<span class="tb-label">Send later</span></summary>
+      <div class="menu-body">
+        <p class="small muted">Send it</p>
+        {{range .Schedule}}<button class="menu-item" type="submit" name="schedule" value="{{.Value}}">{{.Label}} <span class="muted">{{.When}}</span></button>{{end}}
+        <label class="small muted" for="schedule-at">Or pick a date and time</label>
+        <input id="schedule-at" type="datetime-local" name="schedule_at">
+        <button class="button" type="submit" name="schedule" value="custom">Schedule</button>
+      </div>
+    </details>
+    {{end}}{{end}}
     <button class="button" type="submit" name="op" value="save" formnovalidate>Save draft</button>
     <a class="button ghost danger push" href="/mail" data-discard>Discard</a>
   </div>

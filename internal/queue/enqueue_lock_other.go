@@ -130,3 +130,10 @@ func acquireEnqueueLock(path string) (func(), error) {
 		time.Sleep(enqueueLockPoll)
 	}
 }
+
+// enqueueLockIdleAge mirrors the Linux bound; see enqueue_lock_linux.go.
+const enqueueLockIdleAge = time.Hour
+
+// pruneEnqueueLocks is a no-op here: these locks are claim directories that
+// are removed when released and recovered when stale, so they don't pile up.
+func pruneEnqueueLocks(string, time.Time) (int, error) { return 0, nil }

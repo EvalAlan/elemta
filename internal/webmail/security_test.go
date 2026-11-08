@@ -15,11 +15,17 @@ import (
 
 // fakeSecurity stands in for the mailbox service's account-security API.
 type fakeSecurity struct {
-	mu          sync.Mutex
-	totp        bool
-	appRequired bool
-	codeUsed    bool
-	created     []string
+	mu sync.Mutex
+	// Web Push (webpush.go): the key ("" is push off), the devices, and
+	// what was asked of it.
+	pushKey       string
+	pushDevices   []pushDevice
+	pushCalls     []map[string]any
+	pushReminders []any
+	totp          bool
+	appRequired   bool
+	codeUsed      bool
+	created       []string
 	// The class of service the check reports.
 	protocols        map[string]bool
 	requireTwoFactor bool
@@ -47,6 +53,11 @@ type fakeSecurity struct {
 	calendarDenied  bool
 	// Inbox tab rules.
 	categories []categoryRule
+	// Scheduled send and snooze: what was asked, and what the lists return.
+	laterCalls []map[string]any
+	scheduled  []scheduledItem
+	snoozed    []snoozedItem
+	laterErr   string
 }
 
 func (f *fakeSecurity) handler(t *testing.T) http.Handler {
@@ -173,6 +184,50 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 			return
 		case r.URL.Path == "/v1/directory":
 			_ = json.NewEncoder(w).Encode(f.directory)
+			return
+		case r.URL.Path == "/v1/push":
+			devices := f.pushDevices
+			if devices == nil {
+				devices = []pushDevice{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"key": f.pushKey, "devices": devices})
+			return
+		case r.URL.Path == "/v1/push/reminders":
+			f.pushReminders, _ = in["reminders"].([]any)
+			_ = json.NewEncoder(w).Encode(map[string]int{"stored": len(f.pushReminders)})
+			return
+		case strings.HasPrefix(r.URL.Path, "/v1/push/"):
+			if in == nil {
+				in = map[string]any{}
+			}
+			in["path"] = r.Method + " " + r.URL.Path
+			f.pushCalls = append(f.pushCalls, in)
+			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+			return
+		case r.URL.Path == "/v1/scheduled" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"folder": "Scheduled", "scheduled": f.scheduled})
+			return
+		case r.URL.Path == "/v1/snooze" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"folder": "Snoozed", "snoozed": f.snoozed})
+			return
+		case strings.HasPrefix(r.URL.Path, "/v1/scheduled") || strings.HasPrefix(r.URL.Path, "/v1/snooze"):
+			if in == nil {
+				in = map[string]any{}
+			}
+			in["path"] = r.URL.Path
+			f.laterCalls = append(f.laterCalls, in)
+			if f.laterErr != "" {
+				http.Error(w, f.laterErr, http.StatusBadRequest)
+				return
+			}
+			switch r.URL.Path {
+			case "/v1/snooze":
+				_ = json.NewEncoder(w).Encode(map[string]any{"folder": "Snoozed", "uids": []int{41}})
+			case "/v1/scheduled/cancel":
+				_ = json.NewEncoder(w).Encode(map[string]any{"folder": "Drafts", "uid": 52})
+			default:
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "uid": 9})
+			}
 			return
 		case r.URL.Path == "/v1/freebusy" && r.Method == http.MethodPut:
 			f.published = in

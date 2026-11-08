@@ -85,7 +85,13 @@ func runWebmail(cmd *cobra.Command, args []string) error {
 	logger.Info("webmail: shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	return httpSrv.Shutdown(shutdownCtx)
+	err = httpSrv.Shutdown(shutdownCtx)
+	// Messages people pressed Send on and that are waiting out their undo
+	// delay go now, rather than being left in Drafts by a deploy.
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelFlush()
+	srv.FlushPendingSends(flushCtx)
+	return err
 }
 
 var webmailResetCmd = &cobra.Command{

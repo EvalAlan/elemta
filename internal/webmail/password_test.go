@@ -60,11 +60,18 @@ func TestChangePassword(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "password-changed") {
 		t.Fatalf("change = %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	// The session now holds the new password, for redialling IMAP.
+	// This browser carries on in a fresh session that holds the new
+	// password, for redialling IMAP; the old one has ended.
 	sess := onlySession(t, h)
 	if pw, _ := h.server.sessions.password(sess); pw != "correct horse battery" {
 		t.Fatalf("session password = %q", pw)
 	}
+	_, page = h.get("/settings/account")
+	m := hiddenRE("csrf").FindStringSubmatch(page)
+	if m == nil {
+		t.Fatal("signed out by changing the password")
+	}
+	csrf = m[1]
 
 	// Guessing the current password through this form is throttled.
 	for i := 0; i < maxFailuresPerUser; i++ {

@@ -160,11 +160,7 @@ func (s *Server) passwordSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		s.renderProblem(w, r, sess, http.StatusBadGateway, "The password couldn't be changed. Try again later.")
 		return
 	}
-	// This session carries on with the new password. Other sessions keep
-	// working until their mail connection is redialled, then sign out.
-	if err := s.sessions.UpdatePassword(sess, next); err != nil {
-		s.log.Warn("webmail: reseal session password", "user", sess.User, "error", err)
-	}
+	s.signOutOthers(ctx, w, sess, next)
 	s.log.Info("webmail: password changed", "user", sess.User, "ip", s.clientIP(r))
 	http.Redirect(w, r, "/settings/account?n=password-changed#password", http.StatusSeeOther)
 }
@@ -191,4 +187,36 @@ func (l ldapPasswords) ResetPassword(ctx context.Context, user, next string) err
 		return fmt.Errorf("webmail: LDAP password reset: %w", err)
 	}
 	return nil
+}
+
+// signOutOthers ends every session of the account after a password change,
+// and carries this browser on in a fresh one with the new password.
+// Sign-ins are remembered for weeks, so one left on a lost laptop or a
+// shared computer would otherwise keep reading mail long after the password
+// that opened it was changed; changing the password is what people do when
+// they fear that. The revocation is the one password recovery uses: any
+// session made before it is refused, on every pod. If it can't be recorded,
+// this session is resealed with the new password as before, so the person
+// changing it isn't signed out, and the failure is logged.
+func (s *Server) signOutOthers(ctx context.Context, w http.ResponseWriter, sess *Session, password string) {
+	if err := s.sessions.RevokeUser(ctx, sess.Address); err != nil {
+		s.log.Warn("webmail: sign out other sessions after password change", "user", sess.User, "error", err)
+		if err := s.sessions.UpdatePassword(sess, password); err != nil {
+			s.log.Warn("webmail: reseal session password", "user", sess.User, "error", err)
+		}
+		return
+	}
+	s.pages.forget(sess.ID)
+	fresh, err := s.sessions.Create(sess.User, sess.Address, password, nil)
+	if err != nil {
+		// Signed out with the rest; the sign-in page takes the new password.
+		s.log.Warn("webmail: new session after password change", "user", sess.User, "error", err)
+		return
+	}
+	if sess.Mailbox != "" {
+		if err := s.sessions.SetMailbox(ctx, fresh, sess.Mailbox); err != nil {
+			s.log.Warn("webmail: keep selected mailbox after password change", "user", sess.User, "error", err)
+		}
+	}
+	s.setSessionCookie(w, fresh)
 }

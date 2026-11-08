@@ -1,7 +1,8 @@
 #!/bin/sh
 # Backs up the whole Compose stack while it runs:
 #
-#   mailbox/   Postgres metadata and message bodies (scripts/mailbox-backup.sh)
+#   mailbox/   Postgres metadata and message bodies (scripts/mailbox-backup.sh);
+#              BACKUP_BODIES=external leaves the bodies in a versioned bucket
 #   objects/   webmail's calendars, contacts, tasks and settings, when they are
 #              in their own database (docs/webmail-object-storage.md). By
 #              default they are messages in the mailbox and need nothing here.
@@ -9,9 +10,14 @@
 #              its configuration for reference (restores create a fresh one)
 #   mta/       the MTA's queue (mail accepted but not yet delivered) and the
 #              runtime configuration the dashboard saves, with its users file
+#   rspamd/    what the spam filter has learned (its Valkey, with the Bayes
+#              tokens trained from Junk moves) and its own data directory.
+#              Weeks of training, which a fresh install starts without
 #   secrets.tar.gz  deployments/compose/.secrets: TLS and DKIM keys, service
-#              passwords, the TOTP encryption key. Without it the mailbox
-#              can't decrypt anyone's two-step verification.
+#              passwords, the TOTP encryption key, the message body key.
+#              Without it the mailbox can't decrypt anyone's two-step
+#              verification, or an encrypted body. The re-downloadable
+#              location database (.secrets/geoip) is left out.
 #
 #   scripts/backup.sh <new directory>
 #
@@ -72,10 +78,26 @@ for v in elemta_queue elemta_config; do
         -c 'tar --warning=no-file-changed -C /v -czf - .; [ $? -le 1 ]' >"$stage/mta/$v.tar.gz"
 done
 
+rspamd_valkey=$(svc_container rspamd-valkey)
+if docker inspect "$rspamd_valkey" >/dev/null 2>&1; then
+    echo "== Spam filter"
+    mkdir "$stage/rspamd"
+    # SAVE, not BGSAVE: it returns once the snapshot is on disk, so the copy
+    # below holds what Rspamd has learned up to now.
+    docker exec "$rspamd_valkey" valkey-cli SAVE >/dev/null
+    for v in rspamd_valkey_data rspamd_data; do
+        # As root: the files belong to the Rspamd and Valkey users.
+        docker run --rm --network none --user 0 --entrypoint sh -v "${volumes}_$v:/v:ro" "$image" \
+            -c 'tar --warning=no-file-changed --exclude="*.sock" -C /v -czf - .; [ $? -le 1 ]' >"$stage/rspamd/$v.tar.gz"
+    done
+fi
+
 echo "== Secrets"
 # In a container as root: the DKIM keys belong to the container user, so
 # the host user deploying the stack can't read them itself.
-docker run --rm --network none --user 0 --entrypoint tar -v "$secrets:/.secrets:ro" "$image" -C / -czf - .secrets >"$stage/secrets.tar.gz"
+# Not the location database for sign-in alerts: over 100 MB, and the deploy
+# downloads it again (scripts/cloud-deploy.sh).
+docker run --rm --network none --user 0 --entrypoint tar -v "$secrets:/.secrets:ro" "$image" -C / --exclude=.secrets/geoip -czf - .secrets >"$stage/secrets.tar.gz"
 if [ -n "${BACKUP_AGE_RECIPIENT:-}" ]; then
     age -r "$BACKUP_AGE_RECIPIENT" -o "$stage/secrets.tar.gz.age" "$stage/secrets.tar.gz"
     rm "$stage/secrets.tar.gz"
@@ -86,6 +108,11 @@ fi
     # From a mailbox replica: they run throughout, while the MTA may have
     # been stopped for a quiet backup.
     echo "version=$(docker exec "$mailbox" /app/elemta version 2>/dev/null | tail -1)"
+    # The exact source, so a restore on a new host checks out the same code:
+    # from a git checkout, or from COMMIT, which git archive fills in.
+    commit=$(git -C "$root" rev-parse HEAD 2>/dev/null || true)
+    [ -n "$commit" ] || commit=$(sed -n '/^[0-9a-f]\{40\}$/p' "$root/COMMIT" 2>/dev/null || true)
+    echo "commit=${commit:-unknown}"
     echo "ldap_entries=$(grep -c '^dn: ' "$stage/ldap/data.ldif")"
     (cd "$stage" && find . -type f ! -name manifest ! -name complete ! -path './mailbox/*' | sort | while read -r f; do
         echo "sha256 $(sha256sum "$f" | cut -d ' ' -f 1) $f"

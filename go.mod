@@ -4,6 +4,7 @@ go 1.26.10
 
 require (
 	blitiri.com.ar/go/spf v1.6.0
+	filippo.io/age v1.2.1
 	github.com/BurntSushi/toml v1.6.0
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/chromedp/cdproto v0.158.6
@@ -24,7 +25,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/holidays/go-holidays v1.1.0
-	github.com/klauspost/compress v1.20.1
+	github.com/klauspost/compress v1.20.2
 	github.com/lib/pq v1.12.3
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/microcosm-cc/bluemonday v1.0.27

@@ -1,0 +1,45 @@
+# Cell a's mailbox service (cells.yaml). Every listener the router uses
+# takes a PROXY header from the pod network, where the routers are, so
+# the cell sees each client's own address.
+[server]
+imap_listen = ":1143"
+pop3_listen = ":1110"
+lmtp_listen = ":2424"
+http_listen = ":8080"
+imaps_listen = ":10993"
+# The dev directory has no TLS. Public listeners still require TLS first.
+allow_plaintext_auth = true
+tls_cert = "/etc/elemta/tls/cert.pem"
+tls_key = "/etc/elemta/tls/key.pem"
+lmtp_allowed_networks = ["10.42.0.0/16", "127.0.0.0/8"]
+proxy_protocol_from = ["10.42.0.0/16"]
+
+# This service is cell a, and serves only mailboxes placed in it (and,
+# as the default cell, those placed nowhere).
+[cell]
+name = "a"
+default = true
+
+[metadata]
+dsn_env = "ELEMTA_CELL_A_DSN"
+max_connections = 20
+
+[bodies]
+driver = "file"
+root = "/var/lib/elemta/bodies-a"
+
+[auth]
+ldap_url = "ldap://elemta-ldap:389"
+ldap_base = "ou=people,dc=example,dc=com"
+ldap_user_filter = "(&(objectClass=posixAccount)(mail=%s))"
+default_domain = "a.test"
+cache_seconds = 30
+
+[limits]
+max_connections = 20000
+max_message_mb = 25
+max_concurrent_bodies = 8
+
+[sieve]
+listen = ":4190"
+hostname = "mail.example.com"

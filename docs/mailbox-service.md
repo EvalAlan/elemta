@@ -72,6 +72,24 @@ optional.
   that doesn't name the user, sent from the null sender. Redirects and
   replies are submitted to `sieve.submit_addr`; without it they are skipped
   and logged.
+- Scheduled send and snooze (`scheduled.go`), on the account-security API
+  with the user's own credentials. `POST /v1/scheduled` stores a message in
+  the account's Scheduled folder with its envelope and send time;
+  `GET /v1/scheduled`, `/reschedule` and `/cancel` (back to Drafts) manage
+  it. `POST /v1/snooze` moves messages to Snoozed until a time, and
+  `/v1/snooze/cancel` brings them back. Every mailbox server checks every 15
+  seconds for what's due, claiming rows so only one acts on each. A
+  scheduled message goes out through `sieve.submit_addr`, so without it the
+  API refuses to schedule; the account's right to send as the From address
+  is checked again at send time. A temporary failure is retried for about
+  two hours; a refusal, or the last retry, puts the message back in Drafts
+  with a note in the inbox. Deleting or moving a message out of Scheduled
+  or Snoozed, from any client, cancels it (a foreign key ties the row to
+  the message). Sending is at least once: a server that dies mid-send
+  leaves the message to be sent again five minutes later. Moving an
+  account to another cell (`mailbox move-account`) carries what is
+  scheduled and snoozed; the source cell stops acting on them once the
+  account there is read-only.
 - The company address book and free/busy, on the account-security API with
   the user's own credentials and limited to their own domain.
   `GET /v1/directory` lists the domain's active accounts (from LDAP, with
@@ -92,6 +110,26 @@ optional.
   Before acknowledgment, a post-commit WAL barrier on the original primary
   connection verifies that the configured number of synchronous standbys
   flushed the commit. This also covers uncertain commit-wait cancellation.
+
+## Idle sessions and the directory, at scale
+
+- **IDLE waits for a notification.** A trigger on `mailbox_folders` sends a
+  Postgres notification whenever a folder changes, from any writer. Each
+  mailbox server holds one LISTEN connection and wakes only the sessions
+  watching that folder, so an idle session costs the database nothing.
+  - Sessions also check on their own every five minutes or so, in case a
+    notification was lost.
+  - If the LISTEN connection is down, they fall back to checking every second,
+    as before, and the log says so.
+- **Directory connections are pooled**, and answers are cached for
+  `[auth] cache_seconds`, 30 by default (`-1` turns caching off). The cache
+  holds what the directory says about an address, and that a password was
+  accepted, keyed by an HMAC, never the password itself.
+  - A changed password, suspension or forward takes up to that long to apply
+    everywhere.
+  - A wrong password is never cached.
+
+Past one database, see [Mailbox cells](mailbox-cells.md).
 
 ## Daily Compose development
 

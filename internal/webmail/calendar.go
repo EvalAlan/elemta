@@ -194,6 +194,11 @@ func (s *Server) calendarPage(w http.ResponseWriter, r *http.Request, sess *Sess
 		if view == "" {
 			view = "month"
 		}
+		// Seven days across a phone are slivers too narrow to read; it opens
+		// on the day instead, and Week is still a tap away.
+		if view == "week" && phoneUA(r.UserAgent()) {
+			view = "day"
+		}
 	}
 	events, err := s.calendarEvents(r.Context(), sess, loc)
 	if err != nil {
@@ -279,6 +284,23 @@ func (s *Server) buildCalendar(view string, date, today, now time.Time, prefs Se
 	}
 	cv.Calendars = calendarNames(events)
 	cv.NowQ = now.Hour()*4 + now.Minute()/15
+	// Occurrences come out of expand in each event's own zone: UTC for one
+	// saved before the user picked a time zone, the organizer's for an
+	// invitation, whatever an imported file said. The grid reads the hour
+	// and minute off them for the time label and its place in the day, so
+	// they're moved into the viewer's zone first, or a meeting set in London
+	// is drawn at London's hour while its event page, which converts, says
+	// otherwise. All-day events are dates, not instants, and stay as they are.
+	loc := date.Location()
+	inView := func(events []Event, from, to time.Time) []Occurrence {
+		occs := expand(events, from, to)
+		for i := range occs {
+			if !occs[i].Event.AllDay {
+				occs[i].Start, occs[i].End = occs[i].Start.In(loc), occs[i].End.In(loc)
+			}
+		}
+		return occs
+	}
 
 	item := func(o Occurrence, day time.Time) calItem {
 		it := calItem{Occ: o, Class: calClass(o.Event.Calendar), URL: occurrenceURL(o.Event, o.Start)}
@@ -320,7 +342,7 @@ func (s *Server) buildCalendar(view string, date, today, now time.Time, prefs Se
 		for d := gridStart; d.Before(gridEnd); d = d.AddDate(0, 0, 1) {
 			days = append(days, calDay{Date: d, Other: d.Month() != date.Month(), Today: sameDay(d, today), URL: calURL("day", d), NewURL: newEventURL(d, -1)})
 		}
-		fill(days, expand(events, gridStart, gridEnd))
+		fill(days, inView(events, gridStart, gridEnd))
 		for i := range days {
 			// Month cells hold three items; the rest is a "+N more" link.
 			all := append(days[i].AllDay, days[i].Timed...)
@@ -357,7 +379,7 @@ func (s *Server) buildCalendar(view string, date, today, now time.Time, prefs Se
 			d := start.AddDate(0, 0, i)
 			cv.Days = append(cv.Days, calDay{Date: d, Today: sameDay(d, today), URL: calURL("day", d), NewURL: newEventURL(d, -1)})
 		}
-		fill(cv.Days, expand(events, start, start.AddDate(0, 0, n)))
+		fill(cv.Days, inView(events, start, start.AddDate(0, 0, n)))
 		earliest := 24
 		for i := range cv.Days {
 			layoutDay(cv.Days[i].Timed, cv.Days[i].Date)
@@ -381,7 +403,7 @@ func (s *Server) buildCalendar(view string, date, today, now time.Time, prefs Se
 		for d := start; d.Before(end); d = d.AddDate(0, 0, 1) {
 			days = append(days, calDay{Date: d, Today: sameDay(d, today), URL: calURL("day", d)})
 		}
-		fill(days, expand(events, start, end))
+		fill(days, inView(events, start, end))
 		for _, d := range days {
 			if len(d.AllDay)+len(d.Timed) > 0 {
 				d.AllDay = append(d.AllDay, d.Timed...)
@@ -970,6 +992,9 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 	case "delete", "delete-occurrence":
 		s.deleteEventSubmit(w, r, sess, owner, acting, delegated, events, op == "delete-occurrence")
 		return
+	case "move":
+		s.moveEventSubmit(w, r, sess, owner, acting, delegated, events)
+		return
 	case "save":
 	default:
 		s.fail(w, r, sess, ErrNotFound)
@@ -1067,6 +1092,103 @@ func (s *Server) eventSubmit(w http.ResponseWriter, r *http.Request, sess *Sessi
 		}
 	}
 	http.Redirect(w, r, sharedEventURL(eventURL(e.UID, time.Time{}), owner)+"&n="+notice, http.StatusSeeOther)
+}
+
+// moveEventSubmit moves an event dragged on the calendar: to a new start,
+// keeping its length, or, when its end was dragged, to a new end. It's a
+// separate operation rather than a save of the edit form because the page
+// knows only the event's place on the grid; rebuilding the whole form from
+// that would risk dropping fields the form doesn't carry. Times are dates
+// and clock times in the viewer's zone, as the form sends them, so a move
+// across a daylight-saving change keeps the clock time the user dropped it
+// at. The page gets a status and a short message, not a page.
+func (s *Server) moveEventSubmit(w http.ResponseWriter, r *http.Request, sess *Session, owner, acting string, delegated bool, events []Event) {
+	refuse := func(status int, msg string) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(msg))
+	}
+	loc := s.loc(sess)
+	existing := findEvent(events, r.PostFormValue("uid"))
+	if existing == nil || existing.ReadOnly {
+		refuse(http.StatusNotFound, "This event can't be moved here. Open it to see why.")
+		return
+	}
+	if existing.HasAttendees() && (!existing.IsOrganizer(acting) || owner != "" && !delegated) {
+		refuse(http.StatusConflict, "Only the organizer can move this meeting.")
+		return
+	}
+	occ := existing.Start
+	if n, err := strconv.ParseInt(r.PostFormValue("occ"), 10, 64); err == nil && n != 0 {
+		occ = time.Unix(n, 0).In(existing.Start.Location())
+	}
+	day, err := time.ParseInLocation("2006-01-02", r.PostFormValue("start_date"), loc)
+	if err != nil {
+		refuse(http.StatusBadRequest, "Choose a day to move it to.")
+		return
+	}
+	e := *existing
+	if e.AllDay {
+		days := int(e.End.Sub(e.Start).Hours()/24 + 0.5)
+		e.Start = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, e.Start.Location())
+		e.End = e.Start.AddDate(0, 0, max(days, 1))
+	} else {
+		clockAt := func(dateField, timeField string) (time.Time, bool) {
+			d, err1 := time.ParseInLocation("2006-01-02", r.PostFormValue(dateField), loc)
+			t, err2 := time.Parse("15:04", r.PostFormValue(timeField))
+			if err1 != nil || err2 != nil {
+				return time.Time{}, false
+			}
+			return time.Date(d.Year(), d.Month(), d.Day(), t.Hour(), t.Minute(), 0, 0, loc), true
+		}
+		start, ok := clockAt("start_date", "start_time")
+		if !ok {
+			refuse(http.StatusBadRequest, "Choose a time to move it to.")
+			return
+		}
+		end := start.Add(existing.Duration())
+		if r.PostFormValue("end_date") != "" {
+			if end, ok = clockAt("end_date", "end_time"); !ok || !end.After(start) {
+				refuse(http.StatusBadRequest, "The event has to end after it starts.")
+				return
+			}
+		}
+		if end.Sub(start) > 366*24*time.Hour {
+			refuse(http.StatusBadRequest, "Events can last at most a year.")
+			return
+		}
+		e.Start, e.End = start, end
+	}
+	ctx := r.Context()
+	if existing.Recurring() {
+		// A dragged occurrence moves on its own, as an edit of "this one"
+		// does: cut out of the series and saved as an event of its own.
+		series := *existing
+		series.ExDates = append(series.ExDates, occ)
+		series.Sequence++
+		if err := s.putEventIn(ctx, sess, owner, series); err != nil {
+			s.log.Warn("webmail: move event", "user", sess.User, "error", err)
+			refuse(http.StatusBadGateway, "The calendar couldn't be saved. Try again in a moment.")
+			return
+		}
+		e.UID = existing.UID + "-" + occ.UTC().Format("20060102T150405Z")
+		e.RRule, e.ExDates, e.Sequence = "", nil, 0
+	} else {
+		e.Sequence++
+	}
+	if err := s.putEventIn(ctx, sess, owner, e); err != nil {
+		s.log.Warn("webmail: move event", "user", sess.User, "error", err)
+		refuse(http.StatusBadGateway, "The calendar couldn't be saved. Try again in a moment.")
+		return
+	}
+	if e.HasAttendees() {
+		if err := s.sendInvites(ctx, sess, owner, e, "REQUEST", e.Attendees); err != nil {
+			s.log.Warn("webmail: send invitations", "user", sess.User, "error", err)
+			refuse(http.StatusOK, "Moved, but the guests couldn't be told. Open the event and save it to try again.")
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // renderGuestsOnShared explains the refusal. Guests would have to hear about
@@ -1210,4 +1332,11 @@ func (s *Server) calendarImport(w http.ResponseWriter, r *http.Request, sess *Se
 		}
 	}
 	http.Redirect(w, r, "/calendar?n=events-imported", http.StatusSeeOther)
+}
+
+// phoneUA says whether a browser is on a phone. Phones' browsers say
+// "Mobile" (iPhone and Android alike); tablets mostly don't, and get the
+// computer's layout, which fits them.
+func phoneUA(ua string) bool {
+	return strings.Contains(ua, "Mobile") && !strings.Contains(ua, "iPad")
 }
