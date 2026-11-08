@@ -81,6 +81,20 @@ func (r *scheduleRig) schedule(at time.Time) uint32 {
 	return uid
 }
 
+// pendingPush is what the pusher is about to announce for the account.
+func (r *scheduleRig) pendingPush() []mailItem {
+	r.t.Helper()
+	if r.svc.push == nil {
+		r.t.Fatal("the test service has no pusher")
+	}
+	r.svc.push.mu.Lock()
+	defer r.svc.push.mu.Unlock()
+	if b := r.svc.push.pending[r.a.ID]; b != nil {
+		return append([]mailItem(nil), b.items...)
+	}
+	return nil
+}
+
 func (r *scheduleRig) pending() []ScheduledSend {
 	r.t.Helper()
 	list, err := r.e.ScheduledSends(r.ctx, r.a.ID)
@@ -346,6 +360,11 @@ func TestSnoozeComesBackUnread(t *testing.T) {
 	if f := r.flags("INBOX", inbox[0]); hasFlag(f, `\Seen`) {
 		t.Errorf("came back read: %v", f)
 	}
+	// Announced to the user's devices like new mail, and without a tab, so
+	// a device that takes only Primary hears it too.
+	if items := r.pendingPush(); len(items) != 1 || items[0].uid != inbox[0] || items[0].category != "" || items[0].subject != "Quarterly numbers" {
+		t.Errorf("push for the returned message: %+v", items)
+	}
 	if list, _ := r.e.Snoozes(r.ctx, r.a.ID); len(list) != 0 {
 		t.Errorf("snooze rows left: %+v", list)
 	}
@@ -377,6 +396,9 @@ func TestSnoozeReturnsToItsFolderAndUnsnooze(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if items := r.pendingPush(); len(items) != 0 {
+		t.Errorf("a snooze ended by hand was pushed: %+v", items)
+	}
 	if len(back["Projects"]) != 1 || len(r.uids("Projects")) != 1 {
 		t.Errorf("unsnoozed to %v; Projects holds %v", back, r.uids("Projects"))
 	}
@@ -404,6 +426,32 @@ func TestSnoozeFolderGone(t *testing.T) {
 	}
 	if got := r.uids("INBOX"); len(got) != 1 {
 		t.Errorf("INBOX holds %v, want the message back", got)
+	}
+}
+
+// A message snoozed from another folder goes back there without a push, as
+// mail filed into a folder on delivery isn't announced either.
+func TestSnoozeReturnToAFolderIsQuiet(t *testing.T) {
+	r := newScheduleRig(t)
+	if err := r.e.Create(r.ctx, r.a.ID, "Projects"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.e.Append(r.ctx, r.a.ID, "Projects", []byte(scheduledMessage), nil, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.e.Snooze(r.ctx, r.a.ID, "Projects", []uint32{res.UID}, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	r.due()
+	if err := r.svc.returnDueSnoozes(r.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.uids("Projects"); len(got) != 1 {
+		t.Fatalf("Projects holds %v", got)
+	}
+	if items := r.pendingPush(); len(items) != 0 {
+		t.Errorf("a return to Projects was pushed: %+v", items)
 	}
 }
 
