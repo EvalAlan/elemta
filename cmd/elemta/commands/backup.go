@@ -54,10 +54,11 @@ func init() {
 	})
 
 	var daily, weekly int
+	var recent time.Duration
 	var dryRun bool
 	prune := &cobra.Command{
 		Use:   "prune",
-		Short: "Delete all but the newest backup of each recent day and week",
+		Short: "Delete all but the last hours' backups and the newest of each recent day and week",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := client()
 			if err != nil {
@@ -67,7 +68,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			keep, drop := offsite.Prune(objs, daily, weekly)
+			keep, drop := offsite.Prune(objs, recent, daily, weekly)
 			out := cmd.OutOrStdout()
 			for _, o := range drop {
 				if dryRun {
@@ -83,6 +84,7 @@ func init() {
 			return nil
 		},
 	}
+	prune.Flags().DurationVar(&recent, "recent", 48*time.Hour, "Keep every backup taken within this long of the newest one")
 	prune.Flags().IntVar(&daily, "daily", 14, "Keep the newest backup of each of this many recent days")
 	prune.Flags().IntVar(&weekly, "weekly", 8, "Keep the newest backup of each of this many recent weeks")
 	prune.Flags().BoolVar(&dryRun, "dry-run", false, "Say what would be deleted without deleting it")

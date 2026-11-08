@@ -244,15 +244,30 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	return c.mc.RemoveObject(ctx, c.cfg.Bucket, key, minio.RemoveObjectOptions{})
 }
 
-// Prune decides which backups to keep: the newest of each of the last daily
-// days that have one, and the newest of each of the last weekly ISO weeks
-// that have one. The newest backup of all is always kept, so pruning can
-// never leave the bucket empty. objs may be in any order; both results are
-// newest first.
-func Prune(objs []Object, daily, weekly int) (keep, drop []Object) {
+// Prune decides which backups to keep: every backup taken within recent of
+// the newest one, the newest of each of the last daily days that have one,
+// and the newest of each of the last weekly ISO weeks that have one. The
+// newest backup of all is always kept, so pruning can never leave the bucket
+// empty. objs may be in any order; both results are newest first.
+//
+// The recent window exists because backups run several times a day: without
+// it the day's earlier copies would go at the next prune, and the only way
+// back to this morning would be the bucket's version history. It is measured
+// from the newest backup rather than the clock, so a job that hasn't run for
+// a while doesn't prune everything recent on its next run.
+func Prune(objs []Object, recent time.Duration, daily, weekly int) (keep, drop []Object) {
 	sorted := append([]Object(nil), objs...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Taken.After(sorted[j].Taken) })
 	kept := map[string]bool{}
+	if len(sorted) > 0 && recent > 0 {
+		cutoff := sorted[0].Taken.Add(-recent)
+		for _, o := range sorted {
+			if o.Taken.Before(cutoff) {
+				break
+			}
+			kept[o.Key] = true
+		}
+	}
 	pick := func(n int, period func(time.Time) string) {
 		seen := map[string]bool{}
 		for _, o := range sorted {

@@ -485,10 +485,12 @@ IOSchedulingClass=idle
 EOF
     sudo tee "$bk.timer" >/dev/null <<EOF
 [Unit]
-Description=Daily Elemta off-site backup
+Description=Elemta off-site backup, every 6 hours
 
 [Timer]
-OnCalendar=*-*-* 03:00:00
+# Every 6 hours, so a lost server loses at most that much mail metadata
+# (bodies are in their own versioned bucket). A run takes about a minute.
+OnCalendar=*-*-* 03,09,15,21:00:00
 RandomizedDelaySec=15min
 Persistent=true
 
@@ -496,7 +498,7 @@ Persistent=true
 WantedBy=timers.target
 EOF
     backup_timer=elemta-backup.timer
-    echo "Daily at 03:00 UTC; run one now with: sudo systemctl start elemta-backup"
+    echo "Every 6 hours from 03:00 UTC; run one now with: sudo systemctl start elemta-backup"
 fi
 sudo systemctl daemon-reload
 # shellcheck disable=SC2086 # backup_timer is empty or one unit name

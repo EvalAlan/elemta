@@ -42,7 +42,7 @@ func TestPrune(t *testing.T) {
 			objs = append(objs, Object{Key: ts.Format("0102-15"), Taken: ts})
 		}
 	}
-	keep, drop := Prune(objs, 3, 2)
+	keep, drop := Prune(objs, 0, 3, 2)
 	// The last day is 2026-11-08 (a Sunday, ending ISO week 45); week 44
 	// ended on Sunday 2026-11-01.
 	if got, want := keys(keep), "1108-15 1107-15 1106-15 1101-15"; got != want {
@@ -53,12 +53,32 @@ func TestPrune(t *testing.T) {
 	}
 }
 
+// Four backups a day: everything within 48 hours of the newest stays, so a
+// restore can go back to any of the last eight runs, and older days keep
+// only their newest.
+func TestPruneKeepsRecentRuns(t *testing.T) {
+	var objs []Object
+	start := at("2026-11-01T03:00:00Z")
+	for d := 0; d < 8; d++ {
+		for _, h := range []int{3, 9, 15, 21} {
+			ts := start.AddDate(0, 0, d).Add(time.Duration(h-3) * time.Hour)
+			objs = append(objs, Object{Key: ts.Format("0102-15"), Taken: ts})
+		}
+	}
+	keep, _ := Prune(objs, 48*time.Hour, 4, 0)
+	// Newest is 11-08 21:00; 48 hours back is 11-06 21:00, inclusive.
+	want := "1108-21 1108-15 1108-09 1108-03 1107-21 1107-15 1107-09 1107-03 1106-21 1105-21"
+	if got := keys(keep); got != want {
+		t.Errorf("kept %q, want %q", got, want)
+	}
+}
+
 func TestPruneNeverEmpties(t *testing.T) {
 	one := []Object{{Key: "a", Taken: at("2026-11-06T03:00:00Z")}}
-	if keep, drop := Prune(one, 0, 0); len(keep) != 1 || len(drop) != 0 {
+	if keep, drop := Prune(one, 0, 0, 0); len(keep) != 1 || len(drop) != 0 {
 		t.Fatalf("keep %v drop %v: the only backup must stay", keep, drop)
 	}
-	if keep, drop := Prune(nil, 14, 8); keep != nil || drop != nil {
+	if keep, drop := Prune(nil, 48*time.Hour, 14, 8); keep != nil || drop != nil {
 		t.Fatalf("empty bucket: keep %v drop %v", keep, drop)
 	}
 }
