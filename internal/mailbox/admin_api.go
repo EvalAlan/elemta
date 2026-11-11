@@ -583,7 +583,17 @@ func (s *Service) accountView(ctx context.Context, a Account) (mailpolicy.Accoun
 		return mailpolicy.AccountView{}, err
 	}
 	held, err := s.engine.HeldCount(ctx, a.Address)
-	return mailpolicy.AccountView{Policy: p, Effective: eff, Held: held}, err
+	if err != nil {
+		return mailpolicy.AccountView{}, err
+	}
+	view := mailpolicy.AccountView{Policy: p, Effective: eff, Held: held}
+	// A disabled or deleted account has no ID here and no choices to show.
+	if a.ID != "" {
+		if view.UserOff, err = s.engine.ProtocolsOff(ctx, a.ID); err != nil {
+			return mailpolicy.AccountView{}, err
+		}
+	}
+	return view, nil
 }
 
 func adminStatus(err error) (int, string) {

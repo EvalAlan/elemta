@@ -35,7 +35,7 @@ type SenderRules struct {
 // SenderRules returns the account's rules, sorted.
 func (e *Engine) SenderRules(ctx context.Context, account string) (SenderRules, error) {
 	out := SenderRules{Allow: []string{}, Block: []string{}}
-	rows, err := e.DB.QueryContext(ctx, `SELECT entry, kind FROM mailbox_sender_rules WHERE account=$1 ORDER BY entry`, account)
+	rows, err := e.DB.QueryContext(ctx, `SELECT entry, kind FROM mailbox_sender_rules WHERE account=$1 ORDER BY entry COLLATE "C"`, account)
 	if err != nil {
 		return out, err
 	}

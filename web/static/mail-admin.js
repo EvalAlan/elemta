@@ -291,8 +291,15 @@
         accountEditor.fill(view.policy.settings);
         const body = el('ma-effective'); body.replaceChildren();
         const e = view.effective;
+        // IMAP and POP3 can also be turned off by the user for themselves,
+        // in the webmail. The class still allows them, but they're off.
+        const userOff = new Set(view.user_off || []);
         [...LIMITS.map(([k, l]) => [k, l]), ...PROTOCOLS.map(([k, l]) => ['protocols.' + k, l]), ...SWITCHES, ...RETENTION.map(([k, l]) => [k, l])].forEach(([key, label]) => {
-            const row = node('tr'); cell(row, label); cell(row, effectiveValue(e, key)); cell(row, (e.source || {})[key] || 'built-in'); body.appendChild(row);
+            let value = effectiveValue(e, key), source = (e.source || {})[key] || 'built-in';
+            if (key.startsWith('protocols.') && value === 'On' && userOff.has(key.slice(10))) {
+                value = 'Off'; source = 'turned off by the user';
+            }
+            const row = node('tr'); cell(row, label); cell(row, value); cell(row, source); body.appendChild(row);
         });
         const row = node('tr'); cell(row, 'Class in effect'); cell(row, e.class); cell(row, ''); body.prepend(row);
         if (view.held || e.legal_hold) { const held = node('tr'); cell(held, 'Messages on hold'); cell(held, view.held || 0); cell(held, 'export with provision export-held'); body.appendChild(held); }

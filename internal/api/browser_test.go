@@ -11,9 +11,11 @@ package api
 import (
 	"context"
 	"net"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +23,8 @@ import (
 
 	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/dnshealth"
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
+	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/runtime"
 	cdpwebauthn "github.com/chromedp/cdproto/webauthn"
@@ -366,4 +370,62 @@ func TestBrowserConsolePasskey(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.Empty(t, problems)
+}
+
+// IMAP turned off by the user, in the webmail, shows as off in the
+// account's "What applies now", with where that comes from. The class
+// still allows it, and the console used to say On.
+func TestBrowserAccountShowsUserProtocolChoice(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	base, service := startProvisionAPIWith(t, func(s *Server) { s.webRoot = webRoot })
+	service.Directory.(*adminDirectory).account = &provision.Account{Address: "ana@example.com", Name: "Ana", Status: "active", Aliases: []string{}}
+	fake := &fakeMailboxAdmin{classes: map[string]mailpolicy.Class{}, policy: map[string]mailpolicy.AccountPolicy{}, lists: map[string]mailpolicy.List{}, routes: map[string]mailpolicy.DomainRoute{},
+		userOff: map[string][]string{"ana@example.com": {"imap"}}}
+	api := httptest.NewServer(fake)
+	t.Cleanup(api.Close)
+	client, err := mailpolicy.NewClient(api.URL, "token")
+	require.NoError(t, err)
+	service.Mailbox = client
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.WindowSize(1280, 1100), chromedp.NoSandbox)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+	ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+	defer cancel()
+	click := func(selector string) chromedp.Action[chromedp.Void] {
+		return chromedp.Click(chromedp.CSS(selector), chromedp.NodeVisible)
+	}
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.Navigate(base+"/login"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "root"),
+		chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+		click("#login-btn"),
+		chromedp.WaitVisible(chromedp.ID("nav-mailadmin")),
+		click("#nav-mailadmin"),
+		chromedp.WaitVisible(chromedp.CSS("[data-ma-tab=accounts]")),
+		click("[data-ma-tab=accounts]"),
+		chromedp.WaitVisible(chromedp.CSS("#ma-table-body .ma-account-link")),
+		click("#ma-table-body .ma-account-link"),
+	))
+	row := func(label string) string {
+		t.Helper()
+		var out string
+		deadline := time.Now().Add(10 * time.Second)
+		for out == "" && time.Now().Before(deadline) {
+			v, err := chromedp.Run(ctx, chromedp.Evaluate[string](`(() => { const r = [...document.querySelectorAll("#ma-effective tr")].find(r => r.cells[0] && r.cells[0].textContent === `+strconv.Quote(label)+`); return r ? r.cells[1].textContent + " | " + r.cells[2].textContent : ""; })()`))
+			require.NoError(t, err)
+			out = v
+			if out == "" {
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		return out
+	}
+	require.Equal(t, "Off | turned off by the user", row("IMAP"))
+	require.True(t, strings.HasPrefix(row("POP3"), "On | "), row("POP3"))
 }

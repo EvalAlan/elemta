@@ -37,7 +37,7 @@ type CategoryRule struct {
 // CategoryRules returns the account's rules, sorted by sender.
 func (e *Engine) CategoryRules(ctx context.Context, account string) ([]CategoryRule, error) {
 	out := []CategoryRule{}
-	rows, err := e.DB.QueryContext(ctx, `SELECT entry, category FROM mailbox_category_rules WHERE account=$1 ORDER BY entry`, account)
+	rows, err := e.DB.QueryContext(ctx, `SELECT entry, category FROM mailbox_category_rules WHERE account=$1 ORDER BY entry COLLATE "C"`, account)
 	if err != nil {
 		return out, err
 	}
