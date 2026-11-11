@@ -95,47 +95,62 @@ func newTestCell(t *testing.T, name, address, certFile, keyFile string) *testCel
 	if err := e.EnsureAccount(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Server.IMAPListen = freePort(t)
-	cfg.Server.IMAPSListen = freePort(t)
-	cfg.Server.POP3Listen = freePort(t)
-	cfg.Server.LMTPListen = freePort(t)
-	cfg.Server.HTTPListen = freePort(t)
-	cfg.Sieve.Listen = freePort(t)
 	cfg.Server.TLSCert, cfg.Server.TLSKey = certFile, keyFile
 	cfg.Server.ProxyProtocolFrom = []string{"127.0.0.1"}
 	cfg.Server.LMTPAllowedNetworks = []string{"127.0.0.0/8"}
 	cfg.Admin.TokenEnv = "TEST_ROUTER_ADMIN_TOKEN"
-	s, err := newService(cfg, e, mapAuth{address: a}, nil)
-	if err != nil {
-		t.Fatal(err)
+	// The cell binds six ports that freePort only saw free a moment ago, so
+	// it races parallel tests the same way the router does (see
+	// newRouterRig). Run closes whatever it had bound before returning the
+	// error, so a fresh service on fresh ports is a clean retry.
+	for attempt := 1; ; attempt++ {
+		cfg.Server.IMAPListen = freePort(t)
+		cfg.Server.IMAPSListen = freePort(t)
+		cfg.Server.POP3Listen = freePort(t)
+		cfg.Server.LMTPListen = freePort(t)
+		cfg.Server.HTTPListen = freePort(t)
+		cfg.Sieve.Listen = freePort(t)
+		s, err := newService(cfg, e, mapAuth{address: a}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- s.Run(ctx) }()
+		var runErr error
+		waitFor(t, "cell "+name+" to listen", func() bool {
+			select {
+			case runErr = <-done:
+				return true
+			default:
+			}
+			c, err := net.Dial("tcp", cfg.Server.HTTPListen)
+			if err == nil {
+				_ = c.Close()
+			}
+			return err == nil
+		})
+		if runErr != nil {
+			cancel()
+			s.cancel()
+			if errors.Is(runErr, syscall.EADDRINUSE) && attempt < 5 {
+				continue
+			}
+			t.Fatalf("cell %s stopped: %v", name, runErr)
+		}
+		t.Cleanup(func() {
+			cancel()
+			s.cancel()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+			}
+		})
+		return &testCell{name: name, engine: e, service: s, account: a, cfg: CellConfig{
+			Name: name, IMAPS: cfg.Server.IMAPSListen, POP3: cfg.Server.POP3Listen, Sieve: cfg.Sieve.Listen,
+			LMTP: cfg.Server.LMTPListen, HTTP: "http://" + cfg.Server.HTTPListen, TLSCAFile: certFile,
+		}}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	t.Cleanup(func() {
-		cancel()
-		s.cancel()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-		}
-	})
-	waitFor(t, "cell "+name+" to listen", func() bool {
-		select {
-		case err := <-done:
-			t.Fatalf("cell %s stopped: %v", name, err)
-		default:
-		}
-		c, err := net.Dial("tcp", cfg.Server.HTTPListen)
-		if err == nil {
-			_ = c.Close()
-		}
-		return err == nil
-	})
-	return &testCell{name: name, engine: e, service: s, account: a, cfg: CellConfig{
-		Name: name, IMAPS: cfg.Server.IMAPSListen, POP3: cfg.Server.POP3Listen, Sieve: cfg.Sieve.Listen,
-		LMTP: cfg.Server.LMTPListen, HTTP: "http://" + cfg.Server.HTTPListen, TLSCAFile: certFile,
-	}}
 }
 
 type routerRig struct {
