@@ -7,7 +7,7 @@ require (
 	filippo.io/age v1.2.1
 	github.com/BurntSushi/toml v1.6.0
 	github.com/ProtonMail/go-crypto v1.5.2
-	github.com/chromedp/cdproto v0.158.6
+	github.com/chromedp/cdproto v0.159.2
 	github.com/chromedp/chromedp v0.21.0
 	github.com/davecgh/go-spew v1.1.1
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
