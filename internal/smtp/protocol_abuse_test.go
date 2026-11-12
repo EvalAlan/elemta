@@ -159,3 +159,45 @@ func TestOversizedDeclaredSizeIsRefusedBeforeData(t *testing.T) {
 		t.Errorf("a 1TB declared size should be refused at MAIL FROM, got %q", reply)
 	}
 }
+
+// TestGarbageLinesCloseTheSessionAtTheErrorLimit pins the hard error limit.
+// Internet scanners write binary at port 25 (TLS handshakes, other protocols'
+// probes); every line is refused, and without a limit the server answered
+// each one until the idle timeout.
+func TestGarbageLinesCloseTheSessionAtTheErrorLimit(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	// A TLS ClientHello prefix: invalid UTF-8 plus control bytes.
+	junk := "\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03\xff\xfe\r\n"
+	for i := 0; i < maxSessionErrors+5; i++ {
+		if !p.trySend(junk) {
+			break
+		}
+	}
+
+	got := p.drainFor(3 * time.Second)
+	if n := strings.Count(got, "500 5.5.2"); n != maxSessionErrors {
+		t.Errorf("expected %d refusals before closing, got %d:\n%s", maxSessionErrors, n, got)
+	}
+	if !strings.Contains(got, "421 4.7.0 Too many errors") {
+		t.Errorf("expected a 421 once the limit was reached, got:\n%s", got)
+	}
+}
+
+// TestSessionBelowTheErrorLimitStaysUsable makes sure the limit is not hit by
+// a client that makes mistakes but is still speaking SMTP.
+func TestSessionBelowTheErrorLimitStaysUsable(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	p.cmd("EHLO probe.example")
+	for i := 0; i < maxSessionErrors-1; i++ {
+		if reply := p.cmd("NOSUCHCOMMAND"); !strings.HasPrefix(reply, "5") {
+			t.Fatalf("unknown command %d: expected a 5xx refusal, got %q", i, reply)
+		}
+	}
+	if reply := p.cmd("MAIL FROM:<sender@example.com>"); !strings.HasPrefix(reply, "250") {
+		t.Errorf("session should still accept commands below the limit, got %q", reply)
+	}
+}
