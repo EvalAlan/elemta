@@ -541,8 +541,7 @@ func (s *Session) processCommands(ctx context.Context) error {
 				return fmt.Errorf("failed to flush before DATA phase: %w", err)
 			}
 			if err := s.handleDataPhase(ctx); err != nil {
-				s.logger.ErrorContext(ctx, "Data phase handling failed", "error", err)
-				s.writeError(ctx, err)
+				s.writeError(ctx, err, "DATA")
 				// Flush the error response so the client sees it
 				if flushErr := s.flush(); flushErr != nil {
 					s.logger.ErrorContext(ctx, "Failed to flush after DATA error", "error", flushErr)
@@ -623,12 +622,16 @@ func (s *Session) processCommands(ctx context.Context) error {
 		// Process regular commands
 		line := string(commandBytes)
 		if err := s.commandHandler.ProcessCommand(ctx, line); err != nil {
-			s.logger.WarnContext(ctx, "Command processing failed",
-				"event_type", "rejection",
-				"command", redactCommand(line),
-				"error", err,
-			)
-			s.writeError(ctx, err)
+			if s.writeError(ctx, err, redactCommand(line)) >= maxSessionErrors {
+				s.logger.WarnContext(ctx, "Closing session: too many refused commands",
+					"event_type", "rejection",
+					"client", s.remoteAddr,
+					"errors", maxSessionErrors,
+				)
+				_ = s.write("421 4.7.0 Too many errors, closing connection")
+				_ = s.flush()
+				return nil
+			}
 
 			// A refused BDAT whose chunk could not be consumed leaves the
 			// connection somewhere inside that chunk. Reading further commands
@@ -753,38 +756,44 @@ func (s *Session) writeWithLog(msg string) {
 	}
 }
 
-// writeError writes an error response to the client
-func (s *Session) writeError(ctx context.Context, err error) {
+// maxSessionErrors is how many refusals one session may collect before it is
+// closed. A client that is speaking SMTP rarely gets near it; a scanner
+// writing binary at the port would otherwise be answered line by line until
+// the idle timeout. 20 matches Postfix's smtpd_hard_error_limit, so senders
+// that cope with Postfix cope with this.
+const maxSessionErrors = 20
+
+// writeError sends err to the client, logs it once and records it against the
+// session, returning the session's refusal count. command is the redacted
+// command that was refused, for the log.
+//
+// A refusal with an SMTP code is the client's problem and logs at WARN, like
+// the server's other rejections. Anything else is a fault on this side: the
+// client gets a generic 451 and the detail is logged at ERROR.
+func (s *Session) writeError(ctx context.Context, err error, command string) int {
 	errorMsg := err.Error()
 
-	// Extract SMTP error code if present, otherwise use generic error
 	if len(errorMsg) >= 3 && errorMsg[0] >= '4' && errorMsg[0] <= '5' {
-		// Determine if it's a tempfail (4xx) or rejection (5xx)
 		eventType := "rejection"
 		if errorMsg[0] == '4' {
 			eventType = "tempfail"
 		}
-
-		s.logger.WarnContext(ctx, "SMTP error response sent",
+		s.logger.WarnContext(ctx, "SMTP command refused",
 			"event_type", eventType,
-			"error", err,
+			"command", command,
 			"response", errorMsg,
-			"service", "elemta-mta",
-			"session_id", s.sessionID,
 		)
 		_ = s.write(errorMsg) // Intentionally ignore error in error handling
 	} else {
+		s.logger.ErrorContext(ctx, "SMTP command failed",
+			"event_type", "tempfail",
+			"command", command,
+			"error", err,
+		)
 		s.writeWithLog("451 4.3.0 Internal server error")
 	}
 
-	// Log the error
-	s.logger.WarnContext(ctx, "SMTP error response sent",
-		"error", err,
-		"response", errorMsg,
-	)
-
-	// Add error to session state
-	s.state.AddError(ctx, err)
+	return s.state.AddError(ctx, err)
 }
 
 // Close gracefully closes the session
