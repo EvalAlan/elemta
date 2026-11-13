@@ -75,7 +75,7 @@ datasource_type = "file" # or ldap/mysql/postgres/sqlite
 Common breakage:
 
 - wrong datasource path/host/credentials
-- `auth_file` path points to a directory for web auth
+- `auth_file` path points to a directory: the web interface refuses to start (Docker creates a directory when a bind-mounted file is missing on the host)
 
 ---
 
