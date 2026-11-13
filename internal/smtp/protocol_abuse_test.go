@@ -2,6 +2,7 @@ package smtp
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -276,5 +277,44 @@ func TestRefusedBodyDrainHonoursStrictLineEndings(t *testing.T) {
 		if strings.Contains(got, forbidden) {
 			t.Errorf("payload was executed as commands — response contained %q:\n%s", forbidden, got)
 		}
+	}
+}
+
+// TestBDATHeaderAloneDoesNotReserveTheChunk pins that a declared BDAT chunk is
+// streamed rather than allocated up front.
+func TestBDATHeaderAloneDoesNotReserveTheChunk(t *testing.T) {
+	cfg := createTestConfig(t)
+	cfg.MaxSize = 25 << 20
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	go func() { _ = server.Start() }()
+	time.Sleep(150 * time.Millisecond)
+
+	heap := func() int64 {
+		runtime.GC()
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		return int64(m.HeapAlloc)
+	}
+	before := heap()
+	const sessions = 4
+	for i := 0; i < sessions; i++ {
+		p := dialProbe(t, server.Addr().String())
+		p.cmd("EHLO probe.example")
+		p.cmd("MAIL FROM:<sender@example.com>")
+		if reply := p.cmd("RCPT TO:<rcpt@example.com>"); !strings.HasPrefix(reply, "250") {
+			t.Fatalf("RCPT TO: %q", reply)
+		}
+		p.send(fmt.Sprintf("BDAT %d LAST\r\n", cfg.MaxSize-1))
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	// Each idle session used to hold 25 MiB; allow generous slack for the
+	// sessions themselves.
+	if grew := heap() - before; grew > 16<<20 {
+		t.Errorf("%d idle BDAT sessions hold %d MiB of heap", sessions, grew>>20)
 	}
 }

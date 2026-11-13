@@ -594,16 +594,14 @@ func (dh *DataHandler) ReadBDATChunk(ctx context.Context, size int64) error {
 		dh.bdatSpool = NewMessageSpool(dh.spoolDir(), dh.spoolThreshold())
 	}
 
-	// Read exactly size bytes
-	chunk := make([]byte, size)
-	if _, err := io.ReadFull(dh.reader, chunk); err != nil {
+	// Stream the chunk into the spool, so memory follows what has arrived
+	// rather than what the client declared.
+	if _, err := io.CopyN(dh.bdatSpool, dh.reader, size); err != nil {
+		// Part of the chunk may still be on its way, and nothing here knows
+		// how much, so the connection can't be trusted to sit at a command.
+		dh.dataSyncLost = true
 		dh.logger.ErrorContext(ctx, "Failed to read BDAT chunk", "error", err, "expected_size", size)
-		return fmt.Errorf("451 4.3.0 Error reading chunk data: %w", err)
-	}
-
-	if _, err := dh.bdatSpool.Write(chunk); err != nil {
-		dh.logger.ErrorContext(ctx, "Failed to spool BDAT chunk", "error", err)
-		return fmt.Errorf("451 4.3.0 Unable to buffer message data")
+		return fmt.Errorf("451 4.3.0 Error reading chunk data")
 	}
 	dh.bdatBytesReceived += size
 	dh.bdatChunkCount++
