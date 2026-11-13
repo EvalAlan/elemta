@@ -102,18 +102,31 @@ func TestSignContentRetriesStartFromStoredContent(t *testing.T) {
 }
 
 // TestSignContentFallsBackToFromHeader verifies that when the envelope-from is
-// empty (e.g. a bounce), the From header domain is used.
-func TestSignContentFallsBackToFromHeader(t *testing.T) {
+// TestSignContentFallsBackToFromHeaderOnlyWhenMarked covers null-sender mail.
+// The From header names the signing domain only when the server marked the
+// message as one whose From it vouches for (its own bounces, checked
+// submissions). Unmarked, the domain would be whatever the content says, so
+// anyone who could queue a null-sender message chose which domain signed it.
+func TestSignContentFallsBackToFromHeaderOnlyWhenMarked(t *testing.T) {
 	h := NewSMTPDeliveryHandler(0)
 	h.SetDKIMSigner(newTestSigner(t, "example.com"))
 
-	msg := Message{ID: "bounce", From: ""} // empty envelope-from
-	out, err := h.signContent(msg, []byte(dkimTestMessage))
+	marked := Message{ID: "bounce", From: "", Annotations: map[string]string{AnnotationSignFromHeader: "true"}}
+	out, err := h.signContent(marked, []byte(dkimTestMessage))
 	if err != nil {
 		t.Fatalf("signContent: %v", err)
 	}
 	if countSignatures(out) != 1 {
-		t.Fatalf("expected signing via From header fallback, got %d signatures", countSignatures(out))
+		t.Fatalf("marked null-sender message: expected 1 signature, got %d", countSignatures(out))
+	}
+
+	unmarked := Message{ID: "forward", From: ""}
+	out, err = h.signContent(unmarked, []byte(dkimTestMessage))
+	if err != nil {
+		t.Fatalf("signContent: %v", err)
+	}
+	if countSignatures(out) != 0 {
+		t.Fatalf("unmarked null-sender message was signed for its own From header")
 	}
 }
 

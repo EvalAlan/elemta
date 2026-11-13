@@ -64,7 +64,7 @@ func TestSubmissionIsSignedWhenQueued(t *testing.T) {
 		}
 		body := func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(message)), nil }
 		meta := &MessageMetadata{From: from, To: []string{"alan@other.example"}, Subject: "TESTER!"}
-		if err := dh.saveMessage(t.Context(), hop, body, meta); err != nil {
+		if err := dh.saveMessage(t.Context(), hop, body, meta, false); err != nil {
 			t.Fatal(err)
 		}
 		all, err := mgr.GetAllMessages()

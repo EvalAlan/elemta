@@ -738,6 +738,9 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 		dh.logger.WarnContext(ctx, "Message header validation failed", "error", err)
 		return fmt.Errorf("554 5.7.1 Message rejected: %s", err.Error())
 	}
+	if err := dh.checkHeaderFrom(ctx, head); err != nil {
+		return err
+	}
 
 	// Perform security scanning
 	scanResult, err := dh.performSecurityScan(ctx, view, metadata)
@@ -776,7 +779,7 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 		body = withPatchedHead(body, head, patched)
 	}
 
-	if err := dh.saveMessage(ctx, headerPrefix, body, metadata); err != nil {
+	if err := dh.saveMessage(ctx, headerPrefix, body, metadata, dh.mayLaterSignFromHeader(head, metadata.From)); err != nil {
 		dh.logger.ErrorContext(ctx, "Failed to save message", "error", err)
 		return fmt.Errorf("451 4.3.0 Message processing failed")
 	}
@@ -2356,7 +2359,10 @@ func (dh *DataHandler) handleSecurityThreat(ctx context.Context, scanResult *Sec
 }
 
 // saveMessage saves the message to the queue
-func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, body queue.ContentOpener, metadata *MessageMetadata) error {
+//
+// signFromHeader allows delivery to sign a null-sender message for its header
+// From domain; see mayLaterSignFromHeader.
+func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, body queue.ContentOpener, metadata *MessageMetadata, signFromHeader bool) error {
 	// The stored message is this hop's headers followed by the body exactly as
 	// received. Composing them as a reader means a spooled message goes to the
 	// queue disk-to-disk, without being assembled in memory first.
@@ -2398,6 +2404,11 @@ func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, bod
 	// SMTPDeliveryHandler, which mandates TLS and next-hop REQUIRETLS support
 	// before sending mail carrying the require_tls annotation.
 	dh.saveDSNAnnotations(ctx, msgID)
+	if signFromHeader {
+		if err := dh.queueManager.SetAnnotation(msgID, queue.AnnotationSignFromHeader, "true"); err != nil {
+			dh.logger.WarnContext(ctx, "Failed to record that delivery may sign by From; it will go unsigned", "error", err)
+		}
+	}
 	if signedFor != "" {
 		if err := dh.queueManager.SetAnnotation(msgID, queue.AnnotationDKIMSigned, signedFor); err != nil {
 			dh.logger.WarnContext(ctx, "Failed to record submission signature; delivery will sign again", "error", err)

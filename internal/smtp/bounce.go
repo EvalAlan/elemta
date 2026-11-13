@@ -171,6 +171,13 @@ func (be *BounceEngine) generateBounce(ctx context.Context, msg queue.Message, f
 		return &BounceResult{BounceGenerated: false, Error: err}
 	}
 
+	// The bounce's From is this server's own address, so delivery may sign it
+	// for that domain despite the empty envelope (queue.AnnotationSignFromHeader).
+	if err := be.queueManager.SetAnnotation(bounceID, queue.AnnotationSignFromHeader, "true"); err != nil {
+		be.logger.WarnContext(ctx, "Failed to mark bounce for DKIM signing; it will go unsigned",
+			"bounce_id", bounceID, "error", err)
+	}
+
 	be.logger.InfoContext(ctx, "DSN bounce generated and queued",
 		"original_message_id", msg.ID,
 		"bounce_id", bounceID,
