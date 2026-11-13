@@ -14,7 +14,16 @@ NC='\033[0m' # No Color
 # Configuration
 LDAP_CONTAINER="elemta-ldap"
 LDAP_ADMIN_DN="cn=admin,dc=example,dc=com"
-LDAP_ADMIN_PASS="admin"
+# The directory's admin password is generated per deployment
+# (scripts/dev-secrets.sh, scripts/cloud-deploy.sh) and kept in the secrets
+# directory; there is no fixed one to fall back on.
+secrets_dir="${ELEMTA_SECRETS_DIR:-$(cd "$(dirname "$0")/.." && pwd)/deployments/compose/.secrets}"
+if [ -z "${LDAP_ADMIN_PASSWORD:-}" ] && [ -r "$secrets_dir/ldap-admin.env" ]; then
+    # shellcheck disable=SC1091
+    . "$secrets_dir/ldap-admin.env"
+fi
+: "${LDAP_ADMIN_PASSWORD:?set LDAP_ADMIN_PASSWORD or create $secrets_dir/ldap-admin.env}"
+LDAP_ADMIN_PASS="$LDAP_ADMIN_PASSWORD"
 LDAP_BASE_DN="dc=example,dc=com"
 PEOPLE_OU="ou=people,dc=example,dc=com"
 
