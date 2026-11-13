@@ -29,7 +29,10 @@ x-mailbox: &mailbox
       condition: service_healthy
     elemta-ldap:
       condition: service_healthy
-  networks: [elemta_network]
+  # elemta_relay: the mailbox servers' redirects, auto-replies, list copies
+  # and scheduled sends reach the MTA there without logging in (see the
+  # network's comment below).
+  networks: [elemta_network, elemta_relay]
   healthcheck:
     test: [CMD, curl, -fsS, http://localhost:8080/readyz]
     interval: 5s
@@ -119,7 +122,11 @@ services:
     dns:
       - ${ELEMTA_DEV_DNS_IP:-10.253.53.53}
     networks:
-      - elemta_network
+      elemta_network:
+      elemta_relay:
+        # The mailbox servers submit to this name, so their mail arrives
+        # from the relay network that allowed_relays names.
+        aliases: [elemta-relay]
     depends_on:
       elemta-dns:
         condition: service_healthy
@@ -471,7 +478,10 @@ services:
       - "127.0.0.1:110:1110"
       - "993:10993"
       - "2424:2424"
-      - "4190:4190"
+      # ManageSieve: the webmail edits filters over the internal network.
+      # Publish it on another address only if mail apps should edit filters;
+      # those clients sign in under the public rules.
+      - "127.0.0.1:4190:4190"
     volumes:
       - ./mailbox/main-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks:
@@ -639,6 +649,16 @@ networks:
     ipam:
       config:
         - subnet: ${ELEMTA_DEV_DNS_SUBNET:-10.253.53.0/24}
+  # Mail that the MTA relays without a login comes only from here: the MTA
+  # and the mailbox servers are the only members, and allowed_relays names
+  # this subnet. Everything else on elemta_network (the proxy, scanners,
+  # directory, webmail, admin) has to log in like anyone else; the webmail
+  # does, on its own submission port.
+  elemta_relay:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${ELEMTA_RELAY_SUBNET:-10.253.54.0/24}
   monitoring_network:
     driver: bridge
 

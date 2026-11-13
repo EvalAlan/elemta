@@ -56,7 +56,7 @@ the newly generated config.
 
 - `elemta-mail-public` (SMTP 25, submission 587): the address of
   `MAIL_HOST`, which is your domain's MX.
-- `elemta-mailbox-public` (IMAPS 993, IMAP 143, POP3 110, Sieve 4190): give
+- `elemta-mailbox-public` (IMAPS 993, IMAP 143, POP3 110): give
   it a name of its own (for example `imap.`), since it has its own address.
 - The HAProxy ingress (80, 443): the address of `ADMIN_HOST` and
   `WEBMAIL_HOST`. Port 80 must reach it for certificate validation,

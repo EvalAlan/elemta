@@ -12,7 +12,9 @@ max_size = 52428800  # 50MB
 # reach the server through SNAT, a load balancer without the PROXY protocol,
 # or Docker's IPv6 userland proxy, because then every client looks private
 # and the server is an open relay. Use explicit CIDRs in those setups.
-allowed_relays = ["private"]
+# The stack's mailbox servers submit from the elemta_relay network
+# (deployments/compose/docker-compose.yml); nothing else needs to.
+allowed_relays = ["10.253.54.0/24"]
 
 # Outbound traffic shaping: how hard to push at one destination.
 #
