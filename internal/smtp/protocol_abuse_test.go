@@ -360,3 +360,12 @@ func TestJunkCommandsBelowTheLimitLeaveTheSessionUsable(t *testing.T) {
 		t.Errorf("session should still accept mail, got %q", reply)
 	}
 }
+
+// TestMemoryPressureIsATemporaryFailure pins that refusing a message because
+// this server is short of memory tells the sender to retry. It used to be
+// 552, which bounced the mail.
+func TestMemoryPressureIsATemporaryFailure(t *testing.T) {
+	if msg := errServerMemoryPressure.Error(); !strings.HasPrefix(msg, "4") {
+		t.Errorf("memory pressure must be a 4xx reply, got %q", msg)
+	}
+}

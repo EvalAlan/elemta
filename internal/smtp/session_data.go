@@ -192,6 +192,11 @@ func (dh *DataHandler) ReadData(ctx context.Context) (*MessageSpool, error) {
 	return spool, err
 }
 
+// errServerMemoryPressure refuses a message because this server is short of
+// memory right now. That is a temporary condition on our side, so it must be
+// a 4xx the sender retries; it used to be 552, which bounced the mail.
+var errServerMemoryPressure = errors.New("452 4.3.1 Insufficient system storage, try again later")
+
 // maxDrainBytes bounds how much of a rejected message body will be read and
 // discarded to regain protocol sync. A sender that keeps streaming past this
 // is not going to produce a usable transaction, so the session is failed
@@ -435,7 +440,7 @@ func (dh *DataHandler) readData(ctx context.Context) (*MessageSpool, error) {
 					)
 					// Clear data transfer mode on error
 					dh.state.ClearDataTransferMode(ctx)
-					return nil, fmt.Errorf("552 5.3.4 Server memory limit exceeded")
+					return nil, errServerMemoryPressure
 				}
 			}
 		}
@@ -687,7 +692,7 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 				"error", err,
 				"session_id", dh.session.sessionID,
 			)
-			return fmt.Errorf("552 5.3.4 Server memory limit exceeded")
+			return errServerMemoryPressure
 		}
 
 		// Check per-session memory limits for the message
