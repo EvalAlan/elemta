@@ -77,6 +77,12 @@ type Config struct {
 	// browser closes and a session ends after SessionTTL idle.
 	StaySignedIn string `toml:"stay_signed_in"`
 
+	// SessionMaxAge ends a sign-in this long after it started, however often
+	// it is used ("2160h", 90 days, by default; "0" for no limit). Without
+	// it, a remembered sign-in used now and then, or a stolen session cookie
+	// kept warm, would last for ever.
+	SessionMaxAge string `toml:"session_max_age"`
+
 	// SecureCookies marks session cookies Secure. Unset means true; set it
 	// to false only when the webmail is served over plain HTTP in dev.
 	SecureCookies *bool `toml:"secure_cookies"`
@@ -180,6 +186,7 @@ const (
 	defaultListen       = ":8027"
 	defaultSessionTTL   = 8 * time.Hour
 	defaultStaySignedIn = 30 * 24 * time.Hour
+	defaultMaxAge       = 90 * 24 * time.Hour
 	defaultMaxUploadMB  = 25
 	defaultPageSize     = 50
 	defaultMaxMessageMB = 50
@@ -221,6 +228,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.StaySignedIn == "" {
 		c.StaySignedIn = defaultStaySignedIn.String()
+	}
+	if c.SessionMaxAge == "" {
+		c.SessionMaxAge = defaultMaxAge.String()
 	}
 	if c.SecureCookies == nil {
 		secure := true
@@ -315,6 +325,11 @@ func (c Config) Validate() error {
 	if d, err := time.ParseDuration(c.StaySignedIn); err != nil || d < 0 {
 		errs = append(errs, fmt.Errorf("webmail: stay_signed_in %q must be a duration such as \"720h\", or \"0\" for off", c.StaySignedIn))
 	}
+	if c.SessionMaxAge != "" {
+		if d, err := time.ParseDuration(c.SessionMaxAge); err != nil || d < 0 {
+			errs = append(errs, fmt.Errorf("webmail: session_max_age %q must be a duration such as \"2160h\", or \"0\" for no limit", c.SessionMaxAge))
+		}
+	}
 	return errors.Join(errs...)
 }
 
@@ -341,6 +356,15 @@ func (c Config) staySignedIn() time.Duration {
 // sign-in when that's on, so the session outlives the cookie never.
 func (c Config) idleTTL() time.Duration {
 	return max(c.sessionTTL(), c.staySignedIn())
+}
+
+// maxAge is how long a sign-in may last from its start, or zero for no limit.
+func (c Config) maxAge() time.Duration {
+	d, err := time.ParseDuration(c.SessionMaxAge)
+	if err != nil || d < 0 {
+		return 0
+	}
+	return d
 }
 
 // location is the default time zone; Validate guarantees it loads.

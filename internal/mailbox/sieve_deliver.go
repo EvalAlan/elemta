@@ -522,15 +522,31 @@ func (s *Service) vacationReply(d delivery, orig gomail.Header, v interp.ActionV
 		h.SetMsgIDList("References", append(refs, id))
 	}
 	var buf bytes.Buffer
+	reason := strings.ReplaceAll(strings.ReplaceAll(v.Reason, "\r\n", "\n"), "\n", "\r\n")
 	if v.Mime {
-		// :mime: the reason is a MIME entity, headers included.
-		h.Set("MIME-Version", "1.0")
-		if err := textproto.WriteHeader(&buf, h.Header.Header); err != nil {
-			return nil, err
+		// :mime: the reason is a MIME entity, its own Content-* headers
+		// first. Those join the reply's header, and the rest is the body.
+		// Writing the reply's header, its blank line and then the whole
+		// reason put the entity's headers in the body, as text. A reason
+		// without one is sent as plain text below.
+		br := bufio.NewReader(strings.NewReader(reason))
+		// "Note: back Monday" opening a plain reason parses as a header
+		// too, so only a Content-Type makes it an entity.
+		if eh, err := textproto.ReadHeader(br); err == nil && eh.Has("Content-Type") {
+			h.Set("MIME-Version", "1.0")
+			for f := eh.Fields(); f.Next(); {
+				if strings.HasPrefix(strings.ToLower(f.Key()), "content-") {
+					h.Add(f.Key(), f.Value())
+				}
+			}
+			if err := textproto.WriteHeader(&buf, h.Header.Header); err != nil {
+				return nil, err
+			}
+			if _, err := br.WriteTo(&buf); err != nil {
+				return nil, err
+			}
+			return buf.Bytes(), nil
 		}
-		reason := strings.ReplaceAll(strings.ReplaceAll(v.Reason, "\r\n", "\n"), "\n", "\r\n")
-		buf.WriteString(reason)
-		return buf.Bytes(), nil
 	}
 	h.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
 	h.Set("Content-Transfer-Encoding", "quoted-printable")
@@ -538,7 +554,7 @@ func (s *Service) vacationReply(d delivery, orig gomail.Header, v interp.ActionV
 	if err != nil {
 		return nil, err
 	}
-	if _, err := w.Write([]byte(strings.ReplaceAll(strings.ReplaceAll(v.Reason, "\r\n", "\n"), "\n", "\r\n"))); err != nil {
+	if _, err := w.Write([]byte(reason)); err != nil {
 		return nil, err
 	}
 	if err := w.Close(); err != nil {

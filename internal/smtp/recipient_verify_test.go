@@ -169,3 +169,35 @@ func TestRecipientVerifierProvisioningGeneration(t *testing.T) {
 		t.Fatal("provisioning did not invalidate both verdicts")
 	}
 }
+
+// A mailbox service sending an endless reply, as one unbroken line or as
+// continuation lines, is given up on rather than read into memory.
+func TestRecipientVerifierBoundsReplies(t *testing.T) {
+	for _, tc := range []struct {
+		name, chunk, want string
+	}{
+		{"one endless line", strings.Repeat("x", 1024), "buffer full"},
+		{"endless continuation lines", "220-more\r\n", "longer than 100 lines"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newRecipientVerifier("lmtp.internal:24", "mx.example.com", slog.Default())
+			v.dial = func(context.Context, string, string) (net.Conn, error) {
+				server, client := net.Pipe()
+				go func() {
+					defer server.Close()
+					_, _ = server.Write([]byte("220-"))
+					for {
+						if _, err := server.Write([]byte(tc.chunk)); err != nil {
+							return
+						}
+					}
+				}()
+				return client, nil
+			}
+			_, _, err := v.probe(context.Background(), "x@example.com")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("probe error %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
