@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	sieve "github.com/EvalAlan/elemta/internal/sievefork"
 	"github.com/EvalAlan/elemta/internal/sievefork/interp"
 	gomessage "github.com/emersion/go-message"
@@ -38,7 +39,7 @@ import (
 
 // redirectHeader marks mail this service redirected, so a redirect loop
 // between two accounts stops at the second hop.
-const redirectHeader = "X-Elemta-Sieve-Redirected-By"
+const redirectHeader = mailpolicy.SieveRedirectHeader
 
 // sieveCache keeps compiled scripts by account, valid while the script's
 // update time is unchanged.
