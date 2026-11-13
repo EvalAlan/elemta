@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/emersion/go-message"
 )
 
@@ -26,6 +27,12 @@ var errCalendarPartFound = errors.New("calendar part found")
 // calendarPart returns the first text/calendar part of a message, and its iTIP
 // method from the part's Content-Type or failing that its own METHOD line.
 func calendarPart(raw []byte) (string, []byte) {
+	// This runs at delivery on mail from anyone, and walking deeply nested
+	// multiparts takes time that grows with the square of the depth: one
+	// message could hold a CPU for hours. Invitations are never like that.
+	if mailpolicy.MIMETooComplex(raw) {
+		return "", nil
+	}
 	entity, err := message.Read(bytes.NewReader(raw))
 	if err != nil && !message.IsUnknownCharset(err) {
 		return "", nil
