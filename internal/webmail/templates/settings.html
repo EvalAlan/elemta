@@ -225,7 +225,8 @@
     {{if eq .NoticeCard "forwarding"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
     <label for="forward">Forward all mail to</label><input id="forward" name="forward" type="text" value="{{.ForwardText}}" placeholder="you@example.org" autocomplete="off">
     <span></span><label class="checkline"><input type="checkbox" name="keep_copy" value="1"{{if .Forwarding.KeepCopy}} checked{{end}}> Keep a copy here too</label>
-    <span></span><span class="small muted">{{if eq .ForwardLimit 1}}One address.{{else}}Up to {{.ForwardLimit}} addresses, separated by commas.{{end}} Leave it empty to stop forwarding. Without a copy, forwarded mail isn't kept here and your filters don't see it. Your organisation may not allow forwarding outside it.</span>
+    <label for="forward-current">Current password</label><input id="forward-current" name="current_password" type="password" autocomplete="current-password">
+    <span></span><span class="small muted">{{if eq .ForwardLimit 1}}One address.{{else}}Up to {{.ForwardLimit}} addresses, separated by commas.{{end}} Your current password is needed to forward mail, not to stop. Leave the address empty to stop forwarding. Without a copy, forwarded mail isn't kept here and your filters don't see it. Your organisation may not allow forwarding outside it.</span>
     {{if .Forwarding.SendAs}}<span class="label">You may also send as</span><span>{{range $i, $a := .Forwarding.SendAs}}{{if $i}}, {{end}}<span class="mono">{{$a}}</span>{{end}} <span class="small muted">(choose it as From when you write; set by your administrator)</span></span>{{end}}
     <div class="form-actions"><button class="button primary" type="submit">Save forwarding</button></div>
   </form>
@@ -441,6 +442,8 @@
         <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
         <label for="app-name" class="visually-hidden">App name</label>
         <input id="app-name" name="name" type="text" maxlength="64" placeholder="Name, e.g. Thunderbird on laptop" required>
+        <label for="app-current" class="visually-hidden">Current password</label>
+        <input id="app-current" name="current_password" type="password" placeholder="Current password" autocomplete="current-password" required>
         <button class="button" type="submit">{{template "icon-plus"}}Create app password</button>
       </form>
       {{if .AppRequiredByClass}}

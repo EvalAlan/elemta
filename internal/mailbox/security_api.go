@@ -727,6 +727,12 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		}
 		return map[string]bool{"ok": true}, s.engine.DeleteAppPassword(r.Context(), a.account.ID, id)
 	})
+	// Not open to app passwords (allowApp false): it runs with the new
+	// account password just after a change or reset.
+	handle("POST /v1/security/app-passwords/revoke-all", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		n, err := s.engine.DeleteAllAppPasswords(r.Context(), a.account.ID)
+		return map[string]int64{"revoked": n}, err
+	})
 	handle("POST /v1/security/app-required", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		var in struct{ Required bool }
 		if err := decode(r, &in); err != nil {
