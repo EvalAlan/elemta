@@ -25,6 +25,11 @@ Changes from upstream:
   splitting in `internal/utf7/encoder.go`, and IMAP number32 sizes and
   offsets in `imapserver/fetch.go` and `message.go`), because the CI
   security gate runs gosec over the whole repository.
+- `imapserver/conn.go`, `imapserver/append.go`: a refused non-synchronizing
+  literal (`{n+}`: over the buffered-literal or APPEND limit, or over 4096
+  without LITERAL+) closes the connection after the refusal, since its bytes
+  are already on the wire and would otherwise be read as commands (RFC 7888
+  §4). Upstream answers and carries on.
 - Import paths rewritten to this module.
 
 To update: copy the new upstream release over these directories, rewrite
