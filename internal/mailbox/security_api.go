@@ -347,6 +347,11 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		} else if !ok {
 			return nil, &requestError{"you can't send as " + clip(in.From, 80)}
 		}
+		if addr, ok, err := s.mayAuthor(r.Context(), a.account, in.Raw); err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, &requestError{"the message's From isn't an address you can send as: " + clip(addr, 80)}
+		}
 		uid, err := s.engine.ScheduleSend(r.Context(), a.account.ID, in.Raw, strings.ToLower(strings.TrimSpace(in.From)), rcpts, in.SendAt)
 		if errors.Is(err, ErrQuota) {
 			return nil, &requestError{"your mailbox is full"}

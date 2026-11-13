@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net/mail"
 	"strings"
 
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
@@ -18,51 +17,11 @@ import (
 // session every From address has to pass the same ownership rules as the
 // envelope sender.
 
-// headerValues returns the values of every field called name in head,
-// unfolded. It is deliberately lenient: a strict parser stops at the first
-// malformed line, which would let a sender hide a From behind one from this
-// check while dkim.FromHeaderDomain and the recipient's software still find
-// it. Every line with a colon before the blank line is a field here.
-func headerValues(head []byte, name string) []string {
-	if end := bytes.Index(head, []byte("\r\n\r\n")); end >= 0 {
-		head = head[:end]
-	} else if end := bytes.Index(head, []byte("\n\n")); end >= 0 {
-		head = head[:end]
-	}
-	var out []string
-	current := -1
-	for _, line := range strings.Split(strings.ReplaceAll(string(head), "\r\n", "\n"), "\n") {
-		if line != "" && (line[0] == ' ' || line[0] == '\t') {
-			if current >= 0 {
-				out[current] += " " + strings.TrimSpace(line)
-			}
-			continue
-		}
-		current = -1
-		field, value, found := strings.Cut(line, ":")
-		if found && strings.EqualFold(strings.TrimSpace(field), name) {
-			out = append(out, strings.TrimSpace(value))
-			current = len(out) - 1
-		}
-	}
-	return out
-}
+// headerValues and headerFromAddresses are the shared lenient parsers, so the
+// MTA and the mailbox service read From the same way.
+func headerValues(head []byte, name string) []string { return mailpolicy.HeaderValues(head, name) }
 
-// headerFromAddresses returns every address in every From field of head.
-// ok is false when a From field can't be parsed, which callers must treat as
-// not owned rather than as absent.
-func headerFromAddresses(head []byte) (addrs []string, ok bool) {
-	for _, field := range headerValues(head, "From") {
-		list, err := mail.ParseAddressList(field)
-		if err != nil || len(list) == 0 {
-			return nil, false
-		}
-		for _, a := range list {
-			addrs = append(addrs, a.Address)
-		}
-	}
-	return addrs, true
-}
+func headerFromAddresses(head []byte) ([]string, bool) { return mailpolicy.FromAddresses(head) }
 
 // checkHeaderFrom refuses a signed-in user's message whose From names an
 // address the user may not send as. Sessions that aren't signed in are left

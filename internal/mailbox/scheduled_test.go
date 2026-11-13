@@ -74,7 +74,10 @@ func (r *scheduleRig) flags(folder string, uid uint32) []string {
 
 func (r *scheduleRig) schedule(at time.Time) uint32 {
 	r.t.Helper()
-	uid, err := r.e.ScheduleSend(r.ctx, r.a.ID, []byte(scheduledMessage), r.a.Address, []string{"ana@example.net", "hidden@example.org"}, at)
+	// From is the account's own address, as the webmail writes it; a From the
+	// account can't use is refused (TestScheduledSendChecksTheMessagesFrom).
+	raw := strings.Replace(scheduledMessage, "From: me@example.com", "From: "+r.a.Address, 1)
+	uid, err := r.e.ScheduleSend(r.ctx, r.a.ID, []byte(raw), r.a.Address, []string{"ana@example.net", "hidden@example.org"}, at)
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -472,5 +475,35 @@ func TestScheduleValidation(t *testing.T) {
 	}
 	if got, err := checkScheduleRecipients([]string{" ana@example.net "}); err != nil || got[0] != "ana@example.net" {
 		t.Errorf("checkScheduleRecipients = %v, %v", got, err)
+	}
+}
+
+// The From inside a scheduled message is checked as well as the envelope.
+// The message goes out through the MTA's internal relay, where From isn't
+// bound to a login, and is signed for the envelope's domain, so an unchecked
+// From let a user send as a colleague with an aligned signature.
+func TestScheduledSendChecksTheMessagesFrom(t *testing.T) {
+	r := newScheduleRig(t)
+	forged := strings.Replace(scheduledMessage, "From: me@example.com", "From: CEO <ceo@example.com>", 1)
+	if _, ok, err := r.svc.mayAuthor(r.ctx, r.a, []byte(forged)); err != nil || ok {
+		t.Fatalf("mayAuthor(colleague) = %v, %v", ok, err)
+	}
+	own := strings.Replace(scheduledMessage, "From: me@example.com", "From: "+r.a.Address, 1)
+	if _, ok, err := r.svc.mayAuthor(r.ctx, r.a, []byte(own)); err != nil || !ok {
+		t.Fatalf("mayAuthor(own) = %v, %v", ok, err)
+	}
+
+	// Scheduled anyway (straight into the engine), it's refused at send time.
+	if _, err := r.e.ScheduleSend(r.ctx, r.a.ID, []byte(forged), r.a.Address, []string{"ana@example.net"}, time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.svc.sendDue(r.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(r.submit.messages()); n != 0 {
+		t.Fatal("a message with someone else's From was sent")
+	}
+	if got := r.uids("Drafts"); len(got) != 1 {
+		t.Errorf("Drafts holds %v, want the message", got)
 	}
 }

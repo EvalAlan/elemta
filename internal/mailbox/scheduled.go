@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"net/mail"
 	"net/textproto"
 	"slices"
@@ -520,6 +521,13 @@ func (s *Service) sendOne(ctx context.Context, d dueSend) error {
 	if err != nil {
 		return err
 	}
+	// As at scheduling: the From inside the message must be one the account
+	// may still use, not only the envelope.
+	if addr, ok, err := s.mayAuthor(ctx, a, raw); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("%w: %s may not send as %q", errSendRefused, a.Address, addr)
+	}
 	if err := s.submit(ctx, d.from, d.rcpts, raw); err != nil {
 		var se *smtp.SMTPError
 		if errors.As(err, &se) && se.Code >= 500 {
@@ -541,6 +549,26 @@ func (s *Service) sendOne(ctx context.Context, d dueSend) error {
 }
 
 // maySendAs follows the check SMTP makes and compose offers (sendAddresses).
+// mayAuthor reports whether every From address in raw is one a may send as.
+// The scheduled message goes out through the MTA's internal relay, where
+// the MTA doesn't bind From to a login, and is signed for the envelope's
+// domain: checking only the envelope let a user schedule mail that claimed
+// to be from a colleague, signed and aligned. Mail with no From is allowed,
+// since it claims nobody.
+func (s *Service) mayAuthor(ctx context.Context, a Account, raw []byte) (string, bool, error) {
+	addrs, ok := mailpolicy.FromAddresses(raw)
+	if !ok {
+		return "", false, nil
+	}
+	for _, addr := range addrs {
+		allowed, err := s.maySendAs(ctx, a, addr)
+		if err != nil || !allowed {
+			return addr, false, err
+		}
+	}
+	return "", true, nil
+}
+
 func (s *Service) maySendAs(ctx context.Context, a Account, from string) (bool, error) {
 	from = strings.ToLower(strings.TrimSpace(from))
 	if from == strings.ToLower(a.Address) {
