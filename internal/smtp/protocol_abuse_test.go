@@ -2,6 +2,7 @@ package smtp
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -233,5 +234,138 @@ func TestFirstCommandIsNotEatenByTheTLSCheck(t *testing.T) {
 
 	if reply := p.cmd("EHLO probe.example"); !strings.HasPrefix(reply, "250") {
 		t.Errorf("EHLO after the TLS check: %q", reply)
+	}
+}
+
+// TestRefusedBodyDrainHonoursStrictLineEndings pins that the drain after a
+// mid-body refusal ends the message exactly where the strict reader would.
+// Strict mode is the default; the shared test config uses legacy mode, where
+// ".\n" is a terminator by design, so this builds its own server.
+func TestRefusedBodyDrainHonoursStrictLineEndings(t *testing.T) {
+	cfg := strictTestConfig(t)
+	cfg.MaxSize = 4096
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	go func() { _ = server.Start() }()
+	time.Sleep(150 * time.Millisecond)
+
+	p := dialProbe(t, server.Addr().String())
+	p.cmd("EHLO probe.example")
+	p.cmd("MAIL FROM:<sender@example.com>")
+	if reply := p.cmd("RCPT TO:<rcpt@example.com>"); !strings.HasPrefix(reply, "250") {
+		t.Fatalf("RCPT TO: %q", reply)
+	}
+	if reply := p.cmd("DATA"); !strings.HasPrefix(reply, "354") {
+		t.Fatalf("DATA: %q", reply)
+	}
+	p.trySend("Subject: probe\r\n\r\n" +
+		strings.Repeat(strings.Repeat("A", 98)+"\r\n", 60) + // over max_size
+		".\n" + // bare-LF dot: not a terminator in strict mode
+		"MAIL FROM:<attacker@evil.example>\r\n" +
+		"RCPT TO:<victim@example.com>\r\n" +
+		"DATA\r\n" +
+		"Subject: FORGED\r\n\r\ninjected\r\n.\r\n")
+
+	got := p.drainFor(3 * time.Second)
+	if !strings.Contains(got, "552") {
+		t.Errorf("expected the oversized body to be refused, got:\n%s", got)
+	}
+	for _, forbidden := range []string{"Sender OK", "Recipient OK", "Message accepted for delivery"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("payload was executed as commands — response contained %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+// TestBDATHeaderAloneDoesNotReserveTheChunk pins that a declared BDAT chunk is
+// streamed rather than allocated up front.
+func TestBDATHeaderAloneDoesNotReserveTheChunk(t *testing.T) {
+	cfg := createTestConfig(t)
+	cfg.MaxSize = 25 << 20
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	go func() { _ = server.Start() }()
+	time.Sleep(150 * time.Millisecond)
+
+	heap := func() int64 {
+		runtime.GC()
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		return int64(m.HeapAlloc)
+	}
+	before := heap()
+	const sessions = 4
+	for i := 0; i < sessions; i++ {
+		p := dialProbe(t, server.Addr().String())
+		p.cmd("EHLO probe.example")
+		p.cmd("MAIL FROM:<sender@example.com>")
+		if reply := p.cmd("RCPT TO:<rcpt@example.com>"); !strings.HasPrefix(reply, "250") {
+			t.Fatalf("RCPT TO: %q", reply)
+		}
+		p.send(fmt.Sprintf("BDAT %d LAST\r\n", cfg.MaxSize-1))
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	// Each idle session used to hold 25 MiB; allow generous slack for the
+	// sessions themselves.
+	if grew := heap() - before; grew > 16<<20 {
+		t.Errorf("%d idle BDAT sessions hold %d MiB of heap", sessions, grew>>20)
+	}
+}
+
+// TestJunkCommandsCountTowardsTheErrorLimit pins the junk-command limit. NOOP
+// and friends always succeed, so a client looping on them was answered for
+// the whole session timeout; after maxJunkCommands each one counts as an
+// error.
+func TestJunkCommandsCountTowardsTheErrorLimit(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	p.cmd("EHLO probe.example")
+	for i := 0; i < maxJunkCommands+maxSessionErrors+5; i++ {
+		if !p.trySend("NOOP\r\n") {
+			break
+		}
+	}
+	got := p.drainFor(3 * time.Second)
+	if !strings.Contains(got, "421 4.7.0 Too many errors") {
+		t.Errorf("expected a 421 after %d NOOPs, got %d replies ending:\n%s",
+			maxJunkCommands+maxSessionErrors, strings.Count(got, "\n"), got[max(0, len(got)-200):])
+	}
+	// The NOOP that reaches the limit is still answered, then the 421 follows.
+	if n := strings.Count(got, "250"); n != maxJunkCommands+maxSessionErrors {
+		t.Errorf("expected %d NOOPs answered before closing, got %d", maxJunkCommands+maxSessionErrors, n)
+	}
+}
+
+// TestJunkCommandsBelowTheLimitLeaveTheSessionUsable makes sure ordinary use
+// of NOOP and RSET never comes near the limit.
+func TestJunkCommandsBelowTheLimitLeaveTheSessionUsable(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	p.cmd("EHLO probe.example")
+	for i := 0; i < maxJunkCommands; i++ {
+		if reply := p.cmd("NOOP"); !strings.HasPrefix(reply, "250") {
+			t.Fatalf("NOOP %d: %q", i, reply)
+		}
+	}
+	if reply := p.cmd("MAIL FROM:<sender@example.com>"); !strings.HasPrefix(reply, "250") {
+		t.Errorf("session should still accept mail, got %q", reply)
+	}
+}
+
+// TestMemoryPressureIsATemporaryFailure pins that refusing a message because
+// this server is short of memory tells the sender to retry. It used to be
+// 552, which bounced the mail.
+func TestMemoryPressureIsATemporaryFailure(t *testing.T) {
+	if msg := errServerMemoryPressure.Error(); !strings.HasPrefix(msg, "4") {
+		t.Errorf("memory pressure must be a 4xx reply, got %q", msg)
 	}
 }

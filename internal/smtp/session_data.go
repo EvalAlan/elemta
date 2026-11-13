@@ -192,6 +192,11 @@ func (dh *DataHandler) ReadData(ctx context.Context) (*MessageSpool, error) {
 	return spool, err
 }
 
+// errServerMemoryPressure refuses a message because this server is short of
+// memory right now. That is a temporary condition on our side, so it must be
+// a 4xx the sender retries; it used to be 552, which bounced the mail.
+var errServerMemoryPressure = errors.New("452 4.3.1 Insufficient system storage, try again later")
+
 // maxDrainBytes bounds how much of a rejected message body will be read and
 // discarded to regain protocol sync. A sender that keeps streaming past this
 // is not going to produce a usable transaction, so the session is failed
@@ -217,6 +222,12 @@ func (dh *DataHandler) drainToEndOfData(ctx context.Context) {
 	}
 	defer func() { _ = dh.conn.SetReadDeadline(time.Time{}) }()
 
+	// The drain has to agree with readData about where a message ends, or
+	// message content can be read as commands. In strict mode readData only
+	// accepts "<CRLF>.<CRLF>" and treats a bare LF as a framing violation, so
+	// the drain does the same.
+	strict := dh.config.StrictLineEndingsEnabled()
+
 	var drained int64
 	atLineStart := true
 	for {
@@ -227,11 +238,25 @@ func (dh *DataHandler) drainToEndOfData(ctx context.Context) {
 			return
 		}
 
+		if strict && err == nil && !bytes.HasSuffix(line, []byte("\r\n")) {
+			dh.dataSyncLost = true
+			dh.logger.WarnContext(ctx, "Bare LF while draining a rejected message; connection is out of sync",
+				"bytes_discarded", drained,
+				"remote_addr", dh.conn.RemoteAddr().String(),
+			)
+			return
+		}
+
 		// A lone "." on its own line ends the message. Check before the error
 		// branch so a marker arriving with the final read still counts.
 		if atLineStart {
 			trimmed := bytes.TrimRight(line, "\r\n")
-			if len(trimmed) == 1 && trimmed[0] == '.' {
+			isEnd := len(trimmed) == 1 && trimmed[0] == '.'
+			if strict {
+				// TrimRight would also pass ".\r\r\n", which readData doesn't.
+				isEnd = bytes.Equal(line, []byte(".\r\n"))
+			}
+			if isEnd {
 				dh.logger.WarnContext(ctx, "Discarded the remainder of a rejected message to stay in sync",
 					"bytes_discarded", drained,
 					"remote_addr", dh.conn.RemoteAddr().String(),
@@ -415,7 +440,7 @@ func (dh *DataHandler) readData(ctx context.Context) (*MessageSpool, error) {
 					)
 					// Clear data transfer mode on error
 					dh.state.ClearDataTransferMode(ctx)
-					return nil, fmt.Errorf("552 5.3.4 Server memory limit exceeded")
+					return nil, errServerMemoryPressure
 				}
 			}
 		}
@@ -574,16 +599,14 @@ func (dh *DataHandler) ReadBDATChunk(ctx context.Context, size int64) error {
 		dh.bdatSpool = NewMessageSpool(dh.spoolDir(), dh.spoolThreshold())
 	}
 
-	// Read exactly size bytes
-	chunk := make([]byte, size)
-	if _, err := io.ReadFull(dh.reader, chunk); err != nil {
+	// Stream the chunk into the spool, so memory follows what has arrived
+	// rather than what the client declared.
+	if _, err := io.CopyN(dh.bdatSpool, dh.reader, size); err != nil {
+		// Part of the chunk may still be on its way, and nothing here knows
+		// how much, so the connection can't be trusted to sit at a command.
+		dh.dataSyncLost = true
 		dh.logger.ErrorContext(ctx, "Failed to read BDAT chunk", "error", err, "expected_size", size)
-		return fmt.Errorf("451 4.3.0 Error reading chunk data: %w", err)
-	}
-
-	if _, err := dh.bdatSpool.Write(chunk); err != nil {
-		dh.logger.ErrorContext(ctx, "Failed to spool BDAT chunk", "error", err)
-		return fmt.Errorf("451 4.3.0 Unable to buffer message data")
+		return fmt.Errorf("451 4.3.0 Error reading chunk data")
 	}
 	dh.bdatBytesReceived += size
 	dh.bdatChunkCount++
@@ -669,7 +692,7 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 				"error", err,
 				"session_id", dh.session.sessionID,
 			)
-			return fmt.Errorf("552 5.3.4 Server memory limit exceeded")
+			return errServerMemoryPressure
 		}
 
 		// Check per-session memory limits for the message
