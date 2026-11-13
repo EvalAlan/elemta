@@ -126,3 +126,23 @@ func (dh *DataHandler) mayLaterSignFromHeader(head []byte, mailFrom string) bool
 
 // sieveRedirectHeader marks a Sieve forward; see mailpolicy.SieveRedirectHeader.
 const sieveRedirectHeader = mailpolicy.SieveRedirectHeader
+
+// senderVerdict is the value of mailpolicy.SenderVerifiedHeader for this
+// message. A signed-in user's From has been bound to the login by
+// checkHeaderFrom, so its address is confirmed; otherwise DMARC confirms at
+// most the From domain.
+func (dh *DataHandler) senderVerdict(head []byte) string {
+	if dh.state != nil && dh.state.IsAuthenticated() {
+		if addrs, ok := headerFromAddresses(head); ok && len(addrs) == 1 && !strings.ContainsAny(addrs[0], " \t\r\n") {
+			return "auth " + strings.ToLower(addrs[0])
+		}
+		return "none"
+	}
+	if dh.session != nil {
+		if results, ok := dh.session.AuthResults(); ok && results.DMARC.Value == "pass" && results.DMARC.Domain != "" &&
+			!strings.ContainsAny(results.DMARC.Domain, " \t\r\n") {
+			return "dmarc " + strings.ToLower(results.DMARC.Domain)
+		}
+	}
+	return "none"
+}

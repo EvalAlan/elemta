@@ -23,6 +23,7 @@ import (
 	"log/slog"
 
 	"github.com/EvalAlan/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/google/uuid"
 )
@@ -1252,6 +1253,11 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 				"Authentication-Results: "+results.Header(dh.config.Hostname))
 		}
 	}
+
+	// What this server confirmed about the sender, for the mailbox service's
+	// automatic actions (room booking). Always written, so the first one in
+	// the stored message is this one; see mailpolicy.SenderVerifiedHeader.
+	additionalHeaders = append(additionalHeaders, mailpolicy.SenderVerifiedHeader+": "+dh.senderVerdict(data))
 
 	// Add server identification headers
 	additionalHeaders = append(additionalHeaders, "X-Elemta-Version: 1.0")

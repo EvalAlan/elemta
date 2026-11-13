@@ -89,3 +89,18 @@ func TestMayLaterSignFromHeader(t *testing.T) {
 		})
 	}
 }
+
+// The verdict the MTA writes for the mailbox service: a signed-in user's
+// single, already-bound From address; nothing for mail it didn't verify.
+func TestSenderVerdict(t *testing.T) {
+	head := []byte("From: Alice <Alice@Example.com>\r\n\r\n")
+	if got := headerFromHandler(t, "alice@example.com", "203.0.113.9").senderVerdict(head); got != "auth alice@example.com" {
+		t.Errorf("signed in: %q", got)
+	}
+	if got := headerFromHandler(t, "alice@example.com", "203.0.113.9").senderVerdict([]byte("From: a@example.com, b@example.com\r\n\r\n")); got != "none" {
+		t.Errorf("two From addresses: %q", got)
+	}
+	if got := headerFromHandler(t, "", "203.0.113.9").senderVerdict(head); got != "none" {
+		t.Errorf("not signed in, nothing verified: %q", got)
+	}
+}
