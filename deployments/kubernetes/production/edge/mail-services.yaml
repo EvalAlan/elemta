@@ -26,4 +26,3 @@ spec:
     - { name: imaps, port: 993, targetPort: imaps }
     - { name: imap-starttls, port: 143, targetPort: imap-starttls }
     - { name: pop3-starttls, port: 110, targetPort: pop3 }
-    - { name: sieve, port: 4190, targetPort: sieve }

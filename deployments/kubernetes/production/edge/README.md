@@ -72,7 +72,10 @@ publish the backend HTTP Services as LoadBalancers.
 
 Mail bypasses HAProxy. `elemta-mail-public` exposes SMTP 25 and submission
 587; `elemta-mailbox-public` exposes IMAPS 993, IMAP STARTTLS 143, POP3 STLS
-110, and ManageSieve 4190. Both use `externalTrafficPolicy: Local`, so the
+110. ManageSieve (4190) stays internal: the webmail edits filters over the
+cluster network, and publishing it only serves mail apps' filter editors
+(add it to the Service if you want that; those clients sign in under the
+public rules). Both use `externalTrafficPolicy: Local`, so the
 external balancer must send traffic only to nodes with a ready endpoint.
 That keeps the original address available to SMTP relay and rate-limit
 checks. Keep 2588, the webmail-only submission listener, internal.
