@@ -424,7 +424,11 @@ func (s *Session) verifyAuthenticationContent(ctx context.Context, mailFrom stri
 	)
 
 	ownRelay := s.commandHandler != nil && s.commandHandler.isRelayAllowed("")
-	if err := ownDomainDMARCRefusal(results, s.config.LocalDomains, ownRelay); err != nil {
+	var localDomains []string
+	if s.config != nil {
+		localDomains = s.config.LocalDomains
+	}
+	if err := ownDomainDMARCRefusal(results, localDomains, ownRelay); err != nil {
 		s.logger.WarnContext(ctx, "Message refused: claims a local domain and fails its DMARC check",
 			"event_type", "rejection",
 			"client_ip", host,
