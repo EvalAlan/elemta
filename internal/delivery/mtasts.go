@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -119,6 +121,7 @@ func NewMTASTSManager(config *Config) *MTASTSManager {
 				DialContext: (&net.Dialer{
 					Timeout:   10 * time.Second,
 					KeepAlive: 30 * time.Second,
+					Control:   publicPolicyHost,
 				}).DialContext,
 				TLSHandshakeTimeout:   10 * time.Second,
 				ResponseHeaderTimeout: 10 * time.Second,
@@ -481,3 +484,29 @@ func (p *MTASTSPolicy) MarshalJSON() ([]byte, error) {
 		ExpiresAt: p.expiresAt,
 	})
 }
+
+// publicPolicyHost refuses to connect to an address that isn't public. The
+// host fetched is mta-sts.<recipient domain>, and whoever owns that domain
+// chooses where it resolves, so without this a policy fetch could be pointed
+// at the server's own network. It checks the address actually dialled, after
+// DNS, so a name that resolves (or rebinds) inward is refused too.
+func publicPolicyHost(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return err
+	}
+	ip = ip.Unmap()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
+		ip.IsMulticast() || ip.IsUnspecified() || sharedAddressSpace.Contains(ip) {
+		return fmt.Errorf("MTA-STS policy host resolves to a nonpublic address %s", ip)
+	}
+	return nil
+}
+
+// sharedAddressSpace is carrier-grade NAT (RFC 6598), which netip doesn't
+// count as private.
+var sharedAddressSpace = netip.MustParsePrefix("100.64.0.0/10")
