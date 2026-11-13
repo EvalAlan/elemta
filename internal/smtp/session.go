@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -522,6 +523,7 @@ func (s *Session) sendGreeting(ctx context.Context) error {
 // protocol-specific actions that require the client to have seen the response.
 func (s *Session) processCommands(ctx context.Context) error {
 	firstRead := true
+	junk := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -666,6 +668,20 @@ func (s *Session) processCommands(ctx context.Context) error {
 				s.logger.InfoContext(ctx, "Session terminated by client")
 				return nil
 			}
+			if isJunkCommand(line) {
+				junk++
+				if junk > maxJunkCommands &&
+					s.state.AddError(ctx, errTooManyJunkCommands) >= maxSessionErrors {
+					s.logger.WarnContext(ctx, "Closing session: too many commands that do nothing",
+						"event_type", "rejection",
+						"client", s.remoteAddr,
+						"commands", junk,
+					)
+					_ = s.write("421 4.7.0 Too many errors, closing connection")
+					_ = s.flush()
+					return nil
+				}
+			}
 		}
 
 		// Flush responses if no more pipelined commands waiting (RFC 2920)
@@ -789,6 +805,28 @@ func (s *Session) writeWithLog(msg string) {
 // the idle timeout. 20 matches Postfix's smtpd_hard_error_limit, so senders
 // that cope with Postfix cope with this.
 const maxSessionErrors = 20
+
+// maxJunkCommands is how many commands that move nothing forward (NOOP,
+// RSET, VRFY, EXPN, HELP) a session may send before each further one counts
+// towards maxSessionErrors. They always succeed, so the error limit alone
+// never ends a client looping on them, and the session timeout lets that
+// run for half an hour. A plain cap on all commands would instead cut off a
+// busy relay sending many messages on one connection. 100 matches Postfix's
+// smtpd_junk_command_limit.
+const maxJunkCommands = 100
+
+var errTooManyJunkCommands = errors.New("too many NOOP/RSET/VRFY/EXPN/HELP commands")
+
+// isJunkCommand reports whether line is one of the commands maxJunkCommands
+// counts.
+func isJunkCommand(line string) bool {
+	verb, _, _ := strings.Cut(strings.TrimSpace(line), " ")
+	switch strings.ToUpper(verb) {
+	case "NOOP", "RSET", "VRFY", "EXPN", "HELP":
+		return true
+	}
+	return false
+}
 
 // writeError sends err to the client, logs it once and records it against the
 // session, returning the session's refusal count. command is the redacted

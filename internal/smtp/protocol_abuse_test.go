@@ -318,3 +318,45 @@ func TestBDATHeaderAloneDoesNotReserveTheChunk(t *testing.T) {
 		t.Errorf("%d idle BDAT sessions hold %d MiB of heap", sessions, grew>>20)
 	}
 }
+
+// TestJunkCommandsCountTowardsTheErrorLimit pins the junk-command limit. NOOP
+// and friends always succeed, so a client looping on them was answered for
+// the whole session timeout; after maxJunkCommands each one counts as an
+// error.
+func TestJunkCommandsCountTowardsTheErrorLimit(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	p.cmd("EHLO probe.example")
+	for i := 0; i < maxJunkCommands+maxSessionErrors+5; i++ {
+		if !p.trySend("NOOP\r\n") {
+			break
+		}
+	}
+	got := p.drainFor(3 * time.Second)
+	if !strings.Contains(got, "421 4.7.0 Too many errors") {
+		t.Errorf("expected a 421 after %d NOOPs, got %d replies ending:\n%s",
+			maxJunkCommands+maxSessionErrors, strings.Count(got, "\n"), got[max(0, len(got)-200):])
+	}
+	// The NOOP that reaches the limit is still answered, then the 421 follows.
+	if n := strings.Count(got, "250"); n != maxJunkCommands+maxSessionErrors {
+		t.Errorf("expected %d NOOPs answered before closing, got %d", maxJunkCommands+maxSessionErrors, n)
+	}
+}
+
+// TestJunkCommandsBelowTheLimitLeaveTheSessionUsable makes sure ordinary use
+// of NOOP and RSET never comes near the limit.
+func TestJunkCommandsBelowTheLimitLeaveTheSessionUsable(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	p.cmd("EHLO probe.example")
+	for i := 0; i < maxJunkCommands; i++ {
+		if reply := p.cmd("NOOP"); !strings.HasPrefix(reply, "250") {
+			t.Fatalf("NOOP %d: %q", i, reply)
+		}
+	}
+	if reply := p.cmd("MAIL FROM:<sender@example.com>"); !strings.HasPrefix(reply, "250") {
+		t.Errorf("session should still accept mail, got %q", reply)
+	}
+}
