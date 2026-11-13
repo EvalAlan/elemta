@@ -25,6 +25,31 @@ import (
 // Add a case here whenever a new path can refuse input the server has already
 // committed to receiving.
 
+// startAbuseTestServer starts a server with the production default of
+// strict line endings, which is what these attacks would meet. The shared
+// createTestConfig runs legacy mode, where ".\n" ends a message by design;
+// running this suite there is how a strict-mode-only desync (the drain after
+// a refused body accepting ".\n") went unnoticed. mutate, if not nil,
+// adjusts the configuration first.
+func startAbuseTestServer(t *testing.T, mutate func(*Config)) *Server {
+	t.Helper()
+	cfg := strictTestConfig(t)
+	if !cfg.StrictLineEndingsEnabled() {
+		t.Fatal("the abuse suite must run with strict line endings")
+	}
+	if mutate != nil {
+		mutate(cfg)
+	}
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	go func() { _ = server.Start() }()
+	time.Sleep(150 * time.Millisecond)
+	return server
+}
+
 // abuseCase is one hostile exchange and the responses it must never produce.
 type abuseCase struct {
 	name string
@@ -75,6 +100,34 @@ func TestProtocolAbuseDoesNotExecutePayloadAsCommands(t *testing.T) {
 			}, forged...),
 			mustNotAppear: []string{"Message accepted for delivery"},
 		},
+		// SMTP smuggling: end-of-data written in a way some other server
+		// would accept, followed by a forged transaction. In strict mode
+		// none of these ends the message, and the framing violation closes
+		// the session, so the forged commands never run.
+		{
+			name: "bare-LF dot then a forged transaction",
+			send: append([]string{
+				"DATA\r\n",
+				"Subject: probe\r\n\r\nbody\n.\n",
+			}, forged...),
+			mustNotAppear: []string{"Sender OK", "Message accepted for delivery"},
+		},
+		{
+			name: "CRLF then a dot ending in bare LF, then a forged transaction",
+			send: append([]string{
+				"DATA\r\n",
+				"Subject: probe\r\n\r\nbody\r\n.\n",
+			}, forged...),
+			mustNotAppear: []string{"Sender OK", "Message accepted for delivery"},
+		},
+		{
+			name: "bare-CR dot then a forged transaction",
+			send: append([]string{
+				"DATA\r\n",
+				"Subject: probe\r\n\r\nbody\r.\r\n",
+			}, forged...),
+			mustNotAppear: []string{"Sender OK"},
+		},
 		{
 			name: "dot-stuffed terminator lookalike does not end DATA early",
 			send: []string{
@@ -90,7 +143,7 @@ func TestProtocolAbuseDoesNotExecutePayloadAsCommands(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			server := startDesyncTestServer(t)
+			server := startAbuseTestServer(t, nil)
 			p := dialProbe(t, server.Addr().String())
 
 			p.cmd("EHLO probe.example")
@@ -128,7 +181,7 @@ func TestProtocolAbuseDoesNotExecutePayloadAsCommands(t *testing.T) {
 // a client may have several commands in flight when one is refused, and the
 // refusal must not shift the server's idea of where the next command starts.
 func TestPipelinedCommandsAfterRejectionStayInSync(t *testing.T) {
-	server := startDesyncTestServer(t)
+	server := startAbuseTestServer(t, nil)
 	p := dialProbe(t, server.Addr().String())
 
 	p.cmd("EHLO probe.example")
@@ -151,7 +204,7 @@ func TestPipelinedCommandsAfterRejectionStayInSync(t *testing.T) {
 // TestOversizedDeclaredSizeIsRefusedBeforeData pins that a SIZE declaration
 // beyond the limit is refused at MAIL FROM, so no body is ever invited.
 func TestOversizedDeclaredSizeIsRefusedBeforeData(t *testing.T) {
-	server := startDesyncTestServer(t)
+	server := startAbuseTestServer(t, nil)
 	p := dialProbe(t, server.Addr().String())
 
 	p.cmd("EHLO probe.example")
@@ -166,7 +219,7 @@ func TestOversizedDeclaredSizeIsRefusedBeforeData(t *testing.T) {
 // probes); every line is refused, and without a limit the server answered
 // each one until the idle timeout.
 func TestGarbageLinesCloseTheSessionAtTheErrorLimit(t *testing.T) {
-	server := startDesyncTestServer(t)
+	server := startAbuseTestServer(t, nil)
 	p := dialProbe(t, server.Addr().String())
 
 	// Invalid UTF-8 plus control bytes. It must not start like a TLS
@@ -190,7 +243,7 @@ func TestGarbageLinesCloseTheSessionAtTheErrorLimit(t *testing.T) {
 // TestSessionBelowTheErrorLimitStaysUsable makes sure the limit is not hit by
 // a client that makes mistakes but is still speaking SMTP.
 func TestSessionBelowTheErrorLimitStaysUsable(t *testing.T) {
-	server := startDesyncTestServer(t)
+	server := startAbuseTestServer(t, nil)
 	p := dialProbe(t, server.Addr().String())
 
 	p.cmd("EHLO probe.example")
@@ -208,7 +261,7 @@ func TestSessionBelowTheErrorLimitStaysUsable(t *testing.T) {
 // implicit TLS. Its ClientHello has no line feed and it then waits for a
 // ServerHello, so without the check both sides sat until the command timeout.
 func TestTLSHandshakeOnPlaintextPortIsClosedAtOnce(t *testing.T) {
-	server := startDesyncTestServer(t)
+	server := startAbuseTestServer(t, nil)
 	p := dialProbe(t, server.Addr().String())
 
 	// Record header, then the start of a ClientHello; no CRLF anywhere.
@@ -229,7 +282,7 @@ func TestTLSHandshakeOnPlaintextPortIsClosedAtOnce(t *testing.T) {
 // TestFirstCommandIsNotEatenByTheTLSCheck makes sure peeking at the first
 // bytes leaves a normal first command intact.
 func TestFirstCommandIsNotEatenByTheTLSCheck(t *testing.T) {
-	server := startDesyncTestServer(t)
+	server := startAbuseTestServer(t, nil)
 	p := dialProbe(t, server.Addr().String())
 
 	if reply := p.cmd("EHLO probe.example"); !strings.HasPrefix(reply, "250") {
@@ -239,18 +292,9 @@ func TestFirstCommandIsNotEatenByTheTLSCheck(t *testing.T) {
 
 // TestRefusedBodyDrainHonoursStrictLineEndings pins that the drain after a
 // mid-body refusal ends the message exactly where the strict reader would.
-// Strict mode is the default; the shared test config uses legacy mode, where
-// ".\n" is a terminator by design, so this builds its own server.
+// It needs a small max_size to refuse the body cheaply.
 func TestRefusedBodyDrainHonoursStrictLineEndings(t *testing.T) {
-	cfg := strictTestConfig(t)
-	cfg.MaxSize = 4096
-	server, err := NewServer(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = server.Close() })
-	go func() { _ = server.Start() }()
-	time.Sleep(150 * time.Millisecond)
+	server := startAbuseTestServer(t, func(cfg *Config) { cfg.MaxSize = 4096 })
 
 	p := dialProbe(t, server.Addr().String())
 	p.cmd("EHLO probe.example")
@@ -283,15 +327,8 @@ func TestRefusedBodyDrainHonoursStrictLineEndings(t *testing.T) {
 // TestBDATHeaderAloneDoesNotReserveTheChunk pins that a declared BDAT chunk is
 // streamed rather than allocated up front.
 func TestBDATHeaderAloneDoesNotReserveTheChunk(t *testing.T) {
-	cfg := createTestConfig(t)
-	cfg.MaxSize = 25 << 20
-	server, err := NewServer(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = server.Close() })
-	go func() { _ = server.Start() }()
-	time.Sleep(150 * time.Millisecond)
+	server := startAbuseTestServer(t, func(cfg *Config) { cfg.MaxSize = 25 << 20 })
+	cfg := server.config
 
 	heap := func() int64 {
 		runtime.GC()
@@ -324,7 +361,7 @@ func TestBDATHeaderAloneDoesNotReserveTheChunk(t *testing.T) {
 // the whole session timeout; after maxJunkCommands each one counts as an
 // error.
 func TestJunkCommandsCountTowardsTheErrorLimit(t *testing.T) {
-	server := startDesyncTestServer(t)
+	server := startAbuseTestServer(t, nil)
 	p := dialProbe(t, server.Addr().String())
 
 	p.cmd("EHLO probe.example")
@@ -347,7 +384,7 @@ func TestJunkCommandsCountTowardsTheErrorLimit(t *testing.T) {
 // TestJunkCommandsBelowTheLimitLeaveTheSessionUsable makes sure ordinary use
 // of NOOP and RSET never comes near the limit.
 func TestJunkCommandsBelowTheLimitLeaveTheSessionUsable(t *testing.T) {
-	server := startDesyncTestServer(t)
+	server := startAbuseTestServer(t, nil)
 	p := dialProbe(t, server.Addr().String())
 
 	p.cmd("EHLO probe.example")
