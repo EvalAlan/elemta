@@ -323,8 +323,12 @@ func (s *Service) redirect(ctx context.Context, d delivery, to string) error {
 	if err != nil || sent {
 		return err
 	}
+	envelope := s.forwardSender(ctx, d, target)
 	msg := append([]byte(redirectHeader+": "+d.rcpt+"\r\n"), d.raw...)
-	if err := s.submit(ctx, s.forwardSender(ctx, d, target), []string{target}, msg); err != nil {
+	if forwardNeedsNewFrom(d.raw, envelope, domainOf(d.account.Address)) {
+		msg = sendOnAs(msg, d.rcpt, d.account.Address)
+	}
+	if err := s.submit(ctx, envelope, []string{target}, msg); err != nil {
 		// A rule refusing the destination won't change on a retry, and
 		// retrying would hold the mail back from everyone else. Keep it here.
 		var refused *smtp.SMTPError
@@ -563,4 +567,48 @@ func (s *Service) withoutExternalRedirects(ctx context.Context, d delivery, acti
 		out = append(out, a)
 	}
 	return out
+}
+
+// forwardNeedsNewFrom reports whether a forward must not keep its original
+// From. The forward is signed on the way out for its envelope's domain (the
+// account's, under SRS), so a From in that same domain would carry an
+// aligned signature: fine for a colleague's real mail, a forgery service for
+// mail from outside merely claiming to be them. It is kept only when the MTA
+// confirmed that sender on arrival (mailpolicy.SenderVerified): the signed-in
+// sender itself, or DMARC passing for that domain. Mail from other domains
+// keeps its From; the signature doesn't align with it.
+func forwardNeedsNewFrom(raw []byte, envelope, accountDomain string) bool {
+	envDomain := strings.ToLower(domainOf(envelope))
+	if envDomain == "" {
+		return false // a null-sender forward isn't signed (smtp.mayLaterSignFromHeader)
+	}
+	// Only an envelope in this server's own domain (the account's, as SRS
+	// makes it) gets this server's signature. Without SRS the envelope is the
+	// original sender's, and their domain's keys aren't ours.
+	if !sameOrganization(envDomain, strings.ToLower(accountDomain)) {
+		return false
+	}
+	addrs, ok := mailpolicy.FromAddresses(raw)
+	if !ok {
+		return true
+	}
+	kind, value := mailpolicy.SenderVerified(raw)
+	for _, addr := range addrs {
+		dom := strings.ToLower(domainOf(addr))
+		if !sameOrganization(dom, envDomain) {
+			continue
+		}
+		confirmed := (kind == "auth" && strings.EqualFold(value, addr)) || (kind == "dmarc" && sameOrganization(value, dom))
+		if !confirmed {
+			return true
+		}
+	}
+	return false
+}
+
+// sameOrganization is DMARC's relaxed alignment, approximated: the same
+// domain, or one a subdomain of the other.
+func sameOrganization(a, b string) bool {
+	a, b = strings.TrimSuffix(a, "."), strings.TrimSuffix(b, ".")
+	return a != "" && b != "" && (a == b || strings.HasSuffix(a, "."+b) || strings.HasSuffix(b, "."+a))
 }

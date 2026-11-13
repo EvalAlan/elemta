@@ -41,3 +41,35 @@ func TestExternalListCopyDoesNotKeepThePostersFrom(t *testing.T) {
 		t.Errorf("an existing Reply-To must be kept:\n%s", out)
 	}
 }
+
+// A forward is signed for its envelope's domain, so it keeps a From in that
+// domain only when the MTA confirmed the sender on arrival.
+func TestForwardNeedsNewFrom(t *testing.T) {
+	v := func(verdict string) string {
+		if verdict == "" {
+			return ""
+		}
+		return mailpolicy.SenderVerifiedHeader + ": " + verdict + "\r\n"
+	}
+	env := "SRS0=ab=cd=example.org=dana@example.com"
+	for _, tc := range []struct {
+		name, verdict, from, envelope string
+		want                          bool
+	}{
+		{"colleague, signed in", "auth ceo@example.com", "ceo@example.com", env, false},
+		{"own domain, DMARC pass", "dmarc example.com", "ceo@example.com", env, false},
+		{"own domain, unverified", "none", "ceo@example.com", env, true},
+		{"own domain, no verdict", "", "ceo@example.com", env, true},
+		{"own domain, someone else signed in", "auth lee@example.com", "ceo@example.com", env, true},
+		{"subdomain of own domain, unverified", "none", "ceo@mail.example.com", env, true},
+		{"outside domain", "none", "dana@example.org", env, false},
+		{"null-sender forward", "none", "ceo@example.com", "", false},
+		{"no SRS, outside sender's own envelope", "none", "dana@example.org", "dana@example.org", false},
+		{"no SRS, envelope claims own domain", "none", "ceo@example.com", "ceo@example.com", true},
+	} {
+		raw := []byte(v(tc.verdict) + "From: " + tc.from + "\r\nSubject: x\r\n\r\nbody\r\n")
+		if got := forwardNeedsNewFrom(raw, tc.envelope, "example.com"); got != tc.want {
+			t.Errorf("%s: forwardNeedsNewFrom = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
