@@ -355,3 +355,61 @@ func TestLMTPAcceptsLongLines(t *testing.T) {
 		t.Fatal("long-line message not stored")
 	}
 }
+
+// A script's vacation :from is used only when the account may send as it.
+// The reply is signed for its From domain on the way out, so an unchecked
+// :from let a script send mail as anyone in any domain the server signs for.
+func TestVacationFromMustBeTheAccounts(t *testing.T) {
+	r := newSieveRig(t)
+	if err := r.install(`require "vacation"; vacation :days 1 :from "CEO <ceo@other-tenant.example>" "Away.";`); err != nil {
+		t.Fatal(err)
+	}
+	if st := r.deliver("bo@example.com", "v1", r.msg("Hello")); st != nil {
+		t.Fatalf("delivery = %v", st)
+	}
+	sent := r.submit.messages()
+	if len(sent) != 1 {
+		t.Fatalf("%d replies", len(sent))
+	}
+	reply := string(sent[0].data)
+	if strings.Contains(reply, "ceo@other-tenant.example") || !strings.Contains(reply, "From: <"+r.a.Address+">") {
+		t.Fatalf("reply From isn't the account's:\n%s", reply)
+	}
+}
+
+// The account's own address, with a name, is honoured as :from.
+func TestVacationFromOwnAddressIsKept(t *testing.T) {
+	r2 := newSieveRig(t)
+	if err := r2.install(`require "vacation"; vacation :days 1 :from "Me Myself <` + r2.a.Address + `>" "Away.";`); err != nil {
+		t.Fatal(err)
+	}
+	r2.deliver("bo@example.com", "v2", r2.msg("Hello"))
+	if sent := r2.submit.messages(); len(sent) != 1 || !strings.Contains(string(sent[0].data), `From: "Me Myself" <`+r2.a.Address+">") {
+		t.Fatalf("own :from not kept: %+v", sent)
+	}
+}
+
+// ManageSieve keeps the internal listener's rules only for connections from
+// the webmail's networks; anything else signs in under the public rules.
+func TestManageSieveInternalOnlyFromInternalNetworks(t *testing.T) {
+	s := &Service{}
+	for _, cidr := range []string{"10.253.53.0/24"} {
+		_, n, _ := net.ParseCIDR(cidr)
+		s.internalNets = append(s.internalNets, n)
+	}
+	for addr, want := range map[string]bool{
+		"127.0.0.1:5000":    true,
+		"[::1]:5000":        true,
+		"10.253.53.7:5000":  true,
+		"203.0.113.9:5000":  false,
+		"10.0.0.9:5000":     false,
+		"[2001:db8::1]:500": false,
+	} {
+		host, port, _ := net.SplitHostPort(addr)
+		tcp := &net.TCPAddr{IP: net.ParseIP(host)}
+		_ = port
+		if got := s.internalAddr(tcp); got != want {
+			t.Errorf("internalAddr(%s) = %v, want %v", addr, got, want)
+		}
+	}
+}

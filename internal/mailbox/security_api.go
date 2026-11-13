@@ -783,7 +783,17 @@ func writeSecurityError(w http.ResponseWriter, err error) {
 // internalClient admits the internal networks only. The health port is
 // never published, so this is the second of two barriers.
 func (s *Service) internalClient(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	return s.internalHost(r.RemoteAddr)
+}
+
+// internalAddr reports whether a connection comes from loopback or the
+// networks the webmail and MTA run on (lmtp_allowed_networks).
+func (s *Service) internalAddr(addr net.Addr) bool {
+	return addr != nil && s.internalHost(addr.String())
+}
+
+func (s *Service) internalHost(hostport string) bool {
+	host, _, err := net.SplitHostPort(hostport)
 	if err != nil {
 		return false
 	}

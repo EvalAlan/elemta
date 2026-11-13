@@ -454,6 +454,7 @@ func (s *Service) vacation(ctx context.Context, d delivery, v interp.ActionVacat
 	if err != nil || !ok {
 		return err
 	}
+	v.From = s.vacationFrom(ctx, d, v.From)
 	reply, err := s.vacationReply(d, mh, v)
 	if err != nil {
 		s.engine.releaseSent(ctx, d.account.ID, key)
@@ -465,6 +466,28 @@ func (s *Service) vacation(ctx context.Context, d delivery, v interp.ActionVacat
 		return err
 	}
 	return nil
+}
+
+// vacationFrom is the From an out-of-office reply may carry. A script's
+// :from is used only when the account may send as it: the reply goes out
+// through the MTA's internal relay, where From isn't bound to a login, and
+// an auto-reply is signed for its From domain, so an unchecked :from let a
+// script send mail as anyone in any domain this server signs for. Failing
+// that, the address the mail came to, if the account may send as it, and
+// otherwise the account's own address.
+func (s *Service) vacationFrom(ctx context.Context, d delivery, requested string) string {
+	if requested != "" {
+		if list, err := gomail.ParseAddressList(requested); err == nil && len(list) == 1 {
+			if ok, err := s.maySendAs(ctx, d.account, list[0].Address); err == nil && ok {
+				return list[0].String()
+			}
+		}
+		s.log.Info("vacation :from ignored; not an address the account sends as", "account", d.account.ID)
+	}
+	if ok, err := s.maySendAs(ctx, d.account, d.rcpt); err == nil && ok {
+		return d.rcpt
+	}
+	return d.account.Address
 }
 
 func (s *Service) vacationReply(d delivery, orig gomail.Header, v interp.ActionVacation) ([]byte, error) {
