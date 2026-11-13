@@ -521,6 +521,7 @@ func (s *Session) sendGreeting(ctx context.Context) error {
 // Special commands (STARTTLS, AUTH, QUIT) flush explicitly before their
 // protocol-specific actions that require the client to have seen the response.
 func (s *Session) processCommands(ctx context.Context) error {
+	firstRead := true
 	for {
 		select {
 		case <-ctx.Done():
@@ -591,6 +592,17 @@ func (s *Session) processCommands(ctx context.Context) error {
 		}
 		if err := s.conn.SetDeadline(time.Now().Add(commandTimeout)); err != nil {
 			s.logger.WarnContext(ctx, "Failed to set deadline", "error", err)
+		}
+
+		if firstRead {
+			firstRead = false
+			if s.startsWithTLSHandshake() {
+				s.logger.WarnContext(ctx, "Closing session: TLS handshake on a plaintext SMTP port",
+					"event_type", "rejection",
+					"client", s.remoteAddr,
+				)
+				return nil
+			}
 		}
 
 		// Read command line
@@ -664,6 +676,21 @@ func (s *Session) processCommands(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// startsWithTLSHandshake reports whether the client's first bytes are a TLS
+// handshake record (content type 0x16, protocol major version 3), which no
+// SMTP command can begin with. Clients that expect implicit TLS, and scanners
+// trying it, send a ClientHello and then wait for the server's reply. A short
+// ClientHello has no line feed, so the line reader would wait with them until
+// the command timeout; a long one would be refused line by line as garbage.
+// Neither will ever speak SMTP on this connection, so it is closed at once.
+//
+// It only peeks: on a read error or a normal command the bytes stay buffered,
+// and the line reader sees them, and reports the error, as before.
+func (s *Session) startsWithTLSHandshake() bool {
+	b, err := s.reader.Peek(2)
+	return err == nil && b[0] == 0x16 && b[1] == 0x03
 }
 
 // handleDataPhase handles the DATA phase of message transmission

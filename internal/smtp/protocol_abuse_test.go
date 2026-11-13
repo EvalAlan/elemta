@@ -168,8 +168,9 @@ func TestGarbageLinesCloseTheSessionAtTheErrorLimit(t *testing.T) {
 	server := startDesyncTestServer(t)
 	p := dialProbe(t, server.Addr().String())
 
-	// A TLS ClientHello prefix: invalid UTF-8 plus control bytes.
-	junk := "\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03\xff\xfe\r\n"
+	// Invalid UTF-8 plus control bytes. It must not start like a TLS
+	// handshake, which is closed on the first line instead.
+	junk := "\x00\x01\x02\xfc\x03\x03\xff\xfe\r\n"
 	for i := 0; i < maxSessionErrors+5; i++ {
 		if !p.trySend(junk) {
 			break
@@ -199,5 +200,38 @@ func TestSessionBelowTheErrorLimitStaysUsable(t *testing.T) {
 	}
 	if reply := p.cmd("MAIL FROM:<sender@example.com>"); !strings.HasPrefix(reply, "250") {
 		t.Errorf("session should still accept commands below the limit, got %q", reply)
+	}
+}
+
+// TestTLSHandshakeOnPlaintextPortIsClosedAtOnce covers a client that expects
+// implicit TLS. Its ClientHello has no line feed and it then waits for a
+// ServerHello, so without the check both sides sat until the command timeout.
+func TestTLSHandshakeOnPlaintextPortIsClosedAtOnce(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	// Record header, then the start of a ClientHello; no CRLF anywhere.
+	p.send("\x16\x03\x01\x00\xc8\x01\x00\x00\xc4\x03\x03")
+
+	// drainFor returns early only when the server closes the connection, so
+	// finishing well inside its window is the proof that it hung up.
+	start := time.Now()
+	got := p.drainFor(3 * time.Second)
+	if strings.Contains(got, "500") {
+		t.Errorf("a TLS handshake should be closed, not answered as commands:\n%s", got)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("the server did not close the connection within %v; it waited for a line it would never get", elapsed)
+	}
+}
+
+// TestFirstCommandIsNotEatenByTheTLSCheck makes sure peeking at the first
+// bytes leaves a normal first command intact.
+func TestFirstCommandIsNotEatenByTheTLSCheck(t *testing.T) {
+	server := startDesyncTestServer(t)
+	p := dialProbe(t, server.Addr().String())
+
+	if reply := p.cmd("EHLO probe.example"); !strings.HasPrefix(reply, "250") {
+		t.Errorf("EHLO after the TLS check: %q", reply)
 	}
 }
