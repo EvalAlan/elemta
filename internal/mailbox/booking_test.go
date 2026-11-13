@@ -33,6 +33,11 @@ func invitation(method, uid, organizer, start, end, extra string) string {
 	cal := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//t//EN\r\nMETHOD:" + method + "\r\nBEGIN:VEVENT\r\nUID:" + uid +
 		"\r\nDTSTAMP:20261001T000000Z\r\nDTSTART:" + start + "\r\nDTEND:" + end + "\r\nSUMMARY:Planning\r\nORGANIZER:mailto:" + organizer +
 		"\r\nATTENDEE;CUTYPE=ROOM:mailto:room@example.com\r\n" + extra + "END:VEVENT\r\nEND:VCALENDAR\r\n"
+	// The MTA's verdict, as it writes it for a signed-in organizer.
+	return mailpolicy.SenderVerifiedHeader + ": auth " + organizer + "\r\n" + unverifiedInvitation(method, cal, organizer)
+}
+
+func unverifiedInvitation(method, cal, organizer string) string {
 	return "From: " + organizer + "\r\nSubject: Invitation\r\nMIME-Version: 1.0\r\nContent-Type: text/calendar; method=" + method + "; charset=utf-8\r\n\r\n" + cal
 }
 
@@ -241,5 +246,39 @@ func TestPutResourceRules(t *testing.T) {
 	}
 	if got, err := e.Resource(ctx, a.ID); err != nil || got != nil {
 		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+// The organizer and envelope sender are only what the message says, and mail
+// from outside claiming this domain is accepted unless DMARC is enforced. A
+// room acts only on what the MTA confirmed.
+func TestRoomActsOnlyOnAVerifiedSender(t *testing.T) {
+	r := newBookingRig(t, mailpolicy.BookingAuto)
+	request := func(uid string) string {
+		return strings.SplitN(invitation("REQUEST", uid, r.organizer, bookingStart, "20261201T100000Z", ""), "\r\n", 2)[1]
+	}
+	for name, raw := range map[string]string{
+		"no verdict":   request("u1@t"),
+		"none":         mailpolicy.SenderVerifiedHeader + ": none\r\n" + request("u2@t"),
+		"someone else": mailpolicy.SenderVerifiedHeader + ": auth lee@" + r.domain + "\r\n" + request("u3@t"),
+		"other domain": mailpolicy.SenderVerifiedHeader + ": dmarc evil.example\r\n" + request("u4@t"),
+		// The MTA's verdict is always first; a sender's own copy comes after.
+		"forged second": mailpolicy.SenderVerifiedHeader + ": none\r\n" + mailpolicy.SenderVerifiedHeader + ": auth " + r.organizer + "\r\n" + request("u5@t"),
+	} {
+		r.send(r.organizer, raw)
+		if r.booked() != 0 {
+			t.Fatalf("%s: booked", name)
+		}
+	}
+	// DMARC for the room's own domain is enough to book.
+	r.send(r.organizer, mailpolicy.SenderVerifiedHeader+": dmarc "+r.domain+"\r\n"+request("u6@t"))
+	if r.booked() != 1 {
+		t.Fatal("a DMARC-verified colleague couldn't book")
+	}
+	// And a forged cancellation of that booking does nothing.
+	cancel := strings.SplitN(invitation("CANCEL", "u6@t", r.organizer, bookingStart, "20261201T100000Z", ""), "\r\n", 2)[1]
+	r.send(r.organizer, mailpolicy.SenderVerifiedHeader+": none\r\n"+cancel)
+	if r.booked() != 1 {
+		t.Fatal("an unverified cancellation removed the booking")
 	}
 }
