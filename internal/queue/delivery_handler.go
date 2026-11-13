@@ -320,6 +320,13 @@ func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) ([]byte, 
 	return signed, nil
 }
 
+// SignForDelivery returns content as delivery would send it, DKIM-signed by
+// the rules in signContent. It lets end-to-end tests check what leaves the
+// server, signature and all, without a remote MX to deliver to.
+func (h *SMTPDeliveryHandler) SignForDelivery(msg Message, content []byte) ([]byte, error) {
+	return h.signContent(msg, content)
+}
+
 // DeliverMessage attempts to deliver a message via SMTP
 func (h *SMTPDeliveryHandler) DeliverMessage(ctx context.Context, msg Message, content []byte) error {
 	_, err := h.DeliverMessageWithMetadata(ctx, msg, content)
