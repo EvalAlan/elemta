@@ -897,6 +897,28 @@ func TestBrowserInboxTabsFitAndStay(t *testing.T) {
 	}
 }
 
+// New mail sorted into a tab raises that tab's count without a reload, and
+// a tab whose mail has all been read loses its count.
+func TestBrowserInboxTabCountsFollowNewMail(t *testing.T) {
+	b := newBrowser(t)
+	if err := b.h.store.PutObject(context.Background(), CollSettings, Object{ID: settingsID, ContentType: "application/json", Data: []byte(`{"inbox_tabs":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	b.login()
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`!!document.querySelector(".inbox-tabs") && document.readyState === "complete"`)
+	count := func(tab string) string {
+		return `(document.querySelector('.inbox-tab[data-category="` + tab + `"] .tab-count:not(.hidden)') || {}).textContent`
+	}
+	b.waitFor(count("promotions") + ` === "3"`)
+	b.h.store.mu.Lock()
+	b.h.store.tabUnread = map[string]int{"primary": 0, "social": 2, "promotions": 4}
+	b.h.store.mu.Unlock()
+	// The check that runs when mail arrives, as it runs on returning to the tab.
+	b.run(chromedp.Evaluate[chromedp.Void](`document.dispatchEvent(new Event("visibilitychange"))`, chromedp.EvalAsValue))
+	b.waitFor(count("promotions") + ` === "4" && ` + count("social") + ` === "2" && ` + count("primary") + ` === undefined`)
+}
+
 // dragMouse presses at one point, moves in steps as a hand would, and lets
 // go at another.
 func (b *browser) dragMouse(x0, y0, x1, y1 float64) {

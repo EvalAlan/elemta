@@ -1063,7 +1063,7 @@
   function checkMail() {
     if (checkingMail) { pendingMailCheck = true; return; }
     checkingMail = true;
-    fetch("/api/counts", { credentials: "same-origin" })
+    fetch($("a.inbox-tab[data-category]") ? "/api/counts?tabs=1" : "/api/counts", { credentials: "same-origin" })
       .then(function (r) {
         if (r.status === 401) { location.href = "/login"; return null; }
         return r.ok ? r.json() : null;
@@ -1079,6 +1079,22 @@
           span.textContent = n > 0 && !hidden ? String(n) : "";
           span.classList.toggle("hidden", !(n > 0) || hidden);
         });
+        if (data.tabs) {
+          $$("a.inbox-tab[data-category]").forEach(function (a) {
+            var n = data.tabs[a.getAttribute("data-category")] || 0;
+            var span = $(".tab-count", a);
+            if (n > 0 && !span) {
+              span = doc.createElement("span");
+              span.className = "tab-count mono";
+              a.appendChild(doc.createTextNode(" "));
+              a.appendChild(span);
+            }
+            if (span) {
+              span.textContent = n > 0 ? String(n) : "";
+              span.classList.toggle("hidden", !(n > 0));
+            }
+          });
+        }
         var inbox = data.unread.INBOX || 0;
         doc.title = (inbox > 0 ? "(" + inbox + ") " : "") + baseTitle;
         var ol = listEl(), folder = ol && ol.getAttribute("data-folder");

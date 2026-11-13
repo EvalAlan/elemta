@@ -1005,13 +1005,25 @@ var (
 func (s *Server) countsAPI(w http.ResponseWriter, r *http.Request, sess *Session) {
 	counts := map[string]uint32{}
 	totals := map[string]uint32{}
+	// The inbox tabs' counts are only asked for by a page showing them,
+	// since they cost a search each; without them a tab's count stayed as
+	// the page was drawn while new mail arrived in it.
+	wantTabs := r.URL.Query().Get("tabs") == "1" && s.prefsCached(sess).InboxTabs
+	var tabs map[string]int
 	err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 		folders, err := st.Folders(r.Context())
 		for _, f := range folders {
 			counts[f.Name] = f.Unread
 			totals[f.Name] = f.Total
 		}
-		return err
+		if err != nil || !wantTabs {
+			return err
+		}
+		if tabs, err = st.CategoryUnread(r.Context(), "INBOX"); err != nil {
+			s.log.Warn("webmail: count inbox tabs", "error", err)
+			tabs = nil
+		}
+		return nil
 	})
 	if err != nil {
 		if errors.Is(err, ErrAuthFailed) {
@@ -1023,5 +1035,9 @@ func (s *Server) countsAPI(w http.ResponseWriter, r *http.Request, sess *Session
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]any{"unread": counts, "total": totals, "time": time.Now().Unix()})
+	out := map[string]any{"unread": counts, "total": totals, "time": time.Now().Unix()}
+	if tabs != nil {
+		out["tabs"] = tabs
+	}
+	_ = json.NewEncoder(w).Encode(out)
 }

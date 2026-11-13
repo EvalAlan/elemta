@@ -7,6 +7,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/mailcategory"
 	"io"
 	"log/slog"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -42,6 +43,7 @@ type fakeStore struct {
 	lastQuery   ListQuery
 	related     []Related
 	threadCalls int
+	tabUnread   map[string]int // CategoryUnread's answer, when set
 }
 
 func newFakeStore() *fakeStore {
@@ -256,6 +258,11 @@ func (f *fakeStore) DeleteObject(_ context.Context, c Collection, id string) err
 	return nil
 }
 func (f *fakeStore) CategoryUnread(context.Context, string) (map[string]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.tabUnread != nil {
+		return maps.Clone(f.tabUnread), nil
+	}
 	return map[string]int{"primary": 1, "promotions": 3}, nil
 }
 func (f *fakeStore) Senders(_ context.Context, folder string, uids []uint32) (map[uint32]string, error) {
