@@ -217,6 +217,12 @@ func (dh *DataHandler) drainToEndOfData(ctx context.Context) {
 	}
 	defer func() { _ = dh.conn.SetReadDeadline(time.Time{}) }()
 
+	// The drain has to agree with readData about where a message ends, or
+	// message content can be read as commands. In strict mode readData only
+	// accepts "<CRLF>.<CRLF>" and treats a bare LF as a framing violation, so
+	// the drain does the same.
+	strict := dh.config.StrictLineEndingsEnabled()
+
 	var drained int64
 	atLineStart := true
 	for {
@@ -227,11 +233,25 @@ func (dh *DataHandler) drainToEndOfData(ctx context.Context) {
 			return
 		}
 
+		if strict && err == nil && !bytes.HasSuffix(line, []byte("\r\n")) {
+			dh.dataSyncLost = true
+			dh.logger.WarnContext(ctx, "Bare LF while draining a rejected message; connection is out of sync",
+				"bytes_discarded", drained,
+				"remote_addr", dh.conn.RemoteAddr().String(),
+			)
+			return
+		}
+
 		// A lone "." on its own line ends the message. Check before the error
 		// branch so a marker arriving with the final read still counts.
 		if atLineStart {
 			trimmed := bytes.TrimRight(line, "\r\n")
-			if len(trimmed) == 1 && trimmed[0] == '.' {
+			isEnd := len(trimmed) == 1 && trimmed[0] == '.'
+			if strict {
+				// TrimRight would also pass ".\r\r\n", which readData doesn't.
+				isEnd = bytes.Equal(line, []byte(".\r\n"))
+			}
+			if isEnd {
 				dh.logger.WarnContext(ctx, "Discarded the remainder of a rejected message to stay in sync",
 					"bytes_discarded", drained,
 					"remote_addr", dh.conn.RemoteAddr().String(),

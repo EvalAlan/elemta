@@ -235,3 +235,46 @@ func TestFirstCommandIsNotEatenByTheTLSCheck(t *testing.T) {
 		t.Errorf("EHLO after the TLS check: %q", reply)
 	}
 }
+
+// TestRefusedBodyDrainHonoursStrictLineEndings pins that the drain after a
+// mid-body refusal ends the message exactly where the strict reader would.
+// Strict mode is the default; the shared test config uses legacy mode, where
+// ".\n" is a terminator by design, so this builds its own server.
+func TestRefusedBodyDrainHonoursStrictLineEndings(t *testing.T) {
+	cfg := strictTestConfig(t)
+	cfg.MaxSize = 4096
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	go func() { _ = server.Start() }()
+	time.Sleep(150 * time.Millisecond)
+
+	p := dialProbe(t, server.Addr().String())
+	p.cmd("EHLO probe.example")
+	p.cmd("MAIL FROM:<sender@example.com>")
+	if reply := p.cmd("RCPT TO:<rcpt@example.com>"); !strings.HasPrefix(reply, "250") {
+		t.Fatalf("RCPT TO: %q", reply)
+	}
+	if reply := p.cmd("DATA"); !strings.HasPrefix(reply, "354") {
+		t.Fatalf("DATA: %q", reply)
+	}
+	p.trySend("Subject: probe\r\n\r\n" +
+		strings.Repeat(strings.Repeat("A", 98)+"\r\n", 60) + // over max_size
+		".\n" + // bare-LF dot: not a terminator in strict mode
+		"MAIL FROM:<attacker@evil.example>\r\n" +
+		"RCPT TO:<victim@example.com>\r\n" +
+		"DATA\r\n" +
+		"Subject: FORGED\r\n\r\ninjected\r\n.\r\n")
+
+	got := p.drainFor(3 * time.Second)
+	if !strings.Contains(got, "552") {
+		t.Errorf("expected the oversized body to be refused, got:\n%s", got)
+	}
+	for _, forbidden := range []string{"Sender OK", "Recipient OK", "Message accepted for delivery"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("payload was executed as commands — response contained %q:\n%s", forbidden, got)
+		}
+	}
+}
