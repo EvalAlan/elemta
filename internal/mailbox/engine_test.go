@@ -35,6 +35,42 @@ func testEngine(t *testing.T) (*Engine, Account) {
 	if dsn == "" {
 		t.Skip("set ELEMTA_TEST_MAILBOX_DSN to disposable Postgres")
 	}
+	return testEngineOn(t, dsn)
+}
+
+// isolatedTestEngine is testEngine in a schema of its own, dropped
+// afterwards, for tests of whole-store work (compression, verify) that
+// would otherwise see every other test's accounts in the shared database,
+// and those left behind by earlier runs.
+func isolatedTestEngine(t *testing.T) (*Engine, Account) {
+	t.Helper()
+	dsn := os.Getenv("ELEMTA_TEST_MAILBOX_DSN")
+	if dsn == "" {
+		t.Skip("set ELEMTA_TEST_MAILBOX_DSN to disposable Postgres")
+	}
+	admin, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = admin.Close() })
+	schema := "t_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	// Registered before the engine's own cleanups, so it runs after them.
+	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`) })
+	sep := " " // key=value form
+	switch {
+	case strings.Contains(dsn, "://") && strings.Contains(dsn, "?"):
+		sep = "&"
+	case strings.Contains(dsn, "://"):
+		sep = "?"
+	}
+	return testEngineOn(t, dsn+sep+"search_path="+schema)
+}
+
+func testEngineOn(t *testing.T, dsn string) (*Engine, Account) {
+	t.Helper()
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		t.Fatal(err)

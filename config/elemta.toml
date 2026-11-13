@@ -537,9 +537,11 @@ secure_cookies = false
 # People stay signed in, through closing the browser, for this long after
 # they last use the webmail. "0" ends a sign-in with the browser instead, and
 # then session_ttl is how long an idle session lasts. Changing a password
-# signs out every other session.
+# signs out every other session. session_max_age ends any sign-in this long
+# after it started, however busy ("0" for no limit).
 stay_signed_in = "720h"
 session_ttl = "8h"
+session_max_age = "2160h"
 # Sessions live in Valkey (VALKEY_ADDR), so restarting the webmail doesn't
 # sign anyone out. The key that seals the stored passwords is kept apart
 # from Valkey, on the volume the services share; it is created on first start.

@@ -151,6 +151,10 @@ func (v *recipientVerifier) Verify(ctx context.Context, rcpt string) (rcptVerdic
 	return verdict, reply
 }
 
+// maxReplyLines caps a multi-line reply from the mailbox service; its LHLO
+// reply, the longest, is about ten lines.
+const maxReplyLines = 100
+
 // probe runs LHLO, MAIL FROM:<>, RCPT TO and stops, without sending a message.
 func (v *recipientVerifier) probe(ctx context.Context, rcpt string) (rcptVerdict, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, v.timeout)
@@ -164,16 +168,19 @@ func (v *recipientVerifier) probe(ctx context.Context, rcpt string) (rcptVerdict
 		_ = conn.SetDeadline(deadline)
 	}
 
-	r := bufio.NewReader(conn)
+	// Replies are read through a fixed buffer, a line at a time, with a cap
+	// on continuation lines: the mailbox service is trusted, but a broken one
+	// shouldn't be able to grow this process's memory without limit.
+	r := bufio.NewReaderSize(conn, 4096)
 	readReply := func() (int, string, error) {
 		var code int
 		var last string
-		for {
-			line, err := r.ReadString('\n')
+		for range maxReplyLines {
+			raw, err := r.ReadSlice('\n')
 			if err != nil {
-				return 0, "", err
+				return 0, "", err // bufio.ErrBufferFull for a line over 4 KiB
 			}
-			line = strings.TrimRight(line, "\r\n")
+			line := strings.TrimRight(string(raw), "\r\n")
 			if len(line) < 3 {
 				return 0, "", fmt.Errorf("short reply %q", line)
 			}
@@ -185,6 +192,7 @@ func (v *recipientVerifier) probe(ctx context.Context, rcpt string) (rcptVerdict
 				return code, last, nil
 			}
 		}
+		return 0, "", fmt.Errorf("reply longer than %d lines", maxReplyLines)
 	}
 	send := func(cmd string) (int, string, error) {
 		if _, err := fmt.Fprintf(conn, "%s\r\n", cmd); err != nil {

@@ -606,7 +606,9 @@ func (dh *DataHandler) ReadBDATChunk(ctx context.Context, size int64) error {
 		// Part of the chunk may still be on its way, and nothing here knows
 		// how much, so the connection can't be trusted to sit at a command.
 		dh.dataSyncLost = true
-		dh.logger.ErrorContext(ctx, "Failed to read BDAT chunk", "error", err, "expected_size", size)
+		// The client stopped sending, or went away, mid-chunk: its doing,
+		// not the server's, so it isn't an ERROR.
+		dh.logger.WarnContext(ctx, "Failed to read BDAT chunk", "error", err, "expected_size", size)
 		return fmt.Errorf("451 4.3.0 Error reading chunk data")
 	}
 	dh.bdatBytesReceived += size

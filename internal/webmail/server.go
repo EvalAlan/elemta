@@ -182,6 +182,15 @@ func (s *Server) Close() error {
 
 // newSessions builds the session manager the config asks for.
 func newSessions(cfg Config) (*SessionManager, error) {
+	m, err := newSessionStore(cfg)
+	if err != nil {
+		return nil, err
+	}
+	m.maxAge = cfg.maxAge()
+	return m, nil
+}
+
+func newSessionStore(cfg Config) (*SessionManager, error) {
 	if cfg.SessionStore != "valkey" {
 		return NewSessionManager(cfg.idleTTL())
 	}
