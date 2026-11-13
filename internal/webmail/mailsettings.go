@@ -243,6 +243,21 @@ func (s *Server) forwardingSubmit(w http.ResponseWriter, r *http.Request, sess *
 		s.render(w, "settings.html", http.StatusBadRequest, v)
 		return
 	}
+	// Stopping forwarding is always allowed; starting or changing it sends
+	// mail somewhere new, so it needs the password (see reauth.go).
+	if len(forward) > 0 {
+		if problem = s.confirmPassword(r.Context(), r, sess); problem != "" {
+			v, err := s.settingsView(r, sess, "account")
+			if err != nil {
+				s.fail(w, r, sess, err)
+				return
+			}
+			v.Settings.Notice, v.Settings.NoticeCard = problem, "forwarding"
+			v.Settings.ForwardText = r.PostFormValue("forward")
+			s.render(w, "settings.html", http.StatusForbidden, v)
+			return
+		}
+	}
 	pw, err := s.sessions.password(sess)
 	if err != nil {
 		http.Redirect(w, r, "/login", http.StatusFound)

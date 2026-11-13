@@ -37,7 +37,7 @@ func TestForwardingSettings(t *testing.T) {
 			t.Errorf("account settings lack %q", want)
 		}
 	}
-	resp := h.post("/settings/forwarding", url.Values{"csrf": {csrf}, "forward": {"A@Remote.example, b@remote.example\na@remote.example"}, "keep_copy": {"1"}})
+	resp := h.post("/settings/forwarding", url.Values{"csrf": {csrf}, "forward": {"A@Remote.example, b@remote.example\na@remote.example"}, "keep_copy": {"1"}, "current_password": {"secret"}})
 	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "forwarding-saved") {
 		t.Fatalf("save = %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
@@ -71,7 +71,7 @@ func TestForwardingLimitFromMailboxPolicy(t *testing.T) {
 		t.Fatal("account forwarding card did not show the effective limit")
 	}
 	addresses := "a@example.org, b@example.org, c@example.org, d@example.org, e@example.org, f@example.org, g@example.org, h@example.org, i@example.org"
-	if resp := h.post("/settings/forwarding", url.Values{"csrf": {csrf}, "forward": {addresses}}); resp.StatusCode != http.StatusSeeOther {
+	if resp := h.post("/settings/forwarding", url.Values{"csrf": {csrf}, "forward": {addresses}, "current_password": {"secret"}}); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("nine forwarding addresses were refused: %d", resp.StatusCode)
 	}
 }

@@ -60,6 +60,7 @@
       <input name="act_arg" type="text" value="{{.Arg}}" placeholder="Tag or forwarding address" aria-label="Value">
     </div>
     {{end}}
+    <div class="form-grid"><label for="rule-current">Current password</label><input id="rule-current" name="current_password" type="password" autocomplete="current-password"><span></span><span class="small muted">Needed only when this filter forwards mail to a new address.</span></div>
     <div class="form-actions"><button class="button primary" type="submit">Save filter</button><a class="button ghost" href="/filters">Cancel</a></div>
   </form>
   {{end}}

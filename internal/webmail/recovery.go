@@ -335,6 +335,12 @@ func (s *Server) useRecovery(w http.ResponseWriter, r *http.Request, purpose str
 	notice := "recovery-verified"
 	if purpose == "reset" {
 		notice = "password-reset"
+		if n, err := s.revokeAppPasswords(ctx, s.recoveryAccount(rec.User), r.PostFormValue("new")); err != nil {
+			s.log.Error("webmail: app passwords not revoked after password reset", "user", rec.User, "error", err)
+			notice = "password-reset-apps-kept"
+		} else if n > 0 {
+			s.log.Info("webmail: app passwords revoked after password reset", "user", rec.User, "count", n)
+		}
 	}
 	http.Redirect(w, r, "/login?n="+notice, http.StatusSeeOther)
 }

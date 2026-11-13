@@ -26,6 +26,10 @@ type fakeSecurity struct {
 	appRequired   bool
 	codeUsed      bool
 	created       []string
+	// revokeAll counts revoke-all calls; newPassword is accepted as the
+	// account password, as after a change.
+	revokeAll   int
+	newPassword string
 	// The class of service the check reports.
 	protocols        map[string]bool
 	requireTwoFactor bool
@@ -66,6 +70,9 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		defer f.mu.Unlock()
 		user, pw, _ := r.BasicAuth()
 		kind := map[string]string{"secret": "password", "app-pass": "app"}[pw]
+		if f.newPassword != "" && pw == f.newPassword {
+			kind = "password"
+		}
 		if user != "dana" || kind == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -262,6 +269,9 @@ func (f *fakeSecurity) handler(t *testing.T) http.Handler {
 		case "/v1/security/app-required":
 			f.appRequired, _ = in["required"].(bool)
 			out = map[string]any{"ok": true}
+		case "/v1/security/app-passwords/revoke-all":
+			f.revokeAll++
+			out = map[string]any{"revoked": 2}
 		case "/v1/security/app-passwords":
 			name, _ := in["name"].(string)
 			f.created = append(f.created, name)
@@ -419,7 +429,7 @@ func TestSecuritySettings(t *testing.T) {
 	if !strings.Contains(page, "Set up two-step verification") || !strings.Contains(page, "Create app password") {
 		t.Fatal("security card missing")
 	}
-	resp, err := h.client.PostForm(h.srv.URL+"/settings/app-passwords", url.Values{"csrf": {csrf}, "name": {"Thunderbird"}})
+	resp, err := h.client.PostForm(h.srv.URL+"/settings/app-passwords", url.Values{"csrf": {csrf}, "name": {"Thunderbird"}, "current_password": {"secret"}})
 	if err != nil {
 		t.Fatal(err)
 	}

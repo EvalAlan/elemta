@@ -162,7 +162,14 @@ func (s *Server) passwordSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 	}
 	s.signOutOthers(ctx, w, sess, next)
 	s.log.Info("webmail: password changed", "user", sess.User, "ip", s.clientIP(r))
-	http.Redirect(w, r, "/settings/account?n=password-changed#password", http.StatusSeeOther)
+	notice := "password-changed"
+	if n, err := s.revokeAppPasswords(ctx, sess.User, next); err != nil {
+		s.log.Error("webmail: app passwords not revoked after password change", "user", sess.User, "error", err)
+		notice = "password-changed-apps-kept"
+	} else if n > 0 {
+		s.log.Info("webmail: app passwords revoked after password change", "user", sess.User, "count", n)
+	}
+	http.Redirect(w, r, "/settings/account?n="+notice+"#password", http.StatusSeeOther)
 }
 
 // PasswordResetter requires a directory account authorized to reset passwords.

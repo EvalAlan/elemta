@@ -588,6 +588,10 @@ func (s *Server) totpDisableSubmit(w http.ResponseWriter, r *http.Request, sess 
 }
 
 func (s *Server) appPasswordSubmit(w http.ResponseWriter, r *http.Request, sess *Session) {
+	if problem := s.confirmPassword(r.Context(), r, sess); problem != "" {
+		s.renderProblem(w, r, sess, http.StatusForbidden, problem)
+		return
+	}
 	var out struct {
 		AppPassword appPassword `json:"app_password"`
 		Password    string      `json:"password"`
