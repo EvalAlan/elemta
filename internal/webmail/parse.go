@@ -15,6 +15,8 @@ import (
 	_ "github.com/emersion/go-message/charset"
 	"github.com/emersion/go-message/mail"
 	"golang.org/x/text/encoding/charmap"
+
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 )
 
 // maxTextPart caps how much of a single text part is decoded for display,
@@ -99,10 +101,27 @@ type mailReader struct {
 	readers []message.MultipartReader
 }
 
+// tooComplexNotice stands in for the body of a message with too many nested
+// parts to walk safely (mailpolicy.MIMETooComplex).
+const tooComplexNotice = "This message has too many nested parts to show here. Use Download original to open it in a mail app."
+
 func readMail(raw []byte) (*mailReader, error) {
 	e, err := message.Read(bytes.NewReader(raw))
 	if err != nil && !tolerable(err) {
 		return nil, err
+	}
+	// Walking deeply nested multiparts takes time that grows with the square
+	// of the depth, so such a message gets its headers and a note, not a
+	// walk. Reading the headers above is cheap; the body is read lazily.
+	if mailpolicy.MIMETooComplex(raw) {
+		var th message.Header
+		th.Set("Content-Type", "text/plain; charset=utf-8")
+		th.Set("Content-Disposition", "inline")
+		note, _ := message.New(th, strings.NewReader(tooComplexNotice))
+		var h message.Header
+		h.Set("Content-Type", "multipart/mixed")
+		me, _ := message.NewMultipart(h, []*message.Entity{note})
+		return &mailReader{Header: mail.Header{Header: e.Header}, readers: []message.MultipartReader{me.MultipartReader()}}, nil
 	}
 	mr := e.MultipartReader()
 	if mr == nil {

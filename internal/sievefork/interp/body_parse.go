@@ -154,19 +154,29 @@ func ParseBodyParts(ctx context.Context, rawMsg io.Reader, contentTypes []string
 	}
 
 	var results []BodyPart
-	if err := walkMIMEParts(hdr, r, contentTypes, &results, maxBytes); err != nil {
+	if err := walkMIMEParts(hdr, r, contentTypes, &results, maxBytes, 0); err != nil {
 		return nil, err
 	}
 	return results, nil
 }
+
+// maxBodyPartDepth is how deep the body test looks into nested parts. Each
+// level reads through every reader above it, so an unbounded walk costs time
+// that grows with the square of the depth, and recursion that deep could
+// exhaust the stack; a message from anyone could do either at delivery.
+// Real mail nests a few levels.
+const maxBodyPartDepth = 32
 
 // walkMIMEParts recursively walks MIME structure and collects parts matching contentTypes.
 // hdr is the header of the current entity, body is the decoded body reader.
 func walkMIMEParts(
 	hdr textproto.Header, body io.Reader,
 	contentTypes []string, results *[]BodyPart,
-	maxBytes int,
+	maxBytes int, depth int,
 ) error {
+	if depth > maxBodyPartDepth {
+		return nil
+	}
 	msgHdr := message.Header{Header: hdr}
 	ct, params, _ := msgHdr.ContentType()
 	ct = strings.ToLower(ct)
@@ -212,7 +222,7 @@ func walkMIMEParts(
 				break // skip malformed parts
 			}
 
-			if err := walkMIMEParts(part.Header, part, contentTypes, results, maxBytes); err != nil {
+			if err := walkMIMEParts(part.Header, part, contentTypes, results, maxBytes, depth+1); err != nil {
 				return err
 			}
 		}
@@ -242,7 +252,7 @@ func walkMIMEParts(
 			})
 		}
 
-		if err := walkMIMEParts(nestedHdr, buffered, contentTypes, results, maxBytes); err != nil {
+		if err := walkMIMEParts(nestedHdr, buffered, contentTypes, results, maxBytes, depth+1); err != nil {
 			return err
 		}
 		return nil
