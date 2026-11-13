@@ -1959,8 +1959,18 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, view *scanConte
 		results, err = dh.scannerManager.ScanForViruses(ctx, view.body)
 	}
 	if err != nil {
-		// A scanner that is down must not take mail down with it. The message
-		// is delivered unscanned and the failure is recorded.
+		// [antivirus] reject_on_failure is the operator's choice between the
+		// two: on, a message that couldn't be scanned is deferred (451, so the
+		// sender retries once the scanner is back); off, the default, a
+		// scanner that is down doesn't take mail down with it, and the
+		// message is delivered unscanned. The setting was offered in the
+		// admin console and saved, but this path used to ignore it.
+		if dh.config != nil && dh.config.Antivirus != nil && dh.config.Antivirus.RejectOnFailure {
+			dh.logger.WarnContext(ctx, "Antivirus scan failed; deferring the message (reject_on_failure)",
+				"error", err,
+			)
+			return fmt.Errorf("antivirus scan unavailable: %w", err)
+		}
 		dh.logger.WarnContext(ctx, "Antivirus scan failed; delivering message unscanned",
 			"error", err,
 		)

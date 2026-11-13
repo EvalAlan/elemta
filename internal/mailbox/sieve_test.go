@@ -1,7 +1,6 @@
 package mailbox
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"net"
@@ -241,7 +240,10 @@ func TestSieveRetryDoesntDuplicate(t *testing.T) {
 	if len(sent) != 1 || sent[0].to[0] != "elsewhere@example.net" || sent[0].from != "bo@example.com" {
 		t.Fatalf("redirects = %+v", sent)
 	}
-	if !bytes.HasPrefix(sent[0].data, []byte(redirectHeader+": "+r.a.Address)) {
+	// The marker is a header; a forward whose From had to be replaced (an
+	// unverified sender claiming this domain, as this test message is) puts
+	// the new From first.
+	if !hasRedirectMark(sent[0].data, r.a.Address) {
 		t.Errorf("redirect lacks the loop marker:\n%s", sent[0].data)
 	}
 	// A message this account already redirected isn't redirected again.

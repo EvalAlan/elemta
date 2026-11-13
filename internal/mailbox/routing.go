@@ -330,6 +330,19 @@ func (s *Service) deliverListMember(ctx context.Context, l mailpolicy.List, a Ac
 // itself with the poster's name ("Dana via Sales" <sales@example.com>), and
 // the poster moves to Reply-To unless the message already has one.
 func externalListMessage(l mailpolicy.List, msg []byte) []byte {
+	listName := l.Name
+	if listName == "" {
+		listName, _, _ = strings.Cut(l.Address, "@")
+	}
+	return sendOnAs(msg, listName, l.Address)
+}
+
+// sendOnAs replaces every From in msg with "<original name> via <via>"
+// <address>, and moves the original From to Reply-To unless the message has
+// one. It is for mail this server sends on, signed for its own domain, whose
+// original From it can't vouch for (list copies, and forwards of unverified
+// mail claiming the forwarder's domain).
+func sendOnAs(msg []byte, via, address string) []byte {
 	// The header block ends at the first empty line, CRLF or (from a legacy
 	// sender) bare LF. hdrEnd is where the body's blank line starts.
 	hdrEnd, nl := bytes.Index(msg, []byte("\r\n\r\n")), "\r\n"
@@ -353,16 +366,12 @@ func externalListMessage(l mailpolicy.List, msg []byte) []byte {
 			name = a.Address
 		}
 	}
-	listName := l.Name
-	if listName == "" {
-		listName, _, _ = strings.Cut(l.Address, "@")
-	}
 	collapse := func(v string) string { return strings.Join(strings.Fields(v), " ") }
-	display := collapse(name + " via " + listName)
+	display := collapse(name + " via " + via)
 	if name == "" {
-		display = collapse(listName)
+		display = collapse(via)
 	}
-	from := (&mail.Address{Name: display, Address: l.Address}).String()
+	from := (&mail.Address{Name: display, Address: address}).String()
 
 	// Drop every From field, continuation lines included, so a message with
 	// two Froms can't keep one.
