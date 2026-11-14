@@ -86,6 +86,14 @@ management needs `admin`.
 - `POST /api/campaigns/{id}/{action}`
 - `GET /api/directory/recipients`
 
+A campaign's `from` must be an address in a domain this server hosts, unless
+`[mass_mailer] allowed_senders` lists addresses (`news@example.com`) or
+domains (`example.com`); then only those may send, hosted here or not. Saving,
+starting and test-sending all check it, and refuse with `400` and the reason.
+Recipients aren't limited. Each campaign records `created_by` and
+`started_by`, and starts, pauses, cancels and test sends are logged with the
+console user who made them.
+
 ### Users and roles
 
 - `GET|POST /api/users`

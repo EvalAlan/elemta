@@ -2000,6 +2000,8 @@ const PLUGIN_SETTINGS_SCHEMA = {
               hint: 'Used by campaigns that do not set their own. Campaign mail is queued at low priority.' },
             { key: 'max_recipients', label: 'Maximum recipients per campaign', type: 'number',
               hint: '0 for no limit' },
+            { key: 'allowed_senders', label: 'Allowed senders', type: 'list',
+              hint: 'One address or domain per line. Empty allows any address in a domain this server hosts; a list allows only what it names, hosted here or not. Campaigns can go to any recipient either way.' },
         ],
     },
 };

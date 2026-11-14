@@ -4,6 +4,13 @@
 
 ### Upgrade notes
 
+- **Mass Mailer campaigns send from hosted domains.** A campaign's From must now
+  be an address in a domain this server hosts, unless `[mass_mailer]
+  allowed_senders` names other addresses or domains (it can also narrow
+  sending to, say, one newsletter address). Campaigns could previously go out
+  as any address, signed for its domain. Recipients aren't limited, and each
+  campaign records who created and started it.
+
 - **The MX port no longer takes logins.** `listen_addr` stops offering AUTH and
   refuses it with `503 5.5.1`, so signed-in sending happens only on the
   submission ports (`listen_submission`, and the webmail's own). The MX port had
