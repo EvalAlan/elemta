@@ -89,6 +89,7 @@ func TestEndToEndSigning(t *testing.T) {
 	}
 	keys := newSigningKeys(t, "example.com", "other.example")
 	cfg := createTestConfig(t)
+	cfg.SubmissionAddr = "127.0.0.1:0" // logins are taken on the submission listener only
 	cfg.LocalDomains = []string{"example.com", "other.example"}
 	cfg.Auth = &AuthConfig{Enabled: true, DataSourceName: "ldap", DataSourceHost: "ldap.internal"}
 	cfg.DKIM = keys.cfg
@@ -108,7 +109,7 @@ func TestEndToEndSigning(t *testing.T) {
 	// the refusal.
 	sent := func(t *testing.T, signIn bool, mailFrom, message string) (out []byte, refusal string) {
 		t.Helper()
-		p := dialProbe(t, server.Addr().String())
+		p := dialProbe(t, server.getSubmissionListener().Addr().String())
 		p.cmd("EHLO client.example")
 		if signIn {
 			plain := base64.StdEncoding.EncodeToString([]byte("\x00dana@example.com\x00correct horse"))

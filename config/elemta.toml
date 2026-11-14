@@ -60,8 +60,11 @@ dev_mode = false
 # Submission port (RFC 6409; 587 in production): where your users and apps send
 # outbound mail. Clients must log in over STARTTLS, or be in allowed_relays.
 # The MX port above (listen_addr / listen) takes inbound mail for local_domains
-# from anyone and relays for nobody else.
+# from anyone and relays for nobody else. It doesn't take logins either;
+# mx_auth = true allows them there (still subject to the blocklists) for mail
+# apps that can't yet move to 587.
 listen_submission = ":2587"
+# mx_auth = false
 # The webmail's own submission port, reachable only inside the stack (never
 # publish it). Sessions there may use the account password even when the
 # account requires app passwords, from any webmail instance.

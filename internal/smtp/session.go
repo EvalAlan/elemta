@@ -288,7 +288,9 @@ func (s *Session) checkRBL(ctx context.Context) error {
 	// are, which is a stronger statement than an address reputation, and the
 	// addresses submission clients come from are exactly the residential and
 	// mobile ranges blocklists cover.
-	if s.state.IsAuthenticated() {
+	// Only on a submission listener, though: a login on the MX port (with
+	// mx_auth) leaves it facing the blocklists like any other MX client.
+	if s.state.IsAuthenticated() && s.submission {
 		return nil
 	}
 
@@ -329,6 +331,13 @@ func (s *Session) checkRBL(ctx context.Context) error {
 	// 554 rather than 550: this is about the client host, not the address it
 	// is trying to send from.
 	return fmt.Errorf("554 5.7.1 %s", decision.Message())
+}
+
+// takesLogins reports whether the listener this session arrived on accepts
+// AUTH: the submission listeners do; the MX listener only with mx_auth. It
+// is the one place that decides, for EHLO and AUTH.
+func (s *Session) takesLogins() bool {
+	return s.submission || (s.config != nil && s.config.MXAuth)
 }
 
 // RBLDecision returns what the blocklists said about this session's peer, so
