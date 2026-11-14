@@ -23,6 +23,7 @@ func TestAuthLoginInitialResponse(t *testing.T) {
 		}}, nil
 	}
 	cfg := createTestConfig(t)
+	cfg.SubmissionAddr = "127.0.0.1:0" // logins are taken on the submission listener only
 	cfg.Auth = &AuthConfig{Enabled: true, DataSourceName: "ldap", DataSourceHost: "ldap.internal"}
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
@@ -39,7 +40,7 @@ func TestAuthLoginInitialResponse(t *testing.T) {
 		{"prompted", [][2]string{{"AUTH LOGIN", "334"}, {b64("dana@example.com"), "334"}, {b64("correct horse"), "235"}}},
 	} {
 		t.Run(flow.name, func(t *testing.T) {
-			p := dialProbe(t, server.Addr().String())
+			p := dialProbe(t, server.getSubmissionListener().Addr().String())
 			p.cmd("EHLO client.example")
 			for _, step := range flow.steps {
 				if got := p.cmd(step[0]); !strings.HasPrefix(got, step[1]) {

@@ -21,6 +21,7 @@ func TestAuthExchangeLongLinesStayInStep(t *testing.T) {
 		return &fakeAuthDataSource{authenticateFn: func(context.Context, string, string) (bool, error) { return false, nil }}, nil
 	}
 	cfg := createTestConfig(t)
+	cfg.SubmissionAddr = "127.0.0.1:0" // logins are taken on the submission listener only
 	cfg.Auth = &AuthConfig{Enabled: true, DataSourceName: "ldap", DataSourceHost: "ldap.internal"}
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
@@ -38,7 +39,7 @@ func TestAuthExchangeLongLinesStayInStep(t *testing.T) {
 		{"LOGIN username, over the limit", "AUTH LOGIN", 20000, "500 5.5.6"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := dialProbe(t, server.Addr().String())
+			p := dialProbe(t, server.getSubmissionListener().Addr().String())
 			p.cmd("EHLO client.example")
 			if r := p.cmd(tc.start); !strings.HasPrefix(r, "334") {
 				t.Fatalf("%s: %q", tc.start, r)

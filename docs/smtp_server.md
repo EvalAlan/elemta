@@ -63,7 +63,7 @@ Elemta supports standard SMTP flow and common extensions, including:
 - `BDAT` (CHUNKING)
 - `RSET`, `NOOP`, `QUIT`
 - `STARTTLS` (when enabled)
-- `AUTH` (when enabled)
+- `AUTH` (when enabled; on the submission ports only, unless `[server].mx_auth`)
 - `XDEBUG` (dev mode)
 
 Common advertised extensions include:
@@ -100,6 +100,10 @@ debug = false
   address. An authenticated client may only use a `MAIL FROM` it owns.
 - The submission port (`[server].listen_submission`, usually `:587`) refuses
   `MAIL FROM` until the client has logged in, unless it is in `allowed_relays`.
+- The MX port takes no logins: it doesn't offer AUTH and refuses it with
+  `503 5.5.1`, so it relays only for `allowed_relays` and loopback. Set
+  `[server].mx_auth = true` to allow logins there for mail apps that can't yet
+  use 587; the blocklists still apply to them.
 - Do not set `[auth].required = true` on an MX: it refuses unauthenticated
   `MAIL FROM`, which is every server delivering mail to you.
 

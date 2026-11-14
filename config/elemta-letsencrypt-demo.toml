@@ -4,6 +4,7 @@
 [server]
 hostname = "mail.example.com"
 listen = ":2525"
+listen_submission = ":2587"  # logins and outbound mail; the MX port above takes no logins
 tls = true
 queue_dir = "/app/queue"
 

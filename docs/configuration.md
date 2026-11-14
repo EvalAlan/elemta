@@ -103,6 +103,9 @@ file = "/var/log/elemta/elemta.log"
 - `listen_addr`
 - `[server].listen_submission` — optional submission port (RFC 6409, usually
   `:587`); `MAIL FROM` there needs a login or an `allowed_relays` network
+- `[server].mx_auth` — also take logins on the MX port (`listen_addr`). Off by
+  default: logins belong on the submission ports, and AUTH on the MX port is
+  refused with `503 5.5.1`. When on, a login there doesn't skip the blocklists.
 - `[server].proxy_protocol_from` — load balancers (addresses or CIDRs) in
   front of the SMTP, submission and SMTPS ports that send a PROXY protocol
   header (v1 or v2) with each client's own address. Connections from them

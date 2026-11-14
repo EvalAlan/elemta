@@ -1,5 +1,17 @@
 # Elemta Changelog
 
+## Unreleased
+
+### Upgrade notes
+
+- **The MX port no longer takes logins.** `listen_addr` stops offering AUTH and
+  refuses it with `503 5.5.1`, so signed-in sending happens only on the
+  submission ports (`listen_submission`, and the webmail's own). The MX port had
+  offered AUTH after STARTTLS, and a login there skipped the blocklists and
+  could relay. Point any mail app sending on port 25 at 587. A deployment that
+  can't yet can set `mx_auth = true` under `[server]`; logins there then still
+  face the blocklists.
+
 ## v0.8.0 (2026-11-08)
 
 The webmail works on phones now, with its own layout, notifications that arrive

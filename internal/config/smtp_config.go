@@ -56,6 +56,7 @@ func (c *Config) ToSMTPConfig() (*smtp.Config, error) {
 		SubmissionAddr:           c.Server.ListenSubmission,
 		ProxyProtocolFrom:        c.EffectiveProxyProtocolFrom(),
 		WebmailSubmissionAddr:    c.Server.ListenWebmailSubmission,
+		MXAuth:                   c.Server.MXAuth,
 		LocalDomains:             c.EffectiveLocalDomains(),
 		Hostname:                 c.EffectiveHostname(),
 		MaxWorkers:               c.MaxWorkers,

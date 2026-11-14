@@ -197,6 +197,7 @@ func fullyPopulatedConfig() *Config {
 	cfg.Server.ListenSubmission = ":2587"
 	cfg.Server.ProxyProtocolFrom = []string{"10.0.0.1"}
 	cfg.Server.ListenWebmailSubmission = ":2588"
+	cfg.Server.MXAuth = true
 	cfg.Queue.Backend = "sqlite"
 	// Non-zero so the guard rail can see it mapped. The shipped default when the
 	// key is absent is true — keep the body — which is the safe side.
