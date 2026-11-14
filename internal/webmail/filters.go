@@ -453,12 +453,24 @@ func (s *Server) withSieve(ctx context.Context, sess *Session, fn func(SieveConn
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	c, err := s.sieve(ctx, sess.User, pw)
+	c, err := s.sieve(ctx, sieveLogin(sess), pw)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = c.Close() }()
 	return fn(c)
+}
+
+// sieveLogin is the ManageSieve login for the mailbox the session has open:
+// with a shared mailbox selected, "member|owner", the same login that opens
+// it over IMAP, so a member edits the shared mailbox's filters and out-of-
+// office reply rather than their own. The mailbox service checks the share
+// on that login exactly as it does for IMAP.
+func sieveLogin(sess *Session) string {
+	if sess.Mailbox != "" && sess.AdminActor == "" {
+		return sess.User + "|" + sess.Mailbox
+	}
+	return sess.User
 }
 
 var errNoSieve = errors.New("webmail: no ManageSieve server configured")
