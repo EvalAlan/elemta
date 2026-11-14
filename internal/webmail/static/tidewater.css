@@ -1489,7 +1489,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
    one is cut off: tight padding, and spare room shared out between them. A
    strip that still overflows (huge counts, large text) scrolls sideways. */
 .inbox-tabs { display: flex; padding: 0 6px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
-.inbox-tab { flex: 1 0 auto; text-align: center; padding: 10px 6px 9px; color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; }
+.inbox-tab { flex: 1 0 auto; text-align: center; padding: 10px 5px 9px; color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; }
 .inbox-tab:hover { color: var(--ink); }
 .inbox-tab[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 .inbox-tab .tab-count { margin-left: 3px; padding: 0 5px; border-radius: 999px; font-size: 11px; background: var(--accent-soft); color: var(--accent-dark); }
