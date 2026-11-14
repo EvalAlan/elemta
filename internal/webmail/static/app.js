@@ -1085,9 +1085,8 @@
           var span = $(".count", a);
           if (!span || !(name in data.unread)) return;
           var n = data.unread[name];
-          var hidden = span.classList.contains("hidden-role");
-          span.textContent = n > 0 && !hidden ? String(n) : "";
-          span.classList.toggle("hidden", !(n > 0) || hidden);
+          span.textContent = n > 0 ? String(n) : "";
+          span.classList.toggle("hidden", !(n > 0));
         });
         if (data.tabs) {
           $$("a.inbox-tab[data-category]").forEach(function (a) {

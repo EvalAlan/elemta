@@ -204,8 +204,8 @@ var templateFuncs = template.FuncMap{
 	"join":       strings.Join,
 	"linkify":    linkify,
 	"pageSizes":  func() []int { return []int{25, 50, 100, 200} },
-	"countable":  countable,
-	"showCount":  func(f Folder) bool { return f.Unread > 0 && countable(f) },
+	"quietCount": quietCount,
+	"showCount":  func(f Folder) bool { return f.Unread > 0 },
 	"roleName": func(name string, folders []Folder) string {
 		for _, f := range folders {
 			if f.Name == name {
@@ -242,10 +242,13 @@ var templateFuncs = template.FuncMap{
 // option is a value and label for a select.
 type option struct{ Value, Label string }
 
-// countable reports whether a folder's unread count means anything to the
-// user. Unread mail in Sent, Drafts, Junk, Quarantine or Trash isn't waiting for them.
-func countable(f Folder) bool {
-	return f.Role != RoleSent && f.Role != RoleTrash && f.Role != RoleDrafts && f.Role != RoleJunk && f.Role != RoleQuarantine
+// quietCount reports whether a folder's unread count is shown in grey rather
+// than the accent colour. Every folder shows its count: unread mail in Junk
+// or Quarantine is exactly what someone looks through for mail to release.
+// But it isn't mail waiting to be read the way the Inbox's is, nor is unread
+// mail in Sent, Drafts or Trash, so those don't compete with it.
+func quietCount(f Folder) bool {
+	return f.Role == RoleSent || f.Role == RoleTrash || f.Role == RoleDrafts || f.Role == RoleJunk || f.Role == RoleQuarantine
 }
 
 // tagClass gives each tag one of eight colours, the same one everywhere it

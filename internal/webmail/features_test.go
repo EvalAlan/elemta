@@ -800,8 +800,8 @@ func TestQuarantineFolder(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther || h.store.moved[31] != "INBOX" {
 		t.Fatalf("release: status %d moved %v", resp.StatusCode, h.store.moved)
 	}
-	if !countable(Folder{Role: RoleInbox}) || countable(Folder{Role: RoleQuarantine}) {
-		t.Error("held mail isn't waiting for the user, so it shouldn't count as unread")
+	if quietCount(Folder{Role: RoleInbox}) || !quietCount(Folder{Role: RoleQuarantine}) {
+		t.Error("held mail's count should show in grey, the Inbox's in colour")
 	}
 	if got := roleOf("Quarantine", nil); got != RoleQuarantine {
 		t.Errorf("role %q", got)
@@ -1034,5 +1034,29 @@ func TestRemindersLastUntilTheEventStarts(t *testing.T) {
 	}
 	if strings.Join(titles, ",") != "Fired an hour ago" {
 		t.Fatalf("reminders = %v", titles)
+	}
+}
+
+// Every folder shows its unread count, so mail waiting in Junk or Quarantine
+// to be released is visible from the sidebar; those show it in grey.
+func TestEveryFolderShowsItsUnreadCount(t *testing.T) {
+	h := newHarness(t)
+	h.store.folders = append(h.store.folders,
+		Folder{Name: "Quarantine", Display: "Quarantine", Role: RoleQuarantine, Total: 2, Unread: 2, Selectable: true})
+	for i := range h.store.folders {
+		if h.store.folders[i].Name == "Junk" {
+			h.store.folders[i].Unread, h.store.folders[i].Total = 4, 4
+		}
+	}
+	h.login()
+	_, page := h.get("/mail?f=INBOX")
+	for name, want := range map[string]string{
+		"INBOX":      `<span class="count" aria-label="1 unread">1</span>`,
+		"Junk":       `<span class="count quiet" aria-label="4 unread">4</span>`,
+		"Quarantine": `<span class="count quiet" aria-label="2 unread">2</span>`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("%s: no %s in the sidebar", name, want)
+		}
 	}
 }
