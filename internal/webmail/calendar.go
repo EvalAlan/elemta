@@ -64,8 +64,17 @@ func findEvent(events []Event, uid string) *Event {
 	return nil
 }
 
-// calClass gives each calendar one of eight colours, from its name.
+// calClass gives each calendar one of eight colours, from its name. The
+// user's own calendar takes the first, the scheme's blue, and the holidays
+// the last, a grey that stays in the background; by hash alone it was the
+// other way round, and most of someone's events were grey.
 func calClass(name string) string {
+	switch {
+	case strings.EqualFold(name, defaultCalendar):
+		return "cal-0"
+	case strings.EqualFold(name, holidayCalendar):
+		return "cal-7"
+	}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(strings.ToLower(name)))
 	return "cal-" + strconv.Itoa(int(h.Sum32()%8))

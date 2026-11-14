@@ -15,7 +15,7 @@
     {{if eq .NoticeCard "general"}}<p class="notice card-notice" role="status">{{.Notice}}</p>{{end}}
     <div class="card form-grid">
       <h2 class="card-title">Identity</h2>
-      <span class="label">Address</span><span class="mono">{{$.Session.Address}}</span>
+      <span class="label">Address</span><span class="nums">{{$.Session.Address}}</span>
       <label for="display_name">Your name</label>
       <input id="display_name" name="display_name" type="text" value="{{.Prefs.DisplayName}}" maxlength="120" placeholder="Shown to people you write to">
       <label for="reply_to">Reply-to address</label>
@@ -171,7 +171,7 @@
       <thead><tr><th scope="col">Sender</th><th scope="col">Tab</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
       <tbody>
       {{range .TabRules}}<tr>
-        <td class="mono">{{.Sender}}</td>
+        <td>{{.Sender}}</td>
         <td>{{.Label}}</td>
         <td><form action="/settings/tab-rules/remove" method="post" class="inline"><input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="sender" value="{{.Sender}}"><button class="button danger" type="submit">Remove</button></form></td>
       </tr>{{end}}
@@ -205,7 +205,7 @@
       <thead><tr><th scope="col">Person</th><th scope="col">Access</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
       <tbody>
       {{range .CalendarShares}}<tr>
-        <td class="mono">{{.Member}}</td>
+        <td>{{.Member}}</td>
         <td>{{if eq .Level "view"}}View{{else if eq .Level "edit"}}Edit{{else}}Delegate{{end}}</td>
         <td><form action="/settings/calendar-shares" method="post" class="inline"><input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="remove"><input type="hidden" name="member" value="{{.Member}}"><button class="button danger" type="submit" data-confirm="Stop sharing your calendar with {{.Member}}?">Remove</button></form></td>
       </tr>{{end}}
@@ -229,7 +229,7 @@
     <span></span><label class="checkline"><input type="checkbox" name="keep_copy" value="1"{{if .Forwarding.KeepCopy}} checked{{end}}> Keep a copy here too</label>
     <label for="forward-current">Current password</label><input id="forward-current" name="current_password" type="password" autocomplete="current-password">
     <span></span><span class="small muted">{{if eq .ForwardLimit 1}}One address.{{else}}Up to {{.ForwardLimit}} addresses, separated by commas.{{end}} Your current password is needed to forward mail, not to stop. Leave the address empty to stop forwarding. Without a copy, forwarded mail isn't kept here and your filters don't see it. Your organisation may not allow forwarding outside it.</span>
-    {{if .Forwarding.SendAs}}<span class="label">You may also send as</span><span>{{range $i, $a := .Forwarding.SendAs}}{{if $i}}, {{end}}<span class="mono">{{$a}}</span>{{end}} <span class="small muted">(choose it as From when you write; set by your administrator)</span></span>{{end}}
+    {{if .Forwarding.SendAs}}<span class="label">You may also send as</span><span>{{range $i, $a := .Forwarding.SendAs}}{{if $i}}, {{end}}<span>{{$a}}</span>{{end}} <span class="small muted">(choose it as From when you write; set by your administrator)</span></span>{{end}}
     <div class="form-actions"><button class="button primary" type="submit">Save forwarding</button></div>
   </form>
   {{end}}
@@ -567,7 +567,7 @@
       </tbody>
     </table></div>
     <dl class="kv-list">
-      <dt>User name</dt><dd class="mono">{{$.Session.Address}}</dd>
+      <dt>User name</dt><dd class="nums">{{$.Session.Address}}</dd>
       <dt>Password</dt><dd>{{if $app}}An <a href="/settings/security#app-passwords">app password</a> (required for this account){{else}}Your account password, or an <a href="/settings/security#app-passwords">app password</a>{{end}}</dd>
     </dl>
   </div>
@@ -576,7 +576,7 @@
     <p class="muted">Phones and desktop apps (DAVx⁵, Thunderbird, Apple Calendar and Contacts) can sync your calendar, tasks and contacts. Add a CalDAV or CardDAV account with:</p>
     <dl class="kv-list">
       <dt>Server</dt><dd class="mono">{{.DAVURL}}</dd>
-      <dt>User name</dt><dd class="mono">{{$.Session.Address}}</dd>
+      <dt>User name</dt><dd class="nums">{{$.Session.Address}}</dd>
       <dt>Password</dt><dd>{{if $app}}An app password{{else}}Your account password, or an app password{{end}}</dd>
     </dl>
   </div>

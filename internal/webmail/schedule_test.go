@@ -239,7 +239,7 @@ func TestScheduledFolderShowsWhenAndActions(t *testing.T) {
 	h.store.mu.Unlock()
 	csrf := h.login()
 	_, list := h.get("/mail?f=Scheduled")
-	if !strings.Contains(list, `class="mono later-time">Sends `) {
+	if !strings.Contains(list, `class="nums later-time">Sends `) {
 		t.Error("the Scheduled list doesn't say when each message sends")
 	}
 	if strings.Contains(list, "Snooze until") {
