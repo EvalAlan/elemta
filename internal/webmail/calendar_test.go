@@ -621,3 +621,45 @@ func TestPhoneUA(t *testing.T) {
 		}
 	}
 }
+
+func TestCalendarRemembersTheLastView(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	current := func(path string) string {
+		t.Helper()
+		_, body := h.get(path)
+		m := regexp.MustCompile(`<a href="[^"]*view=(\w+)[^"]*" aria-current="page">`).FindStringSubmatch(body)
+		if m == nil {
+			t.Fatalf("%s: no current view in page", path)
+		}
+		return m[1]
+	}
+	if got := current("/calendar"); got != "month" {
+		t.Fatalf("first visit opens in %s, want month", got)
+	}
+	current("/calendar?view=week&date=2026-10-21")
+	if got := current("/calendar"); got != "week" {
+		t.Fatalf("after picking Week the calendar opens in %s", got)
+	}
+	// The event page's way back goes to the remembered view too.
+	if _, body := h.get("/calendar/event?new=1"); !strings.Contains(body, "view=week") {
+		t.Error("the event page doesn't lead back to the remembered view")
+	}
+	// Changing the setting is a fresh choice and replaces what was remembered.
+	postForm(t, h, "/settings", url.Values{"csrf": {csrf}, "calendar_view": {"agenda"}, "clock": {"24"}, "page_size": {"50"}})
+	if got := current("/calendar"); got != "agenda" {
+		t.Fatalf("after setting Agenda the calendar opens in %s", got)
+	}
+	// Saving the settings without changing it keeps the remembered view.
+	current("/calendar?view=day")
+	postForm(t, h, "/settings", url.Values{"csrf": {csrf}, "calendar_view": {"agenda"}, "clock": {"24"}, "page_size": {"50"}})
+	if got := current("/calendar"); got != "day" {
+		t.Fatalf("an unchanged setting replaced the remembered view: %s", got)
+	}
+	// Junk in the cookie falls back to the setting.
+	u, _ := url.Parse(h.srv.URL)
+	h.client.Jar.SetCookies(u, []*http.Cookie{{Name: calendarViewCookie, Value: "year", Path: "/"}})
+	if got := current("/calendar"); got != "agenda" {
+		t.Fatalf("an unknown remembered view opened %s", got)
+	}
+}
