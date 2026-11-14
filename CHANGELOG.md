@@ -1,6 +1,6 @@
 # Elemta Changelog
 
-## v0.9.0 (unreleased)
+## v0.9.0 (2026-11-14)
 
 A security release. A full review of the MTA, the mailbox service and the
 webmail found 19 problems, all fixed here: mostly ways mail could leave the
