@@ -1275,3 +1275,49 @@ func TestBrowserScheduleSendKeepsEncryption(t *testing.T) {
 		t.Error("left the editor without sending")
 	}
 }
+
+// The phone's message list: all five inbox tabs fit the narrowest phone with
+// their words whole; tapping a sender's initials selects the message and
+// turns them into a check; the selection's actions are one row of icons; and
+// New steps aside while choosing.
+func TestBrowserPhoneListFits(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	if err := b.h.store.PutObject(context.Background(), CollSettings, Object{ID: settingsID, ContentType: "application/json", Data: []byte(`{"inbox_tabs":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	b.login()
+	b.run(chromedp.Emulate(device.IPhone5)) // 320px, the narrowest still about
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`!!document.querySelector(".inbox-tabs") && document.readyState === "complete"`)
+	tabs := evalAs[map[string]float64](b, `(() => {
+		const bar = document.querySelector(".inbox-tabs");
+		const cut = [...document.querySelectorAll(".inbox-tab .tab-label")].filter(l => l.scrollWidth > l.clientWidth + 1).length;
+		return { over: bar.scrollWidth - bar.clientWidth, cut, tabs: document.querySelectorAll(".inbox-tab").length };
+	})()`)
+	if tabs["tabs"] != 5 || tabs["over"] > 1 || tabs["cut"] > 0 {
+		t.Errorf("inbox tabs on a 320px phone: %v (want 5, none overflowing or cut)", tabs)
+	}
+	if !evalAs[bool](b, `(() => { const a = document.querySelector(".row-wrap .row-avatar"); const r = a.getBoundingClientRect(); return r.width >= 36 && a.textContent.trim().length > 0; })()`) {
+		t.Error("rows don't start with the sender's initials")
+	}
+	if evalAs[bool](b, `getComputedStyle(document.querySelector(".list-head > .check")).display !== "none"`) {
+		t.Error("select-all shows before anything is selected")
+	}
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelectorAll(".row-wrap .check")[2].click()`, chromedp.EvalAsValue))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 1`)
+	got := evalAs[map[string]float64](b, `(() => {
+		const bar = document.querySelector(".bulk-bar");
+		const fab = document.querySelector(".sidebar > .button.primary.block");
+		const shown = [...bar.querySelectorAll(":scope > .button")].filter(e => getComputedStyle(e).display !== "none");
+		return { height: bar.getBoundingClientRect().height, words: shown.filter(e => { const l = e.querySelector(".bb-label"); return l && l.getBoundingClientRect().width > 2; }).length,
+			fab: fab ? fab.getBoundingClientRect().width : 0, selectAll: getComputedStyle(document.querySelector(".list-head > .check")).display !== "none" ? 1 : 0,
+			first: shown.length ? ["archive", "delete"].indexOf(shown.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)[0].value) : -1 };
+	})()`)
+	if got["height"] > 64 || got["words"] > 0 {
+		t.Errorf("the selection's actions on a phone: %v (want one row of icons)", got)
+	}
+	if got["first"] != 0 || got["fab"] != 0 || got["selectAll"] != 1 {
+		t.Errorf("while selecting: %v (want Archive first, New hidden, select-all shown)", got)
+	}
+}

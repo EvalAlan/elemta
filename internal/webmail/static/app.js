@@ -396,6 +396,16 @@
         if (btn) btn.click();
       });
     }
+    // Nor should moving to another inbox tab; it starts on the tab shown.
+    var cat = $("#bulk-category");
+    if (cat) {
+      var shown = cat.value;
+      cat.addEventListener("change", function () {
+        if (cat.value === shown) return;
+        var btn = $('button[value="category"]', bulk);
+        if (btn) btn.click();
+      });
+    }
     sync();
   }
 

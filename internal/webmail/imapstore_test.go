@@ -96,6 +96,10 @@ func TestIMAPStoreFoldersAndPaging(t *testing.T) {
 	if folders[0].Name != "INBOX" || folders[0].Role != RoleInbox || folders[0].Total != 7 || folders[0].Unread != 7 {
 		t.Fatalf("first folder = %+v, want INBOX with 7 unread", folders[0])
 	}
+	// Shown as people say it, though IMAP names it INBOX.
+	if folders[0].Display != "Inbox" {
+		t.Errorf("INBOX is shown as %q, want Inbox", folders[0].Display)
+	}
 	var sub *Folder
 	for i := range folders {
 		if folders[i].Name == "Projects/Northwind" {
