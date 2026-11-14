@@ -1,5 +1,25 @@
 # Elemta Changelog
 
+## Unreleased
+
+### Upgrade notes
+
+- **Continuous archiving of the mailbox database.** With off-site backups set
+  up, the next `cloud-deploy.sh` also archives the database's WAL and uploads
+  it every 5 minutes (the `elemta-wal` timer), and each backup includes a base
+  backup. A restore can then reach any moment of the last 14 days
+  (`restore.sh --wal ... [--to ...]`), so a lost server loses about 10
+  minutes of mailbox changes instead of up to 6 hours. The database restarts
+  once on that deploy to turn archiving on. Without off-site backups nothing
+  changes. See "Continuous archiving" in docs/production-compose.md.
+
+### Fixes
+
+- The restore drill checks the backup's own copy of the message body keys
+  against its metadata (`elemta mailbox check-keys`); before, it read the
+  bodies with the running server's keys, so a backup with missing or stale
+  keys passed.
+
 ## v0.9.0 (2026-11-14)
 
 A security release. A full review of the MTA, the mailbox service and the

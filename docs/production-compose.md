@@ -141,6 +141,57 @@ scripts/restore.sh elemta-20261106T030000Z --confirm
 
 Run `scripts/restore-drill.sh` on it first if you can.
 
+### Continuous archiving
+
+With off-site backups set up, `cloud-deploy.sh` also turns on continuous
+archiving of the mailbox database, so a restore can reach any moment of the
+last two weeks rather than only the last six-hourly backup:
+
+- Postgres copies each finished WAL file (its log of every change) into the
+  `mailbox_wal` volume, and closes the current one after 5 minutes when mail
+  is quiet.
+- The `elemta-wal` timer (`scripts/wal-offsite.sh`, every 5 minutes) seals
+  each file with the same age public key, uploads it to the backup bucket
+  under `wal/` and removes it here. A lost server therefore loses at most
+  about 10 minutes of mailbox changes. Mail still in the MTA's queue, or
+  still with the sending servers, isn't lost either way.
+- Each six-hourly backup holds a base backup of the database alongside its
+  dump, and the weekly drill starts it to prove it's usable. After each
+  backup, WAL older than 14 days (`BACKUP_WAL_KEEP`) is deleted, and
+  `elemta backup wal-check` confirms nothing is missing from the newest base
+  backup on; a gap or an upload problem shows on the Health page.
+
+Archiving does nothing until off-site backups are set up: Postgres only
+copies files while the marker `cloud-deploy.sh` puts in that volume is
+there, so nothing piles up with no one taking it away.
+
+### Restoring to a point in time
+
+To roll the mailbox forward past a backup, to the moment the server was lost
+or to just before a mistake, fetch the WAL as well. On the machine doing the
+restore, with the private key and the bucket settings:
+
+```sh
+age -d -i backup.key elemta-20261114T030000Z.tar.gz.age | tar -xz
+docker run --rm --env-file backup-storage.env -e BACKUP_AGE_IDENTITY_FILE=/key \
+  -v "$PWD/backup.key:/key:ro" -v "$PWD/wal:/out" ghcr.io/evalalan/elemta-mailbox:<tag> \
+  backup wal-get /out
+scripts/restore.sh elemta-20261114T030000Z --confirm --wal wal
+# or, to stop just before a mistake:
+scripts/restore.sh elemta-20261114T030000Z --confirm --wal wal --to "2026-11-14 09:42:00+00"
+```
+
+- Use the newest backup taken before the moment you want: replay only goes
+  forward, and `restore.sh` refuses a `--to` earlier than the backup.
+- Only the mailbox database is rolled forward. The directory, queue and
+  configuration come from the backup as it was taken, so an account created
+  after it needs creating again (its mail is kept).
+- The database carries on from the restored point as a new timeline, and its
+  WAL keeps going off-site, so a later restore can start from here too. On
+  the same server, `restore.sh` first asks for any WAL still waiting to be
+  uploaded to go (`scripts/wal-offsite.sh`) and be fetched: Postgres reads
+  the archive to choose a timeline number no earlier restore has used.
+
 To get one person's mail back rather than restore the whole stack, use
 `scripts/mailbox-restore-account.sh`; see "Restoring one account" in
 [mailbox-service.md](mailbox-service.md).

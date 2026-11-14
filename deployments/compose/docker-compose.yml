@@ -441,11 +441,40 @@ services:
     env_file:
       - path: .secrets/mailbox-postgres.env
         required: true
-    volumes: [mailbox_metadata:/var/lib/postgresql/data]
+    volumes: [mailbox_metadata:/var/lib/postgresql/data, mailbox_wal:/wal-archive]
+    # The archive directory belongs to Postgres, which writes it as its own
+    # user; a new volume starts out owned by root.
+    entrypoint: [sh, -c, 'mkdir -p /wal-archive && chown postgres:postgres /wal-archive && chmod 700 /wal-archive && exec docker-entrypoint.sh "$$@"', --]
     # pg_stat_statements records which queries cost the time, the first
     # thing to look at when the database is the bottleneck (it was, under
     # the load tests). Its overhead is negligible.
-    command: [postgres, -c, shared_preload_libraries=pg_stat_statements, -c, pg_stat_statements.track=top, -c, track_io_timing=on]
+    #
+    # Continuous archiving (scripts/wal-offsite.sh): each finished WAL file
+    # is copied to /wal-archive, synced, and renamed into place, and the
+    # timer seals and uploads it with the off-site backups, so a restore can
+    # reach any moment rather than the last six-hourly backup. It does
+    # nothing until cloud-deploy.sh puts the .enabled marker there, which it
+    # does only when off-site backups are set up; otherwise the files would
+    # pile up with nothing taking them away. archive_timeout closes a quiet
+    # segment after 5 minutes, so a restore never lags further than that and
+    # the next upload. wal_recycle=off starts each segment zeroed, so a
+    # segment closed early compresses to a few kilobytes.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=top
+      - -c
+      - track_io_timing=on
+      - -c
+      - wal_recycle=off
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=300
+      - -c
+      - archive_command=if [ ! -f /wal-archive/.enabled ]; then exit 0; fi; if [ -f /wal-archive/%f ]; then cmp -s %p /wal-archive/%f; else dd if=%p of=/wal-archive/.%f.tmp bs=1M conv=fsync 2>/dev/null && mv /wal-archive/.%f.tmp /wal-archive/%f; fi
     networks: [elemta_network]
     healthcheck:
       test: [CMD-SHELL, pg_isready -U mailbox -d mailbox]
@@ -671,6 +700,10 @@ volumes:
     name: ${ELEMTA_VOLUME_PREFIX:-elemta}_mailbox_metadata
   mailbox_bodies:
     name: ${ELEMTA_VOLUME_PREFIX:-elemta}_mailbox_bodies
+  # WAL files waiting to go off-site (scripts/wal-offsite.sh). Normally
+  # empty: each is uploaded within five minutes and removed.
+  mailbox_wal:
+    name: ${ELEMTA_VOLUME_PREFIX:-elemta}_mailbox_wal
   elemta_queue:
     name: ${ELEMTA_VOLUME_PREFIX:-elemta}_elemta_queue
     driver: local

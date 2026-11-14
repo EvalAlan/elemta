@@ -1,6 +1,7 @@
 #!/bin/sh
 # Backs up the Compose stack's mailbox service: a consistent Postgres dump
-# of the metadata, then the message bodies.
+# of the metadata, a base backup when WAL is archived, then the message
+# bodies.
 #
 #   scripts/mailbox-backup.sh <directory>
 #
@@ -52,6 +53,22 @@ docker exec -e ELEMTA_BACKUP_DB_USER="$dbuser" -e ELEMTA_BACKUP_DB_NAME="$dbname
     pg_dump -U "$user" -d "$database" -Fc
 ' >"$stage/metadata.dump"
 
+# With continuous archiving on (docker-compose.yml, scripts/wal-offsite.sh),
+# a base backup too: the database's files as they are, which a restore can
+# roll forward with the archived WAL to any later moment (restore.sh --wal).
+# -X fetch puts the WAL the copy needs in the tar, so it starts consistent
+# on its own, and the drill can start it without the archive.
+base=false
+if docker exec "$db" test -f /wal-archive/.enabled 2>/dev/null; then
+    echo "Base backup from $db"
+    docker exec -e ELEMTA_BACKUP_DB_USER="$dbuser" "$db" sh -c '
+        user=${ELEMTA_BACKUP_DB_USER:-${POSTGRES_USER:-postgres}}
+        pg_basebackup -U "$user" -D - -Ft -X fetch --checkpoint=fast | gzip
+    ' >"$stage/base.tar.gz"
+    tar -tzf "$stage/base.tar.gz" | grep -qx backup_label || { echo "The base backup has no backup_label" >&2; exit 1; }
+    base=true
+fi
+
 if [ "$bodies" = copy ]; then
     echo "Copying bodies from $mailbox"
     docker exec "$mailbox" /app/elemta mailbox export-bodies --config /etc/elemta/mailbox.toml >"$stage/bodies.tar.gz"
@@ -66,6 +83,11 @@ docker run --rm -i --network none postgres:17-alpine pg_restore -l <"$stage/meta
     echo "bodies=$bodies"
     echo "metadata_bytes=$(wc -c <"$stage/metadata.dump")"
     echo "metadata_sha256=$(sha256sum "$stage/metadata.dump" | cut -d ' ' -f 1)"
+    if $base; then
+        echo "base_bytes=$(wc -c <"$stage/base.tar.gz")"
+        echo "base_sha256=$(sha256sum "$stage/base.tar.gz" | cut -d ' ' -f 1)"
+        echo "base_wal_start=$(tar -xzOf "$stage/base.tar.gz" backup_label | sed -n 's/^START WAL LOCATION: .* (file \([0-9A-F]*\))$/\1/p')"
+    fi
     if [ "$bodies" = copy ]; then
         echo "bodies_bytes=$(wc -c <"$stage/bodies.tar.gz")"
         echo "bodies_sha256=$(sha256sum "$stage/bodies.tar.gz" | cut -d ' ' -f 1)"

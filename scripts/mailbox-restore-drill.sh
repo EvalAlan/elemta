@@ -23,6 +23,10 @@ bodies=$(sed -n 's/^bodies=//p' "$in/manifest")
 bodies=${bodies:-copy}
 metadata_hash=$(sed -n 's/^metadata_sha256=//p' "$in/manifest")
 [ "$(sha256sum "$in/metadata.dump" | cut -d ' ' -f 1)" = "$metadata_hash" ] || { echo "Metadata checksum differs" >&2; exit 1; }
+base_hash=$(sed -n 's/^base_sha256=//p' "$in/manifest")
+if [ -n "$base_hash" ]; then
+    [ "$(sha256sum "$in/base.tar.gz" | cut -d ' ' -f 1)" = "$base_hash" ] || { echo "Base backup checksum differs" >&2; exit 1; }
+fi
 if [ "$bodies" = copy ]; then
     bodies_hash=$(sed -n 's/^bodies_sha256=//p' "$in/manifest")
     [ "$(sha256sum "$in/bodies.tar.gz" | cut -d ' ' -f 1)" = "$bodies_hash" ] || { echo "Bodies checksum differs" >&2; exit 1; }
@@ -37,9 +41,12 @@ vol=elemta-$run-bodies
 pgvol=elemta-$run-pg
 pw=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)
 
+basec=elemta-$run-base
+basevol=elemta-$run-basevol
+
 cleanup() {
-    docker rm -f "$dbc" >/dev/null 2>&1 || true
-    docker volume rm "$vol" "$pgvol" >/dev/null 2>&1 || true
+    docker rm -f "$dbc" "$basec" >/dev/null 2>&1 || true
+    docker volume rm "$vol" "$pgvol" "$basevol" >/dev/null 2>&1 || true
     docker network rm "$net" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -54,6 +61,35 @@ sleep 2
 
 echo "Restoring metadata"
 docker exec -i "$dbc" pg_restore -U mailbox -d mailbox --no-owner --exit-on-error <"$in/metadata.dump"
+
+# The base backup, when there is one, is what a point-in-time restore rolls
+# forward with the archived WAL. It carries the WAL it needs to be
+# consistent, so it must start on its own and hold the mail. It is taken
+# seconds after the dump, so the counts can differ by what arrived or was
+# deleted in between; an empty copy of a mailbox with mail is the failure.
+if [ -n "$base_hash" ]; then
+    echo "Starting the base backup"
+    docker volume create "$basevol" >/dev/null
+    docker run --rm -i --network none --user 0 --entrypoint sh -v "$basevol:/d" postgres:17-alpine \
+        -c 'tar -xzf - -C /d && chown -R 70:70 /d && chmod 700 /d' <"$in/base.tar.gz"
+    docker run -d --name "$basec" --network none -v "$basevol:/var/lib/postgresql/data" postgres:17-alpine \
+        -c archive_mode=off >/dev/null
+    ready=false
+    for _ in $(seq 120); do
+        if docker exec "$basec" pg_isready -q -U mailbox -d mailbox 2>/dev/null &&
+            [ "$(docker exec "$basec" psql -U mailbox -d mailbox -tAc 'select not pg_is_in_recovery()' 2>/dev/null)" = t ]; then
+            ready=true
+            break
+        fi
+        sleep 1
+    done
+    $ready || { docker logs --tail 20 "$basec" >&2; echo "The base backup didn't start" >&2; exit 1; }
+    base_count=$(docker exec "$basec" psql -U mailbox -d mailbox -tAc "select count(*) from mailbox_messages")
+    dump_count=$(docker exec "$dbc" psql -U mailbox -d mailbox -tAc "select count(*) from mailbox_messages")
+    echo "base backup: $base_count messages (dump: $dump_count)"
+    [ "$base_count" -gt 0 ] || [ "$dump_count" -eq 0 ] || { echo "The base backup holds no messages" >&2; exit 1; }
+    docker rm -f "$basec" >/dev/null
+fi
 
 # The bodies are checked below with keys the live stack holds, which proves
 # nothing about the backup's own copy of them. MAILBOX_BODY_KEYS_FILE names
