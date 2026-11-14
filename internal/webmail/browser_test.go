@@ -1355,3 +1355,58 @@ func TestBrowserDesktopList(t *testing.T) {
 		t.Errorf("while selecting: %v (want empty circles on other rows and an icon bar)", got)
 	}
 }
+
+// TestBrowserMultiSelect pins choosing several messages the familiar way:
+// Ctrl+click adds one without opening it, Shift+click selects the range from
+// the last one chosen, on the row or on its initials, and Shift+J extends
+// the selection from the keyboard.
+func TestBrowserMultiSelect(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.login()
+	b.run(chromedp.EmulateViewport(1440, 900))
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".messages .row-wrap")`)
+	start := evalAs[string](b, `location.href`)
+	center := func(sel string, n int) (float64, float64) {
+		t.Helper()
+		p := evalAs[[]float64](b, fmt.Sprintf(`(() => { const r = document.querySelectorAll(%q)[%d].getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`, sel, n))
+		return p[0], p[1]
+	}
+	checked := func() string {
+		return evalAs[string](b, `[...document.querySelectorAll(".messages .row-wrap")].map((w, i) => w.classList.contains("checked") ? i : -1).filter(i => i >= 0).join(",")`)
+	}
+	x, y := center(".messages a.row", 1)
+	b.run(chromedp.MouseClickXY(x, y, chromedp.ButtonModifiers(chromedp.ModifierCtrl)))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 1`)
+	x, y = center(".messages a.row", 4)
+	b.run(chromedp.MouseClickXY(x, y, chromedp.ButtonModifiers(chromedp.ModifierShift)))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 4`)
+	if got := checked(); got != "1,2,3,4" {
+		t.Errorf("after Ctrl+click on 1 and Shift+click on 4, selected %s", got)
+	}
+	// Ctrl+click again takes one out and moves the anchor there, as in a
+	// file list; Shift+click on the initials then selects from it.
+	x, y = center(".messages a.row", 2)
+	b.run(chromedp.MouseClickXY(x, y, chromedp.ButtonModifiers(chromedp.ModifierCtrl)))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 3`)
+	x, y = center(".messages .row-avatar", 6)
+	b.run(chromedp.MouseClickXY(x, y, chromedp.ButtonModifiers(chromedp.ModifierShift)))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 6`)
+	if got := checked(); got != "1,2,3,4,5,6" {
+		t.Errorf("after Shift+click on the initials of 6, selected %s", got)
+	}
+	if got := evalAs[string](b, `location.href`); got != start || evalAs[bool](b, `!!document.querySelector(".reader h2[data-message-subject]")`) {
+		t.Errorf("a modified click opened a message: %s", got)
+	}
+	if evalAs[string](b, `String(getSelection())`) != "" {
+		t.Error("Shift+click selected the rows' text")
+	}
+	// Shift+J from the keyboard.
+	evalAs[bool](b, `document.querySelectorAll(".messages .row-wrap input[name=uid]").forEach(i => { i.checked = false; i.dispatchEvent(new Event("change", { bubbles: true })); }); true`)
+	b.run(chromedp.KeyEvent("j"), chromedp.KeyEvent("J"), chromedp.KeyEvent("J"))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 3`)
+	if got := checked(); got != "0,1,2" {
+		t.Errorf("after j, Shift+J, Shift+J, selected %s", got)
+	}
+}
