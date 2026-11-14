@@ -147,8 +147,12 @@ To get one person's mail back rather than restore the whole stack, use
 
 `restore-drill.sh` proves a backup restores without touching the stack:
 checksums, the mailbox restored into throwaway containers with every body
-verified, and the directory loaded into a throwaway server. Run it on every
-backup if you can, and certainly after any upgrade.
+verified, and the directory loaded into a throwaway server. With encrypted
+bodies it also checks the backup's own copy of the body keys against the
+restored metadata (`elemta mailbox check-keys`), since the bodies themselves
+are read with the running stack's keys: a backup whose keys are missing or
+stale fails the drill rather than a real restore. Run it on every backup if
+you can, and certainly after any upgrade.
 
 ## Restoring
 

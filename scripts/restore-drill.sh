@@ -24,7 +24,18 @@ grep '^sha256 ' "$in/manifest" | while read -r _ sum file; do
 done
 
 echo "== Mailbox"
-MAILBOX_IMAGE=$image "$root/scripts/mailbox-restore-drill.sh" "$in/mailbox"
+# The mailbox drill checks the backup's own body keys against its metadata
+# (an encrypted store is unreadable without them), so they come from this
+# backup's secrets, not the running stack's. A backup without the key file
+# gets an empty one, which fails the check if any key was ever used.
+keys=""
+if [ -f "$in/secrets.tar.gz" ]; then
+    keys=$(mktemp)
+    trap 'rm -f "$keys"' EXIT
+    chmod 600 "$keys"
+    tar -xzOf "$in/secrets.tar.gz" .secrets/mailbox-body-keys.env >"$keys" 2>/dev/null || : >"$keys"
+fi
+MAILBOX_IMAGE=$image MAILBOX_BODY_KEYS_FILE=$keys "$root/scripts/mailbox-restore-drill.sh" "$in/mailbox"
 
 if [ -f "$in/objects/webmail-objects.dump" ]; then
     echo "== Webmail objects"
