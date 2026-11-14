@@ -465,9 +465,11 @@ EOF
 # place: the bucket and the age public key, in a root-only file the operator
 # writes. Until then nothing is installed, and the Health page says backups
 # aren't set up. As root: the job runs docker and reads that file.
-backup_env=/etc/elemta/secrets/backup-storage.env
+backup_env=${BACKUP_ENV_FILE:-/etc/elemta/secrets/backup-storage.env}
 bk=/etc/systemd/system/elemta-backup
+wal=/etc/systemd/system/elemta-wal
 backup_timer=""
+wal_volume="$(volume_prefix "$env_file")_mailbox_wal"
 if sudo test -f "$backup_env"; then
     step "Off-site backups"
     sudo tee "$bk.service" >/dev/null <<EOF
@@ -497,11 +499,48 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
-    backup_timer=elemta-backup.timer
+    # The mailbox database's WAL, between backups (scripts/wal-offsite.sh).
+    sudo tee "$wal.service" >/dev/null <<EOF
+[Unit]
+Description=Take the mailbox database's archived WAL off the server
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=$root/scripts/wal-offsite.sh
+Environment=BACKUP_ENV_FILE=$backup_env
+Nice=10
+IOSchedulingClass=idle
+EOF
+    sudo tee "$wal.timer" >/dev/null <<EOF
+[Unit]
+Description=Elemta WAL upload, every 5 minutes
+
+[Timer]
+# With archive_timeout=300, a restore can reach to within about 10 minutes
+# of losing the server.
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    backup_timer="elemta-backup.timer elemta-wal.timer"
     echo "Every 6 hours from 03:00 UTC; run one now with: sudo systemctl start elemta-backup"
+    # Postgres archives WAL only while this marker is there: with nothing
+    # taking the files away they would fill the disk.
+    docker run --rm --network none --user 0 --entrypoint sh -v "$wal_volume:/w" postgres:17-alpine \
+        -c 'touch /w/.enabled && chown 70:70 /w /w/.enabled'
+    echo "WAL archived and uploaded every 5 minutes (sudo systemctl start elemta-wal)"
+else
+    if docker volume inspect "$wal_volume" >/dev/null 2>&1; then
+        docker run --rm --network none --user 0 --entrypoint sh -v "$wal_volume:/w" postgres:17-alpine -c 'rm -f /w/.enabled'
+    fi
+    sudo systemctl disable --now elemta-wal.timer >/dev/null 2>&1 || true
 fi
 sudo systemctl daemon-reload
-# shellcheck disable=SC2086 # backup_timer is empty or one unit name
+# shellcheck disable=SC2086 # backup_timer is empty or a list of unit names
 sudo systemctl enable --now elemta-cert-sync.timer elemta-cert-sync.path elemta-abuse-firewall.timer $backup_timer >/dev/null 2>&1
 
 dkim_p=$(sudo openssl pkey -in "$dkim_key" -pubout -outform der 2>/dev/null | base64 -w0)
