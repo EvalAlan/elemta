@@ -405,10 +405,60 @@
       if (!anchor || a === b) anchor = to;
       sync();
     };
+    // On a touch screen, holding a row chooses it, as phone mail apps do,
+    // and while anything is chosen a tap chooses or lets go of a row rather
+    // than opening it. Moving the finger, which is a scroll or a swipe,
+    // cancels the hold.
+    var HOLD_MS = 450, hold = null, touched = false, held = false;
+    var endHold = function () {
+      if (hold) clearTimeout(hold.timer);
+      hold = null;
+    };
+    bulk.addEventListener("pointerdown", function (e) {
+      touched = e.pointerType === "touch";
+      held = false;
+      endHold();
+      var wrap = touched && e.target.closest(".messages .row-wrap");
+      if (!wrap || !boxIn(wrap)) return;
+      hold = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      hold.timer = setTimeout(function () {
+        hold = null;
+        var box = boxIn(wrap);
+        box.checked = !box.checked;
+        anchor = wrap;
+        held = true;
+        sync();
+      }, HOLD_MS);
+    });
+    bulk.addEventListener("pointermove", function (e) {
+      if (hold && e.pointerId === hold.id && Math.abs(e.clientX - hold.x) + Math.abs(e.clientY - hold.y) > 10) endHold();
+    });
+    bulk.addEventListener("pointerup", endHold);
+    bulk.addEventListener("pointercancel", endHold);
+    // A held finger brings up the message menu on some phones; the hold
+    // means choose there, and the menu stays a right-click.
+    bulk.addEventListener("contextmenu", function (e) {
+      if (touched && e.target.closest(".messages .row-wrap")) { e.preventDefault(); e.stopPropagation(); }
+    });
     bulk.addEventListener("click", function (e) {
       if (e.button !== 0 || e.altKey) return;
       var wrap = e.target.closest(".messages .row-wrap");
       if (!wrap || !(e.target.closest(".check") || e.target.closest("a.row"))) return;
+      if (held) {
+        // The finger lifting after a hold isn't a tap: the row is already
+        // chosen, and its box mustn't flip back.
+        held = false;
+        e.preventDefault();
+        return;
+      }
+      if (touched && bulk.classList.contains("has-selection") && e.target.closest("a.row") && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        var tapped = boxIn(wrap);
+        if (tapped) tapped.checked = !tapped.checked;
+        anchor = wrap;
+        sync();
+        return;
+      }
       if (e.shiftKey) {
         // Cancelling the click stops the row opening and the box toggling;
         // a cancelled checkbox click puts its old state back once the
@@ -424,6 +474,14 @@
       } else if (e.target.closest(".check")) {
         anchor = wrap;
       }
+    });
+    // A phone has no Escape key to drop a selection, so the bar has a button.
+    var clear = $("[data-clear-selection]", bulk);
+    if (clear) clear.addEventListener("click", function () {
+      boxes().forEach(function (b) { b.checked = false; });
+      if (all) all.checked = false;
+      anchor = null;
+      sync();
     });
     // Shift or Ctrl with a press on a row would otherwise select its text.
     bulk.addEventListener("mousedown", function (e) {
