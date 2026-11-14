@@ -65,7 +65,8 @@ if docker exec "$db" test -f /wal-archive/.enabled 2>/dev/null; then
         user=${ELEMTA_BACKUP_DB_USER:-${POSTGRES_USER:-postgres}}
         pg_basebackup -U "$user" -D - -Ft -X fetch --checkpoint=fast | gzip
     ' >"$stage/base.tar.gz"
-    tar -tzf "$stage/base.tar.gz" | grep -qx backup_label || { echo "The base backup has no backup_label" >&2; exit 1; }
+    # Read to the end: grep -q would stop early and tar complain of a write error.
+    tar -tzf "$stage/base.tar.gz" | grep -x backup_label >/dev/null || { echo "The base backup has no backup_label" >&2; exit 1; }
     base=true
 fi
 
