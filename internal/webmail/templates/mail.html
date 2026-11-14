@@ -8,7 +8,7 @@
       <div class="list-head">
         <label class="check" title="Select all"><input type="checkbox" data-select-all><span class="visually-hidden">Select all</span></label>
         <h1>{{if .Query}}Results for “{{.Query}}”{{else}}{{folderLabel .Folder .Folders}}{{end}}</h1>
-        {{with .Page}}<span class="mono muted">{{.Total}}</span>{{end}}
+        {{with .Page}}<span class="nums muted">{{.Total}}</span>{{end}}
         <a class="refresh" href="{{.List.URL}}" title="Check for new mail" aria-label="Check for new mail" data-refresh>{{template "icon-refresh"}}</a>
         <details class="menu push">
           <summary class="button small-button" title="Sort">Sort</summary>
@@ -25,7 +25,7 @@
       </div>
       {{with .InboxTabs}}
       <nav class="inbox-tabs" aria-label="Inbox tabs">
-        {{range .}}<a class="inbox-tab" href="{{.URL}}" data-category="{{.Name}}" data-label="{{.Label}}"{{if .Active}} aria-current="page"{{end}}><span class="tab-icon" aria-hidden="true">{{if eq .Name "social"}}{{template "icon-people"}}{{else if eq .Name "promotions"}}{{template "icon-tag"}}{{else if eq .Name "updates"}}{{template "icon-info"}}{{else if eq .Name "forums"}}{{template "icon-chat"}}{{else}}{{template "icon-inbox"}}{{end}}</span><span class="tab-label">{{.Label}}</span>{{if .Unread}} <span class="tab-count mono">{{.Unread}}</span>{{end}}</a>{{end}}
+        {{range .}}<a class="inbox-tab" href="{{.URL}}" data-category="{{.Name}}" data-label="{{.Label}}"{{if .Active}} aria-current="page"{{end}}><span class="tab-icon" aria-hidden="true">{{if eq .Name "social"}}{{template "icon-people"}}{{else if eq .Name "promotions"}}{{template "icon-tag"}}{{else if eq .Name "updates"}}{{template "icon-info"}}{{else if eq .Name "forums"}}{{template "icon-chat"}}{{else}}{{template "icon-inbox"}}{{end}}</span><span class="tab-label">{{.Label}}</span>{{if .Unread}} <span class="tab-count nums">{{.Unread}}</span>{{end}}</a>{{end}}
       </nav>
       <input type="hidden" name="tab" value="{{$.List.Tab}}">
       {{end}}
@@ -81,7 +81,7 @@
               {{if .HasAttachment}}<span class="marker" title="Has attachments">{{template "icon-clip"}}</span>{{end}}
               {{if .Latest.Answered}}<span class="marker" title="Replied">{{template "icon-reply"}}</span>{{end}}
               {{if .Flagged}}<span class="flag" aria-label="Flagged">{{template "icon-star"}}</span>{{end}}
-              {{with laterTime $.Later .Latest.UID}}<span class="mono later-time">{{$.Later.Verb}} {{.}}</span>{{else}}<time class="mono muted" datetime="{{.Latest.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Latest.Date}}</time>{{end}}
+              {{with laterTime $.Later .Latest.UID}}<span class="nums later-time">{{$.Later.Verb}} {{.}}</span>{{else}}<time class="nums muted" datetime="{{.Latest.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Latest.Date}}</time>{{end}}
             </span>
             <span class="subject">{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
             {{if .Latest.Tags}}<span class="tags">{{range .Latest.Tags}}<span class="tag {{tagClass .}}">{{.}}</span>{{end}}</span>{{end}}
@@ -102,7 +102,7 @@
               {{if .Answered}}<span class="marker" title="Replied">{{template "icon-reply"}}</span>{{end}}
               {{if .Forwarded}}<span class="marker" title="Forwarded">{{template "icon-forward"}}</span>{{end}}
               {{if .Flagged}}<span class="flag" aria-label="Flagged">{{template "icon-star"}}</span>{{end}}
-              {{with laterTime $.Later .UID}}<span class="mono later-time">{{$.Later.Verb}} {{.}}</span>{{else}}<time class="mono muted" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Date}}</time>{{end}}
+              {{with laterTime $.Later .UID}}<span class="nums later-time">{{$.Later.Verb}} {{.}}</span>{{else}}<time class="nums muted" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Date}}</time>{{end}}
             </span>
             <span class="subject">{{if .Draft}}<span class="draft-mark">Draft</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
             {{if .Tags}}<span class="tags">{{range .Tags}}<span class="tag {{tagClass .}}">{{.}}</span>{{end}}</span>{{end}}
@@ -253,7 +253,7 @@
         <span class="avatar soft" aria-hidden="true">{{initials .From}}</span>
         <div class="sender-text">
           <div class="sender-line">
-            {{range .From}}<span class="strong">{{.Label}}</span> {{if .Name}}<span class="mono muted">{{.Email}}</span>{{end}}{{end}}
+            {{range .From}}<span class="strong">{{.Label}}</span> {{if .Name}}<span class="nums muted">{{.Email}}</span>{{end}}{{end}}
             {{if and .From (not .SenderContact)}}
             <form action="/contacts" method="post" class="inline">
               <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="add-sender">
@@ -262,7 +262,7 @@
               <button class="link-inline" type="submit">Add to contacts</button>
             </form>
             {{end}}
-            <time class="mono muted push" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate $.Loc $.Clock24 .Date}}</time>
+            <time class="nums muted push" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate $.Loc $.Clock24 .Date}}</time>
           </div>
           <div class="muted small">To {{addrs .To}}{{if .Cc}} · Cc {{addrs .Cc}}{{end}}</div>
         </div>
@@ -295,7 +295,7 @@
       {{with .Attachments}}
       <ul class="attachments" aria-label="Attachments">
         {{range .}}
-        <li><a class="attachment" href="{{partURL $.Message.Folder $.Message.UID .Index}}">{{if and (previewable .ContentType) (lt .Size 10485760)}}<img class="thumb" src="{{partURL $.Message.Folder $.Message.UID .Index}}&amp;inline=1" alt="" loading="lazy">{{else}}{{template "icon-clip"}}{{end}}<span><span class="strong">{{.Filename}}</span><span class="mono muted small">{{humanSize .Size}}</span></span></a></li>
+        <li><a class="attachment" href="{{partURL $.Message.Folder $.Message.UID .Index}}">{{if and (previewable .ContentType) (lt .Size 10485760)}}<img class="thumb" src="{{partURL $.Message.Folder $.Message.UID .Index}}&amp;inline=1" alt="" loading="lazy">{{else}}{{template "icon-clip"}}{{end}}<span><span class="strong">{{.Filename}}</span><span class="nums muted small">{{humanSize .Size}}</span></span></a></li>
         {{end}}
       </ul>
       {{end}}
@@ -337,7 +337,7 @@
     {{range .Upcoming}}
       <li><a class="small strong{{if .Today}} today{{end}}" href="{{.URL}}">{{if .Today}}Today{{else}}{{.Date.Format "Mon, Jan 2"}}{{end}}</a>
         <ul>{{range .AllDay}}
-          <li><a class="upcoming-item" href="{{.URL}}"><span class="swatch {{.Class}}" aria-hidden="true"></span><span class="mono muted">{{if .Occ.Event.AllDay}}All day{{else}}{{.TimeLabel}}{{end}}</span> <span>{{.Occ.Event.Summary}}</span></a></li>
+          <li><a class="upcoming-item" href="{{.URL}}"><span class="swatch {{.Class}}" aria-hidden="true"></span><span class="nums muted">{{if .Occ.Event.AllDay}}All day{{else}}{{.TimeLabel}}{{end}}</span> <span>{{.Occ.Event.Summary}}</span></a></li>
         {{end}}</ul>
       </li>
     {{end}}
@@ -353,7 +353,7 @@
     <span class="tc-from strong">{{addrs .R.From}}</span>
     {{if ne .R.Folder .V.Folder}}<span class="muted small">({{.R.Folder}})</span>{{end}}
     {{if not .R.Seen}}<span class="dot unread-dot" title="Unread"></span>{{end}}
-    <time class="mono muted small push" datetime="{{.R.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate .V.Loc .V.Clock24 .R.Date}}</time>
+    <time class="nums muted small push" datetime="{{.R.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate .V.Loc .V.Clock24 .R.Date}}</time>
   </summary>
   <div class="tc-body">
     <div class="tc-actions">

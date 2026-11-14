@@ -995,7 +995,7 @@
           }
         });
         listEl().replaceWith(doc.importNode(next, true));
-        var count = $(".list-head .mono", fresh), cur = $(".list-head .mono");
+        var count = $(".list-head .nums", fresh), cur = $(".list-head .nums");
         if (count && cur) cur.textContent = count.textContent;
         notifyNew(added);
       })
@@ -1095,7 +1095,7 @@
             var span = $(".tab-count", a);
             if (n > 0 && !span) {
               span = doc.createElement("span");
-              span.className = "tab-count mono";
+              span.className = "tab-count nums";
               a.appendChild(doc.createTextNode(" "));
               a.appendChild(span);
             }

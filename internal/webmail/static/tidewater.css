@@ -1399,6 +1399,9 @@ input, select, textarea { background: var(--surface); }
 kbd { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface); }
 [hidden], .hidden { display: none !important; }
 .mono { font-family: var(--mono); font-size: 12px; }
+/* Dates, sizes, counts and addresses: the text face with even-width digits,
+   so columns of times line up without the look of a terminal. */
+.nums { font-size: 13px; font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .strong { font-weight: 600; }
@@ -1460,10 +1463,13 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .folder { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; padding: 0 10px; border-radius: 6px; color: var(--ink); text-decoration: none; }
 .folder:hover { background: var(--line-soft); color: var(--ink); }
 .folder[aria-current="page"] { background: var(--accent-soft); color: var(--accent-dark); font-weight: 600; }
-.folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-icon { display: inline-flex; color: var(--muted); margin-right: 2px; }
+.folder-icon .icon { width: 17px; height: 17px; }
+.folder[aria-current="page"] .folder-icon { color: var(--accent); }
 .depth-1 { padding-left: 24px; } .depth-2 { padding-left: 38px; } .depth-3 { padding-left: 52px; }
 .depth-4 { padding-left: 66px; } .depth-5 { padding-left: 80px; }
-.count { font-family: var(--mono); font-size: 12px; color: var(--accent-dark); font-weight: 600; }
+.count { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--accent-dark); font-weight: 600; }
 .manage { color: var(--muted); padding: 0 10px; }
 .content { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .notice, .problem, .banner { margin: 12px 16px 0; padding: 10px 14px; border-radius: var(--radius); }
@@ -1483,7 +1489,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
    one is cut off: tight padding, and spare room shared out between them. A
    strip that still overflows (huge counts, large text) scrolls sideways. */
 .inbox-tabs { display: flex; padding: 0 6px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
-.inbox-tab { flex: 1 0 auto; text-align: center; padding: 10px 6px 9px; color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; }
+.inbox-tab { flex: 1 0 auto; text-align: center; padding: 10px 5px 9px; color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; }
 .inbox-tab:hover { color: var(--ink); }
 .inbox-tab[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 .inbox-tab .tab-count { margin-left: 3px; padding: 0 5px; border-radius: 999px; font-size: 11px; background: var(--accent-soft); color: var(--accent-dark); }
@@ -1586,7 +1592,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
    mail written with light and dark variants shows its light one, as on a
    light page. */
 .body-frame { color-scheme: light; width: 100%; height: 70vh; min-height: 360px; border: 1px solid var(--line); border-radius: var(--radius); background: #FFFFFF; }
-.text-body { margin: 0; white-space: pre-wrap; word-wrap: break-word; font: 15px/1.6 var(--font); }
+.text-body { margin: 0; max-width: 78ch; white-space: pre-wrap; word-wrap: break-word; font: 15px/1.6 var(--font); }
 .attachments { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; }
 .attachment { display: flex; align-items: center; gap: 10px; min-width: 220px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); text-decoration: none; }
 .attachment > span { display: flex; flex-direction: column; }
@@ -1730,7 +1736,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .chip-ev { display: block; font-size: 12px; padding: 1px 6px; border-radius: 4px; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip-ev.timed { background: transparent; }
 .chip-ev.timed::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; background: currentColor; vertical-align: 1px; }
-.chip-ev .t { font-family: var(--mono); font-size: 11px; margin-right: 4px; }
+.chip-ev .t { font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; margin-right: 4px; }
 .more { font-size: 12px; color: var(--muted); padding-left: 6px; text-decoration: none; }
 
 .time-grid { flex: 1; overflow-y: auto; max-height: calc(100vh - 170px); }
@@ -1752,7 +1758,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .daycol .slot:hover { background: var(--surface-2); }
 .daycol.today { background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
 .ev { position: absolute; left: 2px; right: 2px; border-radius: 6px; padding: 2px 6px; font-size: 12px; overflow: hidden; text-decoration: none; border-left: 3px solid currentColor; z-index: 2; }
-.ev .t { font-family: var(--mono); font-size: 11px; display: block; }
+.ev .t { font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; display: block; opacity: .85; }
 .ev strong { font-weight: 600; }
 .now-line { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); z-index: 3; }
 
@@ -1767,7 +1773,7 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .event-view .when { font-size: 15px; }
 .attendees { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .cal-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.cal-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; }
+.cal-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; background: currentColor; }
 
 /* The calendar views fit the window, like a desktop calendar, so the page
    never scrolls: month rows share the height left under the heading, and
@@ -2454,8 +2460,8 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
    sender's initials, the way phone mail apps do; tapping them selects the
    message (they are its checkbox's label) and they turn into a check. The
    folder's heading row is shorter, and its select-all box shows only once
-   something is selected. On a computer none of this applies. */
-.tab-icon, .row-avatar { display: none; }
+   something is selected. A computer shows the initials too (below). */
+.tab-icon { display: none; }
 @media (max-width: 720px) {
   .inbox-tabs { padding: 0 2px; overflow: hidden; }
   .inbox-tab { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px;
@@ -2473,44 +2479,36 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
   #bulk.has-selection .list-head > .check { display: inline-flex; }
   .list-head h1 { font-size: 22px; letter-spacing: -.01em; }
 
-  .row-wrap { padding-left: 12px; }
-  .row-wrap .check { position: relative; width: 40px; height: 40px; margin-top: 11px; }
-  .row-wrap .check input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-  .row-avatar { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%;
-    font-size: 14px; font-weight: 600; letter-spacing: .02em; pointer-events: none; transition: background-color .12s ease, color .12s ease; }
-  .row-avatar:not([class*="tag-"]) { background: var(--c0-bg); color: var(--c0-fg); }
-  .row-wrap.checked .row-avatar { position: relative; background: var(--accent); color: transparent; }
-  .row-wrap.checked .row-avatar::after { content: ""; position: absolute; top: 11px; left: 15px; width: 8px; height: 14px;
-    border: solid var(--on-accent); border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); }
-  .row-wrap .check:has(input:focus-visible) .row-avatar { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .row { padding: 12px 14px 12px 10px; }
-  @media (prefers-reduced-motion: reduce) { .row-avatar { transition: none; } }
 }
 
-/* The selection's actions. A computer shows their words; a phone shows one
-   row of icons that scrolls sideways, as the message toolbar does, instead
-   of three or four rows of buttons pushing the mail down. The words stay as
-   each button's accessible name and tooltip. With the script, choosing a
-   folder or a tab moves at once, so the Move buttons are left out. */
-.bulk-bar > .button > .icon { display: none; }
+/* The selection's actions: one row of icons that scrolls sideways if it
+   must, as the message toolbar does, instead of two to four rows of buttons
+   pushing the mail down. The words stay as each button's accessible name
+   and tooltip. With the script, choosing a folder or a tab moves at once,
+   so the Move buttons are left out. What's reached for most comes first. */
+.bulk-bar { flex-wrap: nowrap; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; padding: 6px 12px; }
+.bulk-bar::-webkit-scrollbar { display: none; }
+.bulk-bar > .button, .bulk-bar > .menu > summary.button { flex: none; min-width: 38px; min-height: 38px; padding: 0 8px;
+  border-color: transparent; background: transparent; }
+.bulk-bar > .button:hover, .bulk-bar > .menu > summary.button:hover { background: var(--line-soft); border-color: transparent; }
+.bulk-bar > .button > .icon { width: 19px; height: 19px; }
+.bulk-bar .bb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.bulk-bar > .menu { flex: none; }
+.bulk-bar > select.compact { flex: none; max-width: 9.5rem; min-height: 36px; margin-left: 4px; }
+.js .bulk-bar > .bb-go { display: none; }
+.bulk-bar > [value="notjunk"], .bulk-bar > [value="unsnooze"] { order: -5; }
+.bulk-bar > [value="archive"] { order: -4; }
+.bulk-bar > [value="delete"] { order: -3; }
+.bulk-bar > .snooze-menu { order: -2; }
+/* A scrolling row would clip the Snooze menu, which a phone shows fixed to
+   the screen instead; a computer's list has the room to wrap. */
+@media (min-width: 721px) { .bulk-bar { flex-wrap: wrap; overflow: visible; } }
 @media (max-width: 720px) {
-  .bulk-bar { flex-wrap: nowrap; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; padding: 6px 8px; }
-  .bulk-bar::-webkit-scrollbar { display: none; }
-  .bulk-bar > .button, .bulk-bar > .menu > summary.button { flex: none; min-width: 44px; min-height: 44px; padding: 0 10px;
-    border-color: transparent; background: transparent; }
-  .bulk-bar > .button > .icon { display: inline-block; width: 22px; height: 22px; }
-  .bulk-bar .bb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .bulk-bar > .menu { flex: none; }
-  .bulk-bar > select.compact { flex: none; max-width: 9.5rem; min-height: 38px; margin-left: 4px; }
-  .js .bulk-bar > .bb-go { display: none; }
+  .bulk-bar { padding: 6px 8px; }
+  .bulk-bar > .button, .bulk-bar > .menu > summary.button { min-width: 44px; min-height: 44px; padding: 0 10px; }
+  .bulk-bar > .button > .icon { width: 22px; height: 22px; }
+  .bulk-bar > select.compact { min-height: 38px; }
   .bulk-bar .snooze-menu .menu-body { position: fixed; left: 8px; right: 8px; top: auto; min-width: 0; }
-}
-@media (max-width: 720px) {
-  /* What a thumb reaches for most comes first. */
-  .bulk-bar > [value="archive"] { order: -4; }
-  .bulk-bar > [value="delete"] { order: -3; }
-  .bulk-bar > [value="notjunk"], .bulk-bar > [value="unsnooze"] { order: -5; }
-  .bulk-bar > .snooze-menu { order: -2; }
   /* While choosing messages, New would cover them. */
   body:has(#bulk.has-selection) .sidebar > .button.primary.block { display: none; }
 }
@@ -2518,3 +2516,62 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 @media (max-width: 340px) {
   .inbox-tab { font-size: 10px; letter-spacing: -.01em; }
 }
+
+/* ---- The message list's initials --------------------------------------
+   Every row starts with the sender's initials, coloured by address, which
+   makes a list easier to scan than a column of checkboxes. They are the
+   row's checkbox label: clicking them selects the message, and they turn
+   into a tick. With a mouse, pointing at them shows an empty circle, so
+   it's clear they can be clicked, and once anything is selected every row
+   shows one. */
+.row-wrap { padding-left: 12px; }
+.row-wrap .check { position: relative; width: 36px; height: 36px; margin-top: 11px; }
+.row-wrap .check input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.row-avatar { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%;
+  font-size: 13px; font-weight: 600; letter-spacing: .02em; pointer-events: none; transition: background-color .12s ease, color .12s ease, box-shadow .12s ease; }
+.row-avatar:not([class*="tag-"]) { background: var(--c0-bg); color: var(--c0-fg); }
+.row-wrap.checked .row-avatar { position: relative; background: var(--accent); color: transparent; }
+.row-wrap.checked .row-avatar::after { content: ""; position: absolute; top: 50%; left: 50%; width: 8px; height: 14px;
+  border: solid var(--on-accent); border-width: 0 2.5px 2.5px 0; transform: translate(-50%, -62%) rotate(45deg); }
+.row-wrap .check:has(input:focus-visible) .row-avatar { outline: 2px solid var(--accent); outline-offset: 2px; }
+.row { padding: 12px 16px 12px 10px; }
+/* Only unread mail keeps its dot; read rows don't hold the space for one,
+   so their sender lines up with the subject under it. */
+.row-wrap:not(.unread) .dot { display: none; }
+@media (hover: hover) and (min-width: 721px) {
+  .row-wrap:not(.checked) .check:hover .row-avatar { background: var(--surface); color: transparent; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--muted) 55%, transparent); }
+}
+@media (min-width: 721px) {
+  #bulk.has-selection .row-wrap:not(.checked) .row-avatar { background: var(--surface); color: transparent; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--muted) 55%, transparent); }
+}
+@media (max-width: 720px) {
+  .row-wrap .check { width: 40px; height: 40px; }
+  .row-avatar { width: 40px; height: 40px; font-size: 14px; }
+  .row { padding: 12px 14px 12px 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .row-avatar { transition: none; } }
+
+/* ---- Computers: the message toolbar ------------------------------------
+   Quiet buttons, an icon beside each word, that show their outline only
+   when pointed at, so the message rather than a row of boxes draws the eye.
+   A line separates answering it from filing it. */
+@media (min-width: 721px) {
+  .toolbar { gap: 2px; padding: 8px 16px; min-height: 56px; }
+  .toolbar .button { min-height: 34px; padding: 0 10px; gap: 6px; border-color: transparent; background: transparent; }
+  .toolbar .button:hover, .toolbar details[open] > summary.button { background: var(--line-soft); border-color: transparent; }
+  .toolbar .button.primary-soft { background: var(--accent-soft); }
+  .toolbar .button:has(.tb-label) > .icon { display: inline-block; }
+  .toolbar form.inline:has([value="delete"]) > .button:first-of-type { position: relative; margin-left: 13px; }
+  .toolbar form.inline:has([value="delete"]) > .button:first-of-type::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px;
+    width: 1px; background: var(--line); }
+  .toolbar > .back + form.inline:has([value="delete"]) > .button:first-of-type { margin-left: 0; }
+  .toolbar > .back + form.inline:has([value="delete"]) > .button:first-of-type::before { display: none; }
+}
+
+/* ---- Compose ----------------------------------------------------------- */
+.tb { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; }
+.tb .icon { width: 17px; height: 17px; }
+.field.attach input[type="file"] { font-size: 13px; color: var(--muted); }
+.field.attach input[type="file"]::file-selector-button { font: inherit; color: var(--ink); min-height: 32px; padding: 0 12px; margin-right: 10px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.field.attach input[type="file"]::file-selector-button:hover { border-color: var(--muted); }

@@ -884,7 +884,7 @@ func TestBrowserInboxTabsFitAndStay(t *testing.T) {
 	b.run(chromedp.Navigate(b.url("/mail?f=INBOX&tab=promotions")))
 	b.waitFor(`!!document.querySelector(".inbox-tabs") && document.readyState === "complete"`)
 	// Counts like a real inbox's, two digits on the widest tabs.
-	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelectorAll(".inbox-tab").forEach((a, i) => { a.querySelector(".tab-count")?.remove(); const n = [0, 1, 20, 14, 3][i]; if (n) a.insertAdjacentHTML("beforeend", ' <span class="tab-count mono">' + n + '</span>'); })`, chromedp.EvalAsValue))
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelectorAll(".inbox-tab").forEach((a, i) => { a.querySelector(".tab-count")?.remove(); const n = [0, 1, 20, 14, 3][i]; if (n) a.insertAdjacentHTML("beforeend", ' <span class="tab-count nums">' + n + '</span>'); })`, chromedp.EvalAsValue))
 	if w := evalAs[[]int](b, `(() => { const n = document.querySelector(".inbox-tabs"); return [n.scrollWidth, n.clientWidth] })()`); w[0] > w[1] {
 		t.Errorf("the tabs need %dpx but have %d: the last one is cut off", w[0], w[1])
 	}
@@ -1319,5 +1319,39 @@ func TestBrowserPhoneListFits(t *testing.T) {
 	}
 	if got["first"] != 0 || got["fab"] != 0 || got["selectAll"] != 1 {
 		t.Errorf("while selecting: %v (want Archive first, New hidden, select-all shown)", got)
+	}
+}
+
+// TestBrowserDesktopList pins the computer's message list: rows start with
+// the sender's initials rather than a bare checkbox, selecting turns the
+// other rows' initials into empty circles, the selection's actions are
+// icons, and each standard folder has its icon.
+func TestBrowserDesktopList(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.login()
+	b.run(chromedp.EmulateViewport(1440, 900))
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".row-wrap .row-avatar")`)
+	if !evalAs[bool](b, `(() => { const a = document.querySelector(".row-wrap .row-avatar"); const r = a.getBoundingClientRect(); return r.width >= 32 && a.textContent.trim() === "D" && getComputedStyle(a).color !== "rgba(0, 0, 0, 0)"; })()`) {
+		t.Error("rows don't start with the sender's initials")
+	}
+	if n := evalAs[int](b, `document.querySelectorAll(".folders .folder-icon svg").length`); n == 0 {
+		t.Error("the folders have no icons")
+	}
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelectorAll(".row-wrap .check")[1].click()`, chromedp.EvalAsValue))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 1`)
+	// The initials fade out, so wait for the circle rather than reading it
+	// mid-way.
+	b.waitFor(`getComputedStyle(document.querySelectorAll(".row-wrap .row-avatar")[0]).color === "rgba(0, 0, 0, 0)"`)
+	got := evalAs[map[string]float64](b, `(() => {
+		const other = document.querySelectorAll(".row-wrap .row-avatar")[0];
+		const bar = document.querySelector(".bulk-bar");
+		const words = [...bar.querySelectorAll(":scope > .button .bb-label")].filter(l => l.getBoundingClientRect().width > 2).length;
+		const icons = [...bar.querySelectorAll(":scope > .button > .icon")].filter(i => i.getBoundingClientRect().width > 0).length;
+		return { circle: getComputedStyle(other).color === "rgba(0, 0, 0, 0)" ? 1 : 0, words, icons };
+	})()`)
+	if got["circle"] != 1 || got["words"] != 0 || got["icons"] < 4 {
+		t.Errorf("while selecting: %v (want empty circles on other rows and an icon bar)", got)
 	}
 }
