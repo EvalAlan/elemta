@@ -122,6 +122,10 @@ type MassMailerConfig struct {
 	DefaultRatePerMinute int `toml:"default_rate_per_minute"`
 	// MaxRecipients bounds a single campaign. Zero means no limit.
 	MaxRecipients int `toml:"max_recipients"`
+	// AllowedSenders lists the From addresses ("news@example.com") and
+	// domains ("example.com") campaigns may use. Empty means any address in
+	// a hosted domain (campaign.SenderAllowed). Recipients aren't limited.
+	AllowedSenders []string `toml:"allowed_senders"`
 }
 
 // Config represents the application configuration

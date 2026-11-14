@@ -104,6 +104,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 			Enabled:              mm.Enabled,
 			DefaultRatePerMinute: mm.DefaultRatePerMinute,
 			MaxRecipients:        mm.MaxRecipients,
+			AllowedSenders:       mm.AllowedSenders,
 		}
 	}
 

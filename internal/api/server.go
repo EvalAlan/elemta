@@ -171,9 +171,10 @@ type AccessControlStatus struct {
 
 // MassMailerStatus is the API's view of the mass mailer plugin.
 type MassMailerStatus struct {
-	Enabled              bool `json:"enabled"`
-	DefaultRatePerMinute int  `json:"default_rate_per_minute"`
-	MaxRecipients        int  `json:"max_recipients"`
+	Enabled              bool     `json:"enabled"`
+	DefaultRatePerMinute int      `json:"default_rate_per_minute"`
+	MaxRecipients        int      `json:"max_recipients"`
+	AllowedSenders       []string `json:"allowed_senders"`
 }
 
 // ScannerStatus is the API's view of a content scanner's configuration.
@@ -2206,6 +2207,7 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		mmConfig = map[string]interface{}{
 			"default_rate_per_minute": mm.DefaultRatePerMinute,
 			"max_recipients":          mm.MaxRecipients,
+			"allowed_senders":         mm.AllowedSenders,
 		}
 	}
 
@@ -2726,6 +2728,7 @@ func (s *Server) persistConfig() error {
 			edit{"mass_mailer", "enabled", mm.Enabled},
 			edit{"mass_mailer", "default_rate_per_minute", mm.DefaultRatePerMinute},
 			edit{"mass_mailer", "max_recipients", mm.MaxRecipients},
+			edit{"mass_mailer", "allowed_senders", mm.AllowedSenders},
 		)
 	}
 	if ac := s.mainConfig.AccessControl; ac != nil {

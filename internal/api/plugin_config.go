@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/url"
 	"strings"
+
+	"github.com/EvalAlan/elemta/internal/campaign"
 )
 
 // Editing a plugin's settings, as distinct from turning it on and off.
@@ -179,6 +181,12 @@ func (s *Server) applyPluginConfig(plugin string, cfg map[string]interface{}) er
 		// campaign has swamped the queue, so zero is not accepted here.
 		r.intv("default_rate_per_minute", &next.DefaultRatePerMinute, 1, 1_000_000)
 		r.intv("max_recipients", &next.MaxRecipients, 0, 100_000_000)
+		r.list("allowed_senders", &next.AllowedSenders, func(s string) error {
+			if !campaign.ValidSenderEntry(s) {
+				return fmt.Errorf("%q is not an address or a domain", s)
+			}
+			return nil
+		})
 		if err := r.err(); err != nil {
 			return err
 		}

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -103,11 +104,16 @@ func (s *Server) handleCreateCampaign(w http.ResponseWriter, r *http.Request) {
 	c := &campaign.Campaign{
 		ID:        uuid.New().String(),
 		State:     campaign.StateDraft,
+		CreatedBy: abuseActor(r),
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
 	warnings, err := applyCampaignRequest(c, &req)
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.checkCampaignSender(c.From); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -144,6 +150,10 @@ func (s *Server) handleUpdateCampaign(w http.ResponseWriter, r *http.Request) {
 	stored, ok := store.Get(mux.Vars(r)["id"])
 	if !ok {
 		http.Error(w, "Campaign not found", http.StatusNotFound)
+		return
+	}
+	if err := s.checkCampaignSender(strings.TrimSpace(req.From)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	warnings, err := applyCampaignRequest(stored, &req)
@@ -185,14 +195,35 @@ func (s *Server) handleCampaignAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	action := mux.Vars(r)["action"]
+	actor := abuseActor(r)
+	// Checked again when mail is about to go out: the allowed senders or the
+	// hosted domains may have changed since the campaign was saved.
+	if action == "start" || action == "test" {
+		if err := s.checkCampaignSender(stored.Clone().From); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	var err error
 	switch action {
 	case "start":
 		err = runner.Start(stored)
+		if err == nil {
+			stored.SetStartedBy(actor)
+			snap := stored.Clone()
+			slog.Info("Campaign started", "campaign", snap.ID, "name", snap.Name, "from", snap.From,
+				"recipients", snap.Total(), "rate_per_minute", snap.RatePerMinute, "by", actor)
+		}
 	case "pause":
 		err = runner.Pause(stored)
+		if err == nil {
+			slog.Info("Campaign paused", "campaign", stored.ID, "by", actor)
+		}
 	case "cancel":
 		err = runner.Cancel(stored)
+		if err == nil {
+			slog.Info("Campaign cancelled", "campaign", stored.ID, "by", actor)
+		}
 	case "test":
 		var body struct {
 			To string `json:"to"`
@@ -202,6 +233,9 @@ func (s *Server) handleCampaignAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = runner.SendTest(stored, strings.TrimSpace(body.To))
+		if err == nil {
+			slog.Info("Campaign test sent", "campaign", stored.ID, "to", strings.TrimSpace(body.To), "by", actor)
+		}
 	default:
 		http.Error(w, fmt.Sprintf("Unknown action %q", action), http.StatusBadRequest)
 		return
@@ -292,9 +326,30 @@ func campaignSummary(c *campaign.Campaign) map[string]interface{} {
 		"remaining":       c.Remaining(),
 		"rate_per_minute": c.RatePerMinute,
 		"last_error":      c.LastError,
+		"created_by":      c.CreatedBy,
+		"started_by":      c.StartedBy,
 		"created_at":      c.CreatedAt,
 		"updated_at":      c.UpdatedAt,
 		"started_at":      c.StartedAt,
 		"completed_at":    c.CompletedAt,
 	}
+}
+
+// checkCampaignSender refuses a From the mass mailer may not send as
+// (campaign.SenderAllowed), saying how to allow it.
+func (s *Server) checkCampaignSender(from string) error {
+	if from == "" {
+		return nil // Validate reports the missing address when it matters
+	}
+	var allowed []string
+	if s.mainConfig != nil && s.mainConfig.MassMailer != nil {
+		allowed = s.mainConfig.MassMailer.AllowedSenders
+	}
+	if campaign.SenderAllowed(from, s.localDomains(), allowed) {
+		return nil
+	}
+	if len(allowed) == 0 {
+		return fmt.Errorf("campaigns can't be sent from %s: its domain isn't hosted here. Add it under the Mass Mailer's allowed senders to send as it", from)
+	}
+	return fmt.Errorf("campaigns can't be sent from %s: it isn't one of the Mass Mailer's allowed senders", from)
 }

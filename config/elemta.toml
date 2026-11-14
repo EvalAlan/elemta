@@ -361,6 +361,10 @@ timeout = 10
 enabled = true
 default_rate_per_minute = 600
 max_recipients = 0  # 0 = no limit
+# From addresses campaigns may use: addresses ("news@example.com") or domains
+# ("example.com"). Empty allows any address in a hosted domain; a list allows
+# only what it names, hosted here or not. Recipients are never limited.
+# allowed_senders = []
 
 [antivirus]
 enabled = true
