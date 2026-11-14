@@ -1,23 +1,121 @@
 # Elemta Changelog
 
-## Unreleased
+## v0.9.0 (2026-11-14)
+
+A security release. A full review of the MTA, the mailbox service and the
+webmail found 19 problems, all fixed here: mostly ways mail could leave the
+server signed for an identity its sender didn't own, plus places where a
+session, a filter or a script could do more than it should. Port 25 stops
+taking logins, the Mass Mailer sends only from hosted domains unless told
+otherwise, and the relay the mailbox servers use is narrowed to them alone.
 
 ### Upgrade notes
 
-- **Mass Mailer campaigns send from hosted domains.** A campaign's From must now
-  be an address in a domain this server hosts, unless `[mass_mailer]
-  allowed_senders` names other addresses or domains (it can also narrow
-  sending to, say, one newsletter address). Campaigns could previously go out
-  as any address, signed for its domain. Recipients aren't limited, and each
-  campaign records who created and started it.
-
 - **The MX port no longer takes logins.** `listen_addr` stops offering AUTH and
   refuses it with `503 5.5.1`, so signed-in sending happens only on the
-  submission ports (`listen_submission`, and the webmail's own). The MX port had
-  offered AUTH after STARTTLS, and a login there skipped the blocklists and
-  could relay. Point any mail app sending on port 25 at 587. A deployment that
-  can't yet can set `mx_auth = true` under `[server]`; logins there then still
-  face the blocklists.
+  submission ports (`listen_submission`, and the webmail's own). A login there
+  had skipped the blocklists and could relay. Point any mail app sending on
+  port 25 at 587. A deployment that can't yet can set `mx_auth = true` under
+  `[server]`; logins there still face the blocklists.
+- **Signed-in users can only send as addresses they own.** The header From is
+  now checked against the login, its aliases and send-as grants, like the
+  envelope sender already was, and mail claiming anyone else is refused with
+  `550`. Give anyone who legitimately sends as another address a send-as grant
+  or an alias first. Scheduled sends are checked the same way.
+- **Narrow the relay on existing deployments.** The MTA and the mailbox servers
+  now share a network of their own, `elemta_relay` (10.253.54.0/24 by default,
+  `ELEMTA_RELAY_SUBNET`), where the MTA answers as `elemta-relay`. A fresh
+  deployment relays only for that subnet. An existing one keeps its runtime
+  configuration, which still trusts every private address, so mail keeps
+  flowing but everything on the stack's network can still send without
+  logging in. To narrow it, set `allowed_relays = ["10.253.54.0/24"]` in the
+  runtime `elemta.toml` (`/app/runtime-config/elemta.toml`, in the
+  `elemta_config` volume, owned by the container user) and restart the MTA.
+  The mailbox servers pick up `submit_addr = "elemta-relay:2587"` from the
+  rendered configuration on deploy.
+- **ManageSieve is internal.** Port 4190 is bound to loopback in the compose
+  stack and left off the production edge load balancer; the webmail edits
+  filters over the internal network. Publish it deliberately if mail apps need
+  it; those connections then sign in under the public rules (app passwords
+  where required, no webmail-only tokens).
+- **Mass Mailer campaigns send from hosted domains.** A campaign's From must be
+  an address in a domain this server hosts, unless `[mass_mailer]
+  allowed_senders` names other addresses or domains; a list allows only what it
+  names, so it can also narrow sending to one newsletter address. Recipients
+  aren't limited. Each campaign records who created and started it.
+- **Webmail sign-ins end after 90 days**, however busy, as well as after
+  `stay_signed_in` without use. `session_max_age` under `[webmail]` sets it;
+  `"0"` turns the limit off.
+- **The monitoring stack needs `GRAFANA_ADMIN_PASSWORD`**, and binds Grafana,
+  Prometheus, Alertmanager and the metrics port to loopback. The fixed default
+  password is gone.
+- **`[antivirus] reject_on_failure` now does what it says.** It was saved but
+  ignored; with it on, a message that can't be scanned is deferred with `451`
+  instead of delivered unscanned. Check the setting before upgrading.
+- **Outside mail claiming one of your own domains is refused when that domain
+  publishes `p=reject`** and the mail fails DMARC, even with DMARC enforcement
+  off. Mail from your own relays is exempt.
+- **Rooms book only for verified senders.** A room accepts a request or
+  cancellation only from the signed-in organizer, or mail that passed DMARC for
+  the room's domain; anything else waits in the room's inbox for a person.
+
+- **Rolling back to v0.8.0:** put `allowed_relays` back to `["private"]` first
+  if you narrowed it. v0.8.0's mailbox servers relay from the main network, so
+  with the narrow setting their scheduled sends, out-of-office replies and
+  forwards are refused, and a scheduled send gives up. Mail, scheduled sends
+  and snoozes are otherwise unchanged by an upgrade and a rollback.
+
+### Security fixes
+
+- **Signing.** Delivery no longer signs a null-sender message for the domain in
+  its own From unless the server itself produced it (bounces, out-of-office
+  replies, a signed-in user's checked mail). Out-of-office replies use a
+  script's `:from` only when the account may send as it.
+- **Mail sent on by the mailbox service.** Copies of list posts for outside
+  members, and Sieve forwards of mail the MTA didn't verify, now carry the list
+  or the account as From ("Dana via Sales"), with the original in Reply-To, as
+  mailing-list software does.
+- **Lasting access needs the password.** Creating an app password, forwarding
+  mail to an address, or adding a filter that redirects to a new address asks
+  for the account password. Changing or resetting the password revokes every
+  app password.
+- **SMTP.** A message refused part-way through DATA or BDAT can no longer have
+  the rest of its body read as commands. A keyword filter that refused
+  legitimate hosts at EHLO, and could log AUTH data, is gone. AUTH lines longer
+  than the reader's buffer are read whole. Sessions close after 20 errors, and
+  after 100 commands that move nothing forward count as errors. A session that
+  opens with a TLS handshake is closed at once.
+- **IMAP.** Refusing a non-synchronizing literal closes the connection, rather
+  than reading the literal as commands.
+- **Parsing.** Deeply nested MIME is no longer walked at delivery, in invitations
+  or in the webmail, where it took time growing with the square of the depth.
+- **MTA-STS** policies are fetched only from public addresses.
+- **The admin console** refuses to start when its users file is a directory,
+  rather than running without logins.
+- **The LDAP helper scripts** read the generated admin password instead of a
+  fixed one.
+
+### What's new
+
+- **Shared mailboxes' filters in the webmail.** With a shared mailbox open,
+  Filters edits that mailbox's filters and out-of-office reply.
+- **Inbox tab counts stay live**, rising as new mail is sorted into a tab.
+- **The MTA writes `X-Elemta-Sender-Verified`** on every message: what it
+  confirmed about the sender (a signed-in address, a DMARC-passing domain, or
+  nothing), for services behind it to act on.
+
+### Fixes
+
+- Memory pressure during DATA answers `452` instead of a permanent `552`.
+- Client refusals log once, at WARN rather than ERROR, and so does a client
+  dropping out of a BDAT chunk.
+- The recipient check bounds replies from the mailbox service.
+- Vacation replies with `:mime` are sent as proper MIME instead of showing their
+  headers as text.
+- The message toolbar fits on one row, snoozed mail returning to the inbox is
+  pushed to devices, and the console shows when a user turned IMAP or POP3 off.
+- Built with Go 1.26.11 / 1.27.4 for the `net/http` MaxBytesReader fix
+  (GO-2026-6859).
 
 ## v0.8.0 (2026-11-08)
 
