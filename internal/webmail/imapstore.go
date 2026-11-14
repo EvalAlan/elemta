@@ -140,6 +140,10 @@ func (s *imapStore) Folders(ctx context.Context) ([]Folder, error) {
 			}
 		}
 		f.Role = roleOf(mb.Mailbox, mb.Attrs)
+		// IMAP names the inbox "INBOX" (RFC 9051); people call it Inbox.
+		if f.Role == RoleInbox && f.Depth == 0 {
+			f.Display = "Inbox"
+		}
 		status := mb.Status
 		if status == nil && f.Selectable && !listStatus {
 			status, err = s.c.Status(mb.Mailbox, &imap.StatusOptions{NumMessages: true, NumUnseen: true}).Wait()

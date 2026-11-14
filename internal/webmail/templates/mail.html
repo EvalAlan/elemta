@@ -25,40 +25,40 @@
       </div>
       {{with .InboxTabs}}
       <nav class="inbox-tabs" aria-label="Inbox tabs">
-        {{range .}}<a class="inbox-tab" href="{{.URL}}" data-category="{{.Name}}" data-label="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{.Label}}{{if .Unread}} <span class="tab-count mono">{{.Unread}}</span>{{end}}</a>{{end}}
+        {{range .}}<a class="inbox-tab" href="{{.URL}}" data-category="{{.Name}}" data-label="{{.Label}}"{{if .Active}} aria-current="page"{{end}}><span class="tab-icon" aria-hidden="true">{{if eq .Name "social"}}{{template "icon-people"}}{{else if eq .Name "promotions"}}{{template "icon-tag"}}{{else if eq .Name "updates"}}{{template "icon-info"}}{{else if eq .Name "forums"}}{{template "icon-chat"}}{{else}}{{template "icon-inbox"}}{{end}}</span><span class="tab-label">{{.Label}}</span>{{if .Unread}} <span class="tab-count mono">{{.Unread}}</span>{{end}}</a>{{end}}
       </nav>
       <input type="hidden" name="tab" value="{{$.List.Tab}}">
       {{end}}
       {{if isRole .Folder .Folders "quarantine"}}<p class="muted folder-note">Mail the spam check would have refused. Release anything you were expecting. The rest is deleted automatically.</p>{{end}}
       <div class="bulk-bar" role="toolbar" aria-label="Selected messages">
-        <button class="button" name="op" value="read">Mark read</button>
-        <button class="button" name="op" value="unread">Mark unread</button>
-        <button class="button" name="op" value="flag">Flag</button>
-        {{if isRole .Folder .Folders "quarantine"}}<button class="button" name="op" value="notjunk">Release</button>{{else if isRole .Folder .Folders "junk"}}<button class="button" name="op" value="notjunk">Not junk</button>{{else}}<button class="button" name="op" value="junk">Junk</button>{{end}}
-        {{if not (isRole .Folder .Folders "archive")}}<button class="button" name="op" value="archive">Archive</button>{{end}}
-        <button class="button danger" name="op" value="delete" data-confirm="{{if isRole .Folder .Folders "trash"}}Delete the selected messages for good?{{end}}">Delete</button>
+        <button class="button" name="op" value="read" title="Mark read">{{template "icon-mail-open"}}<span class="bb-label">Mark read</span></button>
+        <button class="button" name="op" value="unread" title="Mark unread">{{template "icon-mail"}}<span class="bb-label">Mark unread</span></button>
+        <button class="button" name="op" value="flag" title="Flag">{{template "icon-star"}}<span class="bb-label">Flag</span></button>
+        {{if isRole .Folder .Folders "quarantine"}}<button class="button" name="op" value="notjunk" title="Release">{{template "icon-inbox"}}<span class="bb-label">Release</span></button>{{else if isRole .Folder .Folders "junk"}}<button class="button" name="op" value="notjunk" title="Not junk">{{template "icon-inbox"}}<span class="bb-label">Not junk</span></button>{{else}}<button class="button" name="op" value="junk" title="Junk">{{template "icon-junk"}}<span class="bb-label">Junk</span></button>{{end}}
+        {{if not (isRole .Folder .Folders "archive")}}<button class="button" name="op" value="archive" title="Archive">{{template "icon-archive"}}<span class="bb-label">Archive</span></button>{{end}}
+        <button class="button danger" name="op" value="delete" data-confirm="{{if isRole .Folder .Folders "trash"}}Delete the selected messages for good?{{end}}" title="Delete">{{template "icon-trash"}}<span class="bb-label">Delete</span></button>
         {{if and .Later (snoozable .Folder .Folders)}}
         <details class="menu snooze-menu">
-          <summary class="button">{{template "icon-clock"}}Snooze</summary>
+          <summary class="button" title="Snooze">{{template "icon-clock"}}<span class="bb-label">Snooze</span></summary>
           <div class="menu-body">
             <p class="small muted">Snooze until</p>
             {{range .Later.Snooze}}<button class="menu-item" name="op" value="snooze@{{.Value}}" data-snooze-choice="{{.Label}}">{{.Label}} <span class="muted">{{.When}}</span></button>{{end}}
           </div>
         </details>
         {{end}}
-        {{if and .Later (isRole .Folder .Folders "snoozed")}}<button class="button" name="op" value="unsnooze">Unsnooze</button>{{end}}
+        {{if and .Later (isRole .Folder .Folders "snoozed")}}<button class="button" name="op" value="unsnooze" title="Unsnooze">{{template "icon-clock"}}<span class="bb-label">Unsnooze</span></button>{{end}}
         <label class="visually-hidden" for="bulk-dest">Move selected to</label>
         <select id="bulk-dest" name="dest" class="compact">
           <option value="">Move to…</option>
           {{range $.Folders}}{{if and .Selectable (ne .Name $.Folder)}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
         </select>
-        <button class="button" name="op" value="move">Move</button>
+        <button class="button bb-go" name="op" value="move">Move</button>
         {{if .InboxTabs}}
         <label class="visually-hidden" for="bulk-category">Move selected to tab</label>
         <select id="bulk-category" name="category" class="compact">
           {{range .CategoryOptions}}<option value="{{.Name}}"{{if eq .Name $.List.Tab}} selected{{end}}>{{.Label}}</option>{{end}}
         </select>
-        <button class="button" name="op" value="category">Move to tab</button>
+        <button class="button bb-go" name="op" value="category">Move to tab</button>
         {{end}}
       </div>
     <div class="list-scroll">
@@ -71,7 +71,8 @@
       {{range $.Conversations}}
         {{$open := $.List.MessageURL .OpenUID}}
         <li class="row-wrap{{if .Unread}} unread{{end}}{{if and $.Message (inUIDs $.Message.UID .UIDs)}} selected{{end}}" data-uid="{{.UIDList}}" data-latest="{{.Latest.UID}}" data-ctx="message"{{if not .Unread}} data-seen{{end}}{{if .Flagged}} data-flagged{{end}}{{with .Latest.From}} data-from="{{(index . 0).Email}}"{{end}} data-open="{{$open}}" data-count="{{.Count}}">
-          <label class="check"><input type="checkbox" name="uid" value="{{.UIDList}}"><span class="visually-hidden">Select conversation</span></label>
+          {{$who := .Latest.From}}{{if isRole $.Folder $.Folders "sent"}}{{$who = .Latest.To}}{{end}}
+          <label class="check"><input type="checkbox" name="uid" value="{{.UIDList}}"><span class="row-avatar{{with $who}} {{tagClass (index . 0).Email}}{{end}}" aria-hidden="true">{{initials $who}}</span><span class="visually-hidden">Select conversation</span></label>
           <a class="row" href="{{$open}}"{{if and $.Message (inUIDs $.Message.UID .UIDs)}} aria-current="true"{{end}}>
             <span class="row-top">
               <span class="dot" aria-hidden="true"></span>
@@ -91,7 +92,8 @@
       {{else}}
       {{range .Messages}}
         <li class="row-wrap{{if not .Seen}} unread{{end}}{{if and $.Message (eq .UID $.Message.UID)}} selected{{end}}" data-uid="{{.UID}}" data-ctx="message"{{if .Seen}} data-seen{{end}}{{if .Flagged}} data-flagged{{end}}{{with .From}} data-from="{{(index . 0).Email}}"{{end}} data-open="{{$.List.MessageURL .UID}}">
-          <label class="check"><input type="checkbox" name="uid" value="{{.UID}}"><span class="visually-hidden">Select</span></label>
+          {{$who := .From}}{{if or (isRole $.Folder $.Folders "sent") (isRole $.Folder $.Folders "drafts")}}{{$who = .To}}{{end}}
+          <label class="check"><input type="checkbox" name="uid" value="{{.UID}}"><span class="row-avatar{{with $who}} {{tagClass (index . 0).Email}}{{end}}" aria-hidden="true">{{initials $who}}</span><span class="visually-hidden">Select</span></label>
           <a class="row" href="{{$.List.MessageURL .UID}}"{{if and $.Message (eq .UID $.Message.UID)}} aria-current="true"{{end}}>
             <span class="row-top">
               <span class="dot" aria-hidden="true"></span>

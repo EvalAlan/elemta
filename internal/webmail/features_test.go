@@ -784,7 +784,7 @@ func TestQuarantineFolder(t *testing.T) {
 	h.store.messages["Quarantine"] = []Summary{{UID: 31, Subject: "Held", Date: time.Now()}}
 	h.store.raw[31] = []byte("Subject: Held\r\n\r\nbody\r\n")
 	_, page := h.get("/mail?f=Quarantine")
-	for _, want := range []string{"Release anything you were expecting", ">Release</button>"} {
+	for _, want := range []string{"Release anything you were expecting", `<span class="bb-label">Release</span></button>`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("Quarantine list lacks %q", want)
 		}

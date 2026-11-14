@@ -3,6 +3,7 @@ package webmail
 import (
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -35,10 +36,10 @@ func TestInboxTabs(t *testing.T) {
 
 	// The inbox opens on Primary, with unread counts on the tabs.
 	_, page = h.get("/mail?f=INBOX")
-	if !strings.Contains(page, `class="inbox-tabs"`) || !strings.Contains(page, `aria-current="page">Primary`) {
+	if !strings.Contains(page, `class="inbox-tabs"`) || !regexp.MustCompile(`data-category="primary"[^>]*aria-current="page">.*?<span class="tab-label">Primary</span>`).MatchString(page) {
 		t.Fatal("inbox lacks the tab bar, or Primary isn't current")
 	}
-	if !strings.Contains(page, `Promotions <span class="tab-count mono">3</span>`) {
+	if !strings.Contains(page, `<span class="tab-label">Promotions</span> <span class="tab-count mono">3</span>`) {
 		t.Fatal("tab unread count missing")
 	}
 	if h.store.lastQuery.Category != "primary" {
