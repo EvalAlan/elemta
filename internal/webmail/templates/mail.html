@@ -31,6 +31,7 @@
       {{end}}
       {{if isRole .Folder .Folders "quarantine"}}<p class="muted folder-note">Mail the spam check would have refused. Release anything you were expecting. The rest is deleted automatically.</p>{{end}}
       <div class="bulk-bar" role="toolbar" aria-label="Selected messages">
+        <button class="button bb-clear" type="button" title="Clear the selection" data-clear-selection>{{template "icon-x"}}<span class="bb-label">Clear the selection</span></button>
         <button class="button" name="op" value="read" title="Mark read">{{template "icon-mail-open"}}<span class="bb-label">Mark read</span></button>
         <button class="button" name="op" value="unread" title="Mark unread">{{template "icon-mail"}}<span class="bb-label">Mark unread</span></button>
         <button class="button" name="op" value="flag" title="Flag">{{template "icon-star"}}<span class="bb-label">Flag</span></button>

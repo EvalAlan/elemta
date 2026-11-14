@@ -2532,26 +2532,42 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 .row-avatar { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%;
   font-size: 13px; font-weight: 600; letter-spacing: .02em; pointer-events: none; transition: background-color .12s ease, color .12s ease, box-shadow .12s ease; }
 .row-avatar:not([class*="tag-"]) { background: var(--c0-bg); color: var(--c0-fg); }
-.row-wrap.checked .row-avatar { position: relative; background: var(--accent); color: transparent; }
-.row-wrap.checked .row-avatar::after { content: ""; position: absolute; top: 50%; left: 50%; width: 8px; height: 14px;
-  border: solid var(--on-accent); border-width: 0 2.5px 2.5px 0; transform: translate(-50%, -62%) rotate(45deg); }
+/* Selecting shows a small circle in the initials' place rather than one
+   the size of the avatar, so a list mid-selection reads as a column of
+   checkboxes, not a column of empty discs. */
+.row-avatar { position: relative; }
+.row-avatar::before { content: ""; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px;
+  box-sizing: border-box; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--muted) 65%, transparent); background: var(--surface);
+  opacity: 0; transition: opacity .12s ease; }
+.row-wrap.checked .row-avatar { background: transparent; color: transparent; }
+.row-wrap.checked .row-avatar::before { opacity: 1; background: var(--accent); border-color: var(--accent); }
+.row-wrap.checked .row-avatar::after { content: ""; position: absolute; top: 50%; left: 50%; width: 5px; height: 10px;
+  border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: translate(-50%, -62%) rotate(45deg); }
 .row-wrap .check:has(input:focus-visible) .row-avatar { outline: 2px solid var(--accent); outline-offset: 2px; }
 .row { padding: 12px 16px 12px 10px; }
 /* Only unread mail keeps its dot; read rows don't hold the space for one,
    so their sender lines up with the subject under it. */
 .row-wrap:not(.unread) .dot { display: none; }
 @media (hover: hover) and (min-width: 721px) {
-  .row-wrap:not(.checked) .check:hover .row-avatar { background: var(--surface); color: transparent; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--muted) 55%, transparent); }
+  .row-wrap:not(.checked) .check:hover .row-avatar { background: transparent; color: transparent; }
+  .row-wrap:not(.checked) .check:hover .row-avatar::before { opacity: 1; }
 }
-@media (min-width: 721px) {
-  #bulk.has-selection .row-wrap:not(.checked) .row-avatar { background: var(--surface); color: transparent; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--muted) 55%, transparent); }
-}
+/* Once anything is chosen, on a phone too, every row shows its circle:
+   a tap then chooses rather than opens. */
+#bulk.has-selection .row-wrap:not(.checked) .row-avatar { background: transparent; color: transparent; }
+#bulk.has-selection .row-wrap:not(.checked) .row-avatar::before { opacity: 1; }
 @media (max-width: 720px) {
   .row-wrap .check { width: 40px; height: 40px; }
   .row-avatar { width: 40px; height: 40px; font-size: 14px; }
   .row { padding: 12px 14px 12px 10px; }
+  .row-avatar::before { width: 22px; height: 22px; margin: -11px 0 0 -11px; }
+  /* Holding a row chooses it, so the hold mustn't select its text or
+     bring up the browser's link preview. */
+  .messages .row-wrap { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 }
-@media (prefers-reduced-motion: reduce) { .row-avatar { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .row-avatar, .row-avatar::before { transition: none; } }
+.bb-clear { display: none; }
+.js .bb-clear { display: inline-flex; order: -10; }
 
 /* ---- Computers: the message toolbar ------------------------------------
    Quiet buttons, an icon beside each word, that show their outline only

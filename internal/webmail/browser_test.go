@@ -1309,7 +1309,7 @@ func TestBrowserPhoneListFits(t *testing.T) {
 	got := evalAs[map[string]float64](b, `(() => {
 		const bar = document.querySelector(".bulk-bar");
 		const fab = document.querySelector(".sidebar > .button.primary.block");
-		const shown = [...bar.querySelectorAll(":scope > .button")].filter(e => getComputedStyle(e).display !== "none");
+		const shown = [...bar.querySelectorAll(":scope > .button:not(.bb-clear)")].filter(e => getComputedStyle(e).display !== "none");
 		return { height: bar.getBoundingClientRect().height, words: shown.filter(e => { const l = e.querySelector(".bb-label"); return l && l.getBoundingClientRect().width > 2; }).length,
 			fab: fab ? fab.getBoundingClientRect().width : 0, selectAll: getComputedStyle(document.querySelector(".list-head > .check")).display !== "none" ? 1 : 0,
 			first: shown.length ? ["archive", "delete"].indexOf(shown.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)[0].value) : -1 };
@@ -1409,4 +1409,60 @@ func TestBrowserMultiSelect(t *testing.T) {
 	if got := checked(); got != "0,1,2" {
 		t.Errorf("after j, Shift+J, Shift+J, selected %s", got)
 	}
+}
+
+// TestBrowserPhoneHoldToSelect pins choosing messages on a touch screen:
+// holding a row chooses it without opening it, taps then choose or let go
+// of rows, every row shows a small circle meanwhile, the bar's clear button
+// ends it, and after that a tap opens a message again.
+func TestBrowserPhoneHoldToSelect(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.login()
+	b.run(chromedp.Emulate(device.IPhone13))
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".messages .row-wrap")`)
+	start := evalAs[string](b, `location.href`)
+	touch := func(n int, hold time.Duration) {
+		t.Helper()
+		p := evalAs[[]float64](b, fmt.Sprintf(`(() => { const r = document.querySelectorAll(".messages a.row")[%d].getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`, n))
+		send := func(kind input.DispatchTouchEventType, pts []*input.TouchPoint) {
+			if _, err := chromedp.Call(b.ctx, input.DispatchTouchEvent, input.DispatchTouchEventParams{Type: kind, TouchPoints: pts}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		send(input.DispatchTouchEventTypeTouchStart, []*input.TouchPoint{{X: p[0], Y: p[1]}})
+		time.Sleep(hold)
+		send(input.DispatchTouchEventTypeTouchEnd, []*input.TouchPoint{})
+	}
+	checked := func() string {
+		return evalAs[string](b, `[...document.querySelectorAll(".messages .row-wrap")].map((w, i) => w.classList.contains("checked") ? i : -1).filter(i => i >= 0).join(",")`)
+	}
+	touch(1, 700*time.Millisecond)
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 1`)
+	time.Sleep(300 * time.Millisecond)
+	if got := checked(); got != "1" {
+		t.Errorf("after holding row 1, selected %q", got)
+	}
+	if got := evalAs[string](b, `location.href`); got != start {
+		t.Errorf("holding a row opened it: %s", got)
+	}
+	touch(3, 0)
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 2`)
+	touch(1, 0)
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 1`)
+	if got := checked(); got != "3" {
+		t.Errorf("after tapping 3 then 1, selected %q (want 3)", got)
+	}
+	circle := evalAs[map[string]string](b, `(() => {
+		const s = getComputedStyle(document.querySelectorAll(".messages .row-avatar")[0], "::before");
+		return { opacity: s.opacity, width: s.width };
+	})()`)
+	if circle["opacity"] != "1" || circle["width"] != "22px" {
+		t.Errorf("an unchosen row while choosing: %v (want a 22px circle)", circle)
+	}
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelector("[data-clear-selection]").click()`, chromedp.EvalAsValue))
+	b.waitFor(`!document.querySelector("#bulk.has-selection") && document.querySelectorAll(".row-wrap.checked").length === 0`)
+	touch(2, 0)
+	b.waitFor(`location.href !== ` + strconv.Quote(start))
 }
