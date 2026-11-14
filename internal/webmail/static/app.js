@@ -387,6 +387,48 @@
       }
       sync();
     });
+    // Ctrl (Cmd on a Mac) and Shift with a click choose messages the way a
+    // file list does: Ctrl+click adds or removes one without opening it, and
+    // Shift+click selects every message from the last one chosen to this
+    // one, on the row or on its initials. The last one chosen is the anchor,
+    // which Shift+click leaves where it is, so a range can be redrawn.
+    var anchor = null;
+    var wraps = function () { return $$(".messages .row-wrap", bulk); };
+    var boxIn = function (wrap) { return $('input[name="uid"]', wrap); };
+    var selectRange = function (to) {
+      var list = wraps(), b = list.indexOf(to), a = anchor ? list.indexOf(anchor) : -1;
+      if (a < 0) a = b;
+      for (var i = Math.min(a, b); i <= Math.max(a, b); i++) {
+        var box = boxIn(list[i]);
+        if (box) box.checked = true;
+      }
+      if (!anchor || a === b) anchor = to;
+      sync();
+    };
+    bulk.addEventListener("click", function (e) {
+      if (e.button !== 0 || e.altKey) return;
+      var wrap = e.target.closest(".messages .row-wrap");
+      if (!wrap || !(e.target.closest(".check") || e.target.closest("a.row"))) return;
+      if (e.shiftKey) {
+        // Cancelling the click stops the row opening and the box toggling;
+        // a cancelled checkbox click puts its old state back once the
+        // handlers have run, so the range is drawn just after.
+        e.preventDefault();
+        setTimeout(function () { selectRange(wrap); }, 0);
+      } else if ((e.ctrlKey || e.metaKey) && e.target.closest("a.row")) {
+        e.preventDefault();
+        var box = boxIn(wrap);
+        if (box) box.checked = !box.checked;
+        anchor = wrap;
+        sync();
+      } else if (e.target.closest(".check")) {
+        anchor = wrap;
+      }
+    });
+    // Shift or Ctrl with a press on a row would otherwise select its text.
+    bulk.addEventListener("mousedown", function (e) {
+      if ((e.shiftKey || e.ctrlKey || e.metaKey) && e.target.closest(".messages .row-wrap")) e.preventDefault();
+    });
     // Moving from the dropdown shouldn't need a second click.
     var dest = $("#bulk-dest");
     if (dest) {
@@ -1220,6 +1262,18 @@
         var r = rows()[cursor];
         var box = r ? $('input[name="uid"]', r.parentNode) : null;
         if (box) { box.checked = !box.checked; box.dispatchEvent(new Event("change", { bubbles: true })); }
+        break;
+      case "J": case "K":
+        // Shift+j/k: select the current message and the next or previous
+        // one too, extending the selection as the cursor moves.
+        if (open) return;
+        var pick = function () {
+          var row = rows()[cursor], b = row ? $('input[name="uid"]', row.parentNode) : null;
+          if (b && !b.checked) { b.checked = true; b.dispatchEvent(new Event("change", { bubbles: true })); }
+        };
+        if (cursor >= 0) pick();
+        moveCursor(k === "J" ? 1 : -1);
+        pick();
         break;
       case "u": case "r": case "a": case "f": case "s": case "e": case "#":
         if (!clickKey(k)) return;
