@@ -55,6 +55,20 @@ sleep 2
 echo "Restoring metadata"
 docker exec -i "$dbc" pg_restore -U mailbox -d mailbox --no-owner --exit-on-error <"$in/metadata.dump"
 
+# The bodies are checked below with keys the live stack holds, which proves
+# nothing about the backup's own copy of them. MAILBOX_BODY_KEYS_FILE names
+# that copy (restore-drill.sh takes it from the backup's secrets); every key
+# the restored metadata recorded must be in it, or a restore from this backup
+# alone couldn't read the mail.
+if [ -n "${MAILBOX_BODY_KEYS_FILE:-}" ]; then
+    echo "Checking the backup's body keys against its metadata"
+    docker run --rm --network "$net" --env-file "$MAILBOX_BODY_KEYS_FILE" \
+        -e ELEMTA_MAILBOX_DATABASE_DSN="postgres://mailbox:$pw@$dbc:5432/mailbox?sslmode=disable" \
+        "$image" mailbox check-keys
+elif [ "$(docker exec "$dbc" psql -U mailbox -d mailbox -tAc 'select count(*) from mailbox_body_keys')" != 0 ]; then
+    echo "Note: the bodies are encrypted and MAILBOX_BODY_KEYS_FILE isn't set, so the backup's own keys aren't checked"
+fi
+
 if [ "$bodies" = external ]; then
     # shellcheck source=SCRIPTDIR/lib/compose.sh
     . "$root/scripts/lib/compose.sh"

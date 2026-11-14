@@ -415,7 +415,11 @@ administrator with the key can read everything. It is not end-to-end encryption.
 **Losing the key loses the mail.** There is no recovery. Keep a copy somewhere
 that doesn't share a failure with the server, and away from the bucket:
 encryption protects nothing if the key sits beside the data. `scripts/backup.sh`
-includes it in `secrets.tar.gz`, so set `BACKUP_AGE_RECIPIENT`.
+includes it in `secrets.tar.gz`, so set `BACKUP_AGE_RECIPIENT`, and the restore
+drill checks that copy against the backup's metadata. That still leaves one
+key, the age identity, between you and the mail if the server is lost, so
+keep one more copy of the key file itself apart from both, such as in a
+password manager. It's one line and changes only when you rotate it.
 
 To turn it on with the cloud deploy:
 
