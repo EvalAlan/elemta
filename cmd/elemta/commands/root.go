@@ -47,8 +47,10 @@ Elemta is a high-performance, carrier-grade MTA with modular architecture and pl
 			}
 
 			// Load configuration exactly once in a thread-safe way
+			// The webmail reads the shared config but never serves SMTP, so
+			// it isn't warned about SMTP certificate files it has no use for.
 			configOnce.Do(func() {
-				cfg, configErr = config.LoadConfig(configPath)
+				cfg, configErr = config.LoadConfigWith(configPath, config.LoadOptions{NoSMTP: cmd.Name() == "webmail"})
 			})
 			if configErr != nil {
 				// In test mode (ELEMTA_TEST env var set), just warn and skip
