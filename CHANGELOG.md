@@ -26,10 +26,13 @@ otherwise, and the relay the mailbox servers use is narrowed to them alone.
   now share a network of their own, `elemta_relay` (10.253.54.0/24 by default,
   `ELEMTA_RELAY_SUBNET`), where the MTA answers as `elemta-relay`. A fresh
   deployment relays only for that subnet. An existing one keeps its runtime
-  configuration, so set `allowed_relays = ["10.253.54.0/24"]` in `elemta.toml`
-  and `submit_addr = "elemta-relay:2587"` under the mailbox service's `[sieve]`,
-  then restart. Until then everything on the stack's network can still send
-  without logging in.
+  configuration, which still trusts every private address, so mail keeps
+  flowing but everything on the stack's network can still send without
+  logging in. To narrow it, set `allowed_relays = ["10.253.54.0/24"]` in the
+  runtime `elemta.toml` (`/app/runtime-config/elemta.toml`, in the
+  `elemta_config` volume, owned by the container user) and restart the MTA.
+  The mailbox servers pick up `submit_addr = "elemta-relay:2587"` from the
+  rendered configuration on deploy.
 - **ManageSieve is internal.** Port 4190 is bound to loopback in the compose
   stack and left off the production edge load balancer; the webmail edits
   filters over the internal network. Publish it deliberately if mail apps need
@@ -55,6 +58,12 @@ otherwise, and the relay the mailbox servers use is narrowed to them alone.
 - **Rooms book only for verified senders.** A room accepts a request or
   cancellation only from the signed-in organizer, or mail that passed DMARC for
   the room's domain; anything else waits in the room's inbox for a person.
+
+- **Rolling back to v0.8.0:** put `allowed_relays` back to `["private"]` first
+  if you narrowed it. v0.8.0's mailbox servers relay from the main network, so
+  with the narrow setting their scheduled sends, out-of-office replies and
+  forwards are refused, and a scheduled send gives up. Mail, scheduled sends
+  and snoozes are otherwise unchanged by an upgrade and a rollback.
 
 ### Security fixes
 
