@@ -5,6 +5,7 @@
   <header class="page-head">
     <h1>Filters and out-of-office</h1>
     <p class="muted">Sort incoming mail automatically, and reply while you're away.</p>
+    {{if and .Session.Mailbox (not .Session.AdminActor)}}<p class="banner subtle" data-shared-filters>These are the filters and automatic reply for <strong>{{.Session.Mailbox}}</strong>. Everyone who shares it sees and changes the same ones. Switch back to your own mailbox for yours.</p>{{end}}
   </header>
   {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
   {{with .Filters}}
