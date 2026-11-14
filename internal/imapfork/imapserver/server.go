@@ -108,10 +108,15 @@ func (s *Server) logger() Logger {
 
 // Serve accepts incoming connections on the listener ln.
 func (s *Server) Serve(ln net.Listener) error {
+	// The wait group is joined under the lock that Close takes before it
+	// waits: joined after it, a Serve starting as Close ran could Add
+	// while Close was in Wait, which the race detector reports and the
+	// WaitGroup contract forbids.
 	s.mutex.Lock()
 	ok := !s.closed
 	if ok {
 		s.listeners[ln] = struct{}{}
+		s.listenerWaitGroup.Add(1)
 	}
 	s.mutex.Unlock()
 	if !ok {
@@ -123,8 +128,6 @@ func (s *Server) Serve(ln net.Listener) error {
 		delete(s.listeners, ln)
 		s.mutex.Unlock()
 	}()
-
-	s.listenerWaitGroup.Add(1)
 	defer s.listenerWaitGroup.Done()
 
 	var delay time.Duration
