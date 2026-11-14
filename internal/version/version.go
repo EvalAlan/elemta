@@ -17,7 +17,7 @@ import (
 //
 // The release workflow (.github/workflows/release.yml) stamps this with the
 // pushed git tag.
-var Version = "0.8.0-dev"
+var Version = "0.9.0-dev"
 
 // SourceURL is where the source code is published. The GPL entitles users
 // to it, so the web interfaces link here from their copyright notice.

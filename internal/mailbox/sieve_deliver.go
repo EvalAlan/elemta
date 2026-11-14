@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	sieve "github.com/EvalAlan/elemta/internal/sievefork"
 	"github.com/EvalAlan/elemta/internal/sievefork/interp"
 	gomessage "github.com/emersion/go-message"
@@ -38,7 +39,7 @@ import (
 
 // redirectHeader marks mail this service redirected, so a redirect loop
 // between two accounts stops at the second hop.
-const redirectHeader = "X-Elemta-Sieve-Redirected-By"
+const redirectHeader = mailpolicy.SieveRedirectHeader
 
 // sieveCache keeps compiled scripts by account, valid while the script's
 // update time is unchanged.
@@ -322,8 +323,12 @@ func (s *Service) redirect(ctx context.Context, d delivery, to string) error {
 	if err != nil || sent {
 		return err
 	}
+	envelope := s.forwardSender(ctx, d, target)
 	msg := append([]byte(redirectHeader+": "+d.rcpt+"\r\n"), d.raw...)
-	if err := s.submit(ctx, s.forwardSender(ctx, d, target), []string{target}, msg); err != nil {
+	if forwardNeedsNewFrom(d.raw, envelope, domainOf(d.account.Address)) {
+		msg = sendOnAs(msg, d.rcpt, d.account.Address)
+	}
+	if err := s.submit(ctx, envelope, []string{target}, msg); err != nil {
 		// A rule refusing the destination won't change on a retry, and
 		// retrying would hold the mail back from everyone else. Keep it here.
 		var refused *smtp.SMTPError
@@ -453,6 +458,7 @@ func (s *Service) vacation(ctx context.Context, d delivery, v interp.ActionVacat
 	if err != nil || !ok {
 		return err
 	}
+	v.From = s.vacationFrom(ctx, d, v.From)
 	reply, err := s.vacationReply(d, mh, v)
 	if err != nil {
 		s.engine.releaseSent(ctx, d.account.ID, key)
@@ -464,6 +470,28 @@ func (s *Service) vacation(ctx context.Context, d delivery, v interp.ActionVacat
 		return err
 	}
 	return nil
+}
+
+// vacationFrom is the From an out-of-office reply may carry. A script's
+// :from is used only when the account may send as it: the reply goes out
+// through the MTA's internal relay, where From isn't bound to a login, and
+// an auto-reply is signed for its From domain, so an unchecked :from let a
+// script send mail as anyone in any domain this server signs for. Failing
+// that, the address the mail came to, if the account may send as it, and
+// otherwise the account's own address.
+func (s *Service) vacationFrom(ctx context.Context, d delivery, requested string) string {
+	if requested != "" {
+		if list, err := gomail.ParseAddressList(requested); err == nil && len(list) == 1 {
+			if ok, err := s.maySendAs(ctx, d.account, list[0].Address); err == nil && ok {
+				return list[0].String()
+			}
+		}
+		s.log.Info("vacation :from ignored; not an address the account sends as", "account", d.account.ID)
+	}
+	if ok, err := s.maySendAs(ctx, d.account, d.rcpt); err == nil && ok {
+		return d.rcpt
+	}
+	return d.account.Address
 }
 
 func (s *Service) vacationReply(d delivery, orig gomail.Header, v interp.ActionVacation) ([]byte, error) {
@@ -494,15 +522,31 @@ func (s *Service) vacationReply(d delivery, orig gomail.Header, v interp.ActionV
 		h.SetMsgIDList("References", append(refs, id))
 	}
 	var buf bytes.Buffer
+	reason := strings.ReplaceAll(strings.ReplaceAll(v.Reason, "\r\n", "\n"), "\n", "\r\n")
 	if v.Mime {
-		// :mime: the reason is a MIME entity, headers included.
-		h.Set("MIME-Version", "1.0")
-		if err := textproto.WriteHeader(&buf, h.Header.Header); err != nil {
-			return nil, err
+		// :mime: the reason is a MIME entity, its own Content-* headers
+		// first. Those join the reply's header, and the rest is the body.
+		// Writing the reply's header, its blank line and then the whole
+		// reason put the entity's headers in the body, as text. A reason
+		// without one is sent as plain text below.
+		br := bufio.NewReader(strings.NewReader(reason))
+		// "Note: back Monday" opening a plain reason parses as a header
+		// too, so only a Content-Type makes it an entity.
+		if eh, err := textproto.ReadHeader(br); err == nil && eh.Has("Content-Type") {
+			h.Set("MIME-Version", "1.0")
+			for f := eh.Fields(); f.Next(); {
+				if strings.HasPrefix(strings.ToLower(f.Key()), "content-") {
+					h.Add(f.Key(), f.Value())
+				}
+			}
+			if err := textproto.WriteHeader(&buf, h.Header.Header); err != nil {
+				return nil, err
+			}
+			if _, err := br.WriteTo(&buf); err != nil {
+				return nil, err
+			}
+			return buf.Bytes(), nil
 		}
-		reason := strings.ReplaceAll(strings.ReplaceAll(v.Reason, "\r\n", "\n"), "\n", "\r\n")
-		buf.WriteString(reason)
-		return buf.Bytes(), nil
 	}
 	h.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
 	h.Set("Content-Transfer-Encoding", "quoted-printable")
@@ -510,7 +554,7 @@ func (s *Service) vacationReply(d delivery, orig gomail.Header, v interp.ActionV
 	if err != nil {
 		return nil, err
 	}
-	if _, err := w.Write([]byte(strings.ReplaceAll(strings.ReplaceAll(v.Reason, "\r\n", "\n"), "\n", "\r\n"))); err != nil {
+	if _, err := w.Write([]byte(reason)); err != nil {
 		return nil, err
 	}
 	if err := w.Close(); err != nil {
@@ -539,4 +583,48 @@ func (s *Service) withoutExternalRedirects(ctx context.Context, d delivery, acti
 		out = append(out, a)
 	}
 	return out
+}
+
+// forwardNeedsNewFrom reports whether a forward must not keep its original
+// From. The forward is signed on the way out for its envelope's domain (the
+// account's, under SRS), so a From in that same domain would carry an
+// aligned signature: fine for a colleague's real mail, a forgery service for
+// mail from outside merely claiming to be them. It is kept only when the MTA
+// confirmed that sender on arrival (mailpolicy.SenderVerified): the signed-in
+// sender itself, or DMARC passing for that domain. Mail from other domains
+// keeps its From; the signature doesn't align with it.
+func forwardNeedsNewFrom(raw []byte, envelope, accountDomain string) bool {
+	envDomain := strings.ToLower(domainOf(envelope))
+	if envDomain == "" {
+		return false // a null-sender forward isn't signed (smtp.mayLaterSignFromHeader)
+	}
+	// Only an envelope in this server's own domain (the account's, as SRS
+	// makes it) gets this server's signature. Without SRS the envelope is the
+	// original sender's, and their domain's keys aren't ours.
+	if !sameOrganization(envDomain, strings.ToLower(accountDomain)) {
+		return false
+	}
+	addrs, ok := mailpolicy.FromAddresses(raw)
+	if !ok {
+		return true
+	}
+	kind, value := mailpolicy.SenderVerified(raw)
+	for _, addr := range addrs {
+		dom := strings.ToLower(domainOf(addr))
+		if !sameOrganization(dom, envDomain) {
+			continue
+		}
+		confirmed := (kind == "auth" && strings.EqualFold(value, addr)) || (kind == "dmarc" && sameOrganization(value, dom))
+		if !confirmed {
+			return true
+		}
+	}
+	return false
+}
+
+// sameOrganization is DMARC's relaxed alignment, approximated: the same
+// domain, or one a subdomain of the other.
+func sameOrganization(a, b string) bool {
+	a, b = strings.TrimSuffix(a, "."), strings.TrimSuffix(b, ".")
+	return a != "" && b != "" && (a == b || strings.HasSuffix(a, "."+b) || strings.HasSuffix(b, "."+a))
 }

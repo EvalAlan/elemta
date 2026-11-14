@@ -29,7 +29,9 @@ few seconds with no restart.
   guessing wrong. Many addresses guessing at one account shield it instead (see
   "Accounts under attack" below), which leaves its owner able to sign in.
 - **Port 25 stays open.** A block for guessing passwords shouldn't lose mail
-  from every server sharing that address.
+  from every server sharing that address. Port 25 takes no logins
+  (`[server].mx_auth` is off by default), so there are no passwords to guess
+  there; with it on, a blocked address is still refused at AUTH.
 - **It can't absorb a flood.** Traffic that fills the network link has to be
   stopped upstream, by the host or a filtering service.
 

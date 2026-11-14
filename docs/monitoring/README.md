@@ -16,7 +16,7 @@ docker compose -f deployments/compose/docker-compose-monitoring.yml up -d
 
 ## Endpoints
 
-- Grafana: `http://localhost:3000`
+- Grafana: `http://localhost:3000` (sign in as `admin` with the `GRAFANA_ADMIN_PASSWORD` you set before starting the stack; there is no default). All monitoring ports listen on loopback only.
 - Prometheus: `http://localhost:9090`
 - Alertmanager: `http://localhost:9093`
 

@@ -104,6 +104,7 @@ func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 			Enabled:              mm.Enabled,
 			DefaultRatePerMinute: mm.DefaultRatePerMinute,
 			MaxRecipients:        mm.MaxRecipients,
+			AllowedSenders:       mm.AllowedSenders,
 		}
 	}
 
@@ -300,12 +301,10 @@ func runWeb(cmd *cobra.Command, args []string) {
 		resolvedAuthFile = cfg.API.AuthFile
 	}
 
-	if resolvedAuthEnabled && resolvedAuthFile != "" {
-		if fi, err := os.Stat(resolvedAuthFile); err == nil && fi.IsDir() {
-			log.Printf("Warning: auth file path %q is a directory; disabling web auth", resolvedAuthFile)
-			resolvedAuthEnabled = false
-			resolvedAuthFile = ""
-		}
+	if err := checkAuthFile(resolvedAuthEnabled, resolvedAuthFile); err != nil {
+		slog.Error("The web interface cannot start", "error", err, "auth_file", resolvedAuthFile,
+			"hint", "point auth_file at a file; `elemta user add` creates it")
+		os.Exit(1)
 	}
 
 	// Create API config
@@ -474,4 +473,20 @@ func moveOldAbuseLists(p abuse.Policy, ac *smtp.AccessControlConfig) (abuse.Poli
 	}
 	p, _ = p.AddRules(rules)
 	return p, true
+}
+
+// checkAuthFile refuses an auth file path that is a directory. This used to
+// turn authentication off with a warning, and Docker creates exactly that
+// directory when a file it was asked to bind-mount doesn't exist on the host,
+// so a missing users file left the admin API, which reads queued mail and
+// rewrites configuration, open to anyone who could reach it. It now stops
+// startup instead.
+func checkAuthFile(enabled bool, path string) error {
+	if !enabled || path == "" {
+		return nil
+	}
+	if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+		return fmt.Errorf("auth file %q is a directory, not a users file; refusing to start without authentication", path)
+	}
+	return nil
 }

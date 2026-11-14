@@ -44,6 +44,14 @@ func TestInboxTabs(t *testing.T) {
 	if h.store.lastQuery.Category != "primary" {
 		t.Fatalf("list category = %q, want primary", h.store.lastQuery.Category)
 	}
+	// The live count check carries the tabs' counts when the page asks,
+	// so a tab's count rises as mail arrives in it without a reload.
+	if _, body := h.get("/api/counts?tabs=1"); !strings.Contains(body, `"tabs":{"primary":1,"promotions":3}`) {
+		t.Fatalf("counts lack the tabs: %s", body)
+	}
+	if _, body := h.get("/api/counts"); strings.Contains(body, `"tabs"`) {
+		t.Fatalf("tab counts sent unasked: %s", body)
+	}
 	h.get("/mail?f=INBOX&tab=social")
 	if h.store.lastQuery.Category != "social" {
 		t.Fatalf("list category = %q, want social", h.store.lastQuery.Category)

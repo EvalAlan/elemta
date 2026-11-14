@@ -274,3 +274,39 @@ func TestFiltersDisabledWithoutSieve(t *testing.T) {
 		t.Fatalf("page:\n%s", body)
 	}
 }
+
+// With a shared mailbox open, Filters edits that mailbox's script, signing
+// in to ManageSieve as member|owner like the IMAP login that opens it.
+func TestFiltersFollowTheOpenSharedMailbox(t *testing.T) {
+	h := newHarness(t)
+	var logins []string
+	fs := &fakeSieve{scripts: map[string]string{}}
+	h.server.sieve = func(_ context.Context, user, _ string) (SieveConn, error) {
+		logins = append(logins, user)
+		return fs, nil
+	}
+	h.login()
+	var sess *Session
+	h.server.sessions.mu.Lock()
+	for _, x := range h.server.sessions.sessions {
+		sess = x
+	}
+	h.server.sessions.mu.Unlock()
+	if err := h.server.sessions.SetMailbox(context.Background(), sess, "team@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	_, body := h.get("/filters")
+	if !strings.Contains(body, "data-shared-filters") || !strings.Contains(body, "team@example.com") {
+		t.Error("the page doesn't say whose filters these are")
+	}
+	if len(logins) == 0 || logins[len(logins)-1] != sess.User+"|team@example.com" {
+		t.Fatalf("ManageSieve logins %q, want %q", logins, sess.User+"|team@example.com")
+	}
+	if err := h.server.sessions.SetMailbox(context.Background(), sess, ""); err != nil {
+		t.Fatal(err)
+	}
+	_, body = h.get("/filters")
+	if strings.Contains(body, "data-shared-filters") || logins[len(logins)-1] != sess.User {
+		t.Fatalf("own mailbox: login %q", logins[len(logins)-1])
+	}
+}

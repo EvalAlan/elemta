@@ -28,6 +28,14 @@ import (
 // it was submitted, so delivery doesn't sign it for that domain again.
 const AnnotationDKIMSigned = "dkim_signed"
 
+// AnnotationSignFromHeader, set to "true", lets delivery sign a message with
+// an empty envelope sender for the domain in its From header. The server sets
+// it on its own bounces and on null-sender mail whose From it has checked
+// (internal/smtp/header_from.go). Without it such a message goes unsigned:
+// taking the domain from content let anyone who could get a null-sender
+// message queued choose which of our domains signed it.
+const AnnotationSignFromHeader = "dkim_from_header"
+
 // messageSigner signs outbound message content for a given signing domain.
 // Satisfied by *dkim.Signer; abstracted so tests can inject a stub. A nil
 // signer means signing is disabled and content passes through unchanged.
@@ -276,8 +284,9 @@ func authenticationResultsValue(content []byte) string {
 // signContent applies DKIM signing to the message before delivery. Signing
 // happens once here — before recipients are grouped by domain — so the same
 // signed bytes are delivered to every MX and a message is never signed
-// per-domain. The signing domain is the envelope-from domain, falling back to
-// the From header domain when the envelope-from is empty (e.g. bounces).
+// per-domain. The signing domain is the envelope-from domain. For an empty
+// envelope-from it is the From header domain, but only when the message
+// carries AnnotationSignFromHeader; see there.
 //
 // Each queue attempt starts from the original stored content, so retries receive
 // one fresh signature without trusting message-supplied DKIM headers. If signing
@@ -290,7 +299,7 @@ func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) ([]byte, 
 	}
 
 	signingDomain := dkim.DomainFromAddress(msg.From)
-	if signingDomain == "" {
+	if signingDomain == "" && msg.From == "" && msg.Annotations[AnnotationSignFromHeader] == "true" {
 		signingDomain = dkim.FromHeaderDomain(content)
 	}
 	if signingDomain == "" {
@@ -309,6 +318,13 @@ func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) ([]byte, 
 		return nil, fmt.Errorf("dkim signing failed for message %q and domain %q: %w", msg.ID, signingDomain, err)
 	}
 	return signed, nil
+}
+
+// SignForDelivery returns content as delivery would send it, DKIM-signed by
+// the rules in signContent. It lets end-to-end tests check what leaves the
+// server, signature and all, without a remote MX to deliver to.
+func (h *SMTPDeliveryHandler) SignForDelivery(msg Message, content []byte) ([]byte, error) {
+	return h.signContent(msg, content)
 }
 
 // DeliverMessage attempts to deliver a message via SMTP

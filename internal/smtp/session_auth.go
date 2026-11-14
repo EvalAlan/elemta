@@ -4,6 +4,7 @@ package smtp
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -237,9 +238,12 @@ func (ah *AuthHandler) handleAuthPlain(ctx context.Context, cmd string) error {
 			return fmt.Errorf("failed to flush auth prompt: %w", err)
 		}
 
-		line, _, err := ah.session.reader.ReadLine()
+		line, err := ah.readAuthLine()
+		if errors.Is(err, errAuthLineTooLong) {
+			return err
+		}
 		if err != nil {
-			ah.logger.ErrorContext(ctx, "Failed to read auth data", "error", err)
+			ah.logger.WarnContext(ctx, "Failed to read auth data", "error", err)
 			return fmt.Errorf("failed to read authentication data: %w", err)
 		}
 		authData = string(line)
@@ -273,6 +277,39 @@ func (ah *AuthHandler) handleAuthPlain(ctx context.Context, cmd string) error {
 	return ah.performAuthentication(ctx, username, password, AuthMethodPlain)
 }
 
+// maxAuthLine is RFC 4954's limit on a line of an AUTH exchange.
+const maxAuthLine = 12288
+
+var errAuthLineTooLong = errors.New("500 5.5.6 Authentication Exchange line is too long")
+
+// readAuthLine reads one client line of an AUTH exchange. ReadLine hands
+// back a line longer than the reader's buffer in pieces; taking only the
+// first left the rest to be read as the next commands. A line over
+// maxAuthLine is read to its end and discarded, so the session stays in
+// step, and refused.
+func (ah *AuthHandler) readAuthLine() ([]byte, error) {
+	var line []byte
+	tooLong := false
+	for {
+		part, more, err := ah.session.reader.ReadLine()
+		if err != nil {
+			return nil, err
+		}
+		if !tooLong && len(line)+len(part) <= maxAuthLine {
+			line = append(line, part...)
+		} else {
+			tooLong, line = true, nil
+		}
+		if !more {
+			break
+		}
+	}
+	if tooLong {
+		return nil, errAuthLineTooLong
+	}
+	return line, nil
+}
+
 // handleAuthLogin processes LOGIN authentication
 func (ah *AuthHandler) handleAuthLogin(ctx context.Context, cmd string) error {
 	ah.logger.DebugContext(ctx, "Processing LOGIN authentication")
@@ -292,9 +329,12 @@ func (ah *AuthHandler) handleAuthLogin(ctx context.Context, cmd string) error {
 		if err := ah.session.flush(); err != nil {
 			return fmt.Errorf("failed to flush username prompt: %w", err)
 		}
-		line, _, err := ah.session.reader.ReadLine()
+		line, err := ah.readAuthLine()
+		if errors.Is(err, errAuthLineTooLong) {
+			return err
+		}
 		if err != nil {
-			ah.logger.ErrorContext(ctx, "Failed to read username", "error", err)
+			ah.logger.WarnContext(ctx, "Failed to read username", "error", err)
 			return fmt.Errorf("failed to read username: %w", err)
 		}
 		userLine = line
@@ -322,9 +362,12 @@ func (ah *AuthHandler) handleAuthLogin(ctx context.Context, cmd string) error {
 	}
 
 	// Read password
-	passLine, _, err := ah.session.reader.ReadLine()
+	passLine, err := ah.readAuthLine()
+	if errors.Is(err, errAuthLineTooLong) {
+		return err
+	}
 	if err != nil {
-		ah.logger.ErrorContext(ctx, "Failed to read password", "error", err)
+		ah.logger.WarnContext(ctx, "Failed to read password", "error", err)
 		return fmt.Errorf("failed to read password: %w", err)
 	}
 

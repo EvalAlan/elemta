@@ -74,11 +74,28 @@ func (r *scheduleRig) flags(folder string, uid uint32) []string {
 
 func (r *scheduleRig) schedule(at time.Time) uint32 {
 	r.t.Helper()
-	uid, err := r.e.ScheduleSend(r.ctx, r.a.ID, []byte(scheduledMessage), r.a.Address, []string{"ana@example.net", "hidden@example.org"}, at)
+	// From is the account's own address, as the webmail writes it; a From the
+	// account can't use is refused (TestScheduledSendChecksTheMessagesFrom).
+	raw := strings.Replace(scheduledMessage, "From: me@example.com", "From: "+r.a.Address, 1)
+	uid, err := r.e.ScheduleSend(r.ctx, r.a.ID, []byte(raw), r.a.Address, []string{"ana@example.net", "hidden@example.org"}, at)
 	if err != nil {
 		r.t.Fatal(err)
 	}
 	return uid
+}
+
+// pendingPush is what the pusher is about to announce for the account.
+func (r *scheduleRig) pendingPush() []mailItem {
+	r.t.Helper()
+	if r.svc.push == nil {
+		r.t.Fatal("the test service has no pusher")
+	}
+	r.svc.push.mu.Lock()
+	defer r.svc.push.mu.Unlock()
+	if b := r.svc.push.pending[r.a.ID]; b != nil {
+		return append([]mailItem(nil), b.items...)
+	}
+	return nil
 }
 
 func (r *scheduleRig) pending() []ScheduledSend {
@@ -346,6 +363,11 @@ func TestSnoozeComesBackUnread(t *testing.T) {
 	if f := r.flags("INBOX", inbox[0]); hasFlag(f, `\Seen`) {
 		t.Errorf("came back read: %v", f)
 	}
+	// Announced to the user's devices like new mail, and without a tab, so
+	// a device that takes only Primary hears it too.
+	if items := r.pendingPush(); len(items) != 1 || items[0].uid != inbox[0] || items[0].category != "" || items[0].subject != "Quarterly numbers" {
+		t.Errorf("push for the returned message: %+v", items)
+	}
 	if list, _ := r.e.Snoozes(r.ctx, r.a.ID); len(list) != 0 {
 		t.Errorf("snooze rows left: %+v", list)
 	}
@@ -377,6 +399,9 @@ func TestSnoozeReturnsToItsFolderAndUnsnooze(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if items := r.pendingPush(); len(items) != 0 {
+		t.Errorf("a snooze ended by hand was pushed: %+v", items)
+	}
 	if len(back["Projects"]) != 1 || len(r.uids("Projects")) != 1 {
 		t.Errorf("unsnoozed to %v; Projects holds %v", back, r.uids("Projects"))
 	}
@@ -407,6 +432,32 @@ func TestSnoozeFolderGone(t *testing.T) {
 	}
 }
 
+// A message snoozed from another folder goes back there without a push, as
+// mail filed into a folder on delivery isn't announced either.
+func TestSnoozeReturnToAFolderIsQuiet(t *testing.T) {
+	r := newScheduleRig(t)
+	if err := r.e.Create(r.ctx, r.a.ID, "Projects"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.e.Append(r.ctx, r.a.ID, "Projects", []byte(scheduledMessage), nil, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.e.Snooze(r.ctx, r.a.ID, "Projects", []uint32{res.UID}, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	r.due()
+	if err := r.svc.returnDueSnoozes(r.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.uids("Projects"); len(got) != 1 {
+		t.Fatalf("Projects holds %v", got)
+	}
+	if items := r.pendingPush(); len(items) != 0 {
+		t.Errorf("a return to Projects was pushed: %+v", items)
+	}
+}
+
 func TestScheduleValidation(t *testing.T) {
 	now := time.Now()
 	for _, at := range []time.Time{now.Add(-time.Hour), now.Add(400 * 24 * time.Hour)} {
@@ -424,5 +475,35 @@ func TestScheduleValidation(t *testing.T) {
 	}
 	if got, err := checkScheduleRecipients([]string{" ana@example.net "}); err != nil || got[0] != "ana@example.net" {
 		t.Errorf("checkScheduleRecipients = %v, %v", got, err)
+	}
+}
+
+// The From inside a scheduled message is checked as well as the envelope.
+// The message goes out through the MTA's internal relay, where From isn't
+// bound to a login, and is signed for the envelope's domain, so an unchecked
+// From let a user send as a colleague with an aligned signature.
+func TestScheduledSendChecksTheMessagesFrom(t *testing.T) {
+	r := newScheduleRig(t)
+	forged := strings.Replace(scheduledMessage, "From: me@example.com", "From: CEO <ceo@example.com>", 1)
+	if _, ok, err := r.svc.mayAuthor(r.ctx, r.a, []byte(forged)); err != nil || ok {
+		t.Fatalf("mayAuthor(colleague) = %v, %v", ok, err)
+	}
+	own := strings.Replace(scheduledMessage, "From: me@example.com", "From: "+r.a.Address, 1)
+	if _, ok, err := r.svc.mayAuthor(r.ctx, r.a, []byte(own)); err != nil || !ok {
+		t.Fatalf("mayAuthor(own) = %v, %v", ok, err)
+	}
+
+	// Scheduled anyway (straight into the engine), it's refused at send time.
+	if _, err := r.e.ScheduleSend(r.ctx, r.a.ID, []byte(forged), r.a.Address, []string{"ana@example.net"}, time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.svc.sendDue(r.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(r.submit.messages()); n != 0 {
+		t.Fatal("a message with someone else's From was sent")
+	}
+	if got := r.uids("Drafts"); len(got) != 1 {
+		t.Errorf("Drafts holds %v, want the message", got)
 	}
 }

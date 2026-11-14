@@ -453,12 +453,24 @@ func (s *Server) withSieve(ctx context.Context, sess *Session, fn func(SieveConn
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	c, err := s.sieve(ctx, sess.User, pw)
+	c, err := s.sieve(ctx, sieveLogin(sess), pw)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = c.Close() }()
 	return fn(c)
+}
+
+// sieveLogin is the ManageSieve login for the mailbox the session has open:
+// with a shared mailbox selected, "member|owner", the same login that opens
+// it over IMAP, so a member edits the shared mailbox's filters and out-of-
+// office reply rather than their own. The mailbox service checks the share
+// on that login exactly as it does for IMAP.
+func sieveLogin(sess *Session) string {
+	if sess.Mailbox != "" && sess.AdminActor == "" {
+		return sess.User + "|" + sess.Mailbox
+	}
+	return sess.User
 }
 
 var errNoSieve = errors.New("webmail: no ManageSieve server configured")
@@ -634,6 +646,14 @@ func (s *Server) filtersSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 			s.renderProblem(w, r, sess, http.StatusBadRequest, "This filter can't be saved: "+err.Error()+".")
 			return
 		}
+		// A redirect to an address no filter sends to yet is forwarding by
+		// another name, so it needs the password too (see reauth.go).
+		if newRedirectTarget(set.Rules, rule) {
+			if problem := s.confirmPassword(ctx, r, sess); problem != "" {
+				s.renderProblem(w, r, sess, http.StatusForbidden, problem)
+				return
+			}
+		}
 		if inRange {
 			set.Rules[idx] = rule
 		} else {
@@ -668,4 +688,23 @@ func (s *Server) filtersSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		return
 	}
 	http.Redirect(w, r, "/filters?"+url.Values{"n": {notice}}.Encode(), http.StatusSeeOther)
+}
+
+// newRedirectTarget reports whether rule redirects to an address that none of
+// the existing rules already redirects to.
+func newRedirectTarget(existing []FilterRule, rule FilterRule) bool {
+	known := map[string]bool{}
+	for _, r := range existing {
+		for _, a := range r.Actions {
+			if a.Type == "redirect" {
+				known[strings.ToLower(strings.TrimSpace(a.Arg))] = true
+			}
+		}
+	}
+	for _, a := range rule.Actions {
+		if a.Type == "redirect" && !known[strings.ToLower(strings.TrimSpace(a.Arg))] {
+			return true
+		}
+	}
+	return false
 }

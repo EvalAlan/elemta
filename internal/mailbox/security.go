@@ -293,6 +293,17 @@ func (e *Engine) DeleteAppPassword(ctx context.Context, account string, id int64
 	return nil
 }
 
+// DeleteAllAppPasswords revokes every app password on the account and says
+// how many there were. The webmail calls it after the account password is
+// changed or reset, so access someone else set up doesn't outlive that.
+func (e *Engine) DeleteAllAppPasswords(ctx context.Context, account string) (int64, error) {
+	res, err := e.DB.ExecContext(ctx, `DELETE FROM mailbox_app_passwords WHERE account=$1`, account)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // appPasswordAccount finds the account an app password belongs to, if the
 // address matches, and records its use.
 func (e *Engine) appPasswordAccount(ctx context.Context, address, password string) (string, bool, error) {

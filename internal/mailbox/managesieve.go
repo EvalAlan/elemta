@@ -311,9 +311,14 @@ func (ss *sieveSession) authenticate(ctx context.Context, args []string) {
 		ss.no("", "Invalid PLAIN response")
 		return
 	}
-	// ManageSieve is internal-only in deployments (the webmail edits
-	// filters), so it is not a listener the requirement covers.
-	a, err := ss.s.login(withLoginSource(ctx, "sieve"), string(parts[1]), string(parts[2]), false, "", clientKey(ss.conn.RemoteAddr()))
+	// The webmail edits filters over this listener from inside, with the
+	// internal listener's rules (its session tokens, and the account
+	// password where app passwords are required). Deployments also publish
+	// it for mail apps' filter editors, and a client from anywhere else is
+	// held to the public rules: app passwords where required, and no
+	// internal-only tokens.
+	public := !ss.s.internalAddr(ss.conn.RemoteAddr())
+	a, err := ss.s.login(withLoginSource(ctx, "sieve"), string(parts[1]), string(parts[2]), public, "", clientKey(ss.conn.RemoteAddr()))
 	if err == nil && a.Policy != nil && !a.Policy.Filters {
 		ss.no("", mailpolicy.FiltersOffMessage)
 		return

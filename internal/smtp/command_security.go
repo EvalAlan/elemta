@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -15,7 +14,22 @@ import (
 type CommandSecurityManager struct {
 	logger *slog.Logger
 	config *CommandSecurityConfig
+
+	// Compiled once from config. Compiling them on every command made each
+	// line cost tens of microseconds before it was even recognised.
+	commandChars   *regexp.Regexp
+	parameterChars *regexp.Regexp
+	blockedCommand []*regexp.Regexp
+	blockedParam   []*regexp.Regexp
 }
+
+var (
+	hostnamePattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$`)
+	emailPattern    = regexp.MustCompile(`^[a-zA-Z0-9._%+=/'!#*?^{}~-]+@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}|localhost)$`)
+	// suspiciousPattern marks arguments worth a log line without refusing
+	// them. Keywords are deliberately absent; see DefaultCommandSecurityConfig.
+	suspiciousPattern = regexp.MustCompile("[;&|`$]|\\.\\./|\\.\\.\\\\|[\\x00-\\x08\\x0B\\x0C\\x0E\\x0F]")
+)
 
 // CommandSecurityConfig defines security policies for command validation
 type CommandSecurityConfig struct {
@@ -37,12 +51,6 @@ type CommandSecurityConfig struct {
 	LogSuspiciousCommands bool
 	// Command processing timeout
 	CommandTimeout time.Duration
-	// Maximum number of commands per session
-	MaxCommandsPerSession int
-	// Enable memory usage monitoring
-	EnableMemoryMonitoring bool
-	// Maximum memory usage per command (bytes)
-	MaxMemoryPerCommand int64
 }
 
 // DefaultCommandSecurityConfig returns a secure default configuration
@@ -54,25 +62,24 @@ func DefaultCommandSecurityConfig() *CommandSecurityConfig {
 		// RFC 5321 allows these characters in email local-part and parameters:
 		// Letters, digits, and special chars: ! # $ % & ' * + - / = ? ^ _ ` { | } ~ . @ : < > [ ]
 		AllowedParameterChars: "^[A-Za-z0-9\\-_@\\.:<>=\\s\\[\\]!#$%&'*\\+/?\\^`{|}~]+$",
+		// No keyword lists. These used to refuse any argument containing
+		// "select", "update", "create", "drop", "exec", "script" and so on,
+		// anywhere and in any case. Nothing here builds SQL, shell or HTML
+		// from a command argument, so the words blocked nothing real, while
+		// they refused real senders at EHLO (mail.createsend.com,
+		// mx.dropboxmail.com) and, because AUTH PLAIN base64 is mixed-case
+		// letters, refused some users' credentials and logged them.
 		BlockedCommandPatterns: []string{
-			// SQL injection patterns
-			`(?i)(union|select|insert|update|delete|drop|create|alter|exec|execute)`,
 			// Command injection patterns
 			`[;&|` + "`" + `$]`,
-			// Script injection patterns
-			`(?i)(script|javascript|vbscript|onload|onerror)`,
 			// Path traversal patterns
 			`\.\./|\.\.\\`,
 			// Control characters
 			`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]`,
 		},
 		BlockedParameterPatterns: []string{
-			// SQL injection patterns
-			`(?i)(union|select|insert|update|delete|drop|create|alter|exec|execute)`,
 			// Command injection patterns
 			`[;&|` + "`" + `$]`,
-			// Script injection patterns
-			`(?i)(script|javascript|vbscript|onload|onerror)`,
 			// Path traversal patterns
 			`\.\./|\.\.\\`,
 			// Control characters
@@ -80,22 +87,44 @@ func DefaultCommandSecurityConfig() *CommandSecurityConfig {
 			// CRLF injection
 			`\r\n|\r|\n`,
 		},
-		StrictMode:             true,
-		LogSuspiciousCommands:  true,
-		CommandTimeout:         30 * time.Second, // 30 second timeout for command processing
-		MaxCommandsPerSession:  1000,             // Maximum commands per session
-		EnableMemoryMonitoring: true,             // Enable memory monitoring
-		MaxMemoryPerCommand:    50 * 1024 * 1024, // 50MB max memory per command (increased for stress testing)
+		StrictMode:            true,
+		LogSuspiciousCommands: true,
+		CommandTimeout:        30 * time.Second, // 30 second timeout for command processing
 	}
 	return config
 }
 
 // NewCommandSecurityManager creates a new command security manager
 func NewCommandSecurityManager(logger *slog.Logger) *CommandSecurityManager {
-	return &CommandSecurityManager{
-		logger: logger.With("component", "command-security"),
-		config: DefaultCommandSecurityConfig(),
+	config := DefaultCommandSecurityConfig()
+	compile := func(patterns []string) []*regexp.Regexp {
+		out := make([]*regexp.Regexp, len(patterns))
+		for i, p := range patterns {
+			out[i] = regexp.MustCompile(p)
+		}
+		return out
 	}
+	return &CommandSecurityManager{
+		logger:         logger.With("component", "command-security"),
+		config:         config,
+		commandChars:   regexp.MustCompile(config.AllowedCommandChars),
+		parameterChars: regexp.MustCompile(config.AllowedParameterChars),
+		blockedCommand: compile(config.BlockedCommandPatterns),
+		blockedParam:   compile(config.BlockedParameterPatterns),
+	}
+}
+
+// loggableArgs is a command's arguments as they may be logged. AUTH
+// arguments are credentials (for PLAIN, the base64 of username and
+// password), so only the mechanism is kept.
+func loggableArgs(cmd, args string) string {
+	if !strings.EqualFold(cmd, "AUTH") {
+		return args
+	}
+	if fields := strings.Fields(args); len(fields) > 1 {
+		return fields[0] + " [redacted]"
+	}
+	return args
 }
 
 // ValidateCommand performs comprehensive security validation on SMTP commands
@@ -103,12 +132,6 @@ func (csm *CommandSecurityManager) ValidateCommand(ctx context.Context, line str
 	// Create a context with timeout for command processing
 	timeoutCtx, cancel := context.WithTimeout(ctx, csm.config.CommandTimeout)
 	defer cancel()
-
-	// Step 0: Memory monitoring (if enabled)
-	var initialMemStats runtime.MemStats
-	if csm.config.EnableMemoryMonitoring {
-		runtime.ReadMemStats(&initialMemStats)
-	}
 
 	// Step 1: Basic length validation
 	if err := csm.validateLength(timeoutCtx, line); err != nil {
@@ -164,13 +187,6 @@ func (csm *CommandSecurityManager) ValidateCommand(ctx context.Context, line str
 	// these patterns, updates@example.com is an UPDATE statement.
 	if cmd != "MAIL" && cmd != "RCPT" {
 		if err := csm.checkBlockedPatterns(timeoutCtx, cmd, args); err != nil {
-			return err
-		}
-	}
-
-	// Step 10: Memory usage check (if enabled)
-	if csm.config.EnableMemoryMonitoring {
-		if err := csm.checkMemoryUsage(timeoutCtx, initialMemStats); err != nil {
 			return err
 		}
 	}
@@ -274,8 +290,7 @@ func (csm *CommandSecurityManager) validateCommandStructure(ctx context.Context,
 	}
 
 	// Command name must contain only allowed characters
-	cmdRegex := regexp.MustCompile(csm.config.AllowedCommandChars)
-	if !cmdRegex.MatchString(cmd) {
+	if !csm.commandChars.MatchString(cmd) {
 		csm.logger.WarnContext(ctx, "Command name contains invalid characters",
 			"command", redactCommand(cmd),
 		)
@@ -332,11 +347,10 @@ func (csm *CommandSecurityManager) validateCommandParameters(ctx context.Context
 	}
 
 	// Validate parameter characters
-	paramRegex := regexp.MustCompile(csm.config.AllowedParameterChars)
-	if !paramRegex.MatchString(args) {
+	if !csm.parameterChars.MatchString(args) {
 		csm.logger.WarnContext(ctx, "Command parameters contain invalid characters",
 			"command", redactCommand(cmd),
-			"parameters", args,
+			"parameters", loggableArgs(cmd, args),
 			"regex_pattern", csm.config.AllowedParameterChars,
 		)
 		return fmt.Errorf("500 5.5.2 Invalid parameter characters")
@@ -378,8 +392,7 @@ func (csm *CommandSecurityManager) validateHostnameParameter(ctx context.Context
 	}
 
 	// Check for valid hostname characters
-	hostnameRegex := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$`)
-	if !hostnameRegex.MatchString(hostname) {
+	if !hostnamePattern.MatchString(hostname) {
 		csm.logger.WarnContext(ctx, "Invalid hostname format",
 			"hostname", hostname,
 		)
@@ -527,8 +540,7 @@ func (csm *CommandSecurityManager) validateEmailAddress(ctx context.Context, add
 		return fmt.Errorf("501 5.1.3 Invalid email address format")
 	}
 	// Require proper domain with TLD (e.g., example.com) or special case for localhost
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+=/'!#*?^{}~-]+@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}|localhost)$`)
-	if !emailRegex.MatchString(addr) {
+	if !emailPattern.MatchString(addr) {
 		csm.logger.WarnContext(ctx, "Invalid email address format",
 			"address", addr,
 			"addr_len", len(addr),
@@ -543,12 +555,11 @@ func (csm *CommandSecurityManager) validateEmailAddress(ctx context.Context, add
 // checkBlockedPatterns checks for blocked patterns in command and parameters
 func (csm *CommandSecurityManager) checkBlockedPatterns(ctx context.Context, cmd, args string) error {
 	// Check command for blocked patterns
-	for _, pattern := range csm.config.BlockedCommandPatterns {
-		regex := regexp.MustCompile(pattern)
+	for _, regex := range csm.blockedCommand {
 		if regex.MatchString(cmd) {
 			csm.logger.WarnContext(ctx, "Blocked pattern detected in command",
 				"command", redactCommand(cmd),
-				"pattern", pattern,
+				"pattern", regex.String(),
 			)
 			return fmt.Errorf("554 5.7.1 Command rejected: security violation")
 		}
@@ -556,13 +567,12 @@ func (csm *CommandSecurityManager) checkBlockedPatterns(ctx context.Context, cmd
 
 	// Check parameters for blocked patterns
 	if args != "" {
-		for _, pattern := range csm.config.BlockedParameterPatterns {
-			regex := regexp.MustCompile(pattern)
+		for _, regex := range csm.blockedParam {
 			if regex.MatchString(args) {
 				csm.logger.WarnContext(ctx, "Blocked pattern detected in parameters",
 					"command", redactCommand(cmd),
-					"parameters", args,
-					"pattern", pattern,
+					"parameters", loggableArgs(cmd, args),
+					"pattern", regex.String(),
 				)
 				return fmt.Errorf("554 5.7.1 Parameters rejected: security violation")
 			}
@@ -574,26 +584,12 @@ func (csm *CommandSecurityManager) checkBlockedPatterns(ctx context.Context, cmd
 
 // logSuspiciousActivity logs potentially suspicious command activity
 func (csm *CommandSecurityManager) logSuspiciousActivity(ctx context.Context, originalLine, cmd, args string) {
-	// Check for suspicious patterns that might indicate attack attempts
-	suspiciousPatterns := []string{
-		`(?i)(union|select|insert|update|delete|drop|create|alter)`,
-		`[;&|` + "`" + `$]`,
-		`(?i)(script|javascript|vbscript)`,
-		`\.\./|\.\.\\`,
-		`\x00|\x01|\x02|\x03|\x04|\x05|\x06|\x07|\x08|\x0B|\x0C|\x0E|\x0F`,
-	}
-
-	for _, pattern := range suspiciousPatterns {
-		regex := regexp.MustCompile(pattern)
-		if regex.MatchString(cmd + " " + args) {
-			csm.logger.WarnContext(ctx, "Suspicious command pattern detected",
-				"original_line", originalLine,
-				"command", redactCommand(cmd),
-				"parameters", args,
-				"pattern", pattern,
-			)
-			break
-		}
+	if suspiciousPattern.MatchString(cmd + " " + args) {
+		csm.logger.WarnContext(ctx, "Suspicious command pattern detected",
+			"original_line", redactCommand(originalLine),
+			"command", redactCommand(cmd),
+			"parameters", loggableArgs(cmd, args),
+		)
 	}
 }
 
@@ -615,38 +611,6 @@ func (csm *CommandSecurityManager) SanitizeCommand(line string) string {
 	}
 
 	return sanitized
-}
-
-// checkMemoryUsage monitors memory usage during command processing
-func (csm *CommandSecurityManager) checkMemoryUsage(ctx context.Context, initialStats runtime.MemStats) error {
-	var currentStats runtime.MemStats
-	runtime.ReadMemStats(&currentStats)
-
-	// Calculate memory increase
-	memoryIncrease := safeUint64ToInt64(currentStats.Alloc) - safeUint64ToInt64(initialStats.Alloc)
-
-	// Check if memory increase exceeds the maximum allowed
-	if memoryIncrease > csm.config.MaxMemoryPerCommand {
-		csm.logger.WarnContext(ctx, "Command processing exceeded memory limit - REJECTING message",
-			"event_type", "rejection",
-			"memory_increase", memoryIncrease,
-			"max_memory_per_command", csm.config.MaxMemoryPerCommand,
-			"over_limit_by", memoryIncrease-csm.config.MaxMemoryPerCommand,
-		)
-		// 452 = temporary failure (4xx), client should retry later
-		// This is a resource constraint, not a permanent rejection
-		return fmt.Errorf("452 4.3.1 Insufficient system storage, try again later")
-	}
-
-	// Log high memory usage for monitoring
-	if memoryIncrease > csm.config.MaxMemoryPerCommand/2 {
-		csm.logger.InfoContext(ctx, "High memory usage detected during command processing",
-			"memory_increase", memoryIncrease,
-			"max_memory_per_command", csm.config.MaxMemoryPerCommand,
-		)
-	}
-
-	return nil
 }
 
 // validateBounds performs enhanced bounds checking on string operations
@@ -690,15 +654,12 @@ func (csm *CommandSecurityManager) safeStringOperation(ctx context.Context, str 
 // GetSecurityStats returns security statistics
 func (csm *CommandSecurityManager) GetSecurityStats() map[string]interface{} {
 	return map[string]interface{}{
-		"max_command_length":       csm.config.MaxCommandLength,
-		"max_parameter_length":     csm.config.MaxParameterLength,
-		"strict_mode":              csm.config.StrictMode,
-		"log_suspicious":           csm.config.LogSuspiciousCommands,
-		"blocked_patterns":         len(csm.config.BlockedCommandPatterns) + len(csm.config.BlockedParameterPatterns),
-		"command_timeout":          csm.config.CommandTimeout,
-		"max_commands_per_session": csm.config.MaxCommandsPerSession,
-		"memory_monitoring":        csm.config.EnableMemoryMonitoring,
-		"max_memory_per_command":   csm.config.MaxMemoryPerCommand,
+		"max_command_length":   csm.config.MaxCommandLength,
+		"max_parameter_length": csm.config.MaxParameterLength,
+		"strict_mode":          csm.config.StrictMode,
+		"log_suspicious":       csm.config.LogSuspiciousCommands,
+		"blocked_patterns":     len(csm.config.BlockedCommandPatterns) + len(csm.config.BlockedParameterPatterns),
+		"command_timeout":      csm.config.CommandTimeout,
 	}
 }
 

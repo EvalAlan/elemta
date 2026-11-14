@@ -193,6 +193,14 @@ func (s *Service) bookResource(ctx context.Context, d delivery) (bool, error) {
 		s.log.Info("invitation from outside the domain not booked", "resource", d.account.Address)
 		return false, nil
 	}
+	// The organizer and the envelope sender are only what the message says.
+	// Mail from outside claiming this domain is accepted unless DMARC is
+	// enforced, so those alone let anyone book a room, or cancel a real
+	// booking, in a colleague's name. Act only on what the MTA confirmed.
+	if !bookingSenderVerified(d.raw, d.account.Address, request.Organizer) {
+		s.log.Info("invitation whose sender wasn't verified left for a person", "resource", d.account.Address)
+		return false, nil
+	}
 	status := ""
 	err = s.engine.lockResource(ctx, d.account.ID, func() error {
 		entries, err := s.engine.bookings(ctx, d.account.ID)
@@ -265,6 +273,21 @@ func (s *Service) replyToBooking(ctx context.Context, address, name, organizer s
 	if err != nil {
 		s.log.Warn("resource answer not sent", "resource", address, "error", err)
 	}
+}
+
+// bookingSenderVerified reports whether the MTA confirmed that organizer
+// sent raw: a signed-in user sending as exactly that address, or mail that
+// passed DMARC for the resource's own domain. DMARC vouches for the domain
+// only, so it covers a colleague's mail from elsewhere, not who in the domain
+// sent it.
+func bookingSenderVerified(raw []byte, resource, organizer string) bool {
+	switch kind, value := mailpolicy.SenderVerified(raw); kind {
+	case "auth":
+		return strings.EqualFold(value, organizer)
+	case "dmarc":
+		return sameDomain(resource, "x@"+value) && sameDomain(resource, organizer)
+	}
+	return false
 }
 
 func sameDomain(a, b string) bool {

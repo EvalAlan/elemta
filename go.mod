@@ -1,13 +1,13 @@
 module github.com/EvalAlan/elemta
 
-go 1.26.10
+go 1.26.11
 
 require (
 	blitiri.com.ar/go/spf v1.6.0
-	filippo.io/age v1.2.1
+	filippo.io/age v1.3.2
 	github.com/BurntSushi/toml v1.6.0
 	github.com/ProtonMail/go-crypto v1.5.2
-	github.com/chromedp/cdproto v0.158.6
+	github.com/chromedp/cdproto v0.159.2
 	github.com/chromedp/chromedp v0.21.0
 	github.com/davecgh/go-spew v1.1.1
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
@@ -24,8 +24,8 @@ require (
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
-	github.com/holidays/go-holidays v1.1.0
-	github.com/klauspost/compress v1.20.2
+	github.com/holidays/go-holidays v1.2.0
+	github.com/klauspost/compress v1.20.3
 	github.com/lib/pq v1.12.3
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/microcosm-cc/bluemonday v1.0.27
@@ -37,7 +37,7 @@ require (
 	github.com/prometheus/client_golang v1.25.0
 	github.com/sony/gobreaker v1.0.0
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.10
+	github.com/spf13/pflag v1.1.0
 	github.com/stretchr/testify v1.12.1
 	github.com/teambition/rrule-go v1.8.2
 	github.com/valkey-io/valkey-go v1.0.79
@@ -55,6 +55,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect

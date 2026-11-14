@@ -15,7 +15,7 @@ import (
 // pattern used by the other socket-level tests in this package.
 func startDesyncTestServer(t *testing.T) *Server {
 	t.Helper()
-	server, err := NewServer(createTestConfig(t))
+	server, err := NewServer(strictTestConfig(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = server.Close() })
 

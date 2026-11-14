@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"net/mail"
 	"net/textproto"
 	"slices"
@@ -400,11 +401,49 @@ func (s *Service) returnDueSnoozes(ctx context.Context) error {
 	for _, d := range due {
 		// The move removes the rows (the foreign key); a failure leaves
 		// them claimed, to be tried again when the claim lapses.
-		if _, _, err := s.engine.returnSnoozed(ctx, d.account, d.folder, d.returnTo, d.uids); err != nil {
+		dest, moved, err := s.engine.returnSnoozed(ctx, d.account, d.folder, d.returnTo, d.uids)
+		if err != nil {
 			s.log.Warn("snooze: return", "account", d.account, "error", err)
+			continue
 		}
+		s.announceReturned(ctx, d.account, dest, moved)
 	}
 	return nil
+}
+
+// announceReturned pushes snoozed messages that came back to the inbox to
+// the user's devices, as new mail is. A snooze is a reminder the user asked
+// for, so it goes to every device that takes mail notifications, including
+// those limited to the Primary tab: it is announced without a category.
+// Messages returning to another folder aren't announced, as mail filed
+// there on delivery isn't.
+func (s *Service) announceReturned(ctx context.Context, account, folder string, uids []uint32) {
+	if s.push == nil || canonicalMailbox(folder) != "INBOX" || len(uids) == 0 {
+		return
+	}
+	a := Account{ID: account}
+	if err := s.engine.DB.QueryRowContext(ctx, `SELECT address FROM mailbox_accounts WHERE id=$1`, account).Scan(&a.Address); err != nil {
+		return
+	}
+	f, err := s.engine.Folder(ctx, account, folder)
+	if err != nil {
+		return
+	}
+	msgs, err := s.engine.MessagesByUID(ctx, f.ID, uids)
+	if err != nil {
+		return
+	}
+	for _, uid := range uids {
+		m, ok := msgs[uid]
+		if !ok {
+			continue
+		}
+		raw, err := s.engine.Read(ctx, m)
+		if err != nil {
+			continue
+		}
+		s.push.mailArrived(a, uid, raw, "")
+	}
 }
 
 func (s *Service) sendDue(ctx context.Context) error {
@@ -482,6 +521,13 @@ func (s *Service) sendOne(ctx context.Context, d dueSend) error {
 	if err != nil {
 		return err
 	}
+	// As at scheduling: the From inside the message must be one the account
+	// may still use, not only the envelope.
+	if addr, ok, err := s.mayAuthor(ctx, a, raw); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("%w: %s may not send as %q", errSendRefused, a.Address, addr)
+	}
 	if err := s.submit(ctx, d.from, d.rcpts, raw); err != nil {
 		var se *smtp.SMTPError
 		if errors.As(err, &se) && se.Code >= 500 {
@@ -503,6 +549,26 @@ func (s *Service) sendOne(ctx context.Context, d dueSend) error {
 }
 
 // maySendAs follows the check SMTP makes and compose offers (sendAddresses).
+// mayAuthor reports whether every From address in raw is one a may send as.
+// The scheduled message goes out through the MTA's internal relay, where
+// the MTA doesn't bind From to a login, and is signed for the envelope's
+// domain: checking only the envelope let a user schedule mail that claimed
+// to be from a colleague, signed and aligned. Mail with no From is allowed,
+// since it claims nobody.
+func (s *Service) mayAuthor(ctx context.Context, a Account, raw []byte) (string, bool, error) {
+	addrs, ok := mailpolicy.FromAddresses(raw)
+	if !ok {
+		return "", false, nil
+	}
+	for _, addr := range addrs {
+		allowed, err := s.maySendAs(ctx, a, addr)
+		if err != nil || !allowed {
+			return addr, false, err
+		}
+	}
+	return "", true, nil
+}
+
 func (s *Service) maySendAs(ctx context.Context, a Account, from string) (bool, error) {
 	from = strings.ToLower(strings.TrimSpace(from))
 	if from == strings.ToLower(a.Address) {

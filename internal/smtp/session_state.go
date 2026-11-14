@@ -464,19 +464,18 @@ func (ss *SessionState) GetTrafficStats() (sent int64, received int64) {
 	return ss.bytesSent, ss.bytesReceived
 }
 
-// AddError adds an error to the session error list (thread-safe)
-func (ss *SessionState) AddError(ctx context.Context, err error) {
+// AddError records a refusal sent to the client and returns how many the
+// session has now had. It does not log: Session.writeError already logged
+// the refusal once, and these are the client's mistakes, not the server's,
+// so an ERROR line per bad command from an internet scanner only buried
+// real faults.
+func (ss *SessionState) AddError(_ context.Context, err error) int {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
 	ss.errors = append(ss.errors, err)
 	ss.lastActivityTime = time.Now()
-
-	ss.logger.ErrorContext(ctx, "Session error recorded",
-		"event_type", "rejection",
-		"error", err,
-		"total_errors", len(ss.errors),
-	)
+	return len(ss.errors)
 }
 
 // GetErrors returns a copy of the error list (thread-safe)

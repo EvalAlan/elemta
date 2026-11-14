@@ -34,6 +34,12 @@ type Config struct {
 	// where the account password is accepted even from accounts that
 	// require app passwords. Reachable only inside the deployment.
 	WebmailSubmissionAddr string `toml:"webmail_submission_addr" json:"webmail_submission_addr"`
+	// MXAuth lets clients log in on the MX listener (listen_addr) as well as
+	// on the submission listeners. Off by default: the MX port takes mail
+	// for local domains from anyone and relays for no one, and logins there
+	// only gave password guessing a port that can't be closed to it. When on,
+	// a login there doesn't excuse the client from the blocklists.
+	MXAuth bool `toml:"mx_auth" json:"mx_auth"`
 	// ProxyProtocolFrom lists the load balancers whose connections carry a
 	// PROXY protocol header with the client's own address.
 	ProxyProtocolFrom []string `toml:"proxy_protocol_from" json:"proxy_protocol_from"`

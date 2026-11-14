@@ -1,9 +1,12 @@
 package smtp
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -433,6 +436,57 @@ func FuzzCommandValidation(f *testing.F) {
 			if len(errorStr) < 3 || errorStr[3] != ' ' {
 				t.Errorf("Invalid error format for command %q: %s", command, errorStr)
 			}
+		}
+	})
+}
+
+// TestRealHostnamesWithKeywordsAreAccepted pins the removal of the keyword
+// filter. It refused any EHLO whose hostname contained an SQL or script word,
+// with a permanent 554, so mail from these hosts bounced.
+func TestRealHostnamesWithKeywordsAreAccepted(t *testing.T) {
+	csm := NewCommandSecurityManager(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, line := range []string{
+		"EHLO mail.createsend.com",
+		"EHLO update.example.com",
+		"EHLO mx.dropboxmail.com",
+		"HELO executive-mail.example.org",
+		"EHLO mail.unionbank.com",
+		"EHLO scripts.example.net",
+	} {
+		if err := csm.ValidateCommand(context.Background(), line); err != nil {
+			t.Errorf("%q refused: %v", line, err)
+		}
+	}
+}
+
+// TestCommandValidationNeverLogsAuthArguments covers AUTH PLAIN initial responses. Their
+// base64 is mixed-case letters, so the old keyword filter matched some
+// credentials (this one contains "ExEc"), refused them and logged the raw
+// arguments: the user's password, recoverably.
+func TestCommandValidationNeverLogsAuthArguments(t *testing.T) {
+	var logs bytes.Buffer
+	csm := NewCommandSecurityManager(slog.New(slog.NewTextHandler(&logs, nil)))
+	cred := "AGFsaWNlQGV4YW1wbGUuY29tAExEcHdvNG1ETnVzcXBj" // \0alice@example.com\0LDpwo4mDNusqpc
+	if err := csm.ValidateCommand(context.Background(), "AUTH PLAIN "+cred); err != nil {
+		t.Errorf("AUTH PLAIN refused: %v", err)
+	}
+
+	// Arguments that are refused must not be logged either.
+	_ = csm.ValidateCommand(context.Background(), "AUTH PLAIN abc$def")
+	for _, secret := range []string{cred, "abc$def"} {
+		if strings.Contains(logs.String(), secret) {
+			t.Errorf("AUTH arguments %q written to the log:\n%s", secret, logs.String())
+		}
+	}
+}
+
+// BenchmarkValidateCommand guards the per-command cost. It used to stop the
+// world twice (runtime.ReadMemStats) and compile every regex on every line.
+func BenchmarkValidateCommand(b *testing.B) {
+	csm := NewCommandSecurityManager(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = csm.ValidateCommand(context.Background(), "EHLO mail.example.com")
 		}
 	})
 }

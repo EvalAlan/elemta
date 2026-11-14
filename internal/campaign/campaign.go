@@ -77,6 +77,11 @@ type Campaign struct {
 	Skipped   int    `json:"skipped"`
 	LastError string `json:"last_error,omitempty"`
 
+	// CreatedBy and StartedBy name the console users who created the
+	// campaign and last started it, so a bulk send can be traced to a person.
+	CreatedBy string `json:"created_by,omitempty"`
+	StartedBy string `json:"started_by,omitempty"`
+
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
@@ -144,6 +149,13 @@ func (c *Campaign) CanStart() bool {
 	return c.State == StateDraft || c.State == StatePaused
 }
 
+// SetStartedBy records who started the campaign.
+func (c *Campaign) SetStartedBy(user string) {
+	c.mu.Lock()
+	c.StartedBy = user
+	c.mu.Unlock()
+}
+
 // Clone returns a copy safe to hand out, without the lock.
 func (c *Campaign) Clone() *Campaign {
 	c.mu.Lock()
@@ -166,6 +178,8 @@ func (c *Campaign) cloneLocked() *Campaign {
 		Failed:        c.Failed,
 		Skipped:       c.Skipped,
 		LastError:     c.LastError,
+		CreatedBy:     c.CreatedBy,
+		StartedBy:     c.StartedBy,
 		CreatedAt:     c.CreatedAt,
 		UpdatedAt:     c.UpdatedAt,
 	}

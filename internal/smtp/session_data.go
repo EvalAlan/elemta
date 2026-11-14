@@ -23,6 +23,7 @@ import (
 	"log/slog"
 
 	"github.com/EvalAlan/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/google/uuid"
 )
@@ -192,6 +193,11 @@ func (dh *DataHandler) ReadData(ctx context.Context) (*MessageSpool, error) {
 	return spool, err
 }
 
+// errServerMemoryPressure refuses a message because this server is short of
+// memory right now. That is a temporary condition on our side, so it must be
+// a 4xx the sender retries; it used to be 552, which bounced the mail.
+var errServerMemoryPressure = errors.New("452 4.3.1 Insufficient system storage, try again later")
+
 // maxDrainBytes bounds how much of a rejected message body will be read and
 // discarded to regain protocol sync. A sender that keeps streaming past this
 // is not going to produce a usable transaction, so the session is failed
@@ -217,6 +223,12 @@ func (dh *DataHandler) drainToEndOfData(ctx context.Context) {
 	}
 	defer func() { _ = dh.conn.SetReadDeadline(time.Time{}) }()
 
+	// The drain has to agree with readData about where a message ends, or
+	// message content can be read as commands. In strict mode readData only
+	// accepts "<CRLF>.<CRLF>" and treats a bare LF as a framing violation, so
+	// the drain does the same.
+	strict := dh.config.StrictLineEndingsEnabled()
+
 	var drained int64
 	atLineStart := true
 	for {
@@ -227,11 +239,25 @@ func (dh *DataHandler) drainToEndOfData(ctx context.Context) {
 			return
 		}
 
+		if strict && err == nil && !bytes.HasSuffix(line, []byte("\r\n")) {
+			dh.dataSyncLost = true
+			dh.logger.WarnContext(ctx, "Bare LF while draining a rejected message; connection is out of sync",
+				"bytes_discarded", drained,
+				"remote_addr", dh.conn.RemoteAddr().String(),
+			)
+			return
+		}
+
 		// A lone "." on its own line ends the message. Check before the error
 		// branch so a marker arriving with the final read still counts.
 		if atLineStart {
 			trimmed := bytes.TrimRight(line, "\r\n")
-			if len(trimmed) == 1 && trimmed[0] == '.' {
+			isEnd := len(trimmed) == 1 && trimmed[0] == '.'
+			if strict {
+				// TrimRight would also pass ".\r\r\n", which readData doesn't.
+				isEnd = bytes.Equal(line, []byte(".\r\n"))
+			}
+			if isEnd {
 				dh.logger.WarnContext(ctx, "Discarded the remainder of a rejected message to stay in sync",
 					"bytes_discarded", drained,
 					"remote_addr", dh.conn.RemoteAddr().String(),
@@ -415,7 +441,7 @@ func (dh *DataHandler) readData(ctx context.Context) (*MessageSpool, error) {
 					)
 					// Clear data transfer mode on error
 					dh.state.ClearDataTransferMode(ctx)
-					return nil, fmt.Errorf("552 5.3.4 Server memory limit exceeded")
+					return nil, errServerMemoryPressure
 				}
 			}
 		}
@@ -574,16 +600,16 @@ func (dh *DataHandler) ReadBDATChunk(ctx context.Context, size int64) error {
 		dh.bdatSpool = NewMessageSpool(dh.spoolDir(), dh.spoolThreshold())
 	}
 
-	// Read exactly size bytes
-	chunk := make([]byte, size)
-	if _, err := io.ReadFull(dh.reader, chunk); err != nil {
-		dh.logger.ErrorContext(ctx, "Failed to read BDAT chunk", "error", err, "expected_size", size)
-		return fmt.Errorf("451 4.3.0 Error reading chunk data: %w", err)
-	}
-
-	if _, err := dh.bdatSpool.Write(chunk); err != nil {
-		dh.logger.ErrorContext(ctx, "Failed to spool BDAT chunk", "error", err)
-		return fmt.Errorf("451 4.3.0 Unable to buffer message data")
+	// Stream the chunk into the spool, so memory follows what has arrived
+	// rather than what the client declared.
+	if _, err := io.CopyN(dh.bdatSpool, dh.reader, size); err != nil {
+		// Part of the chunk may still be on its way, and nothing here knows
+		// how much, so the connection can't be trusted to sit at a command.
+		dh.dataSyncLost = true
+		// The client stopped sending, or went away, mid-chunk: its doing,
+		// not the server's, so it isn't an ERROR.
+		dh.logger.WarnContext(ctx, "Failed to read BDAT chunk", "error", err, "expected_size", size)
+		return fmt.Errorf("451 4.3.0 Error reading chunk data")
 	}
 	dh.bdatBytesReceived += size
 	dh.bdatChunkCount++
@@ -669,7 +695,7 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 				"error", err,
 				"session_id", dh.session.sessionID,
 			)
-			return fmt.Errorf("552 5.3.4 Server memory limit exceeded")
+			return errServerMemoryPressure
 		}
 
 		// Check per-session memory limits for the message
@@ -715,6 +741,9 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 		dh.logger.WarnContext(ctx, "Message header validation failed", "error", err)
 		return fmt.Errorf("554 5.7.1 Message rejected: %s", err.Error())
 	}
+	if err := dh.checkHeaderFrom(ctx, head); err != nil {
+		return err
+	}
 
 	// Perform security scanning
 	scanResult, err := dh.performSecurityScan(ctx, view, metadata)
@@ -753,7 +782,7 @@ func (dh *DataHandler) processMessage(ctx context.Context, head []byte, size int
 		body = withPatchedHead(body, head, patched)
 	}
 
-	if err := dh.saveMessage(ctx, headerPrefix, body, metadata); err != nil {
+	if err := dh.saveMessage(ctx, headerPrefix, body, metadata, dh.mayLaterSignFromHeader(head, metadata.From)); err != nil {
 		dh.logger.ErrorContext(ctx, "Failed to save message", "error", err)
 		return fmt.Errorf("451 4.3.0 Message processing failed")
 	}
@@ -1226,6 +1255,11 @@ func (dh *DataHandler) buildServerHeaders(ctx context.Context, data []byte, meta
 				"Authentication-Results: "+results.Header(dh.config.Hostname))
 		}
 	}
+
+	// What this server confirmed about the sender, for the mailbox service's
+	// automatic actions (room booking). Always written, so the first one in
+	// the stored message is this one; see mailpolicy.SenderVerifiedHeader.
+	additionalHeaders = append(additionalHeaders, mailpolicy.SenderVerifiedHeader+": "+dh.senderVerdict(data))
 
 	// Add server identification headers
 	additionalHeaders = append(additionalHeaders, "X-Elemta-Version: 1.0")
@@ -1927,8 +1961,18 @@ func (dh *DataHandler) performAntivirusScan(ctx context.Context, view *scanConte
 		results, err = dh.scannerManager.ScanForViruses(ctx, view.body)
 	}
 	if err != nil {
-		// A scanner that is down must not take mail down with it. The message
-		// is delivered unscanned and the failure is recorded.
+		// [antivirus] reject_on_failure is the operator's choice between the
+		// two: on, a message that couldn't be scanned is deferred (451, so the
+		// sender retries once the scanner is back); off, the default, a
+		// scanner that is down doesn't take mail down with it, and the
+		// message is delivered unscanned. The setting was offered in the
+		// admin console and saved, but this path used to ignore it.
+		if dh.config != nil && dh.config.Antivirus != nil && dh.config.Antivirus.RejectOnFailure {
+			dh.logger.WarnContext(ctx, "Antivirus scan failed; deferring the message (reject_on_failure)",
+				"error", err,
+			)
+			return fmt.Errorf("antivirus scan unavailable: %w", err)
+		}
 		dh.logger.WarnContext(ctx, "Antivirus scan failed; delivering message unscanned",
 			"error", err,
 		)
@@ -2333,7 +2377,10 @@ func (dh *DataHandler) handleSecurityThreat(ctx context.Context, scanResult *Sec
 }
 
 // saveMessage saves the message to the queue
-func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, body queue.ContentOpener, metadata *MessageMetadata) error {
+//
+// signFromHeader allows delivery to sign a null-sender message for its header
+// From domain; see mayLaterSignFromHeader.
+func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, body queue.ContentOpener, metadata *MessageMetadata, signFromHeader bool) error {
 	// The stored message is this hop's headers followed by the body exactly as
 	// received. Composing them as a reader means a spooled message goes to the
 	// queue disk-to-disk, without being assembled in memory first.
@@ -2375,6 +2422,11 @@ func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, bod
 	// SMTPDeliveryHandler, which mandates TLS and next-hop REQUIRETLS support
 	// before sending mail carrying the require_tls annotation.
 	dh.saveDSNAnnotations(ctx, msgID)
+	if signFromHeader {
+		if err := dh.queueManager.SetAnnotation(msgID, queue.AnnotationSignFromHeader, "true"); err != nil {
+			dh.logger.WarnContext(ctx, "Failed to record that delivery may sign by From; it will go unsigned", "error", err)
+		}
+	}
 	if signedFor != "" {
 		if err := dh.queueManager.SetAnnotation(msgID, queue.AnnotationDKIMSigned, signedFor); err != nil {
 			dh.logger.WarnContext(ctx, "Failed to record submission signature; delivery will sign again", "error", err)

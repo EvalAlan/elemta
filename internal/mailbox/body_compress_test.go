@@ -120,7 +120,7 @@ func TestCompressionUnderEncryption(t *testing.T) {
 
 func compressedEngine(t *testing.T) (*Engine, Account, *memBodies) {
 	t.Helper()
-	e, a := testEngine(t)
+	e, a := isolatedTestEngine(t)
 	inner := &memBodies{objects: map[string][]byte{}, identity: "mem:" + uuid.NewString()}
 	e.Bodies = &compressedBodies{BodyStore: &encryptedBodies{BodyStore: inner, keys: testBodyKeys(t, "v1:"+b64(1))}}
 	return e, a, inner

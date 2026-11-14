@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -287,7 +288,9 @@ func (s *Session) checkRBL(ctx context.Context) error {
 	// are, which is a stronger statement than an address reputation, and the
 	// addresses submission clients come from are exactly the residential and
 	// mobile ranges blocklists cover.
-	if s.state.IsAuthenticated() {
+	// Only on a submission listener, though: a login on the MX port (with
+	// mx_auth) leaves it facing the blocklists like any other MX client.
+	if s.state.IsAuthenticated() && s.submission {
 		return nil
 	}
 
@@ -328,6 +331,13 @@ func (s *Session) checkRBL(ctx context.Context) error {
 	// 554 rather than 550: this is about the client host, not the address it
 	// is trying to send from.
 	return fmt.Errorf("554 5.7.1 %s", decision.Message())
+}
+
+// takesLogins reports whether the listener this session arrived on accepts
+// AUTH: the submission listeners do; the MX listener only with mx_auth. It
+// is the one place that decides, for EHLO and AUTH.
+func (s *Session) takesLogins() bool {
+	return s.submission || (s.config != nil && s.config.MXAuth)
 }
 
 // RBLDecision returns what the blocklists said about this session's peer, so
@@ -421,6 +431,21 @@ func (s *Session) verifyAuthenticationContent(ctx context.Context, mailFrom stri
 		"policy", results.Policy,
 		"disposition", results.Disposition,
 	)
+
+	ownRelay := s.commandHandler != nil && s.commandHandler.isRelayAllowed("")
+	var localDomains []string
+	if s.config != nil {
+		localDomains = s.config.LocalDomains
+	}
+	if err := ownDomainDMARCRefusal(results, localDomains, ownRelay); err != nil {
+		s.logger.WarnContext(ctx, "Message refused: claims a local domain and fails its DMARC check",
+			"event_type", "rejection",
+			"client_ip", host,
+			"mail_from", mailFrom,
+			"header_from_domain", results.DMARC.Domain,
+		)
+		return err
+	}
 
 	switch results.Disposition {
 	case "reject":
@@ -521,6 +546,8 @@ func (s *Session) sendGreeting(ctx context.Context) error {
 // Special commands (STARTTLS, AUTH, QUIT) flush explicitly before their
 // protocol-specific actions that require the client to have seen the response.
 func (s *Session) processCommands(ctx context.Context) error {
+	firstRead := true
+	junk := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -541,8 +568,7 @@ func (s *Session) processCommands(ctx context.Context) error {
 				return fmt.Errorf("failed to flush before DATA phase: %w", err)
 			}
 			if err := s.handleDataPhase(ctx); err != nil {
-				s.logger.ErrorContext(ctx, "Data phase handling failed", "error", err)
-				s.writeError(ctx, err)
+				s.writeError(ctx, err, "DATA")
 				// Flush the error response so the client sees it
 				if flushErr := s.flush(); flushErr != nil {
 					s.logger.ErrorContext(ctx, "Failed to flush after DATA error", "error", flushErr)
@@ -594,6 +620,17 @@ func (s *Session) processCommands(ctx context.Context) error {
 			s.logger.WarnContext(ctx, "Failed to set deadline", "error", err)
 		}
 
+		if firstRead {
+			firstRead = false
+			if s.startsWithTLSHandshake() {
+				s.logger.WarnContext(ctx, "Closing session: TLS handshake on a plaintext SMTP port",
+					"event_type", "rejection",
+					"client", s.remoteAddr,
+				)
+				return nil
+			}
+		}
+
 		// Read command line
 		commandBytes, err := readBoundedSMTPLine(s.reader, 512)
 		if err != nil {
@@ -623,12 +660,16 @@ func (s *Session) processCommands(ctx context.Context) error {
 		// Process regular commands
 		line := string(commandBytes)
 		if err := s.commandHandler.ProcessCommand(ctx, line); err != nil {
-			s.logger.WarnContext(ctx, "Command processing failed",
-				"event_type", "rejection",
-				"command", redactCommand(line),
-				"error", err,
-			)
-			s.writeError(ctx, err)
+			if s.writeError(ctx, err, redactCommand(line)) >= maxSessionErrors {
+				s.logger.WarnContext(ctx, "Closing session: too many refused commands",
+					"event_type", "rejection",
+					"client", s.remoteAddr,
+					"errors", maxSessionErrors,
+				)
+				_ = s.write("421 4.7.0 Too many errors, closing connection")
+				_ = s.flush()
+				return nil
+			}
 
 			// A refused BDAT whose chunk could not be consumed leaves the
 			// connection somewhere inside that chunk. Reading further commands
@@ -651,6 +692,20 @@ func (s *Session) processCommands(ctx context.Context) error {
 				s.logger.InfoContext(ctx, "Session terminated by client")
 				return nil
 			}
+			if isJunkCommand(line) {
+				junk++
+				if junk > maxJunkCommands &&
+					s.state.AddError(ctx, errTooManyJunkCommands) >= maxSessionErrors {
+					s.logger.WarnContext(ctx, "Closing session: too many commands that do nothing",
+						"event_type", "rejection",
+						"client", s.remoteAddr,
+						"commands", junk,
+					)
+					_ = s.write("421 4.7.0 Too many errors, closing connection")
+					_ = s.flush()
+					return nil
+				}
+			}
 		}
 
 		// Flush responses if no more pipelined commands waiting (RFC 2920)
@@ -661,6 +716,21 @@ func (s *Session) processCommands(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// startsWithTLSHandshake reports whether the client's first bytes are a TLS
+// handshake record (content type 0x16, protocol major version 3), which no
+// SMTP command can begin with. Clients that expect implicit TLS, and scanners
+// trying it, send a ClientHello and then wait for the server's reply. A short
+// ClientHello has no line feed, so the line reader would wait with them until
+// the command timeout; a long one would be refused line by line as garbage.
+// Neither will ever speak SMTP on this connection, so it is closed at once.
+//
+// It only peeks: on a read error or a normal command the bytes stay buffered,
+// and the line reader sees them, and reports the error, as before.
+func (s *Session) startsWithTLSHandshake() bool {
+	b, err := s.reader.Peek(2)
+	return err == nil && b[0] == 0x16 && b[1] == 0x03
 }
 
 // handleDataPhase handles the DATA phase of message transmission
@@ -753,38 +823,66 @@ func (s *Session) writeWithLog(msg string) {
 	}
 }
 
-// writeError writes an error response to the client
-func (s *Session) writeError(ctx context.Context, err error) {
+// maxSessionErrors is how many refusals one session may collect before it is
+// closed. A client that is speaking SMTP rarely gets near it; a scanner
+// writing binary at the port would otherwise be answered line by line until
+// the idle timeout. 20 matches Postfix's smtpd_hard_error_limit, so senders
+// that cope with Postfix cope with this.
+const maxSessionErrors = 20
+
+// maxJunkCommands is how many commands that move nothing forward (NOOP,
+// RSET, VRFY, EXPN, HELP) a session may send before each further one counts
+// towards maxSessionErrors. They always succeed, so the error limit alone
+// never ends a client looping on them, and the session timeout lets that
+// run for half an hour. A plain cap on all commands would instead cut off a
+// busy relay sending many messages on one connection. 100 matches Postfix's
+// smtpd_junk_command_limit.
+const maxJunkCommands = 100
+
+var errTooManyJunkCommands = errors.New("too many NOOP/RSET/VRFY/EXPN/HELP commands")
+
+// isJunkCommand reports whether line is one of the commands maxJunkCommands
+// counts.
+func isJunkCommand(line string) bool {
+	verb, _, _ := strings.Cut(strings.TrimSpace(line), " ")
+	switch strings.ToUpper(verb) {
+	case "NOOP", "RSET", "VRFY", "EXPN", "HELP":
+		return true
+	}
+	return false
+}
+
+// writeError sends err to the client, logs it once and records it against the
+// session, returning the session's refusal count. command is the redacted
+// command that was refused, for the log.
+//
+// A refusal with an SMTP code is the client's problem and logs at WARN, like
+// the server's other rejections. Anything else is a fault on this side: the
+// client gets a generic 451 and the detail is logged at ERROR.
+func (s *Session) writeError(ctx context.Context, err error, command string) int {
 	errorMsg := err.Error()
 
-	// Extract SMTP error code if present, otherwise use generic error
 	if len(errorMsg) >= 3 && errorMsg[0] >= '4' && errorMsg[0] <= '5' {
-		// Determine if it's a tempfail (4xx) or rejection (5xx)
 		eventType := "rejection"
 		if errorMsg[0] == '4' {
 			eventType = "tempfail"
 		}
-
-		s.logger.WarnContext(ctx, "SMTP error response sent",
+		s.logger.WarnContext(ctx, "SMTP command refused",
 			"event_type", eventType,
-			"error", err,
+			"command", command,
 			"response", errorMsg,
-			"service", "elemta-mta",
-			"session_id", s.sessionID,
 		)
 		_ = s.write(errorMsg) // Intentionally ignore error in error handling
 	} else {
+		s.logger.ErrorContext(ctx, "SMTP command failed",
+			"event_type", "tempfail",
+			"command", command,
+			"error", err,
+		)
 		s.writeWithLog("451 4.3.0 Internal server error")
 	}
 
-	// Log the error
-	s.logger.WarnContext(ctx, "SMTP error response sent",
-		"error", err,
-		"response", errorMsg,
-	)
-
-	// Add error to session state
-	s.state.AddError(ctx, err)
+	return s.state.AddError(ctx, err)
 }
 
 // Close gracefully closes the session

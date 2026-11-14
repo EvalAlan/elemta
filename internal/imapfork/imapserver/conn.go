@@ -46,7 +46,17 @@ type Conn struct {
 
 	state   imap.ConnState
 	session Session
+
+	// unsynced is set when a non-synchronizing literal ({n+}) was refused.
+	// The client sent its bytes without waiting, and nothing read them, so
+	// what follows on the connection is literal data, not commands. The
+	// connection is closed after the refusal is written (RFC 7888 §4).
+	unsynced bool
 }
+
+// errLiteralRefused ends a connection whose refused non-synchronizing literal
+// left it out of sync.
+var errLiteralRefused = errors.New("imapserver: refused a non-synchronizing literal; closing")
 
 func newConn(c net.Conn, server *Server) *Conn {
 	rw := server.options.wrapReadWriter(c)
@@ -331,7 +341,13 @@ func (c *Conn) readCommand(dec *imapwire.Decoder) error {
 			Text: fmt.Sprintf("%v completed", name),
 		}
 	}
-	return c.writeStatusResp(tag, resp)
+	if err := c.writeStatusResp(tag, resp); err != nil {
+		return err
+	}
+	if c.unsynced {
+		return errLiteralRefused
+	}
+	return nil
 }
 
 func (c *Conn) handleNoop(dec *imapwire.Decoder) error {
@@ -401,6 +417,7 @@ func (c *Conn) handleUnsubscribe(dec *imapwire.Decoder) error {
 
 func (c *Conn) checkBufferedLiteral(size int64, nonSync bool) error {
 	if size > 4096 {
+		c.unsynced = c.unsynced || nonSync
 		return &imap.Error{
 			Type: imap.StatusResponseTypeNo,
 			Code: imap.ResponseCodeTooBig,
@@ -413,6 +430,7 @@ func (c *Conn) checkBufferedLiteral(size int64, nonSync bool) error {
 
 func (c *Conn) acceptLiteral(size int64, nonSync bool) error {
 	if nonSync && size > 4096 && !c.server.options.caps().Has(imap.CapLiteralPlus) {
+		c.unsynced = true
 		return &imap.Error{
 			Type: imap.StatusResponseTypeBad,
 			Text: "Non-synchronizing literals are limited to 4096 bytes",

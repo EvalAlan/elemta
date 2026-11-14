@@ -12,7 +12,9 @@ max_size = 52428800  # 50MB
 # reach the server through SNAT, a load balancer without the PROXY protocol,
 # or Docker's IPv6 userland proxy, because then every client looks private
 # and the server is an open relay. Use explicit CIDRs in those setups.
-allowed_relays = ["private"]
+# The stack's mailbox servers submit from the elemta_relay network
+# (deployments/compose/docker-compose.yml); nothing else needs to.
+allowed_relays = ["10.253.54.0/24"]
 
 # Outbound traffic shaping: how hard to push at one destination.
 #
@@ -58,8 +60,11 @@ dev_mode = false
 # Submission port (RFC 6409; 587 in production): where your users and apps send
 # outbound mail. Clients must log in over STARTTLS, or be in allowed_relays.
 # The MX port above (listen_addr / listen) takes inbound mail for local_domains
-# from anyone and relays for nobody else.
+# from anyone and relays for nobody else. It doesn't take logins either;
+# mx_auth = true allows them there (still subject to the blocklists) for mail
+# apps that can't yet move to 587.
 listen_submission = ":2587"
+# mx_auth = false
 # The webmail's own submission port, reachable only inside the stack (never
 # publish it). Sessions there may use the account password even when the
 # account requires app passwords, from any webmail instance.
@@ -356,6 +361,10 @@ timeout = 10
 enabled = true
 default_rate_per_minute = 600
 max_recipients = 0  # 0 = no limit
+# From addresses campaigns may use: addresses ("news@example.com") or domains
+# ("example.com"). Empty allows any address in a hosted domain; a list allows
+# only what it names, hosted here or not. Recipients are never limited.
+# allowed_senders = []
 
 [antivirus]
 enabled = true
@@ -535,9 +544,11 @@ secure_cookies = false
 # People stay signed in, through closing the browser, for this long after
 # they last use the webmail. "0" ends a sign-in with the browser instead, and
 # then session_ttl is how long an idle session lasts. Changing a password
-# signs out every other session.
+# signs out every other session. session_max_age ends any sign-in this long
+# after it started, however busy ("0" for no limit).
 stay_signed_in = "720h"
 session_ttl = "8h"
+session_max_age = "2160h"
 # Sessions live in Valkey (VALKEY_ADDR), so restarting the webmail doesn't
 # sign anyone out. The key that seals the stored passwords is kept apart
 # from Valkey, on the volume the services share; it is created on first start.

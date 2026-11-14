@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -276,7 +277,7 @@ func (s *Service) deliverList(ctx context.Context, address, from string, raw []b
 	if sent, err := s.engine.listSent(ctx, l.Address, key); err != nil || sent {
 		return err
 	}
-	if err := s.submit(ctx, l.Owner, external, msg); err != nil {
+	if err := s.submit(ctx, l.Owner, external, externalListMessage(l, msg)); err != nil {
 		s.log.Warn("list external delivery failed; will retry", "list", l.Address, "error", err)
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 0}, Message: "List delivery temporarily unavailable"}
 	}
@@ -320,6 +321,86 @@ func (s *Service) deliverListMember(ctx context.Context, l mailpolicy.List, a Ac
 
 // listMessage adds the list's headers: List-Id (RFC 2919), which mail
 // programs use to file and filter list mail, and the loop marker.
+// externalListMessage is the copy for members outside the server. It goes
+// out with the list owner as envelope sender, and is DKIM-signed for the
+// owner's domain, so it must not keep the poster's From: a post from
+// outside claiming one of this server's domains would reach every outside
+// member with a signature aligned to that forged From, and passing DMARC.
+// As mailing-list software does to stay DMARC-safe, From becomes the list
+// itself with the poster's name ("Dana via Sales" <sales@example.com>), and
+// the poster moves to Reply-To unless the message already has one.
+func externalListMessage(l mailpolicy.List, msg []byte) []byte {
+	listName := l.Name
+	if listName == "" {
+		listName, _, _ = strings.Cut(l.Address, "@")
+	}
+	return sendOnAs(msg, listName, l.Address)
+}
+
+// sendOnAs replaces every From in msg with "<original name> via <via>"
+// <address>, and moves the original From to Reply-To unless the message has
+// one. It is for mail this server sends on, signed for its own domain, whose
+// original From it can't vouch for (list copies, and forwards of unverified
+// mail claiming the forwarder's domain).
+func sendOnAs(msg []byte, via, address string) []byte {
+	// The header block ends at the first empty line, CRLF or (from a legacy
+	// sender) bare LF. hdrEnd is where the body's blank line starts.
+	hdrEnd, nl := bytes.Index(msg, []byte("\r\n\r\n")), "\r\n"
+	if lf := bytes.Index(msg, []byte("\n\n")); hdrEnd < 0 || (lf >= 0 && lf < hdrEnd) {
+		hdrEnd, nl = lf, "\n"
+	}
+	if hdrEnd < 0 {
+		// No body at all: the whole message is headers.
+		hdrEnd, nl = len(msg), "\r\n"
+		msg = append(append([]byte{}, msg...), "\r\n"...)
+	}
+	end := hdrEnd + len(nl)
+	poster := ""
+	if addrs := mailpolicy.HeaderValues(msg, "From"); len(addrs) > 0 {
+		poster = addrs[0]
+	}
+	name := ""
+	if a, err := mail.ParseAddress(poster); err == nil {
+		name = a.Name
+		if name == "" {
+			name = a.Address
+		}
+	}
+	collapse := func(v string) string { return strings.Join(strings.Fields(v), " ") }
+	display := collapse(name + " via " + via)
+	if name == "" {
+		display = collapse(via)
+	}
+	from := (&mail.Address{Name: display, Address: address}).String()
+
+	// Drop every From field, continuation lines included, so a message with
+	// two Froms can't keep one.
+	var head bytes.Buffer
+	dropping := false
+	for _, line := range strings.SplitAfter(string(msg[:end]), "\n") {
+		if line == "" {
+			continue
+		}
+		if line[0] == ' ' || line[0] == '\t' {
+			if !dropping {
+				head.WriteString(line)
+			}
+			continue
+		}
+		field, _, _ := strings.Cut(line, ":")
+		dropping = strings.EqualFold(strings.TrimSpace(field), "From")
+		if !dropping {
+			head.WriteString(line)
+		}
+	}
+	out := []byte("From: " + from + "\r\n")
+	if poster != "" && len(mailpolicy.HeaderValues(msg, "Reply-To")) == 0 {
+		out = append(out, "Reply-To: "+collapse(poster)+"\r\n"...)
+	}
+	out = append(out, head.Bytes()...)
+	return append(out, msg[end:]...)
+}
+
 func listMessage(l mailpolicy.List, raw []byte) []byte {
 	local, domain, _ := strings.Cut(l.Address, "@")
 	id := "<" + local + "." + domain + ">"

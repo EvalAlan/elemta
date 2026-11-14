@@ -205,7 +205,7 @@ func (ch *CommandHandler) HandleEHLO(ctx context.Context, args string) error {
 	// Add AUTH methods if authentication is enabled
 	// Always advertise AUTH if auth is enabled but not required (for webmail clients)
 	// Or if TLS is active or not required for PLAIN auth
-	if ch.config.Auth != nil && ch.config.Auth.Enabled {
+	if ch.config.Auth != nil && ch.config.Auth.Enabled && ch.takesLogins() {
 		// Only offer AUTH where a password may actually be sent: advertising
 		// it in the clear invites clients to send credentials and then get
 		// 538, or worse, to fall back to a weaker path.
@@ -685,7 +685,16 @@ func (ch *CommandHandler) HandleQUIT(ctx context.Context) error {
 
 // HandleAUTH processes the AUTH command
 func (ch *CommandHandler) HandleAUTH(ctx context.Context, cmd string) error {
+	if !ch.takesLogins() {
+		return fmt.Errorf("503 5.5.1 Authentication is not available on this port; use the submission port")
+	}
 	return ch.authHandler.HandleAuth(ctx, cmd)
+}
+
+// takesLogins is Session.takesLogins; a handler without a session (unit
+// tests driving commands directly) has no listener to restrict.
+func (ch *CommandHandler) takesLogins() bool {
+	return ch.session == nil || ch.session.takesLogins()
 }
 
 // HandleSTARTTLS processes the STARTTLS command

@@ -6,7 +6,17 @@ set -e
 echo "Waiting for LDAP to be ready..."
 timeout=60
 counter=0
-while ! docker exec elemta-ldap ldapsearch -x -D "cn=admin,dc=example,dc=com" -w admin -b "dc=example,dc=com" -s base > /dev/null 2>&1; do
+# The directory's admin password is generated per deployment
+# (scripts/dev-secrets.sh, scripts/cloud-deploy.sh) and kept in the secrets
+# directory; there is no fixed one to fall back on.
+secrets_dir="${ELEMTA_SECRETS_DIR:-$(cd "$(dirname "$0")/.." && pwd)/deployments/compose/.secrets}"
+if [ -z "${LDAP_ADMIN_PASSWORD:-}" ] && [ -r "$secrets_dir/ldap-admin.env" ]; then
+    # shellcheck disable=SC1091
+    . "$secrets_dir/ldap-admin.env"
+fi
+: "${LDAP_ADMIN_PASSWORD:?set LDAP_ADMIN_PASSWORD or create $secrets_dir/ldap-admin.env}"
+
+while ! docker exec elemta-ldap ldapsearch -x -D "cn=admin,dc=example,dc=com" -w "$LDAP_ADMIN_PASSWORD" -b "dc=example,dc=com" -s base > /dev/null 2>&1; do
     sleep 2
     counter=$((counter + 2))
     if [ $counter -ge $timeout ]; then
@@ -18,7 +28,7 @@ done
 echo "LDAP is ready. Adding test users..."
 
 # First, create the people OU
-docker exec elemta-ldap ldapadd -x -D "cn=admin,dc=example,dc=com" -w admin << 'EOF' 2>&1 || echo "(ou=people may already exist)"
+docker exec elemta-ldap ldapadd -x -D "cn=admin,dc=example,dc=com" -w "$LDAP_ADMIN_PASSWORD" << 'EOF' 2>&1 || echo "(ou=people may already exist)"
 dn: ou=people,dc=example,dc=com
 objectClass: top
 objectClass: organizationalUnit
@@ -26,7 +36,7 @@ ou: people
 EOF
 
 # Now add users
-docker exec elemta-ldap ldapadd -x -D "cn=admin,dc=example,dc=com" -w admin << 'EOF' 2>&1 || echo "(users may already exist)"
+docker exec elemta-ldap ldapadd -x -D "cn=admin,dc=example,dc=com" -w "$LDAP_ADMIN_PASSWORD" << 'EOF' 2>&1 || echo "(users may already exist)"
 
 dn: uid=user,ou=people,dc=example,dc=com
 objectClass: top

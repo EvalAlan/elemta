@@ -347,6 +347,11 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		} else if !ok {
 			return nil, &requestError{"you can't send as " + clip(in.From, 80)}
 		}
+		if addr, ok, err := s.mayAuthor(r.Context(), a.account, in.Raw); err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, &requestError{"the message's From isn't an address you can send as: " + clip(addr, 80)}
+		}
 		uid, err := s.engine.ScheduleSend(r.Context(), a.account.ID, in.Raw, strings.ToLower(strings.TrimSpace(in.From)), rcpts, in.SendAt)
 		if errors.Is(err, ErrQuota) {
 			return nil, &requestError{"your mailbox is full"}
@@ -727,6 +732,12 @@ func (s *Service) securityAPI(mux *http.ServeMux) {
 		}
 		return map[string]bool{"ok": true}, s.engine.DeleteAppPassword(r.Context(), a.account.ID, id)
 	})
+	// Not open to app passwords (allowApp false): it runs with the new
+	// account password just after a change or reset.
+	handle("POST /v1/security/app-passwords/revoke-all", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
+		n, err := s.engine.DeleteAllAppPasswords(r.Context(), a.account.ID)
+		return map[string]int64{"revoked": n}, err
+	})
 	handle("POST /v1/security/app-required", false, func(_ http.ResponseWriter, r *http.Request, a securityAuth) (any, error) {
 		var in struct{ Required bool }
 		if err := decode(r, &in); err != nil {
@@ -772,7 +783,17 @@ func writeSecurityError(w http.ResponseWriter, err error) {
 // internalClient admits the internal networks only. The health port is
 // never published, so this is the second of two barriers.
 func (s *Service) internalClient(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	return s.internalHost(r.RemoteAddr)
+}
+
+// internalAddr reports whether a connection comes from loopback or the
+// networks the webmail and MTA run on (lmtp_allowed_networks).
+func (s *Service) internalAddr(addr net.Addr) bool {
+	return addr != nil && s.internalHost(addr.String())
+}
+
+func (s *Service) internalHost(hostport string) bool {
+	host, _, err := net.SplitHostPort(hostport)
 	if err != nil {
 		return false
 	}

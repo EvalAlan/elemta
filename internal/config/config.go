@@ -122,6 +122,10 @@ type MassMailerConfig struct {
 	DefaultRatePerMinute int `toml:"default_rate_per_minute"`
 	// MaxRecipients bounds a single campaign. Zero means no limit.
 	MaxRecipients int `toml:"max_recipients"`
+	// AllowedSenders lists the From addresses ("news@example.com") and
+	// domains ("example.com") campaigns may use. Empty means any address in
+	// a hosted domain (campaign.SenderAllowed). Recipients aren't limited.
+	AllowedSenders []string `toml:"allowed_senders"`
 }
 
 // Config represents the application configuration
@@ -181,6 +185,8 @@ type Config struct {
 		// replaces exempting the webmail by address, which can't follow a
 		// webmail that runs as several instances or in Kubernetes.
 		ListenWebmailSubmission string `toml:"listen_webmail_submission"`
+		// MXAuth also takes logins on the MX listener (smtp.Config.MXAuth).
+		MXAuth bool `toml:"mx_auth"`
 		// ProxyProtocolFrom lists the load balancers (addresses or CIDR
 		// networks) that put a PROXY protocol header on each connection;
 		// connections from them must carry one (internal/proxyproto).

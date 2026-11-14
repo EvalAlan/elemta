@@ -57,6 +57,7 @@ type SessionManager struct {
 	sessions      map[string]*Session // this process's sessions, with their connections
 	aead          cipher.AEAD
 	ttl           time.Duration
+	maxAge        time.Duration // from sign-in; zero for no limit
 	now           func() time.Time
 	touchInterval time.Duration
 	// shared, when set, holds every session's record for all pods.
@@ -189,10 +190,22 @@ func (m *SessionManager) create(user, address, password string, store Mailstore,
 }
 
 func (m *SessionManager) recordTTL(s *Session, now time.Time) time.Duration {
+	ttl := m.ttl
 	if s.AdminActor != "" {
-		return min(m.ttl, s.AdminExpires.Sub(now))
+		ttl = min(ttl, s.AdminExpires.Sub(now))
 	}
-	return m.ttl
+	if m.maxAge > 0 {
+		ttl = min(ttl, s.created.Add(m.maxAge).Sub(now))
+	}
+	return max(ttl, time.Millisecond) // the store refuses a zero expiry
+}
+
+// over reports whether s has run out at now: idle too long, past its
+// administrator access, or past the longest a sign-in may last.
+func (m *SessionManager) over(s *Session, now time.Time) bool {
+	return now.Sub(s.lastSeen) > m.ttl ||
+		s.AdminActor != "" && !now.Before(s.AdminExpires) ||
+		m.maxAge > 0 && now.Sub(s.created) > m.maxAge
 }
 
 // Get returns the live session with id and extends its idle timer. With a
@@ -243,11 +256,10 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 	}
 	now := m.now()
 	m.mu.Lock()
-	expired := now.Sub(s.lastSeen) > m.ttl || s.AdminActor != "" && !now.Before(s.AdminExpires)
 	if sharedRec != nil && sharedRec.LastSeen.After(s.lastSeen) {
 		s.lastSeen = sharedRec.LastSeen
-		expired = now.Sub(s.lastSeen) > m.ttl || s.AdminActor != "" && !now.Before(s.AdminExpires)
 	}
+	expired := m.over(s, now)
 	if sharedRec != nil && sharedRec.LastSeen.After(s.lastPersisted) {
 		s.lastPersisted = sharedRec.LastSeen
 	}
@@ -311,7 +323,7 @@ func (m *SessionManager) Sweep() int {
 	var expired []*Session
 	m.mu.Lock()
 	for id, s := range m.sessions {
-		if now.Sub(s.lastSeen) > m.ttl || s.AdminActor != "" && !now.Before(s.AdminExpires) {
+		if m.over(s, now) {
 			expired = append(expired, s)
 			delete(m.sessions, id)
 		}

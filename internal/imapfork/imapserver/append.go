@@ -70,6 +70,7 @@ func (c *Conn) handleAppend(tag string, dec *imapwire.Decoder) error {
 	}
 
 	if lit.Size() > appendLimit {
+		c.unsynced = c.unsynced || nonSync
 		return &imap.Error{
 			Type: imap.StatusResponseTypeNo,
 			Code: imap.ResponseCodeTooBig,

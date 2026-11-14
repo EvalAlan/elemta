@@ -63,6 +63,38 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 }
 
+// A sign-in kept busy still ends at session_max_age, so a remembered
+// browser, or a stolen cookie kept warm, doesn't last for ever.
+func TestSessionEndsAtMaxAgeHoweverBusy(t *testing.T) {
+	m, err := NewSessionManager(time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.maxAge = 3 * time.Hour
+	now := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return now }
+	s, err := m.Create("dana", "dana@example.com", "hunter2", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 5 {
+		now = now.Add(30 * time.Minute)
+		if _, ok := m.Get(s.ID); !ok {
+			t.Fatalf("busy session ended early, %v after sign-in", now.Sub(s.created))
+		}
+	}
+	now = now.Add(31 * time.Minute)
+	if _, ok := m.Get(s.ID); ok {
+		t.Fatal("session outlived session_max_age")
+	}
+	s2, _ := m.Create("marcus", "marcus@example.com", "pw", nil)
+	s2.lastSeen = now.Add(4 * time.Hour)
+	now = now.Add(3*time.Hour + time.Minute)
+	if n := m.Sweep(); n != 1 {
+		t.Fatalf("swept %d, want 1", n)
+	}
+}
+
 func TestAdministratorSessionEndsAtTokenExpiry(t *testing.T) {
 	m, err := NewSessionManager(24 * time.Hour)
 	if err != nil {
