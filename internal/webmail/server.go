@@ -585,6 +585,7 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"unsnoozed-many":             "Messages are back.",
 	"emptied":                    "Folder emptied.",
 	"all-read":                   "All messages marked read.",
+	"tab-read":                   "This tab marked read.",
 	"loggedout":                  "You've signed out.",
 	"recovery-code-used":         "You signed in with a recovery code, which can't be used again. If you've lost your authenticator, turn two-step verification off and on again to get new codes.",
 	"2fa-off":                    "Two-step verification is off.",

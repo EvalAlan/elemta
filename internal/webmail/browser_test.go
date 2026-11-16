@@ -913,10 +913,13 @@ func TestBrowserInboxTabCountsFollowNewMail(t *testing.T) {
 	b.waitFor(count("promotions") + ` === "3"`)
 	b.h.store.mu.Lock()
 	b.h.store.tabUnread = map[string]int{"primary": 0, "social": 2, "promotions": 4}
+	b.h.store.folders[0].Unread = 6
 	b.h.store.mu.Unlock()
 	// The check that runs when mail arrives, as it runs on returning to the tab.
 	b.run(chromedp.Evaluate[chromedp.Void](`document.dispatchEvent(new Event("visibilitychange"))`, chromedp.EvalAsValue))
 	b.waitFor(count("promotions") + ` === "4" && ` + count("social") + ` === "2" && ` + count("primary") + ` === undefined`)
+	// The heading counts the whole inbox, with Primary empty.
+	b.waitFor(`document.querySelector("[data-unread-of]").textContent === "6 unread"`)
 }
 
 // dragMouse presses at one point, moves in steps as a hand would, and lets

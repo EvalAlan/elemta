@@ -1188,6 +1188,12 @@
           span.textContent = n > 0 ? String(n) : "";
           span.classList.toggle("hidden", !(n > 0));
         });
+        // With inbox tabs on, the heading counts the inbox's unread mail
+        // across every tab, as the folder tree does.
+        $$("[data-unread-of]").forEach(function (span) {
+          var name = span.getAttribute("data-unread-of");
+          if (name in data.unread) span.textContent = data.unread[name] + " unread";
+        });
         if (data.tabs) {
           $$("a.inbox-tab[data-category]").forEach(function (a) {
             var n = data.tabs[a.getAttribute("data-category")] || 0;

@@ -8,9 +8,22 @@
       <div class="list-head">
         <label class="check" title="Select all"><input type="checkbox" data-select-all><span class="visually-hidden">Select all</span></label>
         <h1>{{if .Query}}Results for “{{.Query}}”{{else}}{{folderLabel .Folder .Folders}}{{end}}</h1>
-        {{with .Page}}<span class="nums muted">{{.Total}}</span>{{end}}
+        {{if .InboxTabs}}<span class="nums muted list-unread" data-unread-of="{{.Folder}}">{{.InboxUnread}} unread</span>{{else}}{{with .Page}}<span class="nums muted">{{.Total}}</span>{{end}}{{end}}
         <a class="refresh" href="{{.List.URL}}" title="Check for new mail" aria-label="Check for new mail" data-refresh>{{template "icon-refresh"}}</a>
-        <details class="menu push">
+        {{if not .Query}}
+        <details class="menu push mark-read-menu">
+          <summary class="refresh" title="Mark all read">{{template "icon-mail-open"}}<span class="visually-hidden">Mark all read</span></summary>
+          <div class="menu-body" role="menu">
+            {{if .InboxTabs}}
+            <button class="menu-item" form="mark-read" name="tab" value="{{.List.Tab}}">Mark {{.TabLabel}} read</button>
+            <button class="menu-item" form="mark-read" name="tab" value="">Mark the whole inbox read</button>
+            {{else}}
+            <button class="menu-item" form="mark-read" name="tab" value="">Mark {{folderLabel .Folder .Folders}} read</button>
+            {{end}}
+          </div>
+        </details>
+        {{end}}
+        <details class="menu{{if .Query}} push{{end}}">
           <summary class="button small-button" title="Sort">Sort</summary>
           <div class="menu-body" role="menu">
             <button class="menu-item" form="conv-toggle" name="on" value="{{if $.Threaded}}0{{else}}1{{end}}">{{if $.Threaded}}✓ {{end}}Group by conversation</button>
@@ -126,6 +139,9 @@
     {{/* Outside #bulk: forms can't nest, and an inner </form> would end the bulk form early. */}}
     <form id="conv-toggle" action="/settings/conversations" method="post" hidden>
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}"><input type="hidden" name="back" value="{{.List.URL}}">
+    </form>
+    <form id="mark-read" action="/mail/action" method="post" hidden>
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="op" value="readall"><input type="hidden" name="back" value="{{.List.URL}}">
     </form>
     {{if and (or (isRole .Folder .Folders "trash") (isRole .Folder .Folders "junk")) .Page .Page.Total}}
     <form class="empty-folder" action="/mail/action" method="post">
