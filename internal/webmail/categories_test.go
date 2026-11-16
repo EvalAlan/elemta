@@ -67,6 +67,34 @@ func TestInboxTabs(t *testing.T) {
 		t.Fatal("tabs shown outside the inbox")
 	}
 
+	// The heading counts the inbox's unread mail across every tab, not the
+	// open tab's messages: an empty Primary showed "Inbox 0" over full tabs.
+	h.store.folders[0].Unread = 24
+	_, page = h.get("/mail?f=INBOX")
+	if !strings.Contains(page, `data-unread-of="INBOX">24 unread</span>`) {
+		t.Fatal("heading lacks the inbox's unread count across tabs")
+	}
+	// Mark all read from the list: the open tab, or the whole inbox.
+	_, page = h.get("/mail?f=INBOX&tab=promotions")
+	if !strings.Contains(page, `form="mark-read" name="tab" value="promotions">Mark Promotions read`) || !strings.Contains(page, `form="mark-read" name="tab" value="">Mark the whole inbox read`) {
+		t.Fatal("list lacks the mark-read menu for the tab and the inbox")
+	}
+	read := url.Values{"csrf": {csrf}, "f": {"INBOX"}, "op": {"readall"}, "tab": {"promotions"}, "back": {"/mail?f=INBOX&tab=promotions"}}
+	if resp := h.post("/mail/action", read); resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "n=tab-read") {
+		t.Fatalf("mark tab read: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	read.Set("tab", "")
+	if resp := h.post("/mail/action", read); !strings.Contains(resp.Header.Get("Location"), "n=all-read") {
+		t.Fatalf("mark inbox read: %q", resp.Header.Get("Location"))
+	}
+	read.Set("tab", "spam")
+	if resp := h.post("/mail/action", read); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown tab: %d, want 400", resp.StatusCode)
+	}
+	if got := strings.Join(h.store.allRead, " "); got != "INBOX#promotions INBOX" {
+		t.Fatalf("marked read: %q", got)
+	}
+
 	// Moving a message to a tab swaps its keyword and remembers the sender.
 	form := url.Values{"csrf": {csrf}, "f": {"INBOX"}, "uid": {"7"}, "op": {"category"}, "category": {"updates"}, "tab": {"promotions"}, "back": {"/mail?f=INBOX&tab=promotions&uid=7"}}
 	resp = h.post("/mail/action", form)

@@ -675,10 +675,13 @@ func (s *imapStore) expunge(folder string, uids []uint32) error {
 	return s.c.Expunge().Close()
 }
 
-func (s *imapStore) MarkAllRead(ctx context.Context, folder string) error {
+func (s *imapStore) MarkAllRead(ctx context.Context, folder, category string) error {
 	n, err := s.syncFolder(folder)
 	if err != nil || n == 0 {
 		return err
+	}
+	if category != "" {
+		return s.markCategoryRead(folder, category)
 	}
 	var all imap.SeqSet
 	all.AddRange(1, 0) // 1:*

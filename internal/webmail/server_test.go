@@ -63,7 +63,11 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-func (f *fakeStore) Folders(context.Context) ([]Folder, error) { return f.folders, nil }
+func (f *fakeStore) Folders(context.Context) ([]Folder, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.folders), nil
+}
 
 // A real mailbox lists a message as read once it has been opened.
 func (f *fakeStore) listed(folder string) []Summary {
@@ -214,8 +218,11 @@ func (f *fakeStore) DeleteFolder(_ context.Context, name string) error {
 	}
 	return ErrNotFound
 }
-func (f *fakeStore) MarkAllRead(_ context.Context, folder string) error {
+func (f *fakeStore) MarkAllRead(_ context.Context, folder, category string) error {
 	f.mu.Lock()
+	if category != "" {
+		folder += "#" + category
+	}
 	f.allRead = append(f.allRead, folder)
 	f.mu.Unlock()
 	return nil
