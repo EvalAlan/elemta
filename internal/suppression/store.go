@@ -38,6 +38,9 @@ const (
 	SourceComplaint Source = "complaint"
 	// SourceManual: an operator added it.
 	SourceManual Source = "manual"
+	// SourceUnsubscribe: the recipient used the one-click unsubscribe link in
+	// a campaign (RFC 8058).
+	SourceUnsubscribe Source = "unsubscribe"
 )
 
 // Entry is one suppressed address.

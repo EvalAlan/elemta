@@ -40,6 +40,10 @@ var DefaultHeadersToSign = []string{
 	"Reply-To",
 	"In-Reply-To",
 	"References",
+	// Gmail and Yahoo honour one-click unsubscribe (RFC 8058) only when the
+	// signature covers both headers; the Mass Mailer sets them.
+	"List-Unsubscribe",
+	"List-Unsubscribe-Post",
 }
 
 // DomainConfig is the per-domain signing configuration.
