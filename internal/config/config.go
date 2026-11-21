@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -473,8 +474,26 @@ func FindConfigFile(configPath string) (string, error) {
 	return "", fmt.Errorf("no config file found")
 }
 
-// LoadConfig loads a configuration from a file
+// LoadOptions says what the process loading the config will use of it.
+type LoadOptions struct {
+	// NoSMTP is for a process that never serves SMTP, such as the webmail.
+	// Every service reads the one shared config, which names the SMTP
+	// certificate and key, but only the SMTP node opens them, and a
+	// container that doesn't serve SMTP rightly isn't given the private
+	// key. Warning there that the files are missing is noise that hides
+	// real warnings, so it is left out.
+	NoSMTP bool
+}
+
+// LoadConfig loads a configuration from a file, for a process that may
+// serve SMTP.
 func LoadConfig(configPath string) (*Config, error) {
+	return LoadConfigWith(configPath, LoadOptions{})
+}
+
+// LoadConfigWith loads a configuration from a file, reporting only the
+// warnings that matter to the process described by opts.
+func LoadConfigWith(configPath string, opts LoadOptions) (*Config, error) {
 	// Get default configuration
 	cfg := DefaultConfig()
 	securityValidator := NewSecurityValidator()
@@ -555,9 +574,10 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	// Log warnings if any (visible during startup)
-	if len(validationResult.Warnings) > 0 {
+	warnings := validationResult.WarningsFor(opts)
+	if len(warnings) > 0 {
 		fmt.Fprintln(os.Stderr, "Configuration warnings:")
-		for _, warning := range validationResult.Warnings {
+		for _, warning := range warnings {
 			fmt.Fprintf(os.Stderr, "  WARNING: %s\n", warning.Error())
 		}
 	}
@@ -734,6 +754,11 @@ type ValidationError struct {
 	Field   string
 	Value   interface{}
 	Message string
+
+	// smtpFile marks a warning that the SMTP certificate or key named in
+	// the config isn't on disk, which matters only to a process that
+	// serves SMTP; see LoadOptions.
+	smtpFile bool
 }
 
 func (e ValidationError) Error() string {
@@ -756,6 +781,19 @@ func (vr *ValidationResult) AddError(field string, value interface{}, message st
 // AddWarning adds a validation warning
 func (vr *ValidationResult) AddWarning(field string, value interface{}, message string) {
 	vr.Warnings = append(vr.Warnings, ValidationError{Field: field, Value: value, Message: message})
+}
+
+// WarningsFor returns the warnings that matter to the process described
+// by opts.
+func (vr *ValidationResult) WarningsFor(opts LoadOptions) []ValidationError {
+	if !opts.NoSMTP {
+		return vr.Warnings
+	}
+	return slices.DeleteFunc(slices.Clone(vr.Warnings), func(w ValidationError) bool { return w.smtpFile })
+}
+
+func (vr *ValidationResult) addMissingSMTPFile(field string, value interface{}, message string) {
+	vr.Warnings = append(vr.Warnings, ValidationError{Field: field, Value: value, Message: message, smtpFile: true})
 }
 
 // Validate performs comprehensive validation of the configuration
@@ -877,7 +915,7 @@ func (c *Config) validateServer(result *ValidationResult, sv *SecurityValidator)
 			if err := sv.ValidatePath(c.Server.CertFile, "server.cert_file"); err != nil {
 				result.AddError("server.cert_file", c.Server.CertFile, err.Error())
 			} else if !fileExists(c.Server.CertFile) {
-				result.AddWarning("server.cert_file", c.Server.CertFile, "certificate file does not exist")
+				result.addMissingSMTPFile("server.cert_file", c.Server.CertFile, "certificate file does not exist")
 			} else {
 				// Validate file size
 				if err := sv.ValidateFileSize(c.Server.CertFile, "server.cert_file"); err != nil {
@@ -896,7 +934,7 @@ func (c *Config) validateServer(result *ValidationResult, sv *SecurityValidator)
 			if err := sv.ValidatePath(c.Server.KeyFile, "server.key_file"); err != nil {
 				result.AddError("server.key_file", c.Server.KeyFile, err.Error())
 			} else if !fileExists(c.Server.KeyFile) {
-				result.AddWarning("server.key_file", c.Server.KeyFile, "private key file does not exist")
+				result.addMissingSMTPFile("server.key_file", c.Server.KeyFile, "private key file does not exist")
 			} else {
 				// Validate file size
 				if err := sv.ValidateFileSize(c.Server.KeyFile, "server.key_file"); err != nil {
@@ -933,7 +971,7 @@ func (c *Config) validateTLS(result *ValidationResult, sv *SecurityValidator) {
 		if err := sv.ValidatePath(c.TLS.CertFile, "tls.cert_file"); err != nil {
 			result.AddError("tls.cert_file", c.TLS.CertFile, err.Error())
 		} else if !fileExists(c.TLS.CertFile) {
-			result.AddWarning("tls.cert_file", c.TLS.CertFile, "certificate file does not exist")
+			result.addMissingSMTPFile("tls.cert_file", c.TLS.CertFile, "certificate file does not exist")
 		} else {
 			// Validate file size
 			if err := sv.ValidateFileSize(c.TLS.CertFile, "tls.cert_file"); err != nil {
@@ -950,7 +988,7 @@ func (c *Config) validateTLS(result *ValidationResult, sv *SecurityValidator) {
 		if err := sv.ValidatePath(c.TLS.KeyFile, "tls.key_file"); err != nil {
 			result.AddError("tls.key_file", c.TLS.KeyFile, err.Error())
 		} else if !fileExists(c.TLS.KeyFile) {
-			result.AddWarning("tls.key_file", c.TLS.KeyFile, "private key file does not exist")
+			result.addMissingSMTPFile("tls.key_file", c.TLS.KeyFile, "private key file does not exist")
 		} else {
 			// Validate file size
 			if err := sv.ValidateFileSize(c.TLS.KeyFile, "tls.key_file"); err != nil {
@@ -1398,10 +1436,12 @@ func (c *Config) validateQueueProcessor(result *ValidationResult, sv *SecurityVa
 		result.AddWarning("queue_processor.workers", c.QueueProcessor.Workers, "high number of workers may impact performance")
 	}
 
+	// No warning for a short interval: it is the wait before a sweep picks
+	// up new mail, not how hard the queue works, and the shipped config
+	// uses 1 second on purpose (see config/elemta.toml). An idle sweep is
+	// one directory scan.
 	if err := sv.ValidateNumericBounds(int64(c.QueueProcessor.Interval), "queue_processor.interval", 1, 3600); err != nil {
 		result.AddError("queue_processor.interval", c.QueueProcessor.Interval, err.Error())
-	} else if c.QueueProcessor.Interval < 5 {
-		result.AddWarning("queue_processor.interval", c.QueueProcessor.Interval, "very short interval may impact performance")
 	}
 }
 

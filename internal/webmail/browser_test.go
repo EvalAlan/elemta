@@ -884,7 +884,7 @@ func TestBrowserInboxTabsFitAndStay(t *testing.T) {
 	b.run(chromedp.Navigate(b.url("/mail?f=INBOX&tab=promotions")))
 	b.waitFor(`!!document.querySelector(".inbox-tabs") && document.readyState === "complete"`)
 	// Counts like a real inbox's, two digits on the widest tabs.
-	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelectorAll(".inbox-tab").forEach((a, i) => { a.querySelector(".tab-count")?.remove(); const n = [0, 1, 20, 14, 3][i]; if (n) a.insertAdjacentHTML("beforeend", ' <span class="tab-count mono">' + n + '</span>'); })`, chromedp.EvalAsValue))
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelectorAll(".inbox-tab").forEach((a, i) => { a.querySelector(".tab-count")?.remove(); const n = [0, 1, 20, 14, 3][i]; if (n) a.insertAdjacentHTML("beforeend", ' <span class="tab-count nums">' + n + '</span>'); })`, chromedp.EvalAsValue))
 	if w := evalAs[[]int](b, `(() => { const n = document.querySelector(".inbox-tabs"); return [n.scrollWidth, n.clientWidth] })()`); w[0] > w[1] {
 		t.Errorf("the tabs need %dpx but have %d: the last one is cut off", w[0], w[1])
 	}
@@ -913,10 +913,13 @@ func TestBrowserInboxTabCountsFollowNewMail(t *testing.T) {
 	b.waitFor(count("promotions") + ` === "3"`)
 	b.h.store.mu.Lock()
 	b.h.store.tabUnread = map[string]int{"primary": 0, "social": 2, "promotions": 4}
+	b.h.store.folders[0].Unread = 6
 	b.h.store.mu.Unlock()
 	// The check that runs when mail arrives, as it runs on returning to the tab.
 	b.run(chromedp.Evaluate[chromedp.Void](`document.dispatchEvent(new Event("visibilitychange"))`, chromedp.EvalAsValue))
 	b.waitFor(count("promotions") + ` === "4" && ` + count("social") + ` === "2" && ` + count("primary") + ` === undefined`)
+	// The heading counts the whole inbox, with Primary empty.
+	b.waitFor(`document.querySelector("[data-unread-of]").textContent === "6 unread"`)
 }
 
 // dragMouse presses at one point, moves in steps as a hand would, and lets
@@ -1274,4 +1277,195 @@ func TestBrowserScheduleSendKeepsEncryption(t *testing.T) {
 	if !evalAs[bool](b, `location.pathname === "/compose"`) {
 		t.Error("left the editor without sending")
 	}
+}
+
+// The phone's message list: all five inbox tabs fit the narrowest phone with
+// their words whole; tapping a sender's initials selects the message and
+// turns them into a check; the selection's actions are one row of icons; and
+// New steps aside while choosing.
+func TestBrowserPhoneListFits(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	if err := b.h.store.PutObject(context.Background(), CollSettings, Object{ID: settingsID, ContentType: "application/json", Data: []byte(`{"inbox_tabs":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	b.login()
+	b.run(chromedp.Emulate(device.IPhone5)) // 320px, the narrowest still about
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`!!document.querySelector(".inbox-tabs") && document.readyState === "complete"`)
+	tabs := evalAs[map[string]float64](b, `(() => {
+		const bar = document.querySelector(".inbox-tabs");
+		const cut = [...document.querySelectorAll(".inbox-tab .tab-label")].filter(l => l.scrollWidth > l.clientWidth + 1).length;
+		return { over: bar.scrollWidth - bar.clientWidth, cut, tabs: document.querySelectorAll(".inbox-tab").length };
+	})()`)
+	if tabs["tabs"] != 5 || tabs["over"] > 1 || tabs["cut"] > 0 {
+		t.Errorf("inbox tabs on a 320px phone: %v (want 5, none overflowing or cut)", tabs)
+	}
+	if !evalAs[bool](b, `(() => { const a = document.querySelector(".row-wrap .row-avatar"); const r = a.getBoundingClientRect(); return r.width >= 36 && a.textContent.trim().length > 0; })()`) {
+		t.Error("rows don't start with the sender's initials")
+	}
+	if evalAs[bool](b, `getComputedStyle(document.querySelector(".list-head > .check")).display !== "none"`) {
+		t.Error("select-all shows before anything is selected")
+	}
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelectorAll(".row-wrap .check")[2].click()`, chromedp.EvalAsValue))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 1`)
+	got := evalAs[map[string]float64](b, `(() => {
+		const bar = document.querySelector(".bulk-bar");
+		const fab = document.querySelector(".sidebar > .button.primary.block");
+		const shown = [...bar.querySelectorAll(":scope > .button:not(.bb-clear)")].filter(e => getComputedStyle(e).display !== "none");
+		return { height: bar.getBoundingClientRect().height, words: shown.filter(e => { const l = e.querySelector(".bb-label"); return l && l.getBoundingClientRect().width > 2; }).length,
+			fab: fab ? fab.getBoundingClientRect().width : 0, selectAll: getComputedStyle(document.querySelector(".list-head > .check")).display !== "none" ? 1 : 0,
+			first: shown.length ? ["archive", "delete"].indexOf(shown.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)[0].value) : -1 };
+	})()`)
+	if got["height"] > 64 || got["words"] > 0 {
+		t.Errorf("the selection's actions on a phone: %v (want one row of icons)", got)
+	}
+	if got["first"] != 0 || got["fab"] != 0 || got["selectAll"] != 1 {
+		t.Errorf("while selecting: %v (want Archive first, New hidden, select-all shown)", got)
+	}
+}
+
+// TestBrowserDesktopList pins the computer's message list: rows start with
+// the sender's initials rather than a bare checkbox, selecting turns the
+// other rows' initials into empty circles, the selection's actions are
+// icons, and each standard folder has its icon.
+func TestBrowserDesktopList(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.login()
+	b.run(chromedp.EmulateViewport(1440, 900))
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".row-wrap .row-avatar")`)
+	if !evalAs[bool](b, `(() => { const a = document.querySelector(".row-wrap .row-avatar"); const r = a.getBoundingClientRect(); return r.width >= 32 && a.textContent.trim() === "D" && getComputedStyle(a).color !== "rgba(0, 0, 0, 0)"; })()`) {
+		t.Error("rows don't start with the sender's initials")
+	}
+	if n := evalAs[int](b, `document.querySelectorAll(".folders .folder-icon svg").length`); n == 0 {
+		t.Error("the folders have no icons")
+	}
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelectorAll(".row-wrap .check")[1].click()`, chromedp.EvalAsValue))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 1`)
+	// The initials fade out, so wait for the circle rather than reading it
+	// mid-way.
+	b.waitFor(`getComputedStyle(document.querySelectorAll(".row-wrap .row-avatar")[0]).color === "rgba(0, 0, 0, 0)"`)
+	got := evalAs[map[string]float64](b, `(() => {
+		const other = document.querySelectorAll(".row-wrap .row-avatar")[0];
+		const bar = document.querySelector(".bulk-bar");
+		const words = [...bar.querySelectorAll(":scope > .button .bb-label")].filter(l => l.getBoundingClientRect().width > 2).length;
+		const icons = [...bar.querySelectorAll(":scope > .button > .icon")].filter(i => i.getBoundingClientRect().width > 0).length;
+		return { circle: getComputedStyle(other).color === "rgba(0, 0, 0, 0)" ? 1 : 0, words, icons };
+	})()`)
+	if got["circle"] != 1 || got["words"] != 0 || got["icons"] < 4 {
+		t.Errorf("while selecting: %v (want empty circles on other rows and an icon bar)", got)
+	}
+}
+
+// TestBrowserMultiSelect pins choosing several messages the familiar way:
+// Ctrl+click adds one without opening it, Shift+click selects the range from
+// the last one chosen, on the row or on its initials, and Shift+J extends
+// the selection from the keyboard.
+func TestBrowserMultiSelect(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.login()
+	b.run(chromedp.EmulateViewport(1440, 900))
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".messages .row-wrap")`)
+	start := evalAs[string](b, `location.href`)
+	center := func(sel string, n int) (float64, float64) {
+		t.Helper()
+		p := evalAs[[]float64](b, fmt.Sprintf(`(() => { const r = document.querySelectorAll(%q)[%d].getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`, sel, n))
+		return p[0], p[1]
+	}
+	checked := func() string {
+		return evalAs[string](b, `[...document.querySelectorAll(".messages .row-wrap")].map((w, i) => w.classList.contains("checked") ? i : -1).filter(i => i >= 0).join(",")`)
+	}
+	x, y := center(".messages a.row", 1)
+	b.run(chromedp.MouseClickXY(x, y, chromedp.ButtonModifiers(chromedp.ModifierCtrl)))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 1`)
+	x, y = center(".messages a.row", 4)
+	b.run(chromedp.MouseClickXY(x, y, chromedp.ButtonModifiers(chromedp.ModifierShift)))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 4`)
+	if got := checked(); got != "1,2,3,4" {
+		t.Errorf("after Ctrl+click on 1 and Shift+click on 4, selected %s", got)
+	}
+	// Ctrl+click again takes one out and moves the anchor there, as in a
+	// file list; Shift+click on the initials then selects from it.
+	x, y = center(".messages a.row", 2)
+	b.run(chromedp.MouseClickXY(x, y, chromedp.ButtonModifiers(chromedp.ModifierCtrl)))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 3`)
+	x, y = center(".messages .row-avatar", 6)
+	b.run(chromedp.MouseClickXY(x, y, chromedp.ButtonModifiers(chromedp.ModifierShift)))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 6`)
+	if got := checked(); got != "1,2,3,4,5,6" {
+		t.Errorf("after Shift+click on the initials of 6, selected %s", got)
+	}
+	if got := evalAs[string](b, `location.href`); got != start || evalAs[bool](b, `!!document.querySelector(".reader h2[data-message-subject]")`) {
+		t.Errorf("a modified click opened a message: %s", got)
+	}
+	if evalAs[string](b, `String(getSelection())`) != "" {
+		t.Error("Shift+click selected the rows' text")
+	}
+	// Shift+J from the keyboard.
+	evalAs[bool](b, `document.querySelectorAll(".messages .row-wrap input[name=uid]").forEach(i => { i.checked = false; i.dispatchEvent(new Event("change", { bubbles: true })); }); true`)
+	b.run(chromedp.KeyEvent("j"), chromedp.KeyEvent("J"), chromedp.KeyEvent("J"))
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 3`)
+	if got := checked(); got != "0,1,2" {
+		t.Errorf("after j, Shift+J, Shift+J, selected %s", got)
+	}
+}
+
+// TestBrowserPhoneHoldToSelect pins choosing messages on a touch screen:
+// holding a row chooses it without opening it, taps then choose or let go
+// of rows, every row shows a small circle meanwhile, the bar's clear button
+// ends it, and after that a tap opens a message again.
+func TestBrowserPhoneHoldToSelect(t *testing.T) {
+	b := newBrowser(t)
+	seedLongInbox(b, nil)
+	b.login()
+	b.run(chromedp.Emulate(device.IPhone13))
+	b.run(chromedp.Navigate(b.url("/mail?f=INBOX")))
+	b.waitFor(`document.readyState === "complete" && !!document.querySelector(".messages .row-wrap")`)
+	start := evalAs[string](b, `location.href`)
+	touch := func(n int, hold time.Duration) {
+		t.Helper()
+		p := evalAs[[]float64](b, fmt.Sprintf(`(() => { const r = document.querySelectorAll(".messages a.row")[%d].getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`, n))
+		send := func(kind input.DispatchTouchEventType, pts []*input.TouchPoint) {
+			if _, err := chromedp.Call(b.ctx, input.DispatchTouchEvent, input.DispatchTouchEventParams{Type: kind, TouchPoints: pts}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		send(input.DispatchTouchEventTypeTouchStart, []*input.TouchPoint{{X: p[0], Y: p[1]}})
+		time.Sleep(hold)
+		send(input.DispatchTouchEventTypeTouchEnd, []*input.TouchPoint{})
+	}
+	checked := func() string {
+		return evalAs[string](b, `[...document.querySelectorAll(".messages .row-wrap")].map((w, i) => w.classList.contains("checked") ? i : -1).filter(i => i >= 0).join(",")`)
+	}
+	touch(1, 700*time.Millisecond)
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 1`)
+	time.Sleep(300 * time.Millisecond)
+	if got := checked(); got != "1" {
+		t.Errorf("after holding row 1, selected %q", got)
+	}
+	if got := evalAs[string](b, `location.href`); got != start {
+		t.Errorf("holding a row opened it: %s", got)
+	}
+	touch(3, 0)
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 2`)
+	touch(1, 0)
+	b.waitFor(`document.querySelectorAll(".row-wrap.checked").length === 1`)
+	if got := checked(); got != "3" {
+		t.Errorf("after tapping 3 then 1, selected %q (want 3)", got)
+	}
+	circle := evalAs[map[string]string](b, `(() => {
+		const s = getComputedStyle(document.querySelectorAll(".messages .row-avatar")[0], "::before");
+		return { opacity: s.opacity, width: s.width };
+	})()`)
+	if circle["opacity"] != "1" || circle["width"] != "22px" {
+		t.Errorf("an unchosen row while choosing: %v (want a 22px circle)", circle)
+	}
+	b.run(chromedp.Evaluate[chromedp.Void](`document.querySelector("[data-clear-selection]").click()`, chromedp.EvalAsValue))
+	b.waitFor(`!document.querySelector("#bulk.has-selection") && document.querySelectorAll(".row-wrap.checked").length === 0`)
+	touch(2, 0)
+	b.waitFor(`location.href !== ` + strconv.Quote(start))
 }

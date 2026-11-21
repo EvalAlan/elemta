@@ -43,7 +43,7 @@
       <h2{{if .Today}} class="today"{{end}}><a href="{{.URL}}">{{.Date.Format "Monday, January 2"}}</a>{{if .Today}} · Today{{end}}</h2>
       {{range .AllDay}}
       <a class="agenda-item" href="{{.URL}}" data-ctx="event" data-uid="{{.Occ.Event.UID}}"{{if .Occ.Event.Owner}} data-owner="{{.Occ.Event.Owner}}"{{end}} data-occ="{{.Occ.Start.Unix}}"{{if .Occ.Event.Recurring}} data-recurring{{end}}{{if .Occ.Event.ReadOnly}} data-readonly{{end}}>
-        <span class="mono muted">{{if .Occ.Event.AllDay}}All day{{else}}{{.TimeLabel}} – {{clock $.Clock24 (.Occ.End.In $.Loc)}}{{end}}</span>
+        <span class="nums muted">{{if .Occ.Event.AllDay}}All day{{else}}{{.TimeLabel}} – {{clock $.Clock24 (.Occ.End.In $.Loc)}}{{end}}</span>
         <span class="swatch {{.Class}}" aria-hidden="true"></span>
         <span><span class="strong">{{.Occ.Event.Summary}}</span>{{if .Occ.Event.Location}} <span class="muted">· {{.Occ.Event.Location}}</span>{{end}}{{if .Occ.Event.Recurring}} <span class="marker" title="Repeats">{{template "icon-repeat"}}</span>{{end}}</span>
       </a>
@@ -125,7 +125,7 @@
     <dt>Show as</dt><dd>{{if .Event.Busy}}Busy{{else}}Free{{end}}</dd>
     {{if .Event.Private}}<dt>Visibility</dt><dd>Private</dd>{{end}}
     {{if ge .Event.Reminder 0}}<dt>Reminder</dt><dd>{{reminderLabel .Event.Reminder}}</dd>{{end}}
-    {{with .Event.Organizer}}<dt>Organizer</dt><dd>{{.Label}}{{if .Name}} <span class="mono muted">{{.Email}}</span>{{end}}</dd>{{end}}
+    {{with .Event.Organizer}}<dt>Organizer</dt><dd>{{.Label}}{{if .Name}} <span class="nums muted">{{.Email}}</span>{{end}}</dd>{{end}}
     {{if .Event.Attendees}}
     <dt>{{template "icon-people"}} Guests</dt>
     <dd><ul class="attendees">{{range .Event.Attendees}}<li>{{.Label}} <span class="small {{.StatusClass}}">· {{.StatusLabel}}</span>{{if .Optional}} <span class="muted small">(optional)</span>{{end}}</li>{{end}}</ul></dd>

@@ -9,6 +9,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -225,6 +226,48 @@ func (e *Engine) checkBodyKeys(ctx context.Context, keys []bodySecret) error {
 		if !hmac.Equal([]byte(want), []byte(k.fingerprint())) {
 			return fmt.Errorf("message body key %q is not the key this mailbox store was encrypted with", k.version)
 		}
+	}
+	return nil
+}
+
+// CheckBodyKeysCover reports whether keys (an ELEMTA_MAILBOX_BODY_KEYS
+// value) hold every key the mailbox store in db has recorded, each matching
+// its fingerprint. Unlike checkBodyKeys it only reads, so a restore drill can
+// run it against the metadata in a backup with the keys in that backup's
+// secrets, and so prove that the backup can be read without the live server.
+func CheckBodyKeysCover(ctx context.Context, db *sql.DB, keys string) error {
+	parsed, err := parseBodyKeys(keys)
+	if err != nil {
+		return err
+	}
+	have := map[string]string{}
+	for _, k := range parsed {
+		have[k.version] = k.fingerprint()
+	}
+	rows, err := db.QueryContext(ctx, `SELECT version, fingerprint FROM mailbox_body_keys ORDER BY version`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	var problems []string
+	for rows.Next() {
+		var version, want string
+		if err := rows.Scan(&version, &want); err != nil {
+			return err
+		}
+		got, ok := have[version]
+		switch {
+		case !ok:
+			problems = append(problems, fmt.Sprintf("key %q is missing", version))
+		case !hmac.Equal([]byte(got), []byte(want)):
+			problems = append(problems, fmt.Sprintf("key %q is not the key the store was encrypted with", version))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(problems) > 0 {
+		return errors.New("message body keys: " + strings.Join(problems, "; "))
 	}
 	return nil
 }

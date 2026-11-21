@@ -590,8 +590,12 @@ func (s *Server) settingsSubmit(w http.ResponseWriter, r *http.Request, sess *Se
 		p.UndoSend = validUndoSend(v[0])
 	}
 	p.ReminderSound = validReminderSound(r.PostFormValue("reminder_sound"))
-	switch v := r.PostFormValue("calendar_view"); v {
-	case "month", "week", "day", "agenda":
+	if v := r.PostFormValue("calendar_view"); validCalendarView(v) {
+		// Choosing a different start view here is a deliberate choice, so it
+		// replaces the view this browser last remembered.
+		if v != p.CalendarView {
+			s.setCookie(w, calendarViewCookie, "", -1)
+		}
 		p.CalendarView = v
 	}
 	p.HolidayDisabled = r.PostFormValue("holiday_enabled") != "1"

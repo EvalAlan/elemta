@@ -587,6 +587,17 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 	}
 	back := localBack(r.PostFormValue("back"), folderURL(folder, 1, ""))
 	s.pages.forgetRaw(sess.ID)
+	tab := ""
+	if v := r.PostFormValue("tab"); op == "readall" && v != "" && strings.EqualFold(folder, "INBOX") && s.prefsCached(sess).InboxTabs {
+		c, ok := mailcategory.Parse(v)
+		if !ok {
+			// Marking the whole inbox instead would read mail the user
+			// never asked about.
+			s.renderProblem(w, r, sess, http.StatusBadRequest, "There's no inbox tab by that name.")
+			return
+		}
+		tab = c.Name()
+	}
 	if len(uids) == 0 && op != "empty" && op != "readall" {
 		redirectLocal(w, r, back)
 		return
@@ -700,8 +711,13 @@ func (s *Server) messageAction(w http.ResponseWriter, r *http.Request, sess *Ses
 			notice = "emptied"
 			return st.EmptyFolder(ctx, folder)
 		case "readall":
+			// From the list's menu with inbox tabs on, "tab" is the tab
+			// being looked at; the whole inbox posts none.
 			notice = "all-read"
-			return st.MarkAllRead(ctx, folder)
+			if tab != "" {
+				notice = "tab-read"
+			}
+			return st.MarkAllRead(ctx, folder, tab)
 		}
 		return fmt.Errorf("webmail: unknown action %q", op)
 	})

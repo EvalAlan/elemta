@@ -21,7 +21,11 @@
 #      the newest of each of the last 14 days and 8 weeks
 #      (BACKUP_KEEP_RECENT, BACKUP_KEEP_DAILY, BACKUP_KEEP_WEEKLY). The
 #      bucket's versioning keeps what's pruned a while longer.
-#   5. Deletes the local, unencrypted backup.
+#   5. With continuous archiving on, uploads the WAL waiting since the last
+#      run (scripts/wal-offsite.sh), drops WAL older than BACKUP_WAL_KEEP
+#      (default 336h, 14 days), and checks the archive has every segment from
+#      the newest base backup on (elemta backup wal-check).
+#   6. Deletes the local, unencrypted backup.
 #
 # The result goes to backup-status.json in the runtime configuration volume,
 # where the admin console's Health page reads it, and to the journal
@@ -110,9 +114,33 @@ echo "== Prune"
 docker run --rm --user 0 --env-file "$env_file" "$image" backup prune \
     --recent "${BACKUP_KEEP_RECENT:-48h}" --daily "${BACKUP_KEEP_DAILY:-14}" --weekly "${BACKUP_KEEP_WEEKLY:-8}"
 
+# Continuous archiving (scripts/wal-offsite.sh), when it's on: send what's
+# waiting, which includes the label of the base backup just taken, drop WAL
+# older than BACKUP_WAL_KEEP, and check that nothing is missing from the
+# newest base backup on. A problem here is reported, not a failed backup:
+# the backup itself is safely off-site by now.
+stage=wal
+wal_note=""
+wal_volume="${volumes}_mailbox_wal"
+if docker volume inspect "$wal_volume" >/dev/null 2>&1 &&
+    docker run --rm --network none --user 0 --entrypoint sh -v "$wal_volume:/w" "$image" -c 'test -f /w/.enabled'; then
+    echo "== WAL"
+    if ! BACKUP_IMAGE=$image "$root/scripts/wal-offsite.sh"; then
+        wal_note=upload
+    fi
+    docker run --rm --user 0 --env-file "$env_file" "$image" backup wal-prune --keep "${BACKUP_WAL_KEEP:-336h}" || wal_note=${wal_note:-prune}
+    if ! docker run --rm --user 0 --env-file "$env_file" "$image" backup wal-check; then
+        wal_note=gap
+    fi
+fi
+
 now >"$work/last-success"
 stage="done"
-if [ "$(remembered last-drill-failed)" = yes ]; then
+if [ "$wal_note" = gap ]; then
+    status true "Backed up, but the database's WAL archive is missing files since the last base backup, so a restore can only reach that backup. See journalctl -u elemta-backup."
+elif [ -n "$wal_note" ]; then
+    status true "Backed up, but the database's WAL couldn't be sent off-site. See journalctl -u elemta-wal and -u elemta-backup."
+elif [ "$(remembered last-drill-failed)" = yes ]; then
     status true "Backed up, but the last restore drill failed. Run scripts/restore-drill.sh on a fresh backup to see why."
 elif $drilled; then
     status true "Backed up and checked with a restore drill."

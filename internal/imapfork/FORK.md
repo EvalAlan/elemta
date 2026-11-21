@@ -30,6 +30,9 @@ Changes from upstream:
   without LITERAL+) closes the connection after the refusal, since its bytes
   are already on the wire and would otherwise be read as commands (RFC 7888
   §4). Upstream answers and carries on.
+- `imapserver/server.go`: `Serve` joins the listener wait group under the lock
+  `Close` takes before waiting, so a `Serve` starting while `Close` runs can't
+  `Add` during `Wait` (a data race upstream has too).
 - Import paths rewritten to this module.
 
 To update: copy the new upstream release over these directories, rewrite

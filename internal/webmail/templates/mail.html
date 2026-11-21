@@ -8,9 +8,22 @@
       <div class="list-head">
         <label class="check" title="Select all"><input type="checkbox" data-select-all><span class="visually-hidden">Select all</span></label>
         <h1>{{if .Query}}Results for “{{.Query}}”{{else}}{{folderLabel .Folder .Folders}}{{end}}</h1>
-        {{with .Page}}<span class="mono muted">{{.Total}}</span>{{end}}
+        {{if .InboxTabs}}<span class="nums muted list-unread" data-unread-of="{{.Folder}}">{{.InboxUnread}} unread</span>{{else}}{{with .Page}}<span class="nums muted">{{.Total}}</span>{{end}}{{end}}
         <a class="refresh" href="{{.List.URL}}" title="Check for new mail" aria-label="Check for new mail" data-refresh>{{template "icon-refresh"}}</a>
-        <details class="menu push">
+        {{if not .Query}}
+        <details class="menu push mark-read-menu">
+          <summary class="refresh" title="Mark all read">{{template "icon-mail-open"}}<span class="visually-hidden">Mark all read</span></summary>
+          <div class="menu-body" role="menu">
+            {{if .InboxTabs}}
+            <button class="menu-item" form="mark-read" name="tab" value="{{.List.Tab}}">Mark {{.TabLabel}} read</button>
+            <button class="menu-item" form="mark-read" name="tab" value="">Mark the whole inbox read</button>
+            {{else}}
+            <button class="menu-item" form="mark-read" name="tab" value="">Mark {{folderLabel .Folder .Folders}} read</button>
+            {{end}}
+          </div>
+        </details>
+        {{end}}
+        <details class="menu{{if .Query}} push{{end}}">
           <summary class="button small-button" title="Sort">Sort</summary>
           <div class="menu-body" role="menu">
             <button class="menu-item" form="conv-toggle" name="on" value="{{if $.Threaded}}0{{else}}1{{end}}">{{if $.Threaded}}✓ {{end}}Group by conversation</button>
@@ -25,40 +38,41 @@
       </div>
       {{with .InboxTabs}}
       <nav class="inbox-tabs" aria-label="Inbox tabs">
-        {{range .}}<a class="inbox-tab" href="{{.URL}}" data-category="{{.Name}}" data-label="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{.Label}}{{if .Unread}} <span class="tab-count mono">{{.Unread}}</span>{{end}}</a>{{end}}
+        {{range .}}<a class="inbox-tab" href="{{.URL}}" data-category="{{.Name}}" data-label="{{.Label}}"{{if .Active}} aria-current="page"{{end}}><span class="tab-icon" aria-hidden="true">{{if eq .Name "social"}}{{template "icon-people"}}{{else if eq .Name "promotions"}}{{template "icon-tag"}}{{else if eq .Name "updates"}}{{template "icon-info"}}{{else if eq .Name "forums"}}{{template "icon-chat"}}{{else}}{{template "icon-inbox"}}{{end}}</span><span class="tab-label">{{.Label}}</span>{{if .Unread}} <span class="tab-count nums">{{.Unread}}</span>{{end}}</a>{{end}}
       </nav>
       <input type="hidden" name="tab" value="{{$.List.Tab}}">
       {{end}}
       {{if isRole .Folder .Folders "quarantine"}}<p class="muted folder-note">Mail the spam check would have refused. Release anything you were expecting. The rest is deleted automatically.</p>{{end}}
       <div class="bulk-bar" role="toolbar" aria-label="Selected messages">
-        <button class="button" name="op" value="read">Mark read</button>
-        <button class="button" name="op" value="unread">Mark unread</button>
-        <button class="button" name="op" value="flag">Flag</button>
-        {{if isRole .Folder .Folders "quarantine"}}<button class="button" name="op" value="notjunk">Release</button>{{else if isRole .Folder .Folders "junk"}}<button class="button" name="op" value="notjunk">Not junk</button>{{else}}<button class="button" name="op" value="junk">Junk</button>{{end}}
-        {{if not (isRole .Folder .Folders "archive")}}<button class="button" name="op" value="archive">Archive</button>{{end}}
-        <button class="button danger" name="op" value="delete" data-confirm="{{if isRole .Folder .Folders "trash"}}Delete the selected messages for good?{{end}}">Delete</button>
+        <button class="button bb-clear" type="button" title="Clear the selection" data-clear-selection>{{template "icon-x"}}<span class="bb-label">Clear the selection</span></button>
+        <button class="button" name="op" value="read" title="Mark read">{{template "icon-mail-open"}}<span class="bb-label">Mark read</span></button>
+        <button class="button" name="op" value="unread" title="Mark unread">{{template "icon-mail"}}<span class="bb-label">Mark unread</span></button>
+        <button class="button" name="op" value="flag" title="Flag">{{template "icon-star"}}<span class="bb-label">Flag</span></button>
+        {{if isRole .Folder .Folders "quarantine"}}<button class="button" name="op" value="notjunk" title="Release">{{template "icon-inbox"}}<span class="bb-label">Release</span></button>{{else if isRole .Folder .Folders "junk"}}<button class="button" name="op" value="notjunk" title="Not junk">{{template "icon-inbox"}}<span class="bb-label">Not junk</span></button>{{else}}<button class="button" name="op" value="junk" title="Junk">{{template "icon-junk"}}<span class="bb-label">Junk</span></button>{{end}}
+        {{if not (isRole .Folder .Folders "archive")}}<button class="button" name="op" value="archive" title="Archive">{{template "icon-archive"}}<span class="bb-label">Archive</span></button>{{end}}
+        <button class="button danger" name="op" value="delete" data-confirm="{{if isRole .Folder .Folders "trash"}}Delete the selected messages for good?{{end}}" title="Delete">{{template "icon-trash"}}<span class="bb-label">Delete</span></button>
         {{if and .Later (snoozable .Folder .Folders)}}
         <details class="menu snooze-menu">
-          <summary class="button">{{template "icon-clock"}}Snooze</summary>
+          <summary class="button" title="Snooze">{{template "icon-clock"}}<span class="bb-label">Snooze</span></summary>
           <div class="menu-body">
             <p class="small muted">Snooze until</p>
             {{range .Later.Snooze}}<button class="menu-item" name="op" value="snooze@{{.Value}}" data-snooze-choice="{{.Label}}">{{.Label}} <span class="muted">{{.When}}</span></button>{{end}}
           </div>
         </details>
         {{end}}
-        {{if and .Later (isRole .Folder .Folders "snoozed")}}<button class="button" name="op" value="unsnooze">Unsnooze</button>{{end}}
+        {{if and .Later (isRole .Folder .Folders "snoozed")}}<button class="button" name="op" value="unsnooze" title="Unsnooze">{{template "icon-clock"}}<span class="bb-label">Unsnooze</span></button>{{end}}
         <label class="visually-hidden" for="bulk-dest">Move selected to</label>
         <select id="bulk-dest" name="dest" class="compact">
           <option value="">Move to…</option>
           {{range $.Folders}}{{if and .Selectable (ne .Name $.Folder)}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
         </select>
-        <button class="button" name="op" value="move">Move</button>
+        <button class="button bb-go" name="op" value="move">Move</button>
         {{if .InboxTabs}}
         <label class="visually-hidden" for="bulk-category">Move selected to tab</label>
         <select id="bulk-category" name="category" class="compact">
           {{range .CategoryOptions}}<option value="{{.Name}}"{{if eq .Name $.List.Tab}} selected{{end}}>{{.Label}}</option>{{end}}
         </select>
-        <button class="button" name="op" value="category">Move to tab</button>
+        <button class="button bb-go" name="op" value="category">Move to tab</button>
         {{end}}
       </div>
     <div class="list-scroll">
@@ -71,7 +85,8 @@
       {{range $.Conversations}}
         {{$open := $.List.MessageURL .OpenUID}}
         <li class="row-wrap{{if .Unread}} unread{{end}}{{if and $.Message (inUIDs $.Message.UID .UIDs)}} selected{{end}}" data-uid="{{.UIDList}}" data-latest="{{.Latest.UID}}" data-ctx="message"{{if not .Unread}} data-seen{{end}}{{if .Flagged}} data-flagged{{end}}{{with .Latest.From}} data-from="{{(index . 0).Email}}"{{end}} data-open="{{$open}}" data-count="{{.Count}}">
-          <label class="check"><input type="checkbox" name="uid" value="{{.UIDList}}"><span class="visually-hidden">Select conversation</span></label>
+          {{$who := .Latest.From}}{{if isRole $.Folder $.Folders "sent"}}{{$who = .Latest.To}}{{end}}
+          <label class="check"><input type="checkbox" name="uid" value="{{.UIDList}}"><span class="row-avatar{{with $who}} {{tagClass (index . 0).Email}}{{end}}" aria-hidden="true">{{initials $who}}</span><span class="visually-hidden">Select conversation</span></label>
           <a class="row" href="{{$open}}"{{if and $.Message (inUIDs $.Message.UID .UIDs)}} aria-current="true"{{end}}>
             <span class="row-top">
               <span class="dot" aria-hidden="true"></span>
@@ -80,7 +95,7 @@
               {{if .HasAttachment}}<span class="marker" title="Has attachments">{{template "icon-clip"}}</span>{{end}}
               {{if .Latest.Answered}}<span class="marker" title="Replied">{{template "icon-reply"}}</span>{{end}}
               {{if .Flagged}}<span class="flag" aria-label="Flagged">{{template "icon-star"}}</span>{{end}}
-              {{with laterTime $.Later .Latest.UID}}<span class="mono later-time">{{$.Later.Verb}} {{.}}</span>{{else}}<time class="mono muted" datetime="{{.Latest.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Latest.Date}}</time>{{end}}
+              {{with laterTime $.Later .Latest.UID}}<span class="nums later-time">{{$.Later.Verb}} {{.}}</span>{{else}}<time class="nums muted" datetime="{{.Latest.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Latest.Date}}</time>{{end}}
             </span>
             <span class="subject">{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
             {{if .Latest.Tags}}<span class="tags">{{range .Latest.Tags}}<span class="tag {{tagClass .}}">{{.}}</span>{{end}}</span>{{end}}
@@ -91,7 +106,8 @@
       {{else}}
       {{range .Messages}}
         <li class="row-wrap{{if not .Seen}} unread{{end}}{{if and $.Message (eq .UID $.Message.UID)}} selected{{end}}" data-uid="{{.UID}}" data-ctx="message"{{if .Seen}} data-seen{{end}}{{if .Flagged}} data-flagged{{end}}{{with .From}} data-from="{{(index . 0).Email}}"{{end}} data-open="{{$.List.MessageURL .UID}}">
-          <label class="check"><input type="checkbox" name="uid" value="{{.UID}}"><span class="visually-hidden">Select</span></label>
+          {{$who := .From}}{{if or (isRole $.Folder $.Folders "sent") (isRole $.Folder $.Folders "drafts")}}{{$who = .To}}{{end}}
+          <label class="check"><input type="checkbox" name="uid" value="{{.UID}}"><span class="row-avatar{{with $who}} {{tagClass (index . 0).Email}}{{end}}" aria-hidden="true">{{initials $who}}</span><span class="visually-hidden">Select</span></label>
           <a class="row" href="{{$.List.MessageURL .UID}}"{{if and $.Message (eq .UID $.Message.UID)}} aria-current="true"{{end}}>
             <span class="row-top">
               <span class="dot" aria-hidden="true"></span>
@@ -100,7 +116,7 @@
               {{if .Answered}}<span class="marker" title="Replied">{{template "icon-reply"}}</span>{{end}}
               {{if .Forwarded}}<span class="marker" title="Forwarded">{{template "icon-forward"}}</span>{{end}}
               {{if .Flagged}}<span class="flag" aria-label="Flagged">{{template "icon-star"}}</span>{{end}}
-              {{with laterTime $.Later .UID}}<span class="mono later-time">{{$.Later.Verb}} {{.}}</span>{{else}}<time class="mono muted" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Date}}</time>{{end}}
+              {{with laterTime $.Later .UID}}<span class="nums later-time">{{$.Later.Verb}} {{.}}</span>{{else}}<time class="nums muted" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{shortDate $.Loc $.Clock24 .Date}}</time>{{end}}
             </span>
             <span class="subject">{{if .Draft}}<span class="draft-mark">Draft</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</span>
             {{if .Tags}}<span class="tags">{{range .Tags}}<span class="tag {{tagClass .}}">{{.}}</span>{{end}}</span>{{end}}
@@ -123,6 +139,9 @@
     {{/* Outside #bulk: forms can't nest, and an inner </form> would end the bulk form early. */}}
     <form id="conv-toggle" action="/settings/conversations" method="post" hidden>
       <input type="hidden" name="csrf" value="{{.Session.CSRF}}"><input type="hidden" name="back" value="{{.List.URL}}">
+    </form>
+    <form id="mark-read" action="/mail/action" method="post" hidden>
+      <input type="hidden" name="csrf" value="{{.Session.CSRF}}"><input type="hidden" name="f" value="{{.Folder}}"><input type="hidden" name="op" value="readall"><input type="hidden" name="back" value="{{.List.URL}}">
     </form>
     {{if and (or (isRole .Folder .Folders "trash") (isRole .Folder .Folders "junk")) .Page .Page.Total}}
     <form class="empty-folder" action="/mail/action" method="post">
@@ -251,7 +270,7 @@
         <span class="avatar soft" aria-hidden="true">{{initials .From}}</span>
         <div class="sender-text">
           <div class="sender-line">
-            {{range .From}}<span class="strong">{{.Label}}</span> {{if .Name}}<span class="mono muted">{{.Email}}</span>{{end}}{{end}}
+            {{range .From}}<span class="strong">{{.Label}}</span> {{if .Name}}<span class="nums muted">{{.Email}}</span>{{end}}{{end}}
             {{if and .From (not .SenderContact)}}
             <form action="/contacts" method="post" class="inline">
               <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="add-sender">
@@ -260,7 +279,7 @@
               <button class="link-inline" type="submit">Add to contacts</button>
             </form>
             {{end}}
-            <time class="mono muted push" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate $.Loc $.Clock24 .Date}}</time>
+            <time class="nums muted push" datetime="{{.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate $.Loc $.Clock24 .Date}}</time>
           </div>
           <div class="muted small">To {{addrs .To}}{{if .Cc}} · Cc {{addrs .Cc}}{{end}}</div>
         </div>
@@ -293,7 +312,7 @@
       {{with .Attachments}}
       <ul class="attachments" aria-label="Attachments">
         {{range .}}
-        <li><a class="attachment" href="{{partURL $.Message.Folder $.Message.UID .Index}}">{{if and (previewable .ContentType) (lt .Size 10485760)}}<img class="thumb" src="{{partURL $.Message.Folder $.Message.UID .Index}}&amp;inline=1" alt="" loading="lazy">{{else}}{{template "icon-clip"}}{{end}}<span><span class="strong">{{.Filename}}</span><span class="mono muted small">{{humanSize .Size}}</span></span></a></li>
+        <li><a class="attachment" href="{{partURL $.Message.Folder $.Message.UID .Index}}">{{if and (previewable .ContentType) (lt .Size 10485760)}}<img class="thumb" src="{{partURL $.Message.Folder $.Message.UID .Index}}&amp;inline=1" alt="" loading="lazy">{{else}}{{template "icon-clip"}}{{end}}<span><span class="strong">{{.Filename}}</span><span class="nums muted small">{{humanSize .Size}}</span></span></a></li>
         {{end}}
       </ul>
       {{end}}
@@ -335,7 +354,7 @@
     {{range .Upcoming}}
       <li><a class="small strong{{if .Today}} today{{end}}" href="{{.URL}}">{{if .Today}}Today{{else}}{{.Date.Format "Mon, Jan 2"}}{{end}}</a>
         <ul>{{range .AllDay}}
-          <li><a class="upcoming-item" href="{{.URL}}"><span class="swatch {{.Class}}" aria-hidden="true"></span><span class="mono muted">{{if .Occ.Event.AllDay}}All day{{else}}{{.TimeLabel}}{{end}}</span> <span>{{.Occ.Event.Summary}}</span></a></li>
+          <li><a class="upcoming-item" href="{{.URL}}"><span class="swatch {{.Class}}" aria-hidden="true"></span><span class="nums muted">{{if .Occ.Event.AllDay}}All day{{else}}{{.TimeLabel}}{{end}}</span> <span>{{.Occ.Event.Summary}}</span></a></li>
         {{end}}</ul>
       </li>
     {{end}}
@@ -351,7 +370,7 @@
     <span class="tc-from strong">{{addrs .R.From}}</span>
     {{if ne .R.Folder .V.Folder}}<span class="muted small">({{.R.Folder}})</span>{{end}}
     {{if not .R.Seen}}<span class="dot unread-dot" title="Unread"></span>{{end}}
-    <time class="mono muted small push" datetime="{{.R.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate .V.Loc .V.Clock24 .R.Date}}</time>
+    <time class="nums muted small push" datetime="{{.R.Date.Format "2006-01-02T15:04:05Z07:00"}}">{{longDate .V.Loc .V.Clock24 .R.Date}}</time>
   </summary>
   <div class="tc-body">
     <div class="tc-actions">

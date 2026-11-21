@@ -64,8 +64,17 @@ func findEvent(events []Event, uid string) *Event {
 	return nil
 }
 
-// calClass gives each calendar one of eight colours, from its name.
+// calClass gives each calendar one of eight colours, from its name. The
+// user's own calendar takes the first, the scheme's blue, and the holidays
+// the last, a grey that stays in the background; by hash alone it was the
+// other way round, and most of someone's events were grey.
 func calClass(name string) string {
+	switch {
+	case strings.EqualFold(name, defaultCalendar):
+		return "cal-0"
+	case strings.EqualFold(name, holidayCalendar):
+		return "cal-7"
+	}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(strings.ToLower(name)))
 	return "cal-" + strconv.Itoa(int(h.Sum32()%8))
@@ -187,18 +196,10 @@ func (s *Server) calendarPage(w http.ResponseWriter, r *http.Request, sess *Sess
 		date = d
 	}
 	view := q.Get("view")
-	switch view {
-	case "month", "week", "day", "agenda":
-	default:
-		view = prefs.CalendarView
-		if view == "" {
-			view = "month"
-		}
-		// Seven days across a phone are slivers too narrow to read; it opens
-		// on the day instead, and Week is still a tap away.
-		if view == "week" && phoneUA(r.UserAgent()) {
-			view = "day"
-		}
+	if validCalendarView(view) {
+		s.rememberCalendarView(w, r, view)
+	} else {
+		view = calendarStartView(r, prefs)
 	}
 	events, err := s.calendarEvents(r.Context(), sess, loc)
 	if err != nil {
@@ -624,10 +625,7 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess *Session
 	if ev != nil {
 		date = dayStart(occ.In(loc))
 	}
-	view := prefs.CalendarView
-	if view == "" {
-		view = "month"
-	}
+	view := calendarStartView(r, prefs)
 	cv := s.buildCalendar("agenda", date, dayStart(now), now, prefs, nil)
 	cv.View = view
 	cv.Calendars = calendarNames(events)
@@ -1337,6 +1335,49 @@ func (s *Server) calendarImport(w http.ResponseWriter, r *http.Request, sess *Se
 // phoneUA says whether a browser is on a phone. Phones' browsers say
 // "Mobile" (iPhone and Android alike); tablets mostly don't, and get the
 // computer's layout, which fits them.
+// calendarViewCookie holds the calendar view last picked in this browser, so
+// the calendar opens where the user left it. It is kept per device rather
+// than in the settings: someone who likes Week on a desktop usually wants Day
+// on a phone, and every switch would otherwise be a settings write.
+const calendarViewCookie = "cal_view"
+
+func validCalendarView(v string) bool {
+	switch v {
+	case "month", "week", "day", "agenda":
+		return true
+	}
+	return false
+}
+
+// calendarStartView is the view the calendar opens in when the link doesn't
+// name one: the last one picked in this browser, else the Calendar opens in
+// setting.
+func calendarStartView(r *http.Request, prefs Settings) string {
+	if c, err := r.Cookie(calendarViewCookie); err == nil && validCalendarView(c.Value) {
+		return c.Value
+	}
+	view := prefs.CalendarView
+	if view == "" {
+		view = "month"
+	}
+	// Seven days across a phone are slivers too narrow to read; it opens on
+	// the day instead, and Week is still a tap away. Someone who picks Week
+	// on their phone anyway gets it from the cookie above from then on.
+	if view == "week" && phoneUA(r.UserAgent()) {
+		view = "day"
+	}
+	return view
+}
+
+// rememberCalendarView records the view a link named. Every link inside the
+// calendar names its view, so the cookie is only written when it changes.
+func (s *Server) rememberCalendarView(w http.ResponseWriter, r *http.Request, view string) {
+	if c, err := r.Cookie(calendarViewCookie); err == nil && c.Value == view {
+		return
+	}
+	s.setCookie(w, calendarViewCookie, view, 400*24*60*60)
+}
+
 func phoneUA(ua string) bool {
 	return strings.Contains(ua, "Mobile") && !strings.Contains(ua, "iPad")
 }

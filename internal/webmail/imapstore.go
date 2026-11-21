@@ -140,6 +140,10 @@ func (s *imapStore) Folders(ctx context.Context) ([]Folder, error) {
 			}
 		}
 		f.Role = roleOf(mb.Mailbox, mb.Attrs)
+		// IMAP names the inbox "INBOX" (RFC 9051); people call it Inbox.
+		if f.Role == RoleInbox && f.Depth == 0 {
+			f.Display = "Inbox"
+		}
 		status := mb.Status
 		if status == nil && f.Selectable && !listStatus {
 			status, err = s.c.Status(mb.Mailbox, &imap.StatusOptions{NumMessages: true, NumUnseen: true}).Wait()
@@ -671,10 +675,13 @@ func (s *imapStore) expunge(folder string, uids []uint32) error {
 	return s.c.Expunge().Close()
 }
 
-func (s *imapStore) MarkAllRead(ctx context.Context, folder string) error {
+func (s *imapStore) MarkAllRead(ctx context.Context, folder, category string) error {
 	n, err := s.syncFolder(folder)
 	if err != nil || n == 0 {
 		return err
+	}
+	if category != "" {
+		return s.markCategoryRead(folder, category)
 	}
 	var all imap.SeqSet
 	all.AddRange(1, 0) // 1:*

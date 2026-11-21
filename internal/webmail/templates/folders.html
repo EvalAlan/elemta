@@ -27,8 +27,8 @@
     {{range .Folders}}
       <tr>
         <td class="{{depthClass .Depth}} folder-cell"><a href="{{folderURL .Name 1 ""}}">{{.Display}}</a></td>
-        <td class="num mono">{{.Total}}</td>
-        <td class="num mono">{{.Unread}}</td>
+        <td class="num nums">{{.Total}}</td>
+        <td class="num nums">{{.Unread}}</td>
         <td class="num"><div class="row-actions">
           {{if .Role}}<span class="muted small">Built-in</span>{{else}}
           <details class="menu">

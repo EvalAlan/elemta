@@ -32,7 +32,7 @@
   <section class="list" aria-label="Contacts">
     <div class="list-head">
       <h1>{{if .Query}}Results for “{{.Query}}”{{else if .Group}}{{.Group}}{{else}}Contacts{{end}}</h1>
-      <span class="mono muted">{{len .Shown}}</span>
+      <span class="nums muted">{{len .Shown}}</span>
     </div>
     {{if not .Shown}}<p class="empty">{{if .Query}}No contacts match.{{else}}No contacts yet. Add one, import a .vcf file, or just write to someone: people you email are remembered under “Emailed”.{{end}}</p>{{end}}
     <ol class="messages">

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/mailcategory"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
@@ -95,6 +96,10 @@ func TestIMAPStoreFoldersAndPaging(t *testing.T) {
 	}
 	if folders[0].Name != "INBOX" || folders[0].Role != RoleInbox || folders[0].Total != 7 || folders[0].Unread != 7 {
 		t.Fatalf("first folder = %+v, want INBOX with 7 unread", folders[0])
+	}
+	// Shown as people say it, though IMAP names it INBOX.
+	if folders[0].Display != "Inbox" {
+		t.Errorf("INBOX is shown as %q, want Inbox", folders[0].Display)
 	}
 	var sub *Folder
 	for i := range folders {
@@ -391,12 +396,46 @@ func TestIMAPStoreMarkAllRead(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		appendTo(t, st, "INBOX", testMessage(i, "m"))
 	}
-	if err := st.MarkAllRead(ctx, "INBOX"); err != nil {
+	if err := st.MarkAllRead(ctx, "INBOX", ""); err != nil {
 		t.Fatal(err)
 	}
 	p, _ := st.List(ctx, "INBOX", ListQuery{Unread: true, Page: 1, PageSize: 10})
 	if p.Total != 0 {
 		t.Fatalf("unread after mark all read = %d", p.Total)
+	}
+}
+
+// Marking one inbox tab read leaves the other tabs' unread mail alone.
+func TestIMAPStoreMarkTabRead(t *testing.T) {
+	cfg := startIMAP(t)
+	st := dialTest(t, cfg)
+	ctx := context.Background()
+	for i := 1; i <= 3; i++ {
+		appendTo(t, st, "INBOX", testMessage(i, "m"))
+	}
+	p, err := st.List(ctx, "INBOX", ListQuery{Page: 1, PageSize: 10})
+	if err != nil || len(p.Messages) != 3 {
+		t.Fatalf("list: %v %d", err, len(p.Messages))
+	}
+	promo := p.Messages[0].UID
+	if err := st.SetFlags(ctx, "INBOX", []uint32{promo}, []string{mailcategory.Promotions.Keyword()}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkAllRead(ctx, "INBOX", "promotions"); err != nil {
+		t.Fatal(err)
+	}
+	unread, err := st.CategoryUnread(ctx, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unread["promotions"] != 0 || unread["primary"] != 2 {
+		t.Fatalf("unread after marking Promotions read: %v", unread)
+	}
+	if err := st.MarkAllRead(ctx, "INBOX", "primary"); err != nil {
+		t.Fatal(err)
+	}
+	if unread, _ = st.CategoryUnread(ctx, "INBOX"); unread["primary"] != 0 {
+		t.Fatalf("unread after marking Primary read: %v", unread)
 	}
 }
 

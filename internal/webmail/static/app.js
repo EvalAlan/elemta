@@ -387,12 +387,122 @@
       }
       sync();
     });
+    // Ctrl (Cmd on a Mac) and Shift with a click choose messages the way a
+    // file list does: Ctrl+click adds or removes one without opening it, and
+    // Shift+click selects every message from the last one chosen to this
+    // one, on the row or on its initials. The last one chosen is the anchor,
+    // which Shift+click leaves where it is, so a range can be redrawn.
+    var anchor = null;
+    var wraps = function () { return $$(".messages .row-wrap", bulk); };
+    var boxIn = function (wrap) { return $('input[name="uid"]', wrap); };
+    var selectRange = function (to) {
+      var list = wraps(), b = list.indexOf(to), a = anchor ? list.indexOf(anchor) : -1;
+      if (a < 0) a = b;
+      for (var i = Math.min(a, b); i <= Math.max(a, b); i++) {
+        var box = boxIn(list[i]);
+        if (box) box.checked = true;
+      }
+      if (!anchor || a === b) anchor = to;
+      sync();
+    };
+    // On a touch screen, holding a row chooses it, as phone mail apps do,
+    // and while anything is chosen a tap chooses or lets go of a row rather
+    // than opening it. Moving the finger, which is a scroll or a swipe,
+    // cancels the hold.
+    var HOLD_MS = 450, hold = null, touched = false, held = false;
+    var endHold = function () {
+      if (hold) clearTimeout(hold.timer);
+      hold = null;
+    };
+    bulk.addEventListener("pointerdown", function (e) {
+      touched = e.pointerType === "touch";
+      held = false;
+      endHold();
+      var wrap = touched && e.target.closest(".messages .row-wrap");
+      if (!wrap || !boxIn(wrap)) return;
+      hold = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      hold.timer = setTimeout(function () {
+        hold = null;
+        var box = boxIn(wrap);
+        box.checked = !box.checked;
+        anchor = wrap;
+        held = true;
+        sync();
+      }, HOLD_MS);
+    });
+    bulk.addEventListener("pointermove", function (e) {
+      if (hold && e.pointerId === hold.id && Math.abs(e.clientX - hold.x) + Math.abs(e.clientY - hold.y) > 10) endHold();
+    });
+    bulk.addEventListener("pointerup", endHold);
+    bulk.addEventListener("pointercancel", endHold);
+    // A held finger brings up the message menu on some phones; the hold
+    // means choose there, and the menu stays a right-click.
+    bulk.addEventListener("contextmenu", function (e) {
+      if (touched && e.target.closest(".messages .row-wrap")) { e.preventDefault(); e.stopPropagation(); }
+    });
+    bulk.addEventListener("click", function (e) {
+      if (e.button !== 0 || e.altKey) return;
+      var wrap = e.target.closest(".messages .row-wrap");
+      if (!wrap || !(e.target.closest(".check") || e.target.closest("a.row"))) return;
+      if (held) {
+        // The finger lifting after a hold isn't a tap: the row is already
+        // chosen, and its box mustn't flip back.
+        held = false;
+        e.preventDefault();
+        return;
+      }
+      if (touched && bulk.classList.contains("has-selection") && e.target.closest("a.row") && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        var tapped = boxIn(wrap);
+        if (tapped) tapped.checked = !tapped.checked;
+        anchor = wrap;
+        sync();
+        return;
+      }
+      if (e.shiftKey) {
+        // Cancelling the click stops the row opening and the box toggling;
+        // a cancelled checkbox click puts its old state back once the
+        // handlers have run, so the range is drawn just after.
+        e.preventDefault();
+        setTimeout(function () { selectRange(wrap); }, 0);
+      } else if ((e.ctrlKey || e.metaKey) && e.target.closest("a.row")) {
+        e.preventDefault();
+        var box = boxIn(wrap);
+        if (box) box.checked = !box.checked;
+        anchor = wrap;
+        sync();
+      } else if (e.target.closest(".check")) {
+        anchor = wrap;
+      }
+    });
+    // A phone has no Escape key to drop a selection, so the bar has a button.
+    var clear = $("[data-clear-selection]", bulk);
+    if (clear) clear.addEventListener("click", function () {
+      boxes().forEach(function (b) { b.checked = false; });
+      if (all) all.checked = false;
+      anchor = null;
+      sync();
+    });
+    // Shift or Ctrl with a press on a row would otherwise select its text.
+    bulk.addEventListener("mousedown", function (e) {
+      if ((e.shiftKey || e.ctrlKey || e.metaKey) && e.target.closest(".messages .row-wrap")) e.preventDefault();
+    });
     // Moving from the dropdown shouldn't need a second click.
     var dest = $("#bulk-dest");
     if (dest) {
       dest.addEventListener("change", function () {
         if (!dest.value) return;
         var btn = $('button[value="move"]', bulk);
+        if (btn) btn.click();
+      });
+    }
+    // Nor should moving to another inbox tab; it starts on the tab shown.
+    var cat = $("#bulk-category");
+    if (cat) {
+      var shown = cat.value;
+      cat.addEventListener("change", function () {
+        if (cat.value === shown) return;
+        var btn = $('button[value="category"]', bulk);
         if (btn) btn.click();
       });
     }
@@ -985,7 +1095,7 @@
           }
         });
         listEl().replaceWith(doc.importNode(next, true));
-        var count = $(".list-head .mono", fresh), cur = $(".list-head .mono");
+        var count = $(".list-head .nums", fresh), cur = $(".list-head .nums");
         if (count && cur) cur.textContent = count.textContent;
         notifyNew(added);
       })
@@ -1075,9 +1185,14 @@
           var span = $(".count", a);
           if (!span || !(name in data.unread)) return;
           var n = data.unread[name];
-          var hidden = span.classList.contains("hidden-role");
-          span.textContent = n > 0 && !hidden ? String(n) : "";
-          span.classList.toggle("hidden", !(n > 0) || hidden);
+          span.textContent = n > 0 ? String(n) : "";
+          span.classList.toggle("hidden", !(n > 0));
+        });
+        // With inbox tabs on, the heading counts the inbox's unread mail
+        // across every tab, as the folder tree does.
+        $$("[data-unread-of]").forEach(function (span) {
+          var name = span.getAttribute("data-unread-of");
+          if (name in data.unread) span.textContent = data.unread[name] + " unread";
         });
         if (data.tabs) {
           $$("a.inbox-tab[data-category]").forEach(function (a) {
@@ -1085,7 +1200,7 @@
             var span = $(".tab-count", a);
             if (n > 0 && !span) {
               span = doc.createElement("span");
-              span.className = "tab-count mono";
+              span.className = "tab-count nums";
               a.appendChild(doc.createTextNode(" "));
               a.appendChild(span);
             }
@@ -1211,6 +1326,18 @@
         var r = rows()[cursor];
         var box = r ? $('input[name="uid"]', r.parentNode) : null;
         if (box) { box.checked = !box.checked; box.dispatchEvent(new Event("change", { bubbles: true })); }
+        break;
+      case "J": case "K":
+        // Shift+j/k: select the current message and the next or previous
+        // one too, extending the selection as the cursor moves.
+        if (open) return;
+        var pick = function () {
+          var row = rows()[cursor], b = row ? $('input[name="uid"]', row.parentNode) : null;
+          if (b && !b.checked) { b.checked = true; b.dispatchEvent(new Event("change", { bubbles: true })); }
+        };
+        if (cursor >= 0) pick();
+        moveCursor(k === "J" ? 1 : -1);
+        pick();
         break;
       case "u": case "r": case "a": case "f": case "s": case "e": case "#":
         if (!clickKey(k)) return;

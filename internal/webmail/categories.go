@@ -62,6 +62,32 @@ func (s *imapStore) CategoryUnread(ctx context.Context, folder string) (map[stri
 	return out, nil
 }
 
+// markCategoryRead marks one inbox tab's unread mail read. The tab is a
+// search, not a folder, so its messages are found first; marking 1:* would
+// read the other tabs too. The folder is already selected.
+func (s *imapStore) markCategoryRead(folder, category string) error {
+	cat, ok := mailcategory.Parse(category)
+	if !ok {
+		return fmt.Errorf("webmail: no inbox tab %q", category)
+	}
+	c := &imap.SearchCriteria{NotFlag: []imap.Flag{imap.FlagSeen, imap.FlagDeleted}}
+	categoryCriteria(c, cat)
+	data, err := s.c.UIDSearch(c, nil).Wait()
+	if err != nil {
+		return fmt.Errorf("webmail: search %s unread: %w", cat.Name(), err)
+	}
+	uids := data.AllUIDs()
+	if len(uids) == 0 {
+		return nil
+	}
+	var set imap.UIDSet
+	set.AddNum(uids...)
+	if err := s.c.Store(set, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Silent: true, Flags: []imap.Flag{imap.FlagSeen}}, nil).Close(); err != nil {
+		return fmt.Errorf("webmail: mark %q %s read: %w", folder, cat.Name(), err)
+	}
+	return nil
+}
+
 func (s *imapStore) Senders(ctx context.Context, folder string, uids []uint32) (map[uint32]string, error) {
 	out := map[uint32]string{}
 	if len(uids) == 0 {
@@ -253,6 +279,28 @@ func (s *Server) inboxTabs(ctx context.Context, st Mailstore, ls listState) []In
 		out = append(out, InboxTab{Name: c.Name(), Label: c.Label(), Unread: unread[c.Name()], Active: ls.Tab == c.Name(), URL: t.URL()})
 	}
 	return out
+}
+
+// InboxUnread is the inbox's unread count across every tab, for the list's
+// heading while tabs are on. The tab's own message count read as the
+// inbox's: an empty Primary showed "Inbox 0" over tabs full of unread mail,
+// while the folder tree counted them all.
+func (v view) InboxUnread() uint32 {
+	for _, f := range v.Folders {
+		if f.Name == v.Folder {
+			return f.Unread
+		}
+	}
+	return 0
+}
+
+// TabLabel is the open inbox tab's name as shown, for the list's menu.
+func (v view) TabLabel() string {
+	if v.List == nil {
+		return ""
+	}
+	c, _ := mailcategory.Parse(v.List.Tab)
+	return c.Label()
 }
 
 // CategoryOptions lists the tabs a message can be moved to.
