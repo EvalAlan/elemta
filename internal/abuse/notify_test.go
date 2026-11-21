@@ -81,4 +81,12 @@ func TestNoticesNeedAnAddress(t *testing.T) {
 	if called {
 		t.Fatal("sent with no address and no Valkey")
 	}
+	// Other parts of the server (backup alerts) are told nothing can go out.
+	if e.Notify(context.Background(), "s", "b") {
+		t.Error("Notify claimed to queue without Valkey or an address")
+	}
+	var none *Engine
+	if none.Notify(context.Background(), "s", "b") {
+		t.Error("Notify on a nil engine claimed to queue")
+	}
 }

@@ -67,6 +67,19 @@ func (e *Engine) notify(ctx context.Context, subject, body string) {
 	}
 }
 
+// Notify emails the alert addresses about something other than abuse, such
+// as backups that stopped. It shares the hourly budget and the delivery
+// path, so there is one list of people to tell and one place it can fail.
+// It reports false when nothing can be sent: without Valkey or without
+// alert addresses.
+func (e *Engine) Notify(ctx context.Context, subject, body string) bool {
+	if e == nil || e.valkey() == nil || len(e.Policy().AlertEmail) == 0 {
+		return false
+	}
+	e.notify(ctx, subject, body)
+	return true
+}
+
 // DeliverNotices sends queued notices until ctx ends. Every MTA runs it; each
 // notice is taken by one of them. A notice that can't be sent goes back, to
 // be tried again on the next round.
