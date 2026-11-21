@@ -924,6 +924,7 @@ func (s *Server) Start() error {
 	s.lifecycleState = serverStateRunning
 	close(s.ready)
 	go s.watchBackups(s.stopDone)
+	go s.watchDNS(s.stopDone)
 	s.lifecycleMu.Unlock()
 
 	return nil
