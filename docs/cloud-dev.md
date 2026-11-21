@@ -81,10 +81,34 @@ These steps were done once for Rocky Linux 10 on a 2 vCPU / 4 GB Linode.
     With the proxy, a client connecting over IPv6 reaches Elemta from the
     Docker gateway, a private address that `allowed_relays = ["private"]`
     trusts, which makes an open relay.
+- **IPv4 forwarding**, set permanently in
+  `/etc/sysctl.d/90-docker-forwarding.conf`:
+  `net.ipv4.ip_forward = 1`, then `sysctl --system`. Docker 28 turned it on
+  itself at start; Docker 29 doesn't with the nftables backend, and refuses to
+  start without it ("IPv4 forwarding is disabled"). Dev went down this way on
+  2026-11-21, after a `dnf update` moved Docker from 28 to 29 and rebooted.
 - **Docker port guard.** `/etc/nftables/docker-guard.nft`, loaded by
   `docker-guard.service`, drops internet traffic to any published container port
   other than 25, 80, 110, 143, 443, 587 and 993.
 - **Swap.** A 2 GB swapfile, because ClamAV alone wants about 1.5 GB.
+
+## After a Docker upgrade
+
+If the containers won't start and Docker's log says `network ... does not
+exist`, the upgrade kept the stack's networks listed but lost their bridges,
+and recreating the containers doesn't help. Remove the containers and
+networks and bring the stack back, keeping the volumes (no `-v`), with the
+images it already has:
+
+```
+cd /opt/elemta/deployments/compose
+C="docker compose --env-file .secrets/cloud.env -f docker-compose.yml -f docker-compose.cloud.yml"
+sudo $C down
+sudo $C up -d --no-build --wait
+```
+
+Add `-f docker-compose.release.yml` when `.secrets/cloud.env` sets
+`ELEMTA_TAG`.
 
 ## Deploying
 

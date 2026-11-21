@@ -140,6 +140,10 @@ conn_max_lifetime_seconds = 1800
 
 [logging]
 level = "info"
+# Lines go to stdout (docker logs) and to this file, which the admin console
+# reads for message traces and its Logs page. It is rotated at 25 MB, keeping
+# one older copy (elemta.log.1). "" writes to stdout only.
+# file = "/app/logs/elemta.log"
 
 [plugins]
 directory = "/app/plugins"

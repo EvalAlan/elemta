@@ -25,10 +25,10 @@ func captureLogs(t *testing.T, fn func()) string {
 
 func TestUnimplementedLoggingSettingsAreCalledOut(t *testing.T) {
 	out := captureLogs(t, func() {
-		warnAboutUnusedLoggingSettings("elastic", "http://elemta-elasticsearch:9200", "/var/log/elemta.log")
+		warnAboutUnusedLoggingSettings("elastic", "http://elemta-elasticsearch:9200")
 	})
 
-	for _, want := range []string{"type setting is not implemented", "output setting is not implemented", "file setting is not implemented"} {
+	for _, want := range []string{"type setting is not implemented", "output setting is not implemented"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no warning about %q:\n%s", want, out)
 		}
@@ -44,7 +44,7 @@ func TestUnimplementedLoggingSettingsAreCalledOut(t *testing.T) {
 func TestTheDefaultConfigurationIsSilent(t *testing.T) {
 	for _, logType := range []string{"", "console", "stdout", "  Console  "} {
 		out := captureLogs(t, func() {
-			warnAboutUnusedLoggingSettings(logType, "", "")
+			warnAboutUnusedLoggingSettings(logType, "")
 		})
 		if out != "" {
 			t.Errorf("type %q warned when it should not have:\n%s", logType, out)

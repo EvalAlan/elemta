@@ -1095,6 +1095,14 @@ func (s *Server) refuseBlocked(conn net.Conn) bool {
 // leaves the limit from the configuration file.
 func (s *Server) SetAbuse(e *abuse.Engine) {
 	s.abuse = e
+	// Certificate alerts go to the same addresses as abuse alerts.
+	if tm, ok := s.tlsManager.(*TLSManager); ok && tm.certMonitor != nil {
+		tm.certMonitor.SetNotifier(func(subject, body string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			e.Notify(ctx, subject, body)
+		})
+	}
 	if s.config != nil {
 		s.config.destinationGuard = func(ip net.IP) error {
 			if rule, denied := e.DenyDestination(ip); denied {
