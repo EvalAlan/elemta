@@ -1,6 +1,13 @@
 # Elemta Changelog
 
-## Unreleased
+## v0.10.0 (2026-11-21)
+
+The webmail's message list is rebuilt for phones and computers alike: inbox
+tabs with unread badges, sender initials that select a message, hold to
+select on a phone, Ctrl, Cmd and Shift selection on a computer, and unread
+counts on every folder. The mailbox database is archived continuously, so a
+restore can reach any moment of the last two weeks, and the restore drill now
+proves a backup carries its own keys.
 
 ### Upgrade notes
 
@@ -13,8 +20,43 @@
   once on that deploy to turn archiving on. Without off-site backups nothing
   changes. See "Continuous archiving" in docs/production-compose.md.
 
+### What's new
+
+- **A new message list on phones.** Inbox tabs sit in one row of icons and
+  words with unread badges and fit a 320-pixel screen. Each row starts with
+  the sender's initials; tapping them selects the message, and holding a row
+  starts selecting, after which taps add or remove messages. The bulk actions
+  fit one row of icons with Archive and Delete first, and a button clears the
+  selection.
+- **The same list on computers.** Initials work as checkboxes, with hover and
+  selection circles, and the bulk bar, message toolbar, folder icons and
+  compose toolbar match the phone. Ctrl or Cmd+click toggles a message,
+  Shift+click selects a range, and Shift+J and Shift+K extend the selection.
+- **Every folder shows its unread count.** Sent, Drafts, Junk, Quarantine and
+  Trash show theirs in grey, so mail waiting to be released is visible
+  without a badge shouting about it.
+- **Mark all read from the list.** The list header has a mark-read menu for
+  the open tab, the whole inbox or the folder; before, it lived only in the
+  right-click menu, which a phone never opens.
+- **The calendar opens in the view last picked** in that browser. The
+  "Calendar opens in" setting is the fallback.
+
 ### Fixes
 
+- With inbox tabs on, the inbox heading counted the open tab's messages, so
+  an empty Primary showed "Inbox 0" over tabs holding unread mail. It now
+  shows the inbox's unread count across every tab.
+- The services no longer print two startup warnings that pointed at nothing
+  wrong: the queue interval of 1 second the shipped configuration sets on
+  purpose, and the webmail's missing SMTP certificate, which only the SMTP
+  node reads.
+- A backup no longer logs "tar: stdout: write error" when checking its base
+  backup.
+- The IMAP server could, at shutdown, wait for its listeners before counting
+  the one being started (a data race the race detector caught).
+- Dependency updates: go-imap 2.0.0-beta.9, go-smtp 0.25.1, golang.org/x/sys,
+  sync and text, klauspost/compress, fxamacker/cbor, both SQLite drivers and
+  chromedp (tests only).
 - The restore drill checks the backup's own copy of the message body keys
   against its metadata (`elemta mailbox check-keys`); before, it read the
   bodies with the running server's keys, so a backup with missing or stale
