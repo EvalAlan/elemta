@@ -65,9 +65,9 @@ days_since() {
 # the fixed sentences below, never a command's output, so it needs no
 # escaping and can't carry a secret.
 status() {
-    printf '{"attempted":"%s","ok":%s,"stage":"%s","message":"%s","object":"%s","bytes":%s,"last_success":"%s","last_drill":"%s","drill_ok":%s}\n' \
+    printf '{"attempted":"%s","ok":%s,"stage":"%s","message":"%s","object":"%s","bytes":%s,"last_success":"%s","last_drill":"%s","drill_ok":%s,"wal":"%s"}\n' \
         "$(now)" "$1" "$stage" "$2" "$object" "$bytes" "$(remembered last-success)" "$(remembered last-drill)" \
-        "$([ "$(remembered last-drill-failed)" = yes ] && echo false || echo true)" |
+        "$([ "$(remembered last-drill-failed)" = yes ] && echo false || echo true)" "${wal_note:-}" |
         docker run --rm -i --network none --user 0 --entrypoint sh -v "${volumes}_elemta_config:/c" "$image" \
             -c 'cat >/c/backup-status.json.new && chmod 644 /c/backup-status.json.new && mv /c/backup-status.json.new /c/backup-status.json' ||
         echo "backup-offsite: couldn't write the status file" >&2

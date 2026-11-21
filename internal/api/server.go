@@ -923,6 +923,7 @@ func (s *Server) Start() error {
 	}(httpServer, listener)
 	s.lifecycleState = serverStateRunning
 	close(s.ready)
+	go s.watchBackups(s.stopDone)
 	s.lifecycleMu.Unlock()
 
 	return nil

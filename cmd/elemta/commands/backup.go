@@ -111,7 +111,8 @@ func init() {
 			return nil
 		},
 	})
-	cmd.AddCommand(&cobra.Command{
+	var walStatus string
+	walPush := &cobra.Command{
 		Use:   "wal-push <archive directory>",
 		Short: "Encrypt the mailbox database's archived WAL files to BACKUP_AGE_RECIPIENT, upload them and remove them here",
 		Args:  cobra.ExactArgs(1),
@@ -121,14 +122,23 @@ func init() {
 				return fmt.Errorf("set BACKUP_AGE_RECIPIENT to the age public key backups are encrypted to")
 			}
 			c, err := client()
-			if err != nil {
-				return err
+			n := 0
+			if err == nil {
+				n, err = c.PushWAL(cmd.Context(), args[0], recipient)
+				fmt.Fprintf(cmd.OutOrStdout(), "uploaded %d WAL files\n", n)
 			}
-			n, err := c.PushWAL(cmd.Context(), args[0], recipient)
-			fmt.Fprintf(cmd.OutOrStdout(), "uploaded %d WAL files\n", n)
+			// A run that couldn't even reach the bucket is recorded too:
+			// that is the failure most worth hearing about.
+			if walStatus != "" {
+				if serr := offsite.WriteWALStatus(walStatus, args[0], time.Now(), n, err); serr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "couldn't write %s: %v\n", walStatus, serr)
+				}
+			}
 			return err
 		},
-	})
+	}
+	walPush.Flags().StringVar(&walStatus, "status", "", "Record the result in this file, for the admin console's Health page and alerts")
+	cmd.AddCommand(walPush)
 
 	var walFrom string
 	walGet := &cobra.Command{
