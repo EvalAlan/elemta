@@ -62,6 +62,9 @@ func (s *Server) setMassMailerEnabled(enabled bool) error {
 	if s.suppressed != nil {
 		s.campaignRunner.SetSuppressionList(s.suppressed)
 	}
+	// Every copy offers one-click unsubscribe (RFC 8058), which Gmail and
+	// Yahoo require of bulk senders; using it adds the address to that list.
+	s.campaignRunner.SetUnsubscriber(s.unsubscriber())
 
 	// A development stack gets a worked example, so the Mass Mailer does not
 	// open on an empty list that explains nothing. Draft, local recipients,

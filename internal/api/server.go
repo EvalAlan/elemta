@@ -667,6 +667,9 @@ func (s *Server) Start() error {
 	// Public routes (must be registered before protected routes)
 	r.HandleFunc("/login", s.handleLoginPage).Methods("GET")
 	r.HandleFunc("/logo.png", s.handleLogo).Methods("GET")
+	// One-click unsubscribe from campaign mail: the recipient has no sign-in,
+	// and the signed token is the authority (unsubscribe.go).
+	r.HandleFunc("/unsubscribe/{token}", s.handleUnsubscribe).Methods("GET", "POST")
 
 	// Serve static files for the web interface (protected)
 	if s.authMiddleware != nil {

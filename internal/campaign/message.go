@@ -102,7 +102,10 @@ func EnvelopeSender(from string) (string, error) {
 // before it is written. A subject holding CR/LF, or a From that is really two
 // addresses, would otherwise let the campaign author write arbitrary headers
 // into every message — including a Bcc.
-func BuildMessage(c *Campaign, r Recipient, hostname string) ([]byte, error) {
+//
+// unsubscribeURL, when not empty, is the recipient's one-click unsubscribe
+// link (Unsubscriber.URL), offered in the headers RFC 8058 defines.
+func BuildMessage(c *Campaign, r Recipient, hostname, unsubscribeURL string) ([]byte, error) {
 	from, err := mail.ParseAddress(c.From)
 	if err != nil {
 		return nil, fmt.Errorf("from address: %w", err)
@@ -143,6 +146,13 @@ func BuildMessage(c *Campaign, r Recipient, hostname string) ([]byte, error) {
 	writeHeader("Precedence", "bulk")
 	writeHeader("Auto-Submitted", "auto-generated")
 	writeHeader("X-Campaign-ID", c.ID)
+	if unsubscribeURL != "" {
+		if strings.ContainsAny(unsubscribeURL, "\r\n<> ") {
+			return nil, fmt.Errorf("unsubscribe link %q can't go in a header", unsubscribeURL)
+		}
+		writeHeader("List-Unsubscribe", "<"+unsubscribeURL+">")
+		writeHeader("List-Unsubscribe-Post", "List-Unsubscribe=One-Click")
+	}
 
 	switch {
 	case htmlBody != "" && textBody != "":

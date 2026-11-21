@@ -921,7 +921,7 @@ async function refreshSuppression() {
         if (!data.suppressed || data.suppressed.length === 0) {
             listEl.innerHTML = query
                 ? `<div class="field-hint">No suppressed address matches ${escapeHtml(query)}.</div>`
-                : '<div class="field-hint">Nothing is suppressed. Addresses appear here when a message to them fails permanently.</div>';
+                : '<div class="field-hint">Nothing is suppressed. Addresses appear here when a message to them fails permanently, the recipient reports it as spam, or uses the unsubscribe link.</div>';
             return;
         }
 
