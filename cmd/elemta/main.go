@@ -6,6 +6,7 @@ import (
 
 	"github.com/EvalAlan/elemta/cmd/elemta/commands"
 	"github.com/EvalAlan/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/runtimepaths"
 )
 
 func main() {
@@ -30,7 +31,9 @@ func main() {
 	if scripted {
 		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	} else {
-		logging.InitializeLogging(logLevel)
+		// The default file; the server switches to [logging] file once the
+		// configuration is read.
+		logging.InitializeLogging(logLevel, runtimepaths.Detect().LogFile)
 	}
 
 	commands.Execute()

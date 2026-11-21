@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -14,6 +15,9 @@ type CertificateMonitor struct {
 	mutex        sync.RWMutex
 	logger       *slog.Logger
 	alerter      CertificateAlerter
+	// notify is read while mutex is held (alerts are raised under it), so it
+	// has no lock of its own to take.
+	notify atomic.Pointer[func(subject, body string)]
 }
 
 // CertificateStatus tracks the status of a certificate
@@ -118,15 +122,17 @@ func (cm *CertificateMonitor) determineCertificateStatus(cert *x509.Certificate,
 func (cm *CertificateMonitor) checkCertificateAlerts(status *CertificateStatus) {
 	now := time.Now()
 
-	// Expiration alerts with different thresholds
+	// Expiration alerts with different thresholds. There is no 90-day
+	// step: a Let's Encrypt certificate is under 90 days from the day it's
+	// issued, so it warned on every start. Renewal (Caddy) happens with 30
+	// days left, so under 21 means renewal has failed.
 	thresholds := []struct {
 		days     int
 		severity string
 	}{
 		{1, "critical"},
 		{7, "high"},
-		{30, "medium"},
-		{90, "low"},
+		{21, "medium"},
 	}
 
 	for _, threshold := range thresholds {
@@ -184,8 +190,19 @@ func (cm *CertificateMonitor) hasRecentAlert(status *CertificateStatus, alertTyp
 	return false
 }
 
+// SetNotifier emails medium and worse alerts through notify (the abuse
+// engine's alert addresses). Until now they were only logged, and nobody
+// reads the MTA's log in time for a certificate about to expire.
+func (cm *CertificateMonitor) SetNotifier(notify func(subject, body string)) {
+	cm.notify.Store(&notify)
+}
+
 // sendAlert sends a certificate alert
 func (cm *CertificateMonitor) sendAlert(alert CertificateAlert) {
+	if notify := cm.notify.Load(); notify != nil && *notify != nil && alert.Severity != "low" {
+		(*notify)("Certificate problem: "+alert.Message,
+			alert.Message+"\n\nOn a server set up with scripts/cloud-deploy.sh, Caddy renews the Let's Encrypt certificate 30 days before it expires and the elemta-cert-sync timer copies it to the mail services twice a day. See journalctl -u elemta-cert-sync and Caddy's log on the server.\n")
+	}
 	if cm.alerter != nil {
 		if err := cm.alerter.SendAlert(alert); err != nil {
 			cm.logger.Error("Failed to send certificate alert",

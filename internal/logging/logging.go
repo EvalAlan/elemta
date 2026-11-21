@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/EvalAlan/elemta/internal/runtimepaths"
 	"sync"
 	"unicode"
 )
@@ -385,9 +384,20 @@ func StringToLevel(levelStr string) (slog.Level, error) {
 	}
 }
 
-// InitializeLogging initializes global logging to write to both stdout and file
-// This should be called early in the application startup
-func InitializeLogging(levelStr string) {
+// logFile is the file InitializeLogging writes to, kept so a second call
+// (main sets up logging before the configuration is read, the server again
+// after) reuses it rather than opening the file twice.
+var (
+	logFileMu   sync.Mutex
+	logFile     *rotatingFile
+	logFilePath string
+)
+
+// InitializeLogging sends the global logger's JSON lines to stdout and, when
+// logPath isn't empty, to that file too, rotated at maxLogSize ([logging]
+// file; "" means stdout only). Call it early in startup; calling it again
+// changes the level and the file.
+func InitializeLogging(levelStr, logPath string) {
 	level, err := StringToLevel(levelStr)
 	if err != nil {
 		slog.Warn("invalid log level in config, defaulting to INFO",
@@ -395,38 +405,35 @@ func InitializeLogging(levelStr string) {
 		level = slog.LevelInfo
 	}
 
-	logPath := runtimepaths.Detect().LogFile
-
-	// Create logs directory if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(logPath), 0750); err != nil {
-		slog.Warn("failed to create logs directory", "error", err)
+	logFileMu.Lock()
+	defer logFileMu.Unlock()
+	var out io.Writer = os.Stdout
+	if logPath != "" {
+		if logFile == nil || logFilePath != logPath {
+			if err := os.MkdirAll(filepath.Dir(logPath), 0o750); err != nil {
+				slog.Warn("failed to create logs directory", "error", err)
+			}
+			f, err := openRotating(logPath, maxLogSize)
+			if err != nil {
+				slog.Warn("failed to open log file; logging to stdout only", "path", logPath, "error", err)
+				logPath = ""
+			} else {
+				if logFile != nil {
+					defer func(old *rotatingFile) { _ = old.Close() }(logFile)
+				}
+				logFile, logFilePath = f, logPath
+			}
+		}
+		if logPath != "" {
+			out = io.MultiWriter(os.Stdout, logFile)
+		}
+	}
+	if logPath == "" && logFile != nil {
+		defer func(old *rotatingFile) { _ = old.Close() }(logFile)
+		logFile, logFilePath = nil, ""
 	}
 
-	// Open log file
-	// #nosec G304 -- logPath comes from validated logging configuration
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	if err != nil {
-		slog.Warn("failed to open log file", "error", err)
-		// Fallback to default logging if file creation fails
-		globalLogLevelManager.SetLevel(level)
-		slog.Info("logging initialized (stdout only)",
-			"log_level", LevelToString(level))
-		return
-	}
-
-	// Create multi-writer to write to both stdout and file
-	multiWriter := io.MultiWriter(os.Stdout, logFile)
-
-	// Create a new handler that writes to both stdout and file
-	handler := slog.NewJSONHandler(multiWriter, &slog.HandlerOptions{
-		Level: level,
-	})
-
-	// Set the default logger
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: level})))
 	globalLogLevelManager.SetLevel(level)
-
-	slog.Info("logging initialized",
-		"log_level", LevelToString(level),
-		"log_file", logPath)
+	slog.Info("logging initialized", "log_level", LevelToString(level), "log_file", logPath)
 }
