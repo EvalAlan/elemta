@@ -203,6 +203,10 @@ services:
       - NODE_ID=web
       - ELEMTA_WEBMAIL_PUBLIC_URL=${ELEMTA_WEBMAIL_PUBLIC_URL:-http://localhost:8027}
       - VALKEY_ADDR=elemta-valkey:6379
+      # The DNS checks ask the stack's resolver directly. Through Docker's
+      # own DNS, the MTA's network alias (the mail domain, in the cloud
+      # overlay) hides that domain's real MX and SPF.
+      - ELEMTA_DNS_CHECK_RESOLVER=${ELEMTA_DEV_DNS_IP:-10.253.53.53}
     # Security configuration for the container
     security_opt:
       - no-new-privileges:true

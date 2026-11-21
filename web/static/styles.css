@@ -3194,6 +3194,8 @@ input:checked + .plugin-slider:before {
 .cert-status.warning { color: var(--accent-warning); }
 .cert-status.critical,
 .cert-status.expired { color: var(--accent-danger); }
+.dns-health-problems { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+.dns-health-problems li { margin-bottom: 0.4rem; }
 
 .cert-path {
     font-family: 'SF Mono', Monaco, monospace;

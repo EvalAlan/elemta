@@ -186,6 +186,12 @@ func (s *Server) dkimChange(ctx context.Context, w http.ResponseWriter, r *http.
 }
 
 func (s *Server) domainSettingsRoutes(protected *mux.Router) {
+	// What the scheduled DNS check last found, for the Health page. Limited
+	// to the domains the viewer manages, like the Domains list.
+	protected.HandleFunc("/dns-health/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		s.handleDNSHealthStatus(w, r)
+	}).Methods("GET")
 	protected.HandleFunc("/domains/{domain}/settings", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		domain, err := s.configuredDomain(ctx, r)
 		if err != nil {
@@ -349,7 +355,7 @@ func (s *Server) domainSettingsRoutes(protected *mux.Router) {
 const dnsHealthTimeout = 12 * time.Second
 
 func (s *Server) runDNSHealth(ctx context.Context, view domainSettingsView) dnshealth.Report {
-	o := dnshealth.Options{Domain: view.Domain, Resolver: net.DefaultResolver, Signing: dnshealth.SigningNo}
+	o := dnshealth.Options{Domain: view.Domain, Resolver: dnsCheckResolver(), Signing: dnshealth.SigningNo}
 	if s.mainConfig != nil {
 		o.Hostname = s.mainConfig.Hostname
 	}
