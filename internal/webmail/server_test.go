@@ -291,6 +291,47 @@ func (f *fakeStore) Categorize(_ context.Context, folder string, _ int, override
 	}
 	return n, nil
 }
+
+// BulkMessages reads the headers of the folder's messages that have raw
+// source, as the IMAP store reads the fetched header fields.
+func (f *fakeStore) BulkMessages(_ context.Context, folder string, limit int) ([]BulkMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []BulkMessage
+	for _, m := range f.messages[folder] {
+		raw, ok := f.raw[m.UID]
+		if !ok {
+			continue
+		}
+		head, _, _ := strings.Cut(string(raw), "\r\n\r\n")
+		if !strings.Contains(head, "\nList-Unsubscribe:") && !strings.Contains(head, "\nList-Id:") {
+			continue
+		}
+		b, ok := bulkMessage([]byte(head + "\r\n"))
+		if !ok {
+			continue
+		}
+		b.UID, b.Seen = m.UID, m.Seen
+		out = append(out, b)
+	}
+	if len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out, nil
+}
+
+func (f *fakeStore) UIDsFrom(_ context.Context, folder, sender string) ([]uint32, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []uint32
+	for _, m := range f.messages[folder] {
+		if len(m.From) > 0 && strings.EqualFold(m.From[0].Email, sender) {
+			out = append(out, m.UID)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) Close() error { return nil }
 
 type fakeSubmitter struct {

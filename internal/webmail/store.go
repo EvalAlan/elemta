@@ -270,6 +270,12 @@ type Mailstore interface {
 	// folder that have no category yet, and returns how many it put in a
 	// tab other than Primary.
 	Categorize(ctx context.Context, folder string, limit int, overrides mailcategory.Overrides) (int, error)
+	// BulkMessages returns up to limit of the newest messages in folder
+	// that carry mailing-list headers (subscriptions.go).
+	BulkMessages(ctx context.Context, folder string, limit int) ([]BulkMessage, error)
+	// UIDsFrom returns the messages in folder whose sender is exactly
+	// sender.
+	UIDsFrom(ctx context.Context, folder, sender string) ([]uint32, error)
 
 	ObjectStore
 	Close() error

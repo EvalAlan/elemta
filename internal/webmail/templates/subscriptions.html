@@ -1,0 +1,65 @@
+{{define "search"}}<div class="search-spacer"></div>{{end}}
+{{define "sidebar"}}{{template "settings-sidebar" .}}{{end}}
+{{define "content"}}
+<section class="page settings">
+  <header class="page-head">
+    <h1>Subscriptions</h1>
+    <p class="muted">Newsletters and mailing lists in your inbox and archive, busiest first.</p>
+  </header>
+  {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
+  {{with .Subscriptions}}
+  <div class="card">
+    <div class="rule-head">
+      <h2 class="card-title">{{len .Rows}} sender{{if ne (len .Rows) 1}}s{{end}}</h2>
+      <a class="button small-button push" href="/settings/subscriptions?refresh=1" title="Checked {{shortDate $.Loc $.Clock24 .Checked}}">{{template "icon-refresh"}}Refresh</a>
+    </div>
+    {{if not .Rows}}<p class="muted">No newsletters or mailing lists found.</p>{{end}}
+    <ul class="subs-list">
+    {{range .Rows}}
+      <li class="subs-row" data-sub>
+        <div class="subs-who">
+          <span class="strong">{{.Sender}}</span>
+          <span class="nums muted small">{{.Address}}</span>
+          <span class="muted small nums">{{.Count}} message{{if ne .Count 1}}s{{end}}{{if .Unread}}, {{.Unread}} unread{{end}} · last {{shortDate $.Loc $.Clock24 .Last}}</span>
+          {{if not .Done.IsZero}}<span class="chip pass small">Unsubscribed {{shortDate $.Loc $.Clock24 .Done}}</span>{{end}}
+        </div>
+        <div class="row-actions">
+          {{if and .Done.IsZero .Method (not $.Session.AdminActor)}}
+          {{if eq .Method "link"}}
+          <a class="button small-button" href="{{.URL}}" target="_blank" rel="noopener noreferrer" data-unsub-mark="{{.Action}}">Unsubscribe</a>
+          {{else}}
+          <form action="{{.Action}}" method="post" class="inline">
+            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="back" value="/settings/subscriptions">
+            <button class="button small-button" type="submit"{{if eq .Method "mail"}} data-confirm="Send an unsubscribe email to {{.MailTo}} from your address?"{{end}}>Unsubscribe</button>
+          </form>
+          {{end}}
+          {{end}}
+          {{if not $.Session.AdminActor}}
+          <details class="menu">
+            <summary class="button small-button">{{template "icon-more"}}<span>Their mail</span></summary>
+            <div class="menu-body">
+              <form action="/settings/subscriptions" method="post">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="sender" value="{{.Address}}">
+                <button class="menu-item" name="op" value="archive">{{template "icon-archive"}}Archive all in the inbox</button>
+                <button class="menu-item" name="op" value="delete" data-confirm="Move all of {{.Sender}}'s mail in the inbox to Trash?">{{template "icon-trash"}}Delete all in the inbox</button>
+              </form>
+              <form action="/settings/subscriptions" method="post">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="sender" value="{{.Address}}"><input type="hidden" name="op" value="tab">
+                <p class="small muted">Always put their mail in</p>
+                {{range $.Subscriptions.Tabs}}<button class="menu-item" name="category" value="{{.Name}}">{{.Label}}</button>{{end}}
+              </form>
+              <form action="/mail/block-sender" method="post">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="sender" value="{{.Address}}"><input type="hidden" name="back" value="/settings/subscriptions">
+                <button class="menu-item danger" type="submit">Block sender</button>
+              </form>
+            </div>
+          </details>
+          {{end}}
+        </div>
+      </li>
+    {{end}}
+    </ul>
+  </div>
+  {{end}}
+</section>
+{{end}}
