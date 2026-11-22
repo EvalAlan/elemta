@@ -536,6 +536,9 @@ imap_addr = "elemta-mailbox:1143"
 imap_tls = "none"
 submission_addr = "elemta:2588"
 submission_tls = "starttls"
+# The name the MTA's certificate is checked against, when it isn't
+# submission_addr's host. Empty: that host.
+submission_tls_server_name = ""
 # Filters and out-of-office replies are stored by the mailbox service's
 # ManageSieve (RFC 5804) and run at delivery. Plaintext on the isolated dev
 # network only.

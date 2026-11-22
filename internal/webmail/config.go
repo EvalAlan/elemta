@@ -57,6 +57,13 @@ type Config struct {
 	SubmissionAddr string `toml:"submission_addr"`
 	// SubmissionTLS is "starttls" (default), "tls" or "none".
 	SubmissionTLS string `toml:"submission_tls"`
+	// SubmissionTLSServerName is the name the submission certificate is
+	// checked against, when that isn't submission_addr's host. A stack
+	// reaches the MTA by its service name but the MTA presents the public
+	// certificate; without this the only way to verify it was to give the
+	// MTA the public name as a network alias, which then shadowed that
+	// name's real DNS for every container on the network.
+	SubmissionTLSServerName string `toml:"submission_tls_server_name"`
 
 	// InsecureSkipVerify disables certificate verification on the IMAP and
 	// submission connections. It exists for the dev stack's self-signed

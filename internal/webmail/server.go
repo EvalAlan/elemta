@@ -78,7 +78,7 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		dial = IMAPDialer(cfg)
 	}
 	if submit == nil {
-		submit = SMTPSubmitter{Addr: cfg.SubmissionAddr, TLSMode: cfg.SubmissionTLS, InsecureSkipVerify: cfg.InsecureSkipVerify}
+		submit = SMTPSubmitter{Addr: cfg.SubmissionAddr, TLSMode: cfg.SubmissionTLS, InsecureSkipVerify: cfg.InsecureSkipVerify, ServerName: cfg.SubmissionTLSServerName}
 	}
 	if log == nil {
 		log = slog.Default()

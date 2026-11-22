@@ -46,11 +46,6 @@ services:
       - ./.secrets/cloud/config:/app/config:ro
       - ./.secrets/mailbox-tls:/app/tls:ro
       - ./.secrets/cloud/dkim:/app/dkim:ro
-    networks:
-      elemta_network:
-        # The webmail submits through this name, so its STARTTLS can verify
-        # the public certificate instead of skipping verification.
-        aliases: ["${MAIL_DOMAIN:?MAIL_DOMAIN must be set}"]
 
   elemta-admin:
     ports: !override []
@@ -79,6 +74,15 @@ services:
   elemta-webmail:
     ports: !override
       - "127.0.0.1:8027:8027"
+    environment:
+      # Submits to the MTA by its service name and checks the certificate
+      # against the public name it carries. Set here rather than only in the
+      # configuration, which is kept across deploys. This used to be a
+      # network alias giving the MTA the public name, but that answered for
+      # the name across the whole network: no MX, and the MTA's private
+      # address, for every container's DNS and SPF checks.
+      - ELEMTA_WEBMAIL_SUBMISSION_ADDR=elemta:2588
+      - ELEMTA_WEBMAIL_SUBMISSION_TLS_SERVER_NAME=${MAIL_DOMAIN:?MAIL_DOMAIN must be set}
     volumes:
       - ./.secrets/cloud/config:/app/config:ro
 

@@ -176,7 +176,7 @@ render "$root/config/elemta.toml" "$secrets/cloud/config/elemta.toml" \
     '/^\[tls\]/,/^\[/{s|^key_file = .*|&\nsni_cert_dir = "/app/tls/sni"|}' \
     "s|^lmtp_tls_ca_file = .*|lmtp_tls_ca_file = \"\"|" \
     "s|^lmtp_tls_server_name = .*|lmtp_tls_server_name = \"$d\"|" \
-    "s|^submission_addr = .*|submission_addr = \"$d:2588\"|" \
+    "s|^submission_tls_server_name = .*|submission_tls_server_name = \"$d\"|" \
     "s|^insecure_skip_verify = true|insecure_skip_verify = false|" \
     "s|^secure_cookies = false|secure_cookies = true|" \
     "s|^recovery_url = .*|recovery_url = \"https://$d\"|" \

@@ -41,6 +41,15 @@ func runWebmail(cmd *cobra.Command, args []string) error {
 	if webmailListen != "" {
 		wc.Listen = webmailListen
 	}
+	// A deployment can set these from its environment: the saved
+	// configuration is kept across deploys, so a change to how the stack
+	// reaches the MTA would otherwise never get to a running system.
+	if v := os.Getenv("ELEMTA_WEBMAIL_SUBMISSION_ADDR"); v != "" {
+		wc.SubmissionAddr = v
+	}
+	if v := os.Getenv("ELEMTA_WEBMAIL_SUBMISSION_TLS_SERVER_NAME"); v != "" {
+		wc.SubmissionTLSServerName = v
+	}
 	wc = wc.WithDefaults()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
