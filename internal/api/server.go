@@ -221,6 +221,9 @@ type Server struct {
 	mailAuthLookupTXT func(context.Context, string) ([]string, error)
 	// dnsHealth is replaceable for the same reason.
 	dnsHealth func(context.Context, dnshealth.Options) dnshealth.Report
+	// dmarcLookup and hostLookup stand in for DNS in tests of the DMARC page.
+	dmarcLookup func(context.Context, string) (dnshealth.DMARCPolicy, error)
+	hostLookup  func(context.Context, string) ([]net.IPAddr, error)
 
 	// Mass mailer. Guarded because the plugin toggle builds and tears these
 	// down while requests are in flight, unlike the rest of the server's

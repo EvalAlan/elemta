@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261122-attention">
+    <link rel="stylesheet" href="/static/styles.css?v=20261122-dmarc">
     <link rel="stylesheet" href="/static/mail-admin.css?v=20261122-support">
 </head>
 
@@ -86,6 +86,10 @@
                 <a href="#" class="nav-item" data-view="mail-admin" id="nav-mailadmin" hidden>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg>
                     <span>Mail Administration</span>
+                </a>
+                <a href="#" class="nav-item" data-view="dmarc" id="nav-dmarc" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 20v-7"/><path d="M12 20V4"/><path d="M19 20v-11"/><path d="M2 20h20"/></svg>
+                    <span>DMARC</span>
                 </a>
                 <a href="#" class="nav-item" data-view="health">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -348,6 +352,68 @@
                                 </svg>
                                 Retry All Queues
                             </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- DMARC View -->
+            <section class="view" id="view-dmarc">
+                <div class="dmarc-range" role="group" aria-label="Period">
+                    <button type="button" class="btn btn-secondary btn-sm" data-dmarc-days="7" aria-pressed="false">7 days</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-dmarc-days="30" aria-pressed="true">30 days</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-dmarc-days="90" aria-pressed="false">90 days</button>
+                </div>
+                <p class="dmarc-notice" id="dmarc-notice" role="status" hidden></p>
+                <div class="card">
+                    <div class="card-header"><h3>Domains</h3><span class="field-hint">Who sent mail as your domains, from other servers' verified reports</span></div>
+                    <div class="dmarc-scroll"><table class="messages-table"><thead><tr><th>Domain</th><th>Policy</th><th>Messages</th><th>Passing</th><th>Reporters</th><th>Last report</th></tr></thead><tbody id="dmarc-domains"><tr><td colspan="6">Loading…</td></tr></tbody></table></div>
+                </div>
+                <div id="dmarc-detail" hidden>
+                    <h2 class="dmarc-heading" id="dmarc-title"></h2>
+                    <div class="dmarc-tiles">
+                        <div class="dmarc-tile"><small>Policy</small><span id="dmarc-policy"></span><small id="dmarc-policy-from"></small></div>
+                        <div class="dmarc-tile"><small>Messages</small><span id="dmarc-volume"></span></div>
+                        <div class="dmarc-tile"><small>Passing</small><span id="dmarc-aligned"></span></div>
+                        <div class="dmarc-tile"><small>Reporters</small><span id="dmarc-reporter-count"></span></div>
+                        <div class="dmarc-tile"><small>Last report</small><span id="dmarc-last"></span></div>
+                    </div>
+                    <ul class="dmarc-advice" id="dmarc-advice"></ul>
+                    <div class="card">
+                        <div class="card-header"><h3>Mail per day</h3><span class="field-hint">UTC, by each report's first day</span></div>
+                        <div class="card-body">
+                            <div class="dmarc-legend"><span><i class="dmarc-key dmarc-pass"></i>Passing DMARC</span><span><i class="dmarc-key dmarc-fail"></i>Failing DMARC</span></div>
+                            <div class="dmarc-chart" id="dmarc-chart"></div>
+                            <details><summary>Show as a table</summary><div class="dmarc-scroll"><table class="messages-table"><thead><tr><th>Day</th><th>Passing</th><th>Failing</th></tr></thead><tbody id="dmarc-daily"></tbody></table></div></details>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3>Sources</h3></div>
+                        <div class="dmarc-scroll"><table class="messages-table"><thead><tr><th>Address</th><th>What it looks like</th><th>Messages</th><th>SPF</th><th>DKIM</th><th>From domain</th><th>Action taken</th></tr></thead><tbody id="dmarc-sources"></tbody></table></div>
+                        <div class="card-body">
+                            <button type="button" class="btn btn-secondary btn-sm" id="dmarc-more" hidden></button>
+                            <p class="field-hint" id="dmarc-attribution" hidden>Places by <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">DB-IP</a>, looked up on this server.</p>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3>Reporters</h3></div>
+                        <div class="dmarc-scroll"><table class="messages-table"><thead><tr><th>Sender</th><th>Reports</th><th>Messages</th></tr></thead><tbody id="dmarc-reporters"></tbody></table></div>
+                        <div class="card-body">
+                            <p class="field-hint">Verified means the sender's domain is genuine, not that its numbers are. Be wary of a reporter you don't recognise.</p>
+                            <details id="dmarc-unverified-section" hidden><summary id="dmarc-unverified-summary"></summary><div class="dmarc-scroll"><table class="messages-table"><thead><tr><th>Claimed sender</th><th>Reports</th><th>Messages</th></tr></thead><tbody id="dmarc-unverified"></tbody></table></div></details>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3>Report address</h3></div>
+                        <div class="card-body">
+                            <p id="dmarc-setup-status"></p>
+                            <form class="dmarc-setup" id="dmarc-setup-form" hidden>
+                                <input id="dmarc-address" aria-label="Address the reports are sent to" type="email" placeholder="dmarc@example.com" autocomplete="off" required>
+                                <button type="submit" class="btn btn-primary" id="dmarc-save">Save address</button>
+                                <button type="button" class="btn btn-secondary" id="dmarc-remove" hidden>Stop reading</button>
+                            </form>
+                            <button type="button" class="btn btn-secondary" id="dmarc-backfill" hidden>Read earlier reports…</button>
+                            <p class="field-hint" id="dmarc-backfill-state" role="status"></p>
                         </div>
                     </div>
                 </div>
@@ -2002,11 +2068,12 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261122-attention"></script>
+    <script src="/static/app.js?v=20261122-dmarc"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261103-2fa"></script>
     <script src="/static/mail-admin.js?v=20261122-support"></script>
     <script src="/static/abuse.js?v=20261102-alertblock"></script>
+    <script src="/static/dmarc.js?v=20261122-dmarc"></script>
     <script src="/static/compliance.js?v=20261103-compliance"></script>
     <script src="/static/security.js?v=20261103-2fa"></script>
 </body>

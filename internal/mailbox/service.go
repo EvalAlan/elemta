@@ -56,6 +56,8 @@ type Service struct {
 	dirMail    directoryMail
 	// push sends notifications to browsers (push.go); nil when off.
 	push *pusher
+	// dmarc reads the reports mailed to registered addresses (dmarc.go).
+	dmarc *dmarcIngest
 	// folders wakes idle IMAP sessions when their folder changes (notify.go).
 	folders *folderHub
 	// cells says where mailboxes are placed, when this is one cell of
@@ -129,6 +131,7 @@ func newService(c Config, e *Engine, auth Authenticator, log *slog.Logger) (*Ser
 		s.push = newPusher(ctx, e, log)
 	}
 	s.folders = newFolderHub(log)
+	s.dmarc = newDMARCIngest(e, log)
 	if c.Cell.Name != "" {
 		if dir, ok := s.Placement(); ok {
 			s.cells = dir
@@ -323,6 +326,8 @@ func (s *Service) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() { defer wg.Done(); s.runScheduled(s.ctx) }()
 	wg.Add(1)
+	go func() { defer wg.Done(); s.dmarc.run(s.ctx) }()
+	wg.Add(1)
 	go func() { defer wg.Done(); s.folders.run(s.ctx, s.metadataDSN()) }()
 	wg.Add(1)
 	go func() {
@@ -352,6 +357,9 @@ func (s *Service) Run(ctx context.Context) error {
 						s.log.Warn("mailbox retention failed", "error", err)
 					} else if rep.Deleted > 0 {
 						s.log.Info("mailbox retention", "accounts", rep.Accounts, "deleted", rep.Deleted)
+					}
+					if err := s.engine.deleteOldDMARC(ctx, time.Now()); err != nil && ctx.Err() == nil {
+						s.log.Warn("DMARC report cleanup failed", "error", err)
 					}
 				}
 				// Every replica runs this; summaries are idempotent, so overlap
@@ -588,6 +596,10 @@ func (l *lmtpSession) LMTPData(r io.Reader, status smtp.StatusCollector) error {
 	if err != nil {
 		// A broken read is the connection's fault, not the message's.
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "Message not received completely; try again"}
+	}
+	// By the address it was sent to, before lists, forwarding and filters.
+	for _, address := range l.addresses {
+		l.service.dmarc.observe(address, raw)
 	}
 	largestAttachment := int64(-1) // measured once, if a recipient limits it
 	for i, a := range l.recipients {

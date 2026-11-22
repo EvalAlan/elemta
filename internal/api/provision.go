@@ -315,6 +315,7 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		return nil
 	})).Methods("POST", "DELETE")
 	s.domainSettingsRoutes(protected)
+	s.dmarcRoutes(protected)
 	protected.HandleFunc("/domains", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		sc := scopeOf(r)
 		if r.Method == "GET" {

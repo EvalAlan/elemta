@@ -161,6 +161,7 @@ function switchView(viewName) {
         health: 'Health',
         certificates: 'Certificates',
         abuse: 'Abuse',
+        dmarc: 'DMARC',
         compliance: 'Compliance',
         queues: 'Mail Queues',
         reports: 'Reports',
@@ -202,6 +203,9 @@ function switchView(viewName) {
             break;
         case 'abuse':
             refreshAbuse();
+            break;
+        case 'dmarc':
+            if (typeof openDMARC === 'function') openDMARC();
             break;
         case 'compliance':
             if (typeof openCompliance === 'function') openCompliance();
@@ -1787,6 +1791,8 @@ function updateUserUI() {
     const mailAdminNav = document.getElementById('nav-mailadmin');
     const mailAdmin = perms.includes('system:admin') || perms.includes('mail:domain-admin');
     if (mailAdminNav) mailAdminNav.hidden = !authState.isLoggedIn || !mailAdmin;
+    const dmarcNav = document.getElementById('nav-dmarc');
+    if (dmarcNav) dmarcNav.hidden = !authState.isLoggedIn || !mailAdmin;
     const complianceNav = document.getElementById('nav-compliance');
     if (complianceNav) complianceNav.hidden = !authState.isLoggedIn || !perms.includes('mail:compliance');
     // A domain administrator or compliance officer can't read the server's
@@ -1796,7 +1802,7 @@ function updateUserUI() {
     if (confined !== !!authState.confined) {
         authState.confined = confined;
         document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-            if (!['mail-admin', 'compliance', 'settings'].includes(item.dataset.view)) item.style.display = confined ? 'none' : '';
+            if (!['mail-admin', 'dmarc', 'compliance', 'settings'].includes(item.dataset.view)) item.style.display = confined ? 'none' : '';
         });
         document.querySelectorAll('.settings-tab[data-tab]').forEach(item => {
             if (!['ui', 'users'].includes(item.dataset.tab)) item.style.display = confined ? 'none' : '';
