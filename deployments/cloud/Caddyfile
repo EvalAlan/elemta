@@ -48,6 +48,19 @@
 			XML 200
 	}
 
+	# One-click unsubscribe links in Mass Mailer campaigns. The admin console
+	# answers them, and this path alone of it is public: the signed link is
+	# its authority, and mail providers POST to it for their users (RFC 8058).
+	handle /unsubscribe/* {
+		reverse_proxy {
+			dynamic a elemta-admin 8025 {
+				refresh 5s
+			}
+			lb_retries 2
+			fail_duration 30s
+		}
+	}
+
 	# Every webmail container the name resolves to, so the webmail can run
 	# as several (deployments/compose/docker-compose.scale.yml). A browser
 	# stays with one by cookie: sessions are shared in Valkey, but each

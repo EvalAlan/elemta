@@ -605,6 +605,10 @@ func (s *Server) filtersSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		}
 		set.Vacation = v
 		notice = "vacation-saved"
+	case "vacation-off":
+		// From the banner: stop replying, keep the message for next time.
+		set.Vacation.Enabled = false
+		notice = "vacation-off"
 	case "save":
 		rule := FilterRule{Name: strings.TrimSpace(r.PostFormValue("name")), Enabled: r.PostFormValue("enabled") == "1", MatchAll: r.PostFormValue("match") != "any"}
 		fields, ops, vals := r.PostForm["cond_field"], r.PostForm["cond_op"], r.PostForm["cond_value"]
@@ -687,7 +691,17 @@ func (s *Server) filtersSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 		s.fail(w, r, sess, fmt.Errorf("webmail: save filters: %w", err))
 		return
 	}
-	http.Redirect(w, r, "/filters?"+url.Values{"n": {notice}}.Encode(), http.StatusSeeOther)
+	if s.awayApplies(sess) {
+		s.setAway(sess, set.Vacation)
+	}
+	switch notice {
+	case "vacation-saved":
+		http.Redirect(w, r, "/settings/out-of-office?"+url.Values{"n": {notice}}.Encode(), http.StatusSeeOther)
+	case "vacation-off":
+		redirectLocal(w, r, setParam(localBack(r.PostFormValue("back"), "/mail"), "n", notice))
+	default:
+		http.Redirect(w, r, "/filters?"+url.Values{"n": {notice}}.Encode(), http.StatusSeeOther)
+	}
 }
 
 // newRedirectTarget reports whether rule redirects to an address that none of

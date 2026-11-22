@@ -521,6 +521,28 @@ func TestRouterHTTP(t *testing.T) {
 	if status != http.StatusOK || json.Unmarshal([]byte(body), &domains) != nil || len(domains) != 1 || domains[0]["domain"] != "b.example" {
 		t.Fatalf("domains from every cell: %d %s", status, body)
 	}
+	// Storage is listed from both.
+	status, body = do(http.MethodGet, "/v1/admin/usage", "", nil)
+	if status != http.StatusOK || !strings.Contains(body, rig.cellA.account.Address) || !strings.Contains(body, rig.cellB.account.Address) {
+		t.Fatalf("usage from every cell: %d %s", status, body)
+	}
+	// A report address is kept by every cell, since any may take delivery.
+	if status, body := do(http.MethodPut, "/v1/admin/dmarc/addresses/b.example", `{"address":"bob@b.example"}`, nil); status != http.StatusOK {
+		t.Fatalf("report address: %d %s", status, body)
+	}
+	for _, c := range []*testCell{rig.cellA, rig.cellB} {
+		if list, err := c.engine.DMARCAddresses(context.Background()); err != nil || len(list) != 1 {
+			t.Errorf("cell %s lacks the report address: %v %v", c.name, list, err)
+		}
+	}
+	for _, path := range []string{"addresses", "summary?days=7", "sources?days=7"} {
+		if status, body := do(http.MethodGet, "/v1/admin/dmarc/"+path, "", nil); status != http.StatusOK {
+			t.Errorf("dmarc %s from every cell: %d %s", path, status, body)
+		}
+	}
+	if status, body := do(http.MethodDelete, "/v1/admin/dmarc/addresses/b.example", "", nil); status != http.StatusOK {
+		t.Errorf("remove report address: %d %s", status, body)
+	}
 	if ds, _ := rig.cellA.engine.Domains(context.Background()); len(ds) != 0 {
 		t.Error("cell a got b.example's policy")
 	}

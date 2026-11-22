@@ -3,10 +3,12 @@ package commands
 import (
 	"context"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/logship"
 	"log"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -21,20 +23,12 @@ import (
 // convertToAPIMainConfig converts config.Config to api.MainConfig
 func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 	// Use Server struct fields for primary config, fallback to top-level fields
-	hostname := cfg.Server.Hostname
-	if hostname == "" {
-		hostname = cfg.Hostname // fallback
-	}
-
-	listenAddr := cfg.Server.Listen
-	if listenAddr == "" {
-		listenAddr = cfg.ListenAddr // fallback
-	}
-
-	maxSize := cfg.Server.MaxSize
-	if maxSize == 0 {
-		maxSize = cfg.MaxSize // fallback
-	}
+	// Resolved as the SMTP server resolves them: the flat key wins over
+	// [server]. Read the other way round, the console showed one value while
+	// the server used the other.
+	hostname := cfg.EffectiveHostname()
+	listenAddr := cfg.EffectiveListenAddr()
+	maxSize := cfg.EffectiveMaxSize()
 
 	// The list SMTP accepts mail for, so the console reports on the same one.
 	localDomains := cfg.EffectiveLocalDomains()
@@ -337,6 +331,8 @@ func runWeb(cmd *cobra.Command, args []string) {
 		},
 	}
 
+	defer collectLogs("admin")()
+
 	// Create and start API server.
 	//
 	// These failures are fatal and the container restart policy will bring the
@@ -383,6 +379,15 @@ func runWeb(cmd *cobra.Command, args []string) {
 	abuseEngine.Own(abusePolicy)
 	go abuseEngine.Run(context.Background())
 	server.SetAbuse(abuseEngine)
+	var logShippingDir string
+	if resolvedConfigPath != "" {
+		logShippingDir = filepath.Dir(resolvedConfigPath)
+	}
+	destinations, unusable := logship.ParseDestinations(os.Getenv(logship.DestinationsEnv))
+	if unusable > 0 {
+		slog.Warn("Some log shipping destinations aren't usable URLs and are ignored", "variable", logship.DestinationsEnv, "count", unusable)
+	}
+	server.SetLogShipper(logship.NewShipper(logShippingDir, os.Getenv("VALKEY_ADDR"), destinations, nil))
 	if (cfg.Abuse != nil && len(cfg.Abuse.Allowlist) > 0) || accessControlMoved {
 		// Saved once, so the file says what the services do. Failing only
 		// means doing it again next start: the rules are already in force.

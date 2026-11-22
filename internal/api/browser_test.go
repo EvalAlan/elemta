@@ -10,11 +10,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,12 +26,15 @@ import (
 
 	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/dnshealth"
+	"github.com/EvalAlan/elemta/internal/logship"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/provision"
+	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/runtime"
 	cdpwebauthn "github.com/chromedp/cdproto/webauthn"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -133,6 +139,66 @@ func TestBrowserDomainDNSHealth(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.Empty(t, problems)
+}
+
+// The Health page shows what the scheduled DNS check last found, failing
+// domains first, and what DNS said stays text.
+func TestBrowserHealthDNSCard(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	base, _ := startProvisionAPIWith(t, func(s *Server) {
+		s.webRoot = webRoot
+		reports := []dnshealth.Report{
+			{Domain: "example.com", Checks: []dnshealth.Check{{ID: "mx", Name: "Incoming mail (MX)", Status: dnshealth.StatusOK}}},
+			{Domain: "example.net", Checks: []dnshealth.Check{
+				{ID: "spf", Name: "Sending permission (SPF)", Status: dnshealth.StatusFail, Summary: "<b>not markup</b>", Fix: "Publish this TXT record at example.net.", Record: "v=spf1 mx -all"},
+			}},
+		}
+		next, _ := dnsChanges(dnsWatchState{}, reports)
+		s.saveDNSWatch(recordSweep(dnsWatchFile{}, next, reports, time.Now().UTC()))
+	})
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.WindowSize(1280, 1100), chromedp.NoSandbox)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+	ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+	defer cancel()
+
+	click := func(selector string) chromedp.Action[chromedp.Void] {
+		return chromedp.Click(chromedp.CSS(selector), chromedp.NodeVisible)
+	}
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.Navigate(base+"/login"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "root"),
+		chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+		click("#login-btn"),
+		chromedp.WaitVisible(chromedp.CSS("[data-view=health]")),
+		click("[data-view=health]"),
+		chromedp.WaitVisible(chromedp.CSS("#dns-health-body .dns-health-problems")),
+	))
+	text := func(expr string) string {
+		t.Helper()
+		v, err := chromedp.Run(ctx, chromedp.Evaluate[string](expr))
+		require.NoError(t, err)
+		return v
+	}
+	if shot := os.Getenv("ELEMTA_TEST_SCREENSHOT"); shot != "" {
+		require.NoError(t, chromedp.Do(ctx, chromedp.ScrollIntoView(chromedp.ID("dns-health-card")), chromedp.Sleep(500*time.Millisecond)))
+		png, err := chromedp.Run(ctx, chromedp.Screenshot(chromedp.ID("dns-health-card")))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(shot, png, 0o600))
+	}
+	card := text(`document.getElementById("dns-health-body").textContent`)
+	for _, want := range []string{"1 domain has DNS problems.", "example.net", "Failing", "Sending permission (SPF)", "Publish this TXT record", "v=spf1 mx -all", "example.com", "OK"} {
+		require.Contains(t, card, want)
+	}
+	require.Less(t, strings.Index(card, "example.net"), strings.Index(card, "example.com"), "failing domain first")
+	require.Contains(t, card, "<b>not markup</b>")
+	require.Equal(t, "0", text(`String(document.querySelectorAll("#dns-health-body b").length)`))
 }
 
 // A compliance officer sees their own section and nothing of the server's,
@@ -304,7 +370,7 @@ func TestBrowserConsolePasskey(t *testing.T) {
 		click("#login-btn"),
 		chromedp.WaitVisible(chromedp.CSS(`.nav-item[data-view="settings"]`)),
 		click(`.nav-item[data-view="settings"]`),
-		click(`.settings-tab[data-tab="users"]`),
+		click(`.settings-tab[data-tab="account"]`),
 		chromedp.WaitVisible(chromedp.ID("tf-card")),
 		chromedp.SendKeys(chromedp.ID("tf-password"), testAdminPassword),
 		chromedp.SendKeys(chromedp.ID("tf-passkey-name"), "Test laptop"),
@@ -337,7 +403,7 @@ func TestBrowserConsolePasskey(t *testing.T) {
 	// An authenticator app, set up from the page; then the code signs in.
 	require.NoError(t, chromedp.Do(ctx,
 		click(`.nav-item[data-view="settings"]`),
-		click(`.settings-tab[data-tab="users"]`),
+		click(`.settings-tab[data-tab="account"]`),
 		chromedp.WaitVisible(chromedp.ID("tf-totp-on")),
 		chromedp.SendKeys(chromedp.ID("tf-password"), testAdminPassword),
 		click("#tf-totp-on"),
@@ -428,4 +494,726 @@ func TestBrowserAccountShowsUserProtocolChoice(t *testing.T) {
 	}
 	require.Equal(t, "Off | turned off by the user", row("IMAP"))
 	require.True(t, strings.HasPrefix(row("POP3"), "On | "), row("POP3"))
+}
+
+// Leaving the delete dialog, by Cancel or by Esc, deletes nothing; deleting
+// keeps the mail unless the box was ticked.
+func TestBrowserDeleteAccountDialog(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	fake := &fakeMailboxAdmin{classes: map[string]mailpolicy.Class{}, policy: map[string]mailpolicy.AccountPolicy{}, lists: map[string]mailpolicy.List{}, routes: map[string]mailpolicy.DomainRoute{}}
+	mailbox := httptest.NewServer(fake)
+	defer mailbox.Close()
+	dana := provision.Account{Address: "dana@example.com", Name: "Dana", Status: "active", Aliases: []string{}}
+	directory := &mapDirectory{accounts: map[string]*provision.Account{}}
+	put := func() {
+		directory.mu.Lock()
+		defer directory.mu.Unlock()
+		copied := dana
+		directory.accounts[dana.Address] = &copied
+	}
+	exists := func() bool {
+		directory.mu.Lock()
+		defer directory.mu.Unlock()
+		return directory.accounts[dana.Address] != nil
+	}
+	put()
+	base, _ := startProvisionAPIWith(t, func(s *Server) {
+		s.webRoot = webRoot
+		client, err := mailpolicy.NewClient(mailbox.URL, "token")
+		require.NoError(t, err)
+		s.provisioner.Directory = directory
+		s.provisioner.Mailbox = client
+	})
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+	ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+	defer cancel()
+
+	eval := func(expr string) bool {
+		t.Helper()
+		v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+		require.NoError(t, err)
+		return v
+	}
+	wait := func(expr string) {
+		t.Helper()
+		require.Eventually(t, func() bool { return eval(expr) }, 10*time.Second, 50*time.Millisecond, expr)
+	}
+	press := func(id string) {
+		t.Helper()
+		eval(`(document.getElementById("` + id + `").click(), true)`)
+	}
+	open := func() {
+		t.Helper()
+		press("ma-refresh")
+		wait(`!document.getElementById("ma-refresh").disabled && !!document.querySelector("#ma-table-body .ma-account-link")`)
+		eval(`(document.querySelector("#ma-table-body .ma-account-link").click(), true)`)
+		press("ma-delete")
+		wait(`document.getElementById("ma-delete-dialog").open`)
+	}
+	typeAddress := func() {
+		t.Helper()
+		require.NoError(t, chromedp.Do(ctx, chromedp.SendKeys(chromedp.ID("ma-delete-address"), dana.Address)))
+		wait(`!document.getElementById("ma-delete-confirm").disabled`)
+	}
+
+	require.NoError(t, chromedp.Do(ctx,
+		// Emulated, because headless Chrome won't make a window under 500px.
+		chromedp.EmulateViewport(390, 850),
+		chromedp.Navigate(base+"/login"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "root"),
+		chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+		chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+		// The sidebar is off screen at phone width, so waiting for it to be
+		// ready and clicking from script is the dependable way in.
+		chromedp.WaitReady(chromedp.CSS("#nav-mailadmin:not([hidden])")),
+	))
+	press("nav-mailadmin")
+	wait(`!!document.querySelector("#ma-table-body .ma-account-link")`)
+
+	open()
+	require.True(t, eval(`window.innerWidth === 390`), "not at phone width")
+	require.True(t, eval(`document.activeElement.id === "ma-delete-cancel"`), "Cancel has the focus")
+	require.True(t, eval(`document.getElementById("ma-delete-confirm").disabled`), "Delete waits for the address")
+	require.False(t, eval(`document.getElementById("ma-delete-purge").checked`), "purge is off by default")
+	require.True(t, eval(`document.getElementById("ma-delete-dialog").scrollWidth <= document.getElementById("ma-delete-dialog").clientWidth`), "fits a phone")
+	if shot := os.Getenv("ELEMTA_DELETE_SCREENSHOT"); shot != "" {
+		png, err := chromedp.Run(ctx, chromedp.Screenshot(chromedp.ID("ma-delete-dialog")))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(shot, png, 0o600))
+	}
+	typeAddress()
+	// The fake has no calendar routes, so the account dialog reports an error
+	// behind this one. It mustn't read as a failed delete.
+	wait(`!document.getElementById("ma-dialog-message").hidden`)
+	require.True(t, eval(`document.getElementById("ma-delete-message").hidden`), "an unrelated error shows as the delete's")
+	press("ma-delete-purge")
+	press("ma-delete-cancel")
+	wait(`!document.getElementById("ma-delete-dialog").open`)
+	require.True(t, exists(), "Cancel deleted the account")
+
+	press("ma-delete")
+	wait(`document.getElementById("ma-delete-dialog").open`)
+	require.False(t, eval(`document.getElementById("ma-delete-purge").checked`), "the tick doesn't carry over")
+	require.True(t, eval(`document.getElementById("ma-delete-confirm").disabled`), "nor does the typed address")
+	typeAddress()
+	require.NoError(t, chromedp.Do(ctx, chromedp.KeyEvent(kb.Escape)))
+	wait(`!document.getElementById("ma-delete-dialog").open`)
+	require.True(t, exists(), "Esc deleted the account")
+	require.True(t, eval(`document.getElementById("ma-account-dialog").open`), "back on the account")
+
+	press("ma-delete")
+	typeAddress()
+	press("ma-delete-confirm")
+	wait(`!document.getElementById("ma-account-dialog").open`)
+	require.False(t, exists())
+	fake.mu.Lock()
+	require.Empty(t, fake.purged, "the mail is kept unless asked")
+	fake.mu.Unlock()
+
+	put()
+	open()
+	typeAddress()
+	press("ma-delete-purge")
+	// A refusal (here a legal hold) is said in the dialog, which stays open.
+	fake.mu.Lock()
+	fake.held = map[string]bool{dana.Address: true}
+	fake.mu.Unlock()
+	press("ma-delete-confirm")
+	wait(`!document.getElementById("ma-delete-message").hidden && document.getElementById("ma-delete-message").textContent.includes("legal hold")`)
+	require.True(t, exists(), "a held account was deleted")
+	fake.mu.Lock()
+	fake.held = nil
+	fake.mu.Unlock()
+	wait(`!document.getElementById("ma-delete-confirm").disabled`)
+	press("ma-delete-confirm")
+	wait(`!document.getElementById("ma-account-dialog").open`)
+	require.False(t, exists())
+	fake.mu.Lock()
+	require.Equal(t, []string{dana.Address}, fake.purged)
+	fake.mu.Unlock()
+}
+
+// The support section, at desktop and phone width: what it shows, that names
+// the account's owner chose stay text, and that each button does its one job.
+func TestBrowserAccountSupport(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	for _, size := range []struct {
+		name          string
+		width, height int64
+	}{{"desktop", 1280, 1100}, {"phone", 390, 850}} {
+		t.Run(size.name, func(t *testing.T) {
+			const address = "dana@example.com"
+			used := time.Date(2026, 1, 2, 15, 4, 0, 0, time.UTC)
+			fake := &fakeMailboxAdmin{classes: map[string]mailpolicy.Class{}, policy: map[string]mailpolicy.AccountPolicy{}, lists: map[string]mailpolicy.List{}, routes: map[string]mailpolicy.DomainRoute{},
+				security: map[string]mailpolicy.AccountSecurity{address: {UsedBytes: 3 << 29, QuotaBytes: 5 << 30, TOTP: true, RecoveryLeft: 7, Passkeys: 2,
+					AppPasswords: []mailpolicy.AppPassword{{ID: 1, Name: "<b>Phone</b>", Created: used, LastUsed: &used}, {ID: 2, Name: "Laptop", Created: used}}}},
+				shares: map[string][]mailpolicy.Share{address: {{Mailbox: address, Member: "lee@example.com"}}}}
+			mailbox := httptest.NewServer(fake)
+			defer mailbox.Close()
+			directory := &mapDirectory{accounts: map[string]*provision.Account{address: {Address: address, Name: "Dana", Status: "active", QuotaBytes: 5 << 30, Aliases: []string{}}}}
+			base, _ := startProvisionAPIWith(t, func(s *Server) {
+				s.webRoot = webRoot
+				client, err := mailpolicy.NewClient(mailbox.URL, "token")
+				require.NoError(t, err)
+				s.provisioner.Directory = directory
+				s.provisioner.Mailbox = client
+			})
+
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+			defer cancel()
+			eval := func(expr string) bool {
+				t.Helper()
+				v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+				require.NoError(t, err)
+				return v
+			}
+			wait := func(expr string) {
+				t.Helper()
+				require.Eventually(t, func() bool { return eval(expr) }, 10*time.Second, 50*time.Millisecond, expr)
+			}
+			do := func(expr string) { t.Helper(); eval(`(` + expr + `, true)`) }
+			idle := func() { t.Helper(); wait(`!document.getElementById("ma-support-reset").disabled`) }
+
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(size.width, size.height),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), "root"),
+				chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+				chromedp.WaitReady(chromedp.CSS("#nav-mailadmin:not([hidden])")),
+			))
+			do(`document.getElementById("nav-mailadmin").click()`)
+			wait(`!!document.querySelector("#ma-table-body .ma-account-link")`)
+			require.True(t, eval(`document.getElementById("ma-table-body").textContent.includes("1.5 GiB")`), "Used column")
+			do(`document.querySelector("#ma-table-body .ma-account-link").click()`)
+			require.True(t, eval(`window.innerWidth === `+strconv.FormatInt(size.width, 10)), "not at the asked width")
+			wait(`document.getElementById("ma-support-storage").textContent.includes("30%")`)
+			require.True(t, eval(`document.getElementById("ma-support-two-step").textContent === "On, 7 recovery codes left"`))
+			require.True(t, eval(`document.getElementById("ma-app-password-list").textContent.includes("<b>Phone</b>") && !document.querySelector("#ma-app-password-list b")`), "a name became markup")
+			require.True(t, eval(`document.getElementById("ma-share-list").textContent.includes("lee@example.com")`))
+			require.True(t, eval(`document.getElementById("ma-account-dialog").scrollWidth <= document.getElementById("ma-account-dialog").clientWidth`), "overflows sideways")
+			if dir := os.Getenv("ELEMTA_SUPPORT_SCREENSHOTS"); dir != "" {
+				// The dialog scrolls, so the panel takes two screens.
+				for i, id := range []string{"ma-support", "ma-app-password-list"} {
+					do(`document.getElementById("` + id + `").scrollIntoView({block: "start"})`)
+					do(`document.getElementById("ma-account-dialog").scrollBy(0, -140)`)
+					png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot())
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(filepath.Join(dir, "support-"+size.name+"-"+strconv.Itoa(i)+".png"), png, 0o600))
+				}
+			}
+
+			do(`window.confirm = () => false`)
+			do(`document.getElementById("ma-support-reset").click()`)
+			idle()
+			fake.mu.Lock()
+			require.Empty(t, fake.resets, "reset without a yes")
+			fake.mu.Unlock()
+
+			do(`window.confirm = () => true`)
+			do(`document.querySelector("#ma-app-password-list button").click()`)
+			wait(`!document.getElementById("ma-app-password-list").textContent.includes("Phone") && document.getElementById("ma-app-password-list").textContent.includes("Laptop")`)
+			idle()
+			do(`document.getElementById("ma-support-revoke-all").click()`)
+			wait(`document.getElementById("ma-app-password-list").textContent === "No app passwords."`)
+			idle()
+			do(`document.getElementById("ma-support-reset").click()`)
+			wait(`document.getElementById("ma-support-two-step").textContent === "Off"`)
+			idle()
+			do(`document.querySelector("#ma-share-list button").click()`)
+			wait(`document.getElementById("ma-share-list").textContent === "Only its owner."`)
+			idle()
+			do(`(document.getElementById("ma-share-member").value = "sam@example.com", document.getElementById("ma-share-send").checked = true, document.getElementById("ma-share-form").requestSubmit())`)
+			wait(`document.getElementById("ma-share-list").textContent.includes("sam@example.com · reads and sends")`)
+		})
+	}
+}
+
+// The Dashboard's list: worst first, text only, its buttons lead to the page,
+// and it fits a phone.
+func TestBrowserAttention(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	for _, size := range []struct {
+		name          string
+		width, height int64
+	}{{"desktop", 1280, 1000}, {"phone", 390, 850}} {
+		t.Run(size.name, func(t *testing.T) {
+			base, _ := startProvisionAPIWith(t, func(s *Server) {
+				s.webRoot = webRoot
+				s.monitor = &resourceMonitor{levels: map[string]int{}, diskPaths: []string{"/queue"},
+					disk: func(string) (diskUsage, error) { return diskUsage{SpacePercent: 96, FreeBytes: 3 << 30}, nil },
+					list: func(queue.QueueType) ([]queue.Message, error) { return make([]queue.Message, 120), nil }}
+				reports := []dnshealth.Report{{Domain: "example.com", Checks: []dnshealth.Check{
+					{ID: "dmarc", Name: "Forgery policy (DMARC)", Status: dnshealth.StatusWarn, Summary: "<b>not markup</b>"}}}}
+				next, _ := dnsChanges(dnsWatchState{}, reports)
+				s.saveDNSWatch(recordSweep(dnsWatchFile{}, next, reports, time.Now().UTC()))
+			})
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+			defer cancel()
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(size.width, size.height),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), "root"),
+				chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+				chromedp.WaitVisible(chromedp.CSS("#attention-list .attention-item")),
+			))
+			eval := func(expr string) bool {
+				t.Helper()
+				v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+				require.NoError(t, err)
+				return v
+			}
+			require.True(t, eval(`document.querySelector("#attention-list .attention-item").textContent.includes("Disk space")`), "worst first")
+			require.True(t, eval(`document.getElementById("attention-list").textContent.includes("<b>not markup</b>") && !document.querySelector("#attention-list b")`), "a detail became markup")
+			require.True(t, eval(`document.getElementById("attention-card").scrollWidth <= document.getElementById("attention-card").clientWidth`), "overflows sideways")
+			if dir := os.Getenv("ELEMTA_ATTENTION_SCREENSHOTS"); dir != "" {
+				png, err := chromedp.Run(ctx, chromedp.Screenshot(chromedp.ID("attention-card")))
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "attention-"+size.name+".png"), png, 0o600))
+			}
+			require.True(t, eval(`(document.querySelector("#attention-list .attention-item button").click(), document.getElementById("view-health").classList.contains("active"))`), "the button opens Health")
+		})
+	}
+}
+
+// The DMARC page with seeded reports, for both roles and both widths and
+// themes: numbers, chart, text that stays text, and setup.
+func TestBrowserDMARC(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	for _, c := range []struct {
+		name          string
+		width, height int64
+		theme         string
+		delegated     bool
+	}{{"desktop", 1280, 1000, "dark", false}, {"phone", 390, 850, "light", false}, {"delegated", 390, 850, "dark", true}} {
+		t.Run(c.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var registered, backfilled bool
+			now := time.Now().UTC()
+			var summary []mailpolicy.DMARCDay
+			for i := 1; i < 28; i++ {
+				day := now.AddDate(0, 0, -i).Format("2006-01-02")
+				summary = append(summary, mailpolicy.DMARCDay{Domain: "example.com", PolicyDomain: "example.com", Day: day, Sender: "receiver.example",
+					Org: "<b>not markup</b>", Verified: true, P: "none", Reports: 1, Messages: int64(400 + i*37%300), Aligned: int64(380 + i*37%300 - i*11%70)})
+			}
+			summary = append(summary,
+				mailpolicy.DMARCDay{Domain: "example.com", Day: now.AddDate(0, 0, -2).Format("2006-01-02"), Sender: "claimed.example", Reports: 3, Messages: 900000},
+				mailpolicy.DMARCDay{Domain: "other.example", Day: now.AddDate(0, 0, -2).Format("2006-01-02"), Sender: "receiver.example", Verified: true, P: "reject", Reports: 1, Messages: 5, Aligned: 5})
+			src := func(ip, dkim, spf, signer string, n int64) mailpolicy.DMARCSource {
+				return mailpolicy.DMARCSource{Domain: "example.com", SourceIP: ip, HeaderFrom: "example.com", Disposition: "none", DKIM: dkim, SPF: spf, DKIMDomain: signer, Verified: true, Messages: n}
+			}
+			sources := []mailpolicy.DMARCSource{src("192.0.2.1", "pass", "pass", "example.com", 9000), src("198.51.100.20", "pass", "fail", "example.com", 2100),
+				src("2001:db8::25", "fail", "fail", "example.com", 340), src("203.0.113.9", "fail", "fail", "<i>evil</i>", 60)}
+			mailbox := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				enc := json.NewEncoder(w)
+				// As the mailbox does, only the domains asked for.
+				want := func(d string) bool {
+					q := r.URL.Query()["domain"]
+					return len(q) == 0 || slices.Contains(q, d)
+				}
+				switch r.URL.Path {
+				case "/v1/admin/dmarc/addresses":
+					list := []mailpolicy.DMARCAddress{}
+					if registered {
+						a := mailpolicy.DMARCAddress{Domain: "example.com", Address: "rua@example.com"}
+						if backfilled {
+							a.BackfillStarted, a.BackfillFinished, a.BackfillRead, a.BackfillStored = &now, &now, 27, 27
+						}
+						list = append(list, a)
+					}
+					_ = enc.Encode(list)
+				case "/v1/admin/dmarc/summary":
+					out := []mailpolicy.DMARCDay{}
+					for _, d := range summary {
+						if want(d.Domain) {
+							out = append(out, d)
+						}
+					}
+					_ = enc.Encode(out)
+				case "/v1/admin/dmarc/sources":
+					out := []mailpolicy.DMARCSource{}
+					for _, s := range sources {
+						if want(s.Domain) {
+							out = append(out, s)
+						}
+					}
+					_ = enc.Encode(out)
+				case "/v1/admin/dmarc/addresses/example.com":
+					registered = true
+					_, _ = w.Write([]byte("{}"))
+				case "/v1/admin/dmarc/addresses/example.com/backfill":
+					backfilled = true
+					_, _ = w.Write([]byte("{}"))
+				default:
+					_, _ = w.Write([]byte("{}"))
+				}
+			}))
+			defer mailbox.Close()
+
+			dir := t.TempDir()
+			hash, err := auth.HashPassword(testAdminPassword)
+			require.NoError(t, err)
+			users := filepath.Join(dir, "users")
+			require.NoError(t, os.WriteFile(users, []byte("root:"+hash+":admin\ndeleg:"+hash+":domain-admin,domain:example.com\n"), 0o600))
+			config := filepath.Join(dir, "elemta.toml")
+			require.NoError(t, os.WriteFile(config, []byte("local_domains = [\"example.com\", \"other.example\"]\n"), 0o600))
+			s, err := NewServer(&Config{Enabled: true, ListenAddr: "127.0.0.1:0", WebRoot: webRoot, AuthEnabled: true, AuthFile: users}, &MainConfig{Hostname: "mail.example.com"}, dir, 0, config)
+			require.NoError(t, err)
+			client, err := mailpolicy.NewClient(mailbox.URL, "token")
+			require.NoError(t, err)
+			s.SetProvisioner(&provision.Service{Directory: &mapDirectory{accounts: map[string]*provision.Account{}}, Routing: provision.FileDomains{Path: config}, Mailbox: client})
+			s.dmarcLookup = func(_ context.Context, d string) (dnshealth.DMARCPolicy, error) {
+				return dnshealth.DMARCPolicy{From: d, Policy: "none", Reports: []string{"rua@" + d}}, nil
+			}
+			s.hostLookup = func(context.Context, string) ([]net.IPAddr, error) {
+				return []net.IPAddr{{IP: net.ParseIP("192.0.2.1")}}, nil
+			}
+			require.NoError(t, s.Start())
+			t.Cleanup(func() { _ = s.Stop() })
+			base := "http://" + waitReady(t, s)
+
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+			defer cancel()
+			eval := func(expr string) bool {
+				t.Helper()
+				v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+				require.NoError(t, err)
+				return v
+			}
+			wait := func(expr string) {
+				t.Helper()
+				require.Eventually(t, func() bool { return eval(expr) }, 10*time.Second, 50*time.Millisecond, expr)
+			}
+			run := func(expr string) { t.Helper(); eval(`(` + expr + `, true)`) }
+			user := "root"
+			if c.delegated {
+				user = "deleg"
+			}
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(c.width, c.height),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), user),
+				chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+				chromedp.WaitReady(chromedp.CSS(`.nav-item[data-view="reports"]:not([hidden])`)),
+			))
+			run(`document.documentElement.setAttribute("data-theme", "` + c.theme + `")`)
+			run(`document.querySelector('.nav-item[data-view="reports"]').click()`)
+			wait(`!!document.querySelector('.section-tab[data-section="dmarc"]:not([hidden])')`)
+			run(`document.querySelector('.section-tab[data-section="dmarc"]').click()`)
+			wait(`document.querySelectorAll("#dmarc-chart path").length > 27`)
+
+			text := func(id string) string { return `document.getElementById("` + id + `").textContent` }
+			require.True(t, eval(text("dmarc-title")+` === "example.com"`))
+			var verified int64
+			for _, d := range summary {
+				if d.Domain == "example.com" && d.Verified {
+					verified += d.Messages
+				}
+			}
+			require.True(t, eval(`document.querySelector("#dmarc-reporters tr td:last-child").textContent === (`+strconv.FormatInt(verified, 10)+`).toLocaleString() && `+text("dmarc-volume")+` === Intl.NumberFormat(undefined, {notation: "compact", maximumFractionDigits: 1}).format(`+strconv.FormatInt(verified, 10)+`)`), "unverified reports in the total")
+			require.True(t, eval(text("dmarc-sources")+`.includes("this server") && `+text("dmarc-sources")+`.includes("likely forwarder")`), "source labels")
+			require.True(t, eval(text("dmarc-advice")+`.includes("2001:db8::25") && !`+text("dmarc-advice")+`.includes("203.0.113.9")`), "advice")
+			require.True(t, eval(text("dmarc-reporters")+`.includes("<b>not markup</b>") && !document.querySelector("#report-dmarc tbody b, #report-dmarc tbody i")`), "report text became markup")
+			require.True(t, eval(text("dmarc-unverified-summary")+`.includes("(3)")`), "unverified are shown apart")
+			require.True(t, eval(`window.innerWidth === `+strconv.FormatInt(c.width, 10)+` && document.getElementById("report-dmarc").scrollWidth <= document.getElementById("report-dmarc").clientWidth`), "overflows sideways")
+
+			run(`document.querySelector("#dmarc-chart svg").focus()`)
+			wait(`!!document.querySelector("#dmarc-chart .dmarc-tip:not([hidden])")`)
+			if dir := os.Getenv("ELEMTA_DMARC_SCREENSHOTS"); dir != "" {
+				for i, id := range []string{"report-dmarc", "dmarc-chart", "dmarc-sources", "dmarc-setup-status"} {
+					run(`document.getElementById("` + id + `").scrollIntoView({block: "` + []string{"start", "center", "center", "center"}[i] + `"})`)
+					png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot())
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(filepath.Join(dir, "dmarc-"+c.name+"-"+strconv.Itoa(i)+".png"), png, 0o600))
+				}
+			}
+
+			run(`document.querySelector("[data-dmarc-days='7']").click()`)
+			wait(`document.querySelectorAll("#dmarc-daily tr").length === 7`)
+			require.True(t, eval(`!`+text("dmarc-advice")+`.includes("Ready to tighten")`))
+
+			if c.delegated {
+				require.True(t, eval(`!`+text("dmarc-domains")+`.includes("other.example")`), "another domain's row")
+				require.True(t, eval(`document.getElementById("dmarc-setup-form").hidden && document.getElementById("dmarc-backfill").hidden`), "setup shown to a domain administrator")
+				return
+			}
+			require.True(t, eval(`document.getElementById("dmarc-address").value === "rua@example.com"`), "pre-filled from rua")
+			run(`document.getElementById("dmarc-setup-form").requestSubmit()`)
+			wait(`!document.getElementById("dmarc-backfill").hidden && !document.getElementById("dmarc-backfill").disabled`)
+			run(`window.confirm = () => false`)
+			run(`document.getElementById("dmarc-backfill").click()`)
+			mu.Lock()
+			require.False(t, backfilled, "read a mailbox without a yes")
+			mu.Unlock()
+			run(`window.confirm = () => true`)
+			run(`document.getElementById("dmarc-backfill").click()`)
+			wait(text("dmarc-backfill-state") + `.includes("27")`)
+		})
+	}
+}
+
+// The frame: the sidebar's order, who sees what, addresses that survive a
+// reload, the abuse plugin's two halves, and the jump box.
+func TestBrowserShell(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	for _, c := range []struct{ user, password, nav, landing string }{
+		{"root", testAdminPassword, "dashboard,reports,mail-admin,queues,tracing,logs,compliance,health,certificates,settings", "#/dashboard"},
+		{"viewer", testUserPassword, "dashboard,reports,queues,tracing,logs,health,certificates,settings", "#/dashboard"},
+	} {
+		t.Run(c.user, func(t *testing.T) {
+			base, _ := startProvisionAPIWith(t, func(s *Server) {
+				s.webRoot = webRoot
+				s.mainConfig = &MainConfig{Hostname: "mail.example.com"}
+			})
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 90*time.Second)
+			defer cancel()
+			eval := func(expr string) bool {
+				t.Helper()
+				v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+				require.NoError(t, err)
+				return v
+			}
+			wait := func(expr string) {
+				t.Helper()
+				require.Eventually(t, func() bool {
+					// Evaluating fails while a reload is under way.
+					v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+					return err == nil && v
+				}, 10*time.Second, 50*time.Millisecond, expr)
+			}
+			run := func(expr string) { t.Helper(); eval(`(` + expr + `, true)`) }
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(1280, 900),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), c.user),
+				chromedp.SendKeys(chromedp.ID("password"), c.password),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+				chromedp.WaitReady(chromedp.CSS(`.nav-item[data-view="settings"]:not([hidden])`)),
+			))
+			wait(`location.hash === "` + c.landing + `"`)
+			shown := func(sel, key string) string {
+				return `[...document.querySelectorAll('` + sel + `')].filter(e => !e.hidden).map(e => e.dataset.` + key + `).join(",")`
+			}
+			wait(shown(".nav-item[data-view]", "view") + ` === "` + c.nav + `"`)
+			if c.user == "viewer" {
+				require.True(t, eval(shown(".section-tab", "section")+` === "delivery,senders"`), "reports a viewer can't read")
+				require.True(t, eval(shown(".settings-tab", "tab")+` === "ui,account"`), "settings a viewer can't use")
+				require.True(t, eval(`document.querySelector(".queue-buttons").hidden`), "queue actions shown to a viewer")
+				run(`switchView("reports", "abuse")`)
+				wait(`location.hash === "#/reports/delivery"`)
+				return
+			}
+
+			run(`switchView("abuse")`) // where it used to be
+			wait(`location.hash === "#/reports/abuse" && document.getElementById("report-abuse").classList.contains("active")`)
+			run(`location.reload()`)
+			wait(`typeof shell !== "undefined" && location.hash === "#/reports/abuse" && !!document.querySelector("#report-abuse.active")`)
+
+			run(`switchView("settings", "plugins")`)
+			wait(`!!document.querySelector('.settings-tab[data-tab="plugin-abuse"]:not([hidden])')`)
+			run(`document.querySelector('.settings-tab[data-tab="plugin-abuse"]').click()`)
+			wait(`location.hash === "#/settings/plugin-abuse" && document.getElementById("abuse-connections").value !== ""`)
+			// The tab is made from the plugin list, which a fresh page lacks.
+			run(`(window.beforeReload = true, location.reload())`)
+			wait(`!window.beforeReload && typeof shell !== "undefined" && location.hash === "#/settings/plugin-abuse" && !!document.querySelector("#settings-plugin-abuse.active")`)
+			run(`history.back()`)
+			wait(`location.hash === "#/settings/plugins" && document.getElementById("settings-plugins").classList.contains("active")`)
+
+			// Switched off, both halves go and the alert addresses stay.
+			run(`(window.confirm = () => true, togglePlugin("abuse", false))`)
+			wait(`!document.querySelector('.settings-tab[data-tab="plugin-abuse"]') && document.querySelector('.section-tab[data-section="abuse"]').hidden`)
+			require.True(t, eval(`!document.querySelector('.settings-tab[data-tab="notifications"]').hidden`), "alert emails went with the plugin")
+			run(`togglePlugin("abuse", true)`)
+			wait(`!!document.querySelector('.settings-tab[data-tab="plugin-abuse"]') && !document.querySelector('.section-tab[data-section="abuse"]').hidden`)
+
+			run(`document.getElementById("jump-open").click()`)
+			wait(`document.getElementById("jump").open`)
+			require.NoError(t, chromedp.Do(ctx, chromedp.SendKeys(chromedp.ID("jump-input"), "certif"), chromedp.KeyEvent(kb.Enter)))
+			wait(`location.hash === "#/certificates"`)
+		})
+	}
+}
+
+func TestBrowserLogShippingDestinations(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }))
+	defer sink.Close()
+	for name, allowed := range map[string][]string{"none listed": nil, "listed": {sink.URL}} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			base, _ := startProvisionAPIWith(t, func(s *Server) {
+				s.webRoot = webRoot
+				s.mainConfig = &MainConfig{Hostname: "mail.example.com"}
+				s.SetLogShipper(logship.NewShipper(dir, "", allowed, nil))
+			})
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+			defer cancel()
+			wait := func(expr string) {
+				t.Helper()
+				require.Eventually(t, func() bool {
+					v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+					return err == nil && v
+				}, 15*time.Second, 50*time.Millisecond, expr)
+			}
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(390, 900),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), "root"),
+				chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+			))
+			wait(`location.hash === "#/dashboard"`)
+			_, err := chromedp.Run(ctx, chromedp.Evaluate[bool](`(location.hash = "#/settings/plugin-log_shipping", true)`))
+			require.NoError(t, err)
+			wait(`document.getElementById("logship-allowed").textContent.includes("ELEMTA_LOG_SHIP_DESTINATIONS")`)
+			wait(`document.documentElement.scrollWidth <= window.innerWidth`)
+			wait(`document.getElementById("logship-test").disabled`)
+			if len(allowed) == 0 {
+				wait(`document.getElementById("logship-url").options.length === 1`)
+				return
+			}
+			require.NoError(t, chromedp.Do(ctx, chromedp.WaitVisible(chromedp.ID("logship-url"))))
+			_, err = chromedp.Run(ctx, chromedp.Evaluate[bool](`(() => {
+				const url = document.getElementById("logship-url"), kind = document.getElementById("logship-kind");
+				kind.value = "logstash"; url.selectedIndex = 1;
+				url.dispatchEvent(new Event("change", {bubbles: true}));
+				document.getElementById("logship-test").click();
+				return true })()`))
+			require.NoError(t, err)
+			wait(`document.getElementById("logship-result").textContent.includes("took a test line")`)
+		})
+	}
+}
+
+// Mail, remote servers and logs write much of what the console shows. None
+// of it may become script: not through an attribute, and not through the
+// argument of an inline handler.
+func TestBrowserUntrustedTextStaysText(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	base, _ := startProvisionAPIWith(t, func(s *Server) { s.webRoot = webRoot })
+	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+	ctx, cancel := context.WithTimeout(browserCtx, 90*time.Second)
+	defer cancel()
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.EmulateViewport(1400, 900),
+		chromedp.Navigate(base+"/login"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "root"),
+		chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+		chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+		chromedp.WaitVisible(chromedp.CSS(`.nav-item[data-view="queues"]`)),
+		chromedp.Sleep(1500*time.Millisecond),
+	))
+	run := func(expr string) string {
+		t.Helper()
+		v, err := chromedp.Run(ctx, chromedp.Evaluate[string](expr))
+		require.NoError(t, err)
+		return v
+	}
+	run(`(() => { window.__ran = []; window.hook = () => { window.__ran.push("hook"); return "" };
+		window.payloads = [
+			'plain text',
+			'x" data-injected="1" y="',
+			"x' data-injected='1",
+			"550 '-hook()-'",
+			"x');hook();('",
+			"x&#39;);hook();(&#39;",
+			"x\\');hook();//",
+			'x" onmouseover="hook()',
+			'<img src=x onerror="hook()">',
+			"line\u2028break \u00e9\u6f22\ud83d\ude00",
+		];
+		window.drilldownLogsBySearch = v => window.__got.push(v);
+		window.viewMessage = window.copyMessageId = window.toggleMessageSelection = v => window.__got.push(v);
+		window.retryMessage = window.holdMessage = window.deleteMessage = v => window.__got.push(v);
+		window.__got = [];
+		return "" })()`)
+	got := run(`(() => {
+		const bad = [];
+		for (const p of window.payloads) {
+			state.messages = [{ id: p, from: p, to: [p], subject: p, priority: 2, created_at: new Date().toISOString() }];
+			state.currentPage = 1;
+			for (const id of ["search-input", "priority-filter", "date-filter"]) { const e = document.getElementById(id); if (e) e.value = ""; }
+			if (typeof filterMessages === "function") filterMessages(); else state.filteredMessages = state.messages;
+			renderMessages();
+			const row = document.querySelector("#messages-tbody tr");
+			if (!row || row.querySelector("[data-injected], img")) { bad.push("queue markup: " + p); continue }
+			if (![...row.querySelectorAll("[title]")].some(e => e.title === p)) bad.push("queue title changed: " + p);
+			window.__got = [];
+			try { row.querySelector(".message-id").click() } catch (e) {}
+			if (window.__got[0] !== p) bad.push("queue argument changed: " + p);
+
+			renderRecentErrors([{ error: p, recipient: p, timestamp: new Date().toISOString() }]);
+			renderTopErrorReasons([{ reason: p, count: 1 }]);
+			for (const id of ["recent-errors", "top-error-reasons"]) {
+				const box = document.getElementById(id);
+				if (box.querySelector("[data-injected], img")) bad.push(id + " markup: " + p);
+				window.__got = [];
+				box.querySelector("button").click();
+				if (window.__got[0] !== p) bad.push(id + " argument changed: " + p);
+			}
+			const d = document.createElement("div");
+			d.innerHTML = '<i title="' + escapeHtml(p) + '"></i>';
+			if (d.firstChild.attributes.length !== 1 || d.firstChild.title !== p) bad.push("escapeHtml: " + p);
+		}
+		return bad.concat(window.__ran.map(() => "script ran")).join("\n") })()`)
+	require.Empty(t, got)
 }

@@ -3,8 +3,8 @@
 {{define "content"}}
 <section class="page settings">
   <header class="page-head">
-    <h1>Filters and out-of-office</h1>
-    <p class="muted">Sort incoming mail automatically, and reply while you're away.</p>
+    <h1>Filters</h1>
+    <p class="muted">Sort incoming mail automatically.</p>
     {{if and .Session.Mailbox (not .Session.AdminActor)}}<p class="banner subtle" data-shared-filters>These are the filters and automatic reply for <strong>{{.Session.Mailbox}}</strong>. Everyone who shares it sees and changes the same ones. Switch back to your own mailbox for yours.</p>{{end}}
   </header>
   {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
@@ -16,17 +16,7 @@
   {{else}}
   {{if .Foreign}}<p class="banner">Another filter script, “{{.Foreign}}”, is active on your account. Saving here makes these filters active instead.</p>{{end}}
 
-  <form class="card form-grid" action="/filters" method="post">
-    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="vacation">
-    <h2 class="card-title">Out-of-office reply</h2>
-    <span></span><label class="checkline"><input type="checkbox" name="enabled" value="1"{{if .Set.Vacation.Enabled}} checked{{end}}> Send an automatic reply</label>
-    <label for="v-start">From</label><span class="inline-fields"><input id="v-start" name="start" type="date" value="{{.Set.Vacation.Start}}"> <label for="v-end">until</label> <input id="v-end" name="end" type="date" value="{{.Set.Vacation.End}}"> <span class="small muted">Leave empty to start now and run until turned off.</span></span>
-    <label for="v-subject">Subject</label><input id="v-subject" name="subject" type="text" value="{{.Set.Vacation.Subject}}" placeholder="Out of office" maxlength="300">
-    <label for="v-body">Message</label><textarea id="v-body" name="body" rows="5" placeholder="I'm away until … and will reply when I'm back.">{{.Set.Vacation.Body}}</textarea>
-    <label for="v-days">Reply once every</label><span class="inline-fields"><input id="v-days" name="days" type="number" min="1" max="30" value="{{.Set.Vacation.Days}}" class="narrow"> days to each sender</span>
-    <label for="v-aliases">Also for</label><input id="v-aliases" name="aliases" type="text" value="{{.Set.Vacation.Aliases}}" placeholder="Your other addresses, if any">
-    <div class="form-actions"><button class="button primary" type="submit">Save reply</button><span class="small muted">Mailing lists and automated mail never get a reply.</span></div>
-  </form>
+  <p class="small muted">Automatic replies while you're away are under <a href="/settings/out-of-office">Out of office</a>.</p>
 
   {{if .Edit}}
   {{$folders := .Folders}}

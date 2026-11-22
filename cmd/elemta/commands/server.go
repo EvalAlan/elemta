@@ -68,8 +68,9 @@ func startServer() {
 	if devMode {
 		logLevel = "DEBUG" // Override to DEBUG in dev mode
 	}
-	logging.InitializeLogging(logLevel)
-	warnAboutUnusedLoggingSettings(cfg.Logging.Type, cfg.Logging.Output, cfg.Logging.File)
+	logging.InitializeLogging(logLevel, cfg.Logging.File)
+	warnAboutUnusedLoggingSettings(cfg.Logging.Type, cfg.Logging.Output)
+	defer collectLogs("mta")()
 
 	slog.Info("Elemta MTA server starting", "event_type", "system",
 		"hostname", cfg.Hostname,
@@ -308,11 +309,12 @@ func getDirectoryFromPath(path string) string {
 	return path[:lastSep]
 }
 
-// warnAboutUnusedLoggingSettings says out loud that most of [logging] does
+// warnAboutUnusedLoggingSettings says out loud that some of [logging] does
 // nothing.
 //
-// Only level is consumed: the server always writes line-delimited JSON to
-// stdout and to its log file. The shipped configuration used to set
+// level and file are consumed: the server writes line-delimited JSON to
+// stdout and, unless file is "", to that file (rotated, for the admin
+// console's traces and Logs page). The shipped configuration used to set
 // type = "elastic" with an Elasticsearch URL, and an operator reading it had
 // every reason to believe their logs were being shipped somewhere. They were
 // not, and nothing said so.
@@ -320,7 +322,7 @@ func getDirectoryFromPath(path string) string {
 // Warning rather than refusing to start, because a deployment carrying those
 // settings today is working — badly informed, but working — and failing it on
 // upgrade would turn a documentation bug into an outage.
-func warnAboutUnusedLoggingSettings(logType, output, file string) {
+func warnAboutUnusedLoggingSettings(logType, output string) {
 	if t := strings.ToLower(strings.TrimSpace(logType)); t != "" && t != "console" && t != "stdout" {
 		slog.Warn("The [logging] type setting is not implemented and is being ignored",
 			"event_type", "system",
@@ -331,9 +333,5 @@ func warnAboutUnusedLoggingSettings(logType, output, file string) {
 	if strings.TrimSpace(output) != "" {
 		slog.Warn("The [logging] output setting is not implemented and is being ignored",
 			"event_type", "system", "configured_output", output)
-	}
-	if strings.TrimSpace(file) != "" {
-		slog.Warn("The [logging] file setting is not implemented and is being ignored",
-			"event_type", "system", "configured_file", file)
 	}
 }

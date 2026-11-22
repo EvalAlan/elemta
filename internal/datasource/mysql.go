@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/logging"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -45,7 +45,7 @@ func NewMySQL(config Config) *MySQL {
 	}
 
 	// Create logger for security operations
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})).With(
 		"component", "mysql-datasource",

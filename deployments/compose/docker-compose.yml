@@ -203,6 +203,13 @@ services:
       - NODE_ID=web
       - ELEMTA_WEBMAIL_PUBLIC_URL=${ELEMTA_WEBMAIL_PUBLIC_URL:-http://localhost:8027}
       - VALKEY_ADDR=elemta-valkey:6379
+      # Where log shipping may send (docs/logging.md). The console can pick
+      # from this list and can't add to it.
+      - ELEMTA_LOG_SHIP_DESTINATIONS=${ELEMTA_LOG_SHIP_DESTINATIONS:-}
+      # The DNS checks ask the stack's resolver directly. Docker's own DNS
+      # answers container names and aliases first, so one that matched a
+      # hosted domain would hide that domain's real MX and SPF.
+      - ELEMTA_DNS_CHECK_RESOLVER=${ELEMTA_DEV_DNS_IP:-10.253.53.53}
     # Security configuration for the container
     security_opt:
       - no-new-privileges:true

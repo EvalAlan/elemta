@@ -27,38 +27,7 @@ const campaignState = {
 // Visibility
 // ============================================================================
 
-// applyMassMailerVisibility shows the nav item only while the plugin is on.
-// A section that answers every click with "not enabled" is worse than one that
-// is not there at all.
-function applyMassMailerVisibility(plugins) {
-    const nav = document.getElementById('nav-campaigns');
-    if (!nav) return;
 
-    const plugin = (plugins || []).find(p => p.name === 'mass_mailer');
-    const enabled = !!(plugin && plugin.enabled);
-    nav.style.display = enabled ? '' : 'none';
-
-    // If the operator turns the plugin off while standing in the section, move
-    // them somewhere that still works rather than leaving a dead view up.
-    if (!enabled && document.getElementById('view-campaigns')?.classList.contains('active')) {
-        switchView('dashboard');
-    }
-}
-
-// refreshMassMailerVisibility asks the server directly, for page load and for
-// the case where the plugin list is not otherwise being fetched.
-async function refreshMassMailerVisibility() {
-    try {
-        const response = await fetch(`${API_BASE}/config/plugins`);
-        if (!response.ok) return;
-        const data = await response.json();
-        applyMassMailerVisibility(data.plugins || []);
-    } catch (error) {
-        // Not being able to ask is not a reason to show a section that may not
-        // work; leaving it hidden is the safe direction.
-        console.debug('mass mailer visibility check failed:', error);
-    }
-}
 
 // ============================================================================
 // Campaign list
@@ -464,7 +433,9 @@ function sanitizeEmailHTML(html) {
     if (!html) return '';
     const doc = new DOMParser().parseFromString(String(html), 'text/html');
 
-    doc.querySelectorAll('script, iframe, object, embed, link, meta, base, form, input, button, style')
+    // svg and math parse by other rules, and markup safe in them can turn
+    // into something else when it is serialised and parsed again as HTML.
+    doc.querySelectorAll('script, iframe, object, embed, link, meta, base, form, input, button, style, svg, math, template, noscript')
         .forEach(el => el.remove());
 
     doc.querySelectorAll('*').forEach(el => {
@@ -475,7 +446,7 @@ function sanitizeEmailHTML(html) {
                 el.removeAttribute(attr.name);
                 continue;
             }
-            if (name === 'href' || name === 'src' || name === 'srcset' || name === 'action' || name === 'formaction') {
+            if (name === 'href' || name === 'xlink:href' || name === 'src' || name === 'srcset' || name === 'action' || name === 'formaction') {
                 const value = attr.value.trim();
                 if (!ALLOWED_URL_SCHEMES.test(value)) {
                     el.removeAttribute(attr.name);
@@ -893,7 +864,6 @@ async function deleteCampaign(id) {
 
 document.addEventListener('DOMContentLoaded', () => {
     initializeCampaignEditor();
-    refreshMassMailerVisibility();
 });
 
 // ============================================================================
@@ -921,7 +891,7 @@ async function refreshSuppression() {
         if (!data.suppressed || data.suppressed.length === 0) {
             listEl.innerHTML = query
                 ? `<div class="field-hint">No suppressed address matches ${escapeHtml(query)}.</div>`
-                : '<div class="field-hint">Nothing is suppressed. Addresses appear here when a message to them fails permanently.</div>';
+                : '<div class="field-hint">Nothing is suppressed. Addresses appear here when a message to them fails permanently, the recipient reports it as spam, or uses the unsubscribe link.</div>';
             return;
         }
 

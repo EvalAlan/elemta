@@ -5,6 +5,11 @@ an attacker can't move to another protocol or replica and start again. It is
 managed on the **Abuse** page of the admin console, and changes apply within a
 few seconds with no restart.
 
+In the admin console it is a plugin. **Reports > Abuse** shows what it is doing:
+blocks, holds, alerts and history. **Settings > Abuse protection** has the limits
+and the allow and deny rules, and **Settings > All plugins** turns it on and off.
+Alert addresses are under **Settings > Alert emails**, and keep working with it off.
+
 ## What it does
 
 - **Failed sign-ins add up** per address across SMTP, IMAP, POP3, ManageSieve,
@@ -159,7 +164,7 @@ ends: give them an app password or a passkey. Existing configurations have it of
 
 ## Unusual sign-ins
 
-A stolen password works, so nothing above notices it being used. The Abuse page
+A stolen password works, so nothing above notices it being used. The Abuse report
 lists successful sign-ins that look wrong for their account:
 
 - **Impossible travel:** faster than 1,000 km/h from the account's last sign-in, and
@@ -192,12 +197,12 @@ attack and accounts put on hold emailed as they happen. They come from
 `postmaster@` the first local domain, go through the queue like any other mail
 (DKIM-signed, retried, and shown on the queue page), and are marked
 `Auto-Submitted` so vacation replies leave them alone. At most 20 are sent an hour;
-past that, one more says there are others on the Abuse page. Email alerts need
+past that, one more says there are others in the Abuse report. Email alerts need
 Valkey, as the alerts themselves do.
 
 ## Allow and deny rules
 
-The Abuse page's rule list holds your own decisions. A change reaches every service
+The rule list in Settings > Abuse protection holds your own decisions. A change reaches every service
 within seconds, with no restart.
 
 | Rule on | Inbound | Outbound |

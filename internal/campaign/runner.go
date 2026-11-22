@@ -104,6 +104,7 @@ type Runner struct {
 	hostname    string
 	logger      *slog.Logger
 	suppression SuppressionList
+	unsubscribe *Unsubscriber
 
 	mu sync.Mutex
 	// runs is keyed by campaign ID. The token distinguishes one run of a
@@ -127,6 +128,20 @@ func (r *Runner) SetSuppressionList(list SuppressionList) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.suppression = list
+}
+
+// SetUnsubscriber adds one-click unsubscribe links to every copy sent.
+func (r *Runner) SetUnsubscriber(u *Unsubscriber) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.unsubscribe = u
+}
+
+func (r *Runner) unsubscribeURL(campaignID, address string) string {
+	r.mu.Lock()
+	u := r.unsubscribe
+	r.mu.Unlock()
+	return u.URL(campaignID, address)
 }
 
 func NewRunner(store *Store, q Enqueuer, hostname string, logger *slog.Logger) *Runner {
@@ -365,7 +380,7 @@ func (r *Runner) sendOne(c *Campaign, recipient Recipient) error {
 	snapshot := c.cloneLocked()
 	c.mu.Unlock()
 
-	body, err := BuildMessage(snapshot, recipient, r.hostname)
+	body, err := BuildMessage(snapshot, recipient, r.hostname, r.unsubscribeURL(snapshot.ID, recipient.Email))
 	if err != nil {
 		return fmt.Errorf("build message: %w", err)
 	}
@@ -400,7 +415,9 @@ func (r *Runner) SendTest(c *Campaign, to string) error {
 
 	snapshot := c.Clone()
 	snapshot.Subject = "[TEST] " + snapshot.Subject
-	body, err := BuildMessage(snapshot, recipient, r.hostname)
+	// The test copy carries a working link too, so the sender sees what
+	// recipients will; using it suppresses the sender's own test address.
+	body, err := BuildMessage(snapshot, recipient, r.hostname, r.unsubscribeURL(snapshot.ID, to))
 	if err != nil {
 		return err
 	}

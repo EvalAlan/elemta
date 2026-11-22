@@ -2662,4 +2662,14 @@
     if (doc.fonts && doc.fonts.ready) doc.fonts.ready.then(fitToolbar);
   }
 
+  // ---- unsubscribe on the sender's page --------------------------------------
+  // A sender with only a web page is unsubscribed in the user's browser. The
+  // link opens it; this tells the server it was opened, so the message can
+  // say so next time (unsubscribe.go). Without the script nothing is noted.
+  $$("[data-unsub-mark]").forEach(function (a) {
+    a.addEventListener("click", function () {
+      post(a.getAttribute("data-unsub-mark"), { op: "mark" }).catch(function () {});
+    });
+  });
+
 })();

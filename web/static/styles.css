@@ -8,6 +8,7 @@
     --bg-secondary: #111827;
     --bg-tertiary: #1b2537;
     --bg-hover: #232f45;
+    --bg-sidebar: #0e1626;
     --text-primary: #f1f5f9;
     --text-secondary: #94a3b8;
     --text-muted: #64748b;
@@ -27,9 +28,9 @@
     --radius-md: 8px;
     --radius-lg: 12px;
     --radius-xl: 16px;
-    --sidebar-width: 260px;
-    --sidebar-collapsed: 72px;
-    --header-height: 64px;
+    --sidebar-width: 236px;
+    --sidebar-collapsed: 68px;
+    --header-height: 60px;
     --transition-fast: 150ms ease;
     --transition-normal: 250ms ease;
 }
@@ -39,6 +40,7 @@
     --bg-secondary: #ffffff;
     --bg-tertiary: #f1f5f9;
     --bg-hover: #e2e8f0;
+    --bg-sidebar: #ffffff;
     --text-primary: #0f172a;
     --text-secondary: #475569;
     --text-muted: #94a3b8;
@@ -75,183 +77,16 @@ body {
     overflow: hidden;
 }
 
-/* Sidebar */
-.sidebar {
-    width: var(--sidebar-width);
-    background: var(--bg-secondary);
-    border-right: 1px solid var(--border-color);
-    display: flex;
-    flex-direction: column;
-    transition: width var(--transition-normal);
-    z-index: 100;
-}
-
-.sidebar.collapsed {
-    width: var(--sidebar-collapsed);
-}
-
-.sidebar.collapsed .sidebar-nav span,
-.sidebar.collapsed .sidebar-footer span,
-.sidebar.collapsed .logo span {
-    display: none;
-}
-
-.sidebar-header {
-    height: var(--header-height);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 1rem;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.logo {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--text-primary);
-}
-
-.logo-icon {
-    width: 40px;
-    height: 32px;
-}
-
-.logo-icon .envelope-fill {
-    fill: var(--bg-primary);
-}
-
-.sidebar-toggle {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    padding: 0.5rem;
-    border-radius: var(--radius-sm);
-    transition: all var(--transition-fast);
-}
-
-.sidebar-toggle:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-}
-
-.sidebar-toggle svg {
-    width: 20px;
-    height: 20px;
-}
-
-.sidebar-nav {
+/* Main Content. The sidebar, header and page frame are in shell.css. */
+.main-content {
     flex: 1;
-    padding: 1rem 0.75rem;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    /* Same reasoning as .view: the sidebar is a fixed-height column, so the nav
-       list is what scrolls when it does not fit. In a short window the theme
-       toggle and server status in the footer were pushed off the bottom with no
-       way to reach them. */
-    min-height: 0;
-    overflow-y: auto;
-}
-
-.nav-item {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    color: var(--text-secondary);
-    text-decoration: none;
-    border-radius: var(--radius-md);
-    transition: all var(--transition-fast);
-    white-space: nowrap;
-}
-
-.nav-item:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-}
-
-.nav-item.active {
-    background: var(--accent-primary);
-    color: #ffffff;
-}
-
-.nav-item svg {
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-}
-
-.sidebar-footer {
-    padding: 1rem;
-    border-top: 1px solid var(--border-color);
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}
-
-.theme-toggle {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    color: var(--text-secondary);
-    padding: 0.5rem;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all var(--transition-fast);
-}
-
-.theme-toggle:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-}
-
-.theme-toggle svg {
-    width: 18px;
-    height: 18px;
-}
-
-.theme-toggle .sun { display: none; }
-.theme-toggle .moon { display: block; }
-
-[data-theme="light"] .theme-toggle .sun { display: block; }
-[data-theme="light"] .theme-toggle .moon { display: none; }
-
-/* The copyright notice under the server status; the server fills it in. */
-.sidebar-notice {
-    margin: 0;
-    font-size: 0.7rem;
-    line-height: 1.4;
-    color: var(--text-muted);
-}
-
-.sidebar-notice a {
-    color: inherit;
-}
-
-.sidebar.collapsed .sidebar-notice {
-    display: none;
-}
-
-.server-status {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-}
-
-.status-dot {
-    width: 8px;
-    height: 8px;
-    background: var(--accent-success);
-    border-radius: 50%;
-    animation: pulse 2s infinite;
+    width: 100%;
+    /* A flex item won't shrink below its content, which a wide table gives
+       it. It has to, so that the table's own container is what scrolls; a
+       pixel floor here put the right edge of every page off screen. */
+    min-width: 0;
 }
 
 @keyframes pulse {
@@ -259,179 +94,9 @@ body {
     50% { opacity: 0.5; }
 }
 
-/* Main Content */
-.main-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: visible;
-    width: 100%;
-    /* min-width: 0, not a pixel floor.
-       A flex item defaults to min-width:auto, so it refuses to shrink below its
-       content — which is what a wide table gives it. The fix for that is to let
-       it shrink and let the wide child scroll, not to pin the container: a
-       floor of 800px meant that in a 900px window the content was still laid
-       out at 800px beside a 260px sidebar, putting its right edge at 987px and
-       88px of every page off-screen with no way to scroll to it. That is an
-       ordinary un-maximised laptop window, not a phone.
-       This is also what makes overflow-x on the tables below do anything. */
-    min-width: 0;
-}
-
-/* Header */
-.header {
-    height: var(--header-height);
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border-color);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 1.5rem;
-    flex-shrink: 0;
-}
-
-.header-left {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-}
-
-.header-left h1 {
-    font-size: 1.5rem;
-    font-weight: 600;
-}
-
-.mobile-menu-toggle {
-    display: none;
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    padding: 0.5rem;
-    cursor: pointer;
-}
-
-.mobile-menu-toggle svg {
-    width: 24px;
-    height: 24px;
-}
-
-.header-right {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    color: var(--text-secondary);
-    font-size: 0.875rem;
-}
-
-.refresh-indicator {
-    animation: spin 1s linear infinite;
-    opacity: 0;
-    transition: opacity var(--transition-fast);
-}
-
-.refresh-indicator.active {
-    opacity: 1;
-}
-
-.refresh-indicator svg {
-    width: 16px;
-    height: 16px;
-}
-
 @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
-}
-
-/* Views */
-.view {
-    display: none;
-    flex: 1;
-    /* The shell is a fixed-height column — .app is 100vh with overflow:hidden —
-       so the view is where scrolling has to happen. With overflow:visible here
-       and nothing above it able to scroll, everything past the bottom of the
-       window was clipped rather than reachable: the Plugins list lost its last
-       three cards, toggles and all.
-
-       min-height:0 is the load-bearing half. A flex child defaults to
-       min-height:auto and refuses to shrink below its content, so without it
-       the view stays as tall as its content and there is nothing to scroll. */
-    min-height: 0;
-    overflow-y: auto;
-    padding: 1.5rem;
-    width: 100%;
-}
-
-.view.active {
-    display: block;
-}
-
-/* Stats Grid */
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-}
-
-.stat-card {
-    position: relative;
-    background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 60%),
-        var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    padding: 1.25rem;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.stat-card:hover {
-    transform: translateY(-2px);
-    border-color: var(--border-strong);
-    box-shadow: var(--shadow-md);
-}
-
-.stat-icon {
-    width: 48px;
-    height: 48px;
-    border-radius: var(--radius-md);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.stat-icon svg {
-    width: 24px;
-    height: 24px;
-}
-
-.stat-icon.active-icon { background: rgba(59, 130, 246, 0.15); color: var(--accent-primary); }
-.stat-icon.deferred-icon { background: rgba(245, 158, 11, 0.15); color: var(--accent-warning); }
-.stat-icon.hold-icon { background: rgba(6, 182, 212, 0.15); color: var(--accent-info); }
-.stat-icon.failed-icon { background: rgba(239, 68, 68, 0.15); color: var(--accent-danger); }
-
-.stat-info {
-    display: flex;
-    flex-direction: column;
-}
-
-.stat-value {
-    font-size: 1.75rem;
-    font-weight: 700;
-    line-height: 1;
-    letter-spacing: -0.02em;
-    /* Tabular figures keep the counts from jittering sideways as they tick
-       up during auto-refresh. */
-    font-variant-numeric: tabular-nums;
-}
-
-.stat-label {
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-    margin-top: 0.25rem;
 }
 
 /* Dashboard Grid */
@@ -1111,47 +776,6 @@ body {
    vertical scrollbar with arrow buttons next to the tabs. It also overflowed
    horizontally, so tabs past the edge were simply unreachable. Wrapping removes
    both: no scrollbar, and every tab stays clickable however many plugins are on. */
-.settings-tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem 0.5rem;
-    margin-bottom: 2rem;
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 0;
-}
-
-.settings-tab {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    border-radius: var(--radius-md) var(--radius-md) 0 0;
-    transition: all var(--transition-fast);
-    white-space: nowrap;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-}
-
-.settings-tab:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-}
-
-.settings-tab.active {
-    color: var(--accent-primary);
-    border-bottom-color: var(--accent-primary);
-    background: var(--bg-secondary);
-}
-
-.settings-tab svg {
-    width: 18px;
-    height: 18px;
-}
-
 /* The settings containers carried pixel floors of their own — 700, 600 and 500
    — so removing the one on .main-content alone would only have moved the
    overflow down a level. They are block-level and already width:100%, so they
@@ -1584,27 +1208,6 @@ body.hide-failed-queue .failed-health-stat {
 
 /* Responsive */
 @media (max-width: 768px) {
-    .sidebar {
-        position: fixed;
-        left: 0;
-        top: 0;
-        height: 100vh;
-        transform: translateX(-100%);
-        transition: transform var(--transition-normal);
-    }
-
-    .sidebar.open {
-        transform: translateX(0);
-    }
-
-    .mobile-menu-toggle {
-        display: block;
-    }
-
-    .stats-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
     .queue-controls {
         flex-direction: column;
         align-items: stretch;
@@ -3194,6 +2797,8 @@ input:checked + .plugin-slider:before {
 .cert-status.warning { color: var(--accent-warning); }
 .cert-status.critical,
 .cert-status.expired { color: var(--accent-danger); }
+.dns-health-problems { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+.dns-health-problems li { margin-bottom: 0.4rem; }
 
 .cert-path {
     font-family: 'SF Mono', Monaco, monospace;
@@ -3290,3 +2895,70 @@ input:checked + .plugin-slider:before {
 .domain-rate-ok { color: var(--accent-success); }
 .domain-rate-warn { color: var(--accent-warning); }
 .domain-rate-bad { color: var(--accent-danger); }
+
+/* Needs attention, on the Dashboard */
+.attention-card { margin-bottom: 1.5rem; }
+.attention-card[hidden] { display: none; }
+.attention-list { list-style: none; margin: 0; padding: 0; }
+.attention-item { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr) auto; gap: 0.25rem 1rem; align-items: start; padding: 0.75rem 0; }
+.attention-item + .attention-item { border-top: 1px solid var(--border-color); }
+.attention-what p { margin: 0.15rem 0 0; font-size: 0.875rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+.attention-severity { font-size: 0.8rem; font-weight: 600; padding-top: 0.1rem; }
+.attention-critical { color: var(--accent-danger); }
+.attention-warning { color: var(--accent-warning); }
+.attention-unknown, .attention-info { color: var(--text-secondary); }
+.attention-clear { color: var(--accent-success); }
+@media (max-width: 600px) {
+    .attention-item { grid-template-columns: minmax(0, 1fr); }
+    .attention-item .btn { justify-self: start; }
+}
+
+/* DMARC reports. The pair is checked for colour-blind separation and 3:1 on
+   the card in each theme. */
+#report-dmarc { --dmarc-pass: #3987e5; --dmarc-fail: #d95926; }
+[data-theme="light"] #report-dmarc { --dmarc-pass: #2a78d6; --dmarc-fail: #eb6834; }
+#report-dmarc [hidden] { display: none !important; }
+#report-dmarc .card { margin-bottom: 1.25rem; min-width: 0; }
+#report-dmarc small { display: block; }
+#report-dmarc .card-header { flex-wrap: wrap; gap: 0.5rem; }
+.dmarc-range { display: flex; gap: 0.4rem; margin-bottom: 1rem; }
+.dmarc-range button[aria-pressed="true"] { border-color: var(--accent-primary); color: var(--text-primary); }
+.dmarc-notice { padding: 0.75rem; margin-bottom: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-sm); }
+.dmarc-error { color: var(--accent-danger); }
+.dmarc-scroll { overflow-x: auto; }
+.dmarc-pick { padding: 0; border: 0; background: none; color: var(--accent-primary); font: inherit; text-align: left; cursor: pointer; }
+.dmarc-pick[aria-pressed="true"] { color: var(--text-primary); font-weight: 650; text-decoration: underline; text-underline-offset: 0.25rem; }
+.dmarc-heading { margin: 1.5rem 0 0.75rem; overflow-wrap: anywhere; }
+.dmarc-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+.dmarc-tile { min-width: 0; padding: 0.875rem 1rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); }
+.dmarc-tile > span { display: block; font-size: 1.4rem; font-weight: 650; overflow-wrap: anywhere; }
+.dmarc-tile small { color: var(--text-secondary); }
+.dmarc-advice { list-style: none; margin: 0 0 1.25rem; padding: 0; display: grid; gap: 0.5rem; }
+.dmarc-advice:empty { display: none; }
+.dmarc-advice li { display: grid; gap: 0.2rem; padding: 0.75rem 1rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); font-size: 0.875rem; overflow-wrap: anywhere; }
+.dmarc-advice li.dmarc-advice-warning { border-left: 4px solid var(--accent-warning); }
+.dmarc-advice li.dmarc-advice-ok { border-left: 4px solid var(--accent-success); }
+.dmarc-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-bottom: 0.5rem; font-size: 0.8rem; color: var(--text-secondary); }
+.dmarc-legend span, .dmarc-tip span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.dmarc-key { width: 0.7rem; height: 0.7rem; flex: none; border-radius: 2px; }
+.dmarc-pass { fill: var(--dmarc-pass); background: var(--dmarc-pass); }
+.dmarc-fail { fill: var(--dmarc-fail); background: var(--dmarc-fail); }
+.dmarc-chart { position: relative; width: 100%; min-width: 0; min-height: 220px; }
+.dmarc-chart svg { display: block; max-width: 100%; }
+.dmarc-chart svg:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.dmarc-grid { stroke: var(--border-color); stroke-width: 1; }
+.dmarc-axis { stroke: var(--border-strong); stroke-width: 1; }
+.dmarc-tick { fill: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.dmarc-hit { fill: transparent; }
+.dmarc-hit-on { fill: var(--bg-hover); }
+.dmarc-chart path { pointer-events: none; }
+.dmarc-tip { position: absolute; top: 4px; z-index: 2; display: grid; gap: 0.15rem; padding: 0.5rem 0.65rem; font-size: 0.8rem; white-space: nowrap; pointer-events: none; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.dmarc-empty { position: absolute; inset: 80px 0 auto; text-align: center; color: var(--text-secondary); font-size: 0.85rem; pointer-events: none; }
+#report-dmarc details summary { cursor: pointer; padding: 0.4rem 0; color: var(--accent-primary); }
+.dmarc-setup { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: 0.75rem 0; }
+.dmarc-setup input { flex: 1 1 16rem; min-width: 0; padding: 0.6rem 0.75rem; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font: inherit; }
+#report-dmarc .messages-table td { white-space: normal; overflow-wrap: normal; max-width: 22rem; }
+@media (forced-colors: active) {
+    .dmarc-pass { fill: CanvasText; }
+    .dmarc-fail { fill: Highlight; }
+}

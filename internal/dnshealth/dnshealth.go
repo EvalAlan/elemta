@@ -107,7 +107,7 @@ func Run(ctx context.Context, o Options) Report {
 	c := &checker{Options: o}
 	c.serverIPs, c.serverErr = c.addresses(ctx, o.Hostname)
 
-	checks := []func(context.Context) Check{c.mx, c.reverseDNS, c.spf, c.dkim, c.dmarc, c.mtaSTS, c.tlsRPT, c.autoconfig}
+	checks := []func(context.Context) Check{c.mx, c.reverseDNS, c.spf, c.dkim, c.dmarc, c.dmarcReports, c.mtaSTS, c.tlsRPT, c.autoconfig}
 	report := Report{Domain: o.Domain, Hostname: o.Hostname, Status: StatusOK, Checked: time.Now().UTC(), Checks: make([]Check, len(checks))}
 	var wg sync.WaitGroup
 	for i, check := range checks {
@@ -607,7 +607,9 @@ func (c *checker) tlsRPT(ctx context.Context) Check {
 func (c *checker) autoconfig(ctx context.Context) Check {
 	check := Check{ID: "autoconfig", Name: "Mail app setup (SRV)", Status: StatusOK, Summary: "Mail apps can find this server."}
 	var missing []string
-	for _, service := range []string{"imaps", "submission"} {
+	// _autodiscover is Outlook's: it points Outlook at the host that
+	// answers /autodiscover/autodiscover.xml (the webmail does).
+	for _, service := range []string{"imaps", "submission", "autodiscover"} {
 		_, records, err := c.Resolver.LookupSRV(ctx, service, "tcp", c.Domain)
 		name := "_" + service + "._tcp." + c.Domain
 		switch {

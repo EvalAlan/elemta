@@ -48,13 +48,27 @@ Sign in at your server's address with your full email address and password.
 | Account | Change your password, set a recovery email |
 | Security | Two-step verification and app passwords |
 | Mail apps and sync | Settings for mail, calendar and contacts apps, exports |
-| Filters and out-of-office | Rules that sort incoming mail, and automatic replies |
+| Out of office | The automatic reply while you're away |
+| Filters | Rules that sort incoming mail |
+| Subscriptions | Newsletters and mailing lists, with unsubscribe |
 | Folders | Create, rename and delete folders |
 
 ## Mail apps
 
-Thunderbird, and other apps that support automatic setup, need only your email
-address and password. For other apps, enter these settings, replacing
+Thunderbird and Outlook need only your email address and password: they find
+the server themselves.
+
+**iPhone, iPad and Mac:** under Settings → Mail apps and sync, choose **Set up
+an iPhone, iPad or Mac**. It downloads a profile that adds your mail, calendar
+and contacts together. On an iPhone or iPad, open the webmail in Safari, tap
+the button, then open Settings, where the downloaded profile is listed at the
+top, and install it. On a Mac, open the downloaded file and install it under
+System Settings → Privacy and Security → Profiles. You're asked for your
+password (an app password if your account requires them). The profile shows as
+"not verified" because it isn't signed; that's expected. Downloading and
+installing it again replaces it rather than adding a second account.
+
+For other apps, enter these settings, replacing
 `mail.example.com` with the server shown under Settings → Mail apps and sync:
 
 | Protocol | Server | Port | Security |
@@ -85,8 +99,9 @@ off, it says so and you can't turn it on.
 Calendar, tasks and contacts sync over CalDAV and CardDAV:
 
 - **Android:** use [DAVx⁵](https://www.davx5.com/).
-- **iPhone and iPad:** add an account under Settings → Calendar → Accounts and
-  choose Other → CalDAV, then Contacts → Accounts → Other → CardDAV.
+- **iPhone, iPad and Mac:** the setup profile above adds both. By hand: add
+  an account under Settings → Calendar → Accounts and choose Other → CalDAV,
+  then Contacts → Accounts → Other → CardDAV.
 - **Thunderbird:** add a calendar or address book "on the network".
 
 Use the server address shown under Settings → Mail apps and sync, your email
@@ -191,17 +206,42 @@ The webmail's code comes from the server, so this protects mail that's stored, a
 against someone reading the server's disks. It can't protect you from the server
 itself being changed to steal your passphrase.
 
-## Filters and out-of-office
+## Out of office
 
-Under **Settings → Filters and out-of-office**:
+Under **Settings → Out of office** (on a phone, tap your initials, then **Out
+of office**), turn on an automatic answer, optionally between two dates. Each
+sender gets it once every few days, and mailing lists and automated mail never
+get one.
 
-- **Out-of-office reply:** an automatic answer, optionally between two dates.
-  Each sender gets it once every few days, and mailing lists and automated mail
-  never get one.
-- **Filters:** rules that match incoming mail by sender, recipient, subject,
-  body, size or any header. They can move or copy it to a folder, mark it read,
-  flag or tag it, forward it, delete it, or reject it. Filters run on the
-  server, so they work even when no app is open.
+While the reply is on, or set to start, a bar across the top of the webmail
+says so until when, with **Edit** and **Turn off**. Turning it off keeps your
+message for next time.
+
+## Unsubscribing
+
+A newsletter or mailing list message shows a bar under the sender with
+**Unsubscribe**. Depending on what the sender supports, the webmail either
+unsubscribes you straight away, sends the sender a short unsubscribe email
+from your address (it asks first), or opens the sender's own unsubscribe page
+in a new tab. Junk never offers it: unsubscribing from spam only tells the
+spammer your address is read.
+
+The message remembers that you unsubscribed. If the sender is still writing
+a few days later, it offers **Block sender** instead.
+
+**Settings → Subscriptions** lists the newsletters and lists in your inbox
+and archive, busiest first, with how many messages and when the last came.
+Each one has **Unsubscribe**, and under **Their mail**: archive or delete all
+of it in the inbox, always file it under an inbox tab, or block the sender.
+With inbox tabs on, the Promotions, Updates and Forums tabs link to this page
+from their menu.
+
+## Filters
+
+Under **Settings → Filters**: rules that match incoming mail by sender,
+recipient, subject, body, size or any header. They can move or copy it to a
+folder, mark it read, flag or tag it, forward it, delete it, or reject it.
+Filters run on the server, so they work even when no app is open.
 
 ## Passwords
 

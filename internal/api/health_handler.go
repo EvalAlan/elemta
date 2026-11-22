@@ -229,6 +229,7 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 
 	timeoutErrors5m, connCloseErrors5m := s.getRecentConnectionErrorSignals(ctx, 5*time.Minute)
 
+	perHour := s.averagePerHour(ctx)
 	health := HealthStats{
 		Status:          "healthy",
 		Uptime:          int64(uptime.Seconds()),
@@ -271,15 +272,15 @@ func (s *Server) handleHealthStats(w http.ResponseWriter, r *http.Request) {
 		SMTP: SMTPHealth{
 			Listening:         true,
 			ListenAddr:        s.listenAddr,
-			TLSEnabled:        false, // Will be set from config
+			TLSEnabled:        s.mainConfig != nil && s.mainConfig.TLSEnabled,
 			StartTLSEnabled:   false,
 			AuthEnabled:       s.authSystem != nil,
 			ActiveConnections: int(activeConnections.Load()),
 			TotalConnections:  totalConnections.Load(),
 		},
 		Throughput: ThroughputInfo{
-			MessagesPerMinute: calculateRate(totalProcessed, uptime, time.Minute),
-			MessagesPerHour:   calculateRate(totalProcessed, uptime, time.Hour),
+			MessagesPerMinute: perHour / 60,
+			MessagesPerHour:   perHour,
 			BytesPerMinute:    calculateRate(totalBytes, uptime, time.Minute),
 			TotalProcessed:    totalProcessed,
 			TotalBytes:        totalBytes,
@@ -717,4 +718,22 @@ func calculateRate(total int64, elapsed time.Duration, period time.Duration) flo
 		return 0
 	}
 	return float64(total) / elapsed.Seconds() * period.Seconds()
+}
+
+// averagePerHour is the mean over the last 24 hours. The running totals
+// can't give a rate: they outlive this process, so divided by its uptime they
+// showed thousands of messages a minute after every restart.
+func (s *Server) averagePerHour(ctx context.Context) float64 {
+	if s.metricsStore == nil {
+		return 0
+	}
+	hours, err := s.metricsStore.GetHourlyStats(ctx)
+	if err != nil || len(hours) == 0 {
+		return 0
+	}
+	var total int64
+	for _, h := range hours {
+		total += h.Delivered + h.Failed + h.Deferred
+	}
+	return float64(total) / float64(len(hours))
 }

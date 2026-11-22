@@ -66,6 +66,9 @@ type Settings struct {
 	// and Forums (categories.go). Off by default, so the inbox of someone
 	// who never asked doesn't suddenly hide mail behind tabs.
 	InboxTabs bool `json:"inbox_tabs,omitempty"`
+	// Unsubscribed lists the newsletters and lists left from the webmail
+	// (unsubscribe.go), newest last.
+	Unsubscribed []unsubRecord `json:"unsubscribed,omitempty"`
 }
 
 // mailSounds are the new-mail tones, as Settings shows them. They're generated

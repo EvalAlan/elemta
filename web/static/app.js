@@ -31,18 +31,21 @@ const API_BASE = '/api';
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
     initializeTheme();
-    initializeNavigation();
+    shell.initialize();
+    initializeControls();
     initializeEventListeners();
-    
+
     loadFromURL();
     // Check authentication status with a delay to ensure cookies are ready
     // after redirect, then load the server's data, unless the user is a
     // domain administrator, whom the API would refuse it.
     setTimeout(async () => {
         await checkAuthStatus();
+        await shell.start();
         if (authState.confined) return;
         refreshHealth(); // also sets the failed queue's visibility
-        refreshAllData();
+        // The Dashboard loads this itself.
+        if (!shell.is('dashboard')) refreshAllData();
         startAutoRefresh();
     }, 300);
 });
@@ -73,43 +76,7 @@ function toggleTheme() {
 // ============================================================================
 // Navigation
 // ============================================================================
-function initializeNavigation() {
-    // View navigation
-    document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.preventDefault();
-            switchView(item.dataset.view);
-        });
-    });
-
-    // View All links
-    document.querySelectorAll('.view-all[data-view]').forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.preventDefault();
-            switchView(item.dataset.view);
-        });
-    });
-
-    // Settings tabs navigation - use event delegation
-    document.addEventListener('click', (e) => {
-        const settingsTab = e.target.closest('.settings-tab[data-tab]');
-        if (settingsTab) {
-            e.preventDefault();
-            switchSettingsTab(settingsTab.dataset.tab);
-        }
-    });
-
-    // Sidebar toggle
-    document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
-        document.getElementById('sidebar').classList.toggle('collapsed');
-    });
-
-    // Mobile menu toggle
-    document.getElementById('mobile-menu-toggle')?.addEventListener('click', () => {
-        document.getElementById('sidebar').classList.toggle('open');
-    });
-
-    // Theme toggle
+function initializeControls() {
     document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
 
     // Queue tabs
@@ -126,16 +93,6 @@ function initializeNavigation() {
         });
     });
 
-    // Close sidebar on backdrop click (mobile)
-    document.addEventListener('click', (e) => {
-        const sidebar = document.getElementById('sidebar');
-        if (sidebar.classList.contains('open') &&
-            !sidebar.contains(e.target) &&
-            e.target !== document.getElementById('mobile-menu-toggle')) {
-            sidebar.classList.remove('open');
-        }
-    });
-
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
@@ -144,46 +101,13 @@ function initializeNavigation() {
     });
 }
 
-function switchView(viewName) {
-    // Update nav items
-    document.querySelectorAll('.nav-item').forEach(item => {
-        item.classList.toggle('active', item.dataset.view === viewName);
-    });
+// loadPage fetches what a page shows, each time it opens. A deploy, a slow
+// start or a cached page can otherwise leave one stuck on its placeholders.
+function loadPage(page, section) {
+    // Campaign progress polls itself; leaving the section stops it.
+    if (page !== 'campaigns') stopCampaignPolling();
 
-    // Update views
-    document.querySelectorAll('.view').forEach(view => {
-        view.classList.toggle('active', view.id === `view-${viewName}`);
-    });
-
-    // Update page title
-    const titles = {
-        dashboard: 'Dashboard',
-        health: 'Health',
-        certificates: 'Certificates',
-        abuse: 'Abuse',
-        compliance: 'Compliance',
-        queues: 'Mail Queues',
-        reports: 'Reports',
-        tracing: 'Tracing',
-        campaigns: 'Mass Mailer',
-        logs: 'Logs',
-        'mail-admin': 'Mail Administration',
-        settings: 'Settings'
-    };
-    document.getElementById('page-title').textContent = titles[viewName] || viewName;
-
-    // Close mobile sidebar
-    document.getElementById('sidebar').classList.remove('open');
-
-    // Load view-specific data when the user opens a section. Do not rely on
-    // initial page load: remote deploys, slow API startup, and browser cache can
-    // otherwise leave sections stuck on placeholders.
-    // Campaign progress polls itself while a send is in flight; leaving the
-    // section stops it rather than leaving a timer running against an API
-    // nobody is looking at.
-    if (viewName !== 'campaigns') stopCampaignPolling();
-
-    switch (viewName) {
+    switch (page) {
         case 'dashboard':
             refreshAllData();
             refreshHealth();
@@ -195,12 +119,10 @@ function switchView(viewName) {
             refreshHealth();
             refreshCertificate();
             refreshBackupStatus();
+            refreshDnsHealth();
             break;
         case 'certificates':
             refreshCertificates();
-            break;
-        case 'abuse':
-            refreshAbuse();
             break;
         case 'compliance':
             if (typeof openCompliance === 'function') openCompliance();
@@ -209,9 +131,10 @@ function switchView(viewName) {
             refreshQueue();
             break;
         case 'reports':
-            refreshReports();
-            refreshDomainStats();
-            refreshSenderStats();
+            if (section === 'delivery') refreshReports();
+            else if (section === 'senders') { refreshDomainStats(); refreshSenderStats(); }
+            else if (section === 'dmarc') openDMARC();
+            else if (section === 'abuse') refreshAbuse();
             break;
         case 'campaigns':
             refreshCampaigns();
@@ -220,21 +143,17 @@ function switchView(viewName) {
         case 'logs':
             refreshLogs();
             break;
-        case 'settings': {
-            // The per-plugin tabs are built from the API response, so the tab
-            // bar has nothing in it until the plugin list has been fetched at
-            // least once. Settings opens on "UI Settings", which fetches
-            // nothing, so without this the plugin tabs appeared only after
-            // visiting the Plugins tab — they looked like they had failed.
-            refreshPlugins();
-            // Whichever panel is showing also needs current data: the panels
-            // keep whatever they were left with on the previous visit.
-            const activeTab = document.querySelector('.settings-tab.active')?.dataset.tab;
-            if (activeTab === 'server') refreshServerConfig();
-            else if (activeTab === 'rate-limiting') refreshRateLimiting();
-            else if (activeTab === 'users') refreshUsers();
+        case 'settings':
+            // The plugins' tabs come from the API, and the panels otherwise
+            // keep what the last visit left in them.
+            if (shell.allowed('configure')) refreshPlugins();
+            if (section === 'server') refreshServerConfig();
+            else if (section === 'users' || section === 'account') refreshUsers();
+            else if (section === 'plugin-abuse') refreshAbuseSettings();
+            else if (section === 'notifications') refreshAlertEmails();
+            else if (section === 'plugin-log_shipping') refreshLogShipping();
+            else if (section === 'system') refreshHealth();
             break;
-        }
     }
 }
 
@@ -296,7 +215,7 @@ function updateURL() {
     const dateFilter = document.getElementById('date-filter')?.value;
     if (dateFilter) params.set('date', dateFilter);
 
-    window.history.replaceState({}, '', `?${params.toString()}`);
+    window.history.replaceState({}, '', `?${params.toString()}${window.location.hash}`);
 }
 
 function loadFromURL() {
@@ -338,15 +257,80 @@ async function refreshAllData() {
             loadQueueStats(),
             loadQueueObservability(),
             loadQueue(state.currentQueue),
-            loadRecentActivity()
+            loadRecentActivity(),
+            loadOverview(),
+            loadAttention()
         ]);
-        updateLastUpdated();
         return true;
     } catch (error) {
         console.error('Error refreshing data:', error);
         return false;
     } finally {
         showRefreshIndicator(false);
+    }
+}
+
+// loadAttention fills the Dashboard's problem list. Only system
+// administrators may read it; for anyone else the card stays hidden. Details
+// quote DNS and status files, so they are only ever set as text.
+let attentionShown = '';
+async function loadAttention() {
+    const card = document.getElementById('attention-card');
+    if (!card || !shell.is('dashboard')) return;
+    let items;
+    try {
+        const response = await fetch(`${API_BASE}/attention`);
+        if ([401, 403, 404].includes(response.status)) {
+            card.hidden = true;
+            setOverallStatus(undefined);
+            return;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        items = (await response.json()).items;
+        setOverallStatus(items);
+    } catch (error) {
+        console.error('Attention check failed:', error);
+        setOverallStatus(null);
+        items = [{ severity: 'unknown', title: 'Needs attention', detail: "Couldn't check for problems." }];
+    }
+    // With nothing to list, the banner above has already said so.
+    card.hidden = !items.length;
+    // Unchanged, it is left alone: rebuilding on every refresh would take
+    // the focus off its links and be read out again.
+    const shown = JSON.stringify(items);
+    if (shown === attentionShown) return;
+    attentionShown = shown;
+
+    const labels = { critical: 'Critical', warning: 'Warning', unknown: "Couldn't check", info: 'Note' };
+    const pages = { health: 'Health', queues: 'Queues', abuse: 'Abuse report', certificates: 'Certificates', 'settings/notifications': 'Alert emails', 'settings/plugin-log_shipping': 'Log shipping' };
+    const make = (tag, className, text) => {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+    };
+    document.getElementById('attention-count').textContent = items.length ? String(items.length) : '';
+    const list = document.getElementById('attention-list');
+    list.replaceChildren();
+    if (!items.length) {
+        list.appendChild(make('li', 'attention-clear', 'Nothing needs attention.'));
+        return;
+    }
+    for (const item of items) {
+        const row = make('li', 'attention-item');
+        row.appendChild(make('span', `attention-severity attention-${item.severity in labels ? item.severity : 'unknown'}`, labels[item.severity] || labels.unknown));
+        const what = make('div', 'attention-what');
+        what.appendChild(make('strong', '', item.title));
+        what.appendChild(make('p', '', item.detail));
+        if (item.since) what.appendChild(make('small', 'field-hint', `since ${formatDate(item.since)}`));
+        row.appendChild(what);
+        if (pages[item.link]) {
+            const open = make('button', 'btn btn-secondary btn-sm', pages[item.link]);
+            open.type = 'button';
+            open.addEventListener('click', () => switchView(...item.link.split('/')));
+            row.appendChild(open);
+        }
+        list.appendChild(row);
     }
 }
 
@@ -365,9 +349,12 @@ async function loadQueueStats() {
         document.getElementById('badge-deferred').textContent = stats.deferred_count || 0;
         document.getElementById('badge-hold').textContent = stats.hold_count || 0;
         document.getElementById('badge-failed').textContent = stats.failed_count || 0;
+        setServerReachable(true);
+        updateLastUpdated();
         return true;
     } catch (error) {
         console.error('Error loading queue stats:', error);
+        setServerReachable(false);
         return false;
     }
 }
@@ -1124,9 +1111,9 @@ async function refreshLogs(options = {}) {
             const eventTypeClass = getEventTypeClass(log.event_type);
 
             return `
-                        <tr class="log-row ${level.toLowerCase()}">
+                        <tr class="log-row ${escapeHtml(level.toLowerCase())}">
                             <td class="log-time-cell">${escapeHtml(time)}</td>
-                            <td><span class="log-level-badge ${level.toLowerCase()}">${level}</span></td>
+                            <td><span class="log-level-badge ${escapeHtml(level.toLowerCase())}">${escapeHtml(level)}</span></td>
                             <td><span class="log-type-badge ${eventTypeClass}">${escapeHtml(eventType)}</span></td>
                             <td class="log-message-cell">
                                 <div class="log-msg-text">${escapeHtml(log.msg || '')}</div>
@@ -1423,7 +1410,8 @@ async function autoRefreshTick() {
             loadRecentActivity(),
             refreshHealth()
         ]);
-        updateLastUpdated();
+        loadOverview();
+        loadAttention();
 
         if (results.some(ok => ok === false)) {
             throw new Error('Auto-refresh payload failed');
@@ -1457,19 +1445,20 @@ function updateAutoRefreshToggle() {
     if (!btn) return;
 
     if (state.refreshRate <= 0) {
-        btn.textContent = 'Auto-refresh disabled';
+        btn.classList.add('paused');
+        btn.title = 'Auto-refresh is off in Settings';
+        btn.setAttribute('aria-label', btn.title);
         btn.disabled = true;
         return;
     }
 
     btn.disabled = false;
-    if (state.autoRefreshPaused) {
-        btn.textContent = 'Resume Auto-refresh';
-    } else if (state.refreshErrorStreak > 0) {
-        btn.textContent = `Auto-refresh retrying (${state.refreshErrorStreak})`;
-    } else {
-        btn.textContent = 'Pause Auto-refresh';
-    }
+    let label = 'Pause auto-refresh';
+    if (state.autoRefreshPaused) label = 'Resume auto-refresh';
+    else if (state.refreshErrorStreak > 0) label = `Auto-refresh retrying (${state.refreshErrorStreak})`;
+    btn.classList.toggle('paused', state.autoRefreshPaused);
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
 }
 
 function showRefreshIndicator(show) {
@@ -1477,8 +1466,22 @@ function showRefreshIndicator(show) {
     indicator.classList.toggle('active', show);
 }
 
+let lastUpdatedAt = 0;
 function updateLastUpdated() {
-    document.getElementById('last-updated').textContent = 'Updated just now';
+    lastUpdatedAt = Date.now();
+    showLastUpdated();
+}
+
+function showLastUpdated() {
+    const line = document.getElementById('last-updated');
+    if (line) line.textContent = lastUpdatedAt ? `Updated ${formatTimeAgo(lastUpdatedAt)}` : '';
+}
+setInterval(showLastUpdated, 15000);
+
+// The dot says whether the console last answered, which is all it can know.
+function setServerReachable(ok) {
+    document.getElementById('server-status').classList.toggle('offline', !ok);
+    document.getElementById('server-status-text').textContent = ok ? 'Console connected' : "Console isn't answering";
 }
 
 // ============================================================================
@@ -1518,11 +1521,17 @@ function showToast(message, type = 'info') {
 // ============================================================================
 // Utility Functions
 // ============================================================================
+// escapeHtml makes text safe both between tags and inside a quoted attribute.
+// Much of what the console shows is written by whoever sent the mail, so both
+// kinds of quote have to go as well: serialising a text node leaves them.
 function escapeHtml(text) {
     if (text === null || text === undefined) return '';
-    const div = document.createElement('div');
-    div.textContent = String(text);
-    return div.innerHTML;
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function getPriorityLabel(priority) {
@@ -1558,8 +1567,13 @@ async function copyMessageId(id) {
     }
 }
 
+// escapeJsArg makes a value safe as a quoted argument in an inline handler.
+// The browser decodes the attribute as HTML before it reads it as JavaScript,
+// so a character that means something to either is written as \\uXXXX, which
+// means nothing to HTML and only itself to JavaScript.
 function escapeJsArg(value) {
-    return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return String(value ?? '').replace(/[^A-Za-z0-9 _.,:@/-]/g,
+        c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
 }
 
 function queueStatusClass(queueType) {
@@ -1630,6 +1644,7 @@ async function checkAuthStatus() {
             authState.username = data.user?.Username || data.user?.username || data.username;
             authState.permissions = data.permissions || [];
             authState.roles = data.user?.Groups || [];
+            setServerReachable(true);
             updateUserUI();
         } else {
             // Not authenticated, keep default state
@@ -1718,31 +1733,16 @@ function updateUserUI() {
     const btnLogin = document.getElementById('btn-login');
     const btnLogout = document.getElementById('btn-logout');
     const btnApikeys = document.getElementById('btn-apikeys');
-    // There are no accounts to manage when the dashboard runs without login.
-    const usersTab = document.getElementById('settings-tab-users');
-    if (usersTab) usersTab.style.display = authState.isLoggedIn ? '' : 'none';
     const perms = authState.permissions || [];
-    const mailAdminNav = document.getElementById('nav-mailadmin');
-    const mailAdmin = perms.includes('system:admin') || perms.includes('mail:domain-admin');
-    if (mailAdminNav) mailAdminNav.hidden = !authState.isLoggedIn || !mailAdmin;
-    const complianceNav = document.getElementById('nav-compliance');
-    if (complianceNav) complianceNav.hidden = !authState.isLoggedIn || !perms.includes('mail:compliance');
+    shell.setAuth(authState);
     // A domain administrator or compliance officer can't read the server's
-    // queues, logs or statistics (the API refuses them), so the dashboard
-    // shows only their own sections and Settings, and stops polling the rest.
+    // queues, logs or statistics, so the console stops polling for them.
     const confined = authState.isLoggedIn && (perms.includes('mail:domain-admin') || perms.includes('mail:compliance')) && !perms.includes('api:read');
     if (confined !== !!authState.confined) {
         authState.confined = confined;
-        document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-            if (!['mail-admin', 'compliance', 'settings'].includes(item.dataset.view)) item.style.display = confined ? 'none' : '';
-        });
-        document.querySelectorAll('.settings-tab[data-tab]').forEach(item => {
-            if (!['ui', 'users'].includes(item.dataset.tab)) item.style.display = confined ? 'none' : '';
-        });
         if (confined) {
             state.autoRefreshPaused = true;
             if (state.refreshInterval) { clearTimeout(state.refreshInterval); state.refreshInterval = null; }
-            switchView(mailAdmin ? 'mail-admin' : 'compliance');
         }
     }
 
@@ -1782,23 +1782,6 @@ document.addEventListener('click', (e) => {
 // ============================================================================
 // Settings Tabs
 // ============================================================================
-function switchSettingsTab(tabName) {
-    // Update tab buttons
-    document.querySelectorAll('.settings-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.tab === tabName);
-    });
-
-    // Toggle panel visibility
-    document.querySelectorAll('.settings-panel').forEach(panel => {
-        panel.classList.toggle('active', panel.id === `settings-${tabName}`);
-    });
-
-    // Load data for specific tabs
-    if (tabName === 'server') refreshServerConfig();
-    else if (tabName === 'plugins') refreshPlugins();
-    else if (tabName === 'rate-limiting') refreshRateLimiting();
-    else if (tabName === 'users') refreshUsers();
-}
 
 // ============================================================================
 // Configuration Management API
@@ -1821,6 +1804,7 @@ async function refreshServerConfig() {
         document.getElementById('config-listen-addr').value = config.listen_addr || '';
         document.getElementById('config-queue-dir').value = config.queue_dir || '';
         document.getElementById('config-max-size').value = config.max_size || '';
+        document.getElementById('config-max-size-human').textContent = config.max_size ? `Now ${(config.max_size / 1048576).toFixed(1)} MiB` : '';
         document.getElementById('config-queue-backend').value = config.queue_backend || 'file';
         // Absent means the shipped default, which keeps the copy.
         document.getElementById('config-retain-tombstone-body').checked =
@@ -1833,7 +1817,7 @@ async function refreshServerConfig() {
         contentEl.style.display = 'block';
     } catch (error) {
         console.error('Error loading server config:', error);
-        loadingEl.innerHTML = `<div style="color: #ef4444; padding: 1rem;">Failed to load configuration: ${error.message}</div>`;
+        loadingEl.innerHTML = `<div style="color: #ef4444; padding: 1rem;">Failed to load configuration: ${escapeHtml(error.message)}</div>`;
     }
 }
 
@@ -1847,8 +1831,7 @@ async function saveServerConfig() {
         const config = {
             hostname: document.getElementById('config-hostname').value,
             listen_addr: document.getElementById('config-listen-addr').value,
-            queue_dir: document.getElementById('config-queue-dir').value,
-            max_size: document.getElementById('config-max-size').value,
+            max_size: Number(document.getElementById('config-max-size').value),
             failed_queue_retention_hours: parseInt(document.getElementById('config-failed-retention').value),
             // queue_backend is not sent: it is read-only here on purpose.
             queue_retain_tombstone_body: document.getElementById('config-retain-tombstone-body').checked
@@ -1862,7 +1845,7 @@ async function saveServerConfig() {
             body: JSON.stringify(config)
         });
         
-        if (!response.ok) throw new Error('Failed to save configuration');
+        if (!response.ok) throw new Error((await response.text()).trim() || 'Failed to save configuration');
         
         const result = await response.json();
         statusEl.textContent = result.message || 'Configuration saved successfully';
@@ -1882,10 +1865,13 @@ async function saveServerConfig() {
 // reports as configurable but that is missing here still gets a toggle; it just
 // has no tab, which is better than showing an empty one.
 const PLUGIN_SETTINGS_SCHEMA = {
-    rate_limiter: {
-        // The rate limiter has a hand-built panel already; its tab reuses it.
-        panelId: 'settings-rate-limiting',
-        onShow: () => refreshRateLimiting(),
+    log_shipping: {
+        // Destination, credential and status are hand-built (logship.js).
+        panelId: 'settings-plugin-log_shipping',
+    },
+    abuse: {
+        // Limits and rules have a hand-built panel (abuse.js).
+        panelId: 'settings-plugin-abuse',
     },
     spf: {
         testable: true,
@@ -1951,9 +1937,9 @@ const PLUGIN_SETTINGS_SCHEMA = {
         ],
     },
     access_control: {
-        // The Abuse page's rules do this with directions and across every
+        // Abuse protection's rules do this with directions and across every
         // protocol; these lists stay for configurations that already use them.
-        note: 'These lists have moved to the allow and deny rules on the Abuse page, which cover inbound and outbound mail and every protocol. Anything added here moves there when the console next starts, and applies to SMTP until then.',
+        note: 'These lists have moved to the allow and deny rules in the Abuse protection settings, which cover inbound and outbound mail and every protocol. Anything added here moves there when the console next starts, and applies to SMTP until then.',
         fields: [
             { key: 'allow_ips', label: 'Allowed addresses', type: 'list',
               hint: 'CIDR ranges or single addresses, one per line. An allow entry beats a deny entry.' },
@@ -2034,7 +2020,7 @@ async function refreshPlugins() {
         renderPluginTabs(plugins);
         // The mass mailer is a section of its own, so its nav item follows the
         // toggle in the same breath as the settings tabs do.
-        applyMassMailerVisibility(plugins);
+        shell.setPlugins(plugins);
 
         loadingEl.style.display = 'none';
         contentEl.style.display = 'block';
@@ -2069,13 +2055,13 @@ function renderPluginCard(plugin) {
             </div>
             <div class="plugin-status ${enabled ? 'on' : 'off'}">
                 ${enabled ? 'Enabled' : 'Disabled'}
-                ${plugin.requires_restart ? '<span class="plugin-note">restart required to apply</span>' : ''}
-                ${plugin.applies_on_reload ? '<span class="plugin-note">applied by the SMTP server within a few seconds</span>' : ''}
+                ${plugin.requires_restart ? '<span class="plugin-note restart">needs a restart</span>' : ''}
+                ${plugin.applies_on_reload ? '<span class="plugin-note">applies within seconds</span>' : ''}
             </div>
             <div class="plugin-description">${escapeHtml(plugin.description || '')}</div>
             ${summary ? `<div class="plugin-summary">${summary}</div>` : ''}
             ${operational ? `<div class="plugin-summary">${operational}</div>` : ''}
-            ${enabled && schema ? `<div class="plugin-summary"><a href="#" class="link-button"
+            ${enabled && schema ? `<div class="plugin-open"><a href="#" class="link-button"
                 onclick="switchSettingsTab('plugin-${escapeJsArg(name)}'); return false;">Open settings</a></div>` : ''}
         </div>
     `;
@@ -2129,7 +2115,7 @@ function pluginSummary(plugin) {
 // toggle answered "add at least one blocklist zone" and the form for adding
 // one appeared only once it was enabled.
 function renderPluginTabs(plugins) {
-    const tabBar = document.querySelector('.settings-tabs');
+    const tabBar = document.getElementById('settings-plugin-tabs');
     if (!tabBar) return;
 
     const wanted = plugins.filter(p =>
@@ -2147,8 +2133,7 @@ function renderPluginTabs(plugins) {
         }
     });
 
-    // Add tabs for newly enabled plugins, before the System tab.
-    const systemTab = tabBar.querySelector('.settings-tab[data-tab="system"]');
+    // Add tabs for newly enabled plugins, under "All plugins".
     wanted.forEach(plugin => {
         const tabId = `plugin-${plugin.name}`;
         if (tabBar.querySelector(`.settings-tab[data-tab="${tabId}"]`)) {
@@ -2161,8 +2146,7 @@ function renderPluginTabs(plugins) {
         tab.dataset.tab = tabId;
         tab.dataset.pluginTab = plugin.name;
         tab.textContent = plugin.title || plugin.name;
-        tab.addEventListener('click', () => switchSettingsTab(tabId));
-        tabBar.insertBefore(tab, systemTab || null);
+        tabBar.appendChild(tab);
 
         renderPluginPanel(plugin);
     });
@@ -2224,7 +2208,7 @@ function renderPluginPanel(plugin) {
         panel = document.createElement('div');
         panel.className = 'settings-panel';
         panel.id = panelId;
-        const container = document.querySelector('#view-settings');
+        const container = document.querySelector('#view-settings .settings-content');
         if (!container) return;
         container.appendChild(panel);
     }
@@ -2490,6 +2474,14 @@ function setSaveStatus(el, message, kind) {
 }
 
 async function togglePlugin(pluginName, enabled) {
+    if (pluginName === 'log_shipping' && !enabled && !window.confirm('Turn log shipping off? Lines still waiting to be sent are discarded.')) {
+        refreshPlugins();
+        return;
+    }
+    if (pluginName === 'abuse' && !enabled && !window.confirm('Turn abuse protection off? Nothing is blocked, and connection limits fall back to the configuration file.')) {
+        refreshPlugins();
+        return;
+    }
     try {
         const response = await fetch(`${API_BASE}/config/plugins/${encodeURIComponent(pluginName)}`, {
             method: 'PUT',
@@ -2578,83 +2570,7 @@ function showRestartRequired(message) {
 }
 
 
-async function refreshRateLimiting() {
-    const loadingEl = document.getElementById('rate-limiting-loading');
-    const contentEl = document.getElementById('rate-limiting-content');
-    
-    try {
-        loadingEl.style.display = 'block';
-        contentEl.style.display = 'none';
-        
-        const response = await fetch('/api/config');
-        if (!response.ok) throw new Error('Failed to load configuration');
-        
-        const config = await response.json();
-        const rateLimiter = config.rate_limiter;
-        
-        if (rateLimiter) {
-            // Populate connection limits
-            document.getElementById('rate-max-connections-ip').value = rateLimiter.max_connections_per_ip || '';
-            document.getElementById('rate-connections-per-minute').value = rateLimiter.connection_rate_per_minute || '';
-            document.getElementById('rate-connection-burst').value = rateLimiter.connection_burst_size || '';
-            document.getElementById('rate-connection-timeout').value = rateLimiter.connection_timeout || '';
-            
-            // Populate message limits
-            document.getElementById('rate-messages-per-minute').value = rateLimiter.max_messages_per_minute || '';
-            document.getElementById('rate-messages-per-hour').value = rateLimiter.max_messages_per_hour || '';
-            document.getElementById('rate-recipients-per-message').value = rateLimiter.max_recipients_per_message || '';
-            document.getElementById('rate-max-message-size').value = rateLimiter.max_message_size || '';
-        }
-        
-        loadingEl.style.display = 'none';
-        contentEl.style.display = 'block';
-    } catch (error) {
-        console.error('Error loading rate limiting config:', error);
-        loadingEl.innerHTML = `<div class="error-message">Failed to load rate limiting configuration: ${error.message}</div>`;
-    }
-}
 
-async function saveRateLimiting() {
-    const statusEl = document.getElementById('rate-limiting-status');
-    
-    try {
-        statusEl.textContent = 'Saving...';
-        statusEl.className = 'config-status';
-        
-        const rateLimiterConfig = {
-            max_connections_per_ip: parseInt(document.getElementById('rate-max-connections-ip').value),
-            connection_rate_per_minute: parseInt(document.getElementById('rate-connections-per-minute').value),
-            connection_burst_size: parseInt(document.getElementById('rate-connection-burst').value),
-            connection_timeout: document.getElementById('rate-connection-timeout').value,
-            max_messages_per_minute: parseInt(document.getElementById('rate-messages-per-minute').value),
-            max_messages_per_hour: parseInt(document.getElementById('rate-messages-per-hour').value),
-            max_recipients_per_message: parseInt(document.getElementById('rate-recipients-per-message').value),
-            max_message_size: document.getElementById('rate-max-message-size').value
-        };
-        
-        const response = await fetch('/api/config', {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ rate_limiter: rateLimiterConfig })
-        });
-        
-        if (!response.ok) throw new Error('Failed to save rate limiting configuration');
-        
-        const result = await response.json();
-        statusEl.textContent = result.message || 'Rate limiting configuration saved successfully';
-        statusEl.className = 'config-status success';
-        
-        if (result.requires_restart) {
-            statusEl.textContent += ' (restart required)';
-        }
-    } catch (error) {
-        console.error('Error saving rate limiting config:', error);
-        statusEl.textContent = `Error: ${error.message}`;
-        statusEl.className = 'config-status error';
-    }
-}
 
 async function restartServer() {
     // Callable from the System panel and from the restart-required banner, so
@@ -2733,7 +2649,7 @@ async function loadAPIKeys() {
                     <span class="apikey-meta">Created: ${formatDate(key.created_at)}</span>
                 </div>
                 <div class="apikey-actions">
-                    <button class="btn btn-danger btn-sm" onclick="revokeAPIKey('${key.id}')">Revoke</button>
+                    <button class="btn btn-danger btn-sm" onclick="revokeAPIKey('${escapeJsArg(key.id)}')">Revoke</button>
                 </div>
             </div>
         `).join('');
@@ -2815,6 +2731,7 @@ async function refreshHealth() {
         // System info
         document.getElementById('health-go-version').textContent = health.go_version || '-';
         document.getElementById('health-server-version').textContent = health.server_version || '-';
+        document.getElementById('about-version').textContent = health.server_version || 'unknown';
         document.getElementById('health-cpus').textContent = health.num_cpu || '-';
         document.getElementById('health-listen-addr').textContent = health.configured_addr || '-';
         document.getElementById('health-auth-enabled').textContent = health.auth_enabled ? 'Yes' : 'No';
@@ -2836,7 +2753,6 @@ async function refreshHealth() {
         document.getElementById('queue-deferred-health').textContent = queue.deferred_count || 0;
         document.getElementById('queue-hold-health').textContent = queue.hold_count || 0;
         document.getElementById('queue-failed-health').textContent = queue.failed_count || 0;
-        document.getElementById('queue-processor').textContent = queue.processor_active ? 'Yes' : 'No';
         document.getElementById('queue-oldest-active').textContent = queue.oldest_active_age || '-';
         document.getElementById('queue-oldest-deferred').textContent = queue.oldest_deferred_age || '-';
         document.getElementById('queue-oldest-failed').textContent = queue.oldest_failed_age || '-';
@@ -2849,8 +2765,6 @@ async function refreshHealth() {
 
         // SMTP
         const smtp = health.smtp || {};
-        document.getElementById('smtp-connections').textContent = smtp.active_connections || 0;
-        document.getElementById('smtp-total-connections').textContent = smtp.total_connections || 0;
         document.getElementById('smtp-tls').textContent = smtp.tls_enabled ? 'Yes' : 'No';
         document.getElementById('smtp-timeout-5m').textContent = throughput.timeout_errors_5m || 0;
         document.getElementById('smtp-conn-close-5m').textContent = throughput.conn_close_errors_5m || 0;
@@ -3104,7 +3018,7 @@ function renderRecentErrors(errors) {
                 <div class="error-message">${escapeHtml(err.error)}</div>
                 <div class="error-meta">${escapeHtml(err.recipient)} • ${formatTimeAgo(err.timestamp)}</div>
                 <div style="margin-top: 0.35rem;">
-                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch(decodeURIComponent('${encodeURIComponent(err.error || '')}'))">View related logs</button>
+                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch('${escapeJsArg(err.error)}')">View related logs</button>
                 </div>
             </div>
         </div>
@@ -3126,7 +3040,7 @@ function renderTopErrorReasons(reasons) {
                 <div class="error-message">${escapeHtml(reason.reason || 'unknown error')}</div>
                 <div class="error-meta">${reason.count || 0} event(s)</div>
                 <div style="margin-top: 0.35rem;">
-                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch(decodeURIComponent('${encodeURIComponent(reason.reason || '')}'))">View matching logs</button>
+                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch('${escapeJsArg(reason.reason)}')">View matching logs</button>
                 </div>
             </div>
         </div>
@@ -3185,7 +3099,7 @@ function renderMessagePreview(message) {
                     </svg>
                     HTML content rendered in sandbox
                 </div>
-                <iframe class="preview-frame" sandbox="allow-same-origin" srcdoc="${escapeHtml(body).replace(/"/g, '&quot;')}"></iframe>
+                <iframe class="preview-frame" sandbox="" srcdoc="${escapeHtml(body)}"></iframe>
             </div>
         `;
     } else {
@@ -3465,6 +3379,47 @@ async function refreshBackupStatus() {
     } catch (error) {
         console.error('Backup status check failed:', error);
         body.innerHTML = `<div class="error-message">Could not check backups: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+// refreshDnsHealth fills the Health page's DNS card from the scheduled
+// check's last results, so problems show without opening each domain. The
+// Domains page's Check DNS runs the same checks on demand.
+async function refreshDnsHealth() {
+    const body = document.getElementById('dns-health-body');
+    if (!body) return;
+    try {
+        const response = await fetch(`${API_BASE}/provision/dns-health/status`);
+        if (response.status === 403) {
+            document.getElementById('dns-health-card').hidden = true;
+            return;
+        }
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        const d = await response.json();
+        const status = (s, text) => `<span class="cert-status ${escapeHtml(s)}">${escapeHtml(text)}</span>`;
+        const head = `
+            <div class="cert-grid">
+                <div class="cert-row"><span class="cert-label">Status</span><span class="cert-value">${status(d.status, d.message)}</span></div>
+                <div class="cert-row"><span class="cert-label">Last checked</span><span class="cert-value">${d.checked ? escapeHtml(formatDate(d.checked)) : 'never'}</span></div>
+            </div>`;
+        const label = { ok: 'OK', warning: 'Warning', critical: 'Failing' };
+        const domains = (d.domains || []).map(dom => {
+            const since = dom.since ? ` <span class="field-hint">since ${escapeHtml(formatDate(dom.since))}</span>` : '';
+            const problems = (dom.problems || []).map(c => `
+                <li><strong>${escapeHtml(c.name)}</strong>: ${escapeHtml(c.summary)}
+                    ${c.fix ? `<div class="field-hint">${escapeHtml(c.fix)}</div>` : ''}
+                    ${c.record ? `<div class="cert-path">${escapeHtml(c.record)}</div>` : ''}</li>`).join('');
+            return `
+                <div class="cert-row">
+                    <span class="cert-label">${escapeHtml(dom.domain)}</span>
+                    <span class="cert-value">${status(dom.status, label[dom.status] || dom.status)}${since}
+                        ${problems ? `<ul class="dns-health-problems">${problems}</ul>` : ''}</span>
+                </div>`;
+        }).join('');
+        body.innerHTML = head + (domains ? `<div class="cert-grid" style="margin-top: 1rem;">${domains}</div>` : '');
+    } catch (error) {
+        console.error('DNS health check failed:', error);
+        body.innerHTML = `<div class="error-message">Could not load the DNS check: ${escapeHtml(error.message)}</div>`;
     }
 }
 

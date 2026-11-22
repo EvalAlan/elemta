@@ -15,8 +15,10 @@ FROM alpine:3.24
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata bash
+# Install runtime dependencies, after upgrading what the base image has:
+# apk add never upgrades those, and Alpine's fixes land in the repository
+# before a new base image (zlib 1.4 for CVE-2026-4738 did).
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates tzdata bash
 
 # Create directories
 RUN mkdir -p /app/config /app/queue /app/logs /app/plugins

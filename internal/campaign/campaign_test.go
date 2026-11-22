@@ -144,7 +144,7 @@ func TestUnresolvedFieldsWarnsBeforeSending(t *testing.T) {
 
 func TestBuildMessageProducesMultipartWithCRLF(t *testing.T) {
 	c := testCampaign()
-	body, err := BuildMessage(c, c.Recipients[0], "mail.example.com")
+	body, err := BuildMessage(c, c.Recipients[0], "mail.example.com", "")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestBuildMessageRefusesHeaderInjectionViaMergeField(t *testing.T) {
 		Vars:  map[string]string{"name": "x\r\nBcc: attacker@evil.example"},
 	}
 
-	_, err := BuildMessage(c, r, "mail.example.com")
+	_, err := BuildMessage(c, r, "mail.example.com", "")
 	if err == nil {
 		t.Fatal("a merge value containing CRLF must not be written into a header")
 	}
@@ -200,7 +200,7 @@ func TestBuildMessageHandlesSingleBodyTypes(t *testing.T) {
 	t.Run("text only", func(t *testing.T) {
 		c := testCampaign()
 		c.HTMLBody = ""
-		body, err := BuildMessage(c, c.Recipients[0], "mail.example.com")
+		body, err := BuildMessage(c, c.Recipients[0], "mail.example.com", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -211,7 +211,7 @@ func TestBuildMessageHandlesSingleBodyTypes(t *testing.T) {
 	t.Run("html only", func(t *testing.T) {
 		c := testCampaign()
 		c.TextBody = ""
-		body, err := BuildMessage(c, c.Recipients[0], "mail.example.com")
+		body, err := BuildMessage(c, c.Recipients[0], "mail.example.com", "")
 		if err != nil {
 			t.Fatal(err)
 		}

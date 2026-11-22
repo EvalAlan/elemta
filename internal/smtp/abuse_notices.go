@@ -30,18 +30,38 @@ func (s *Server) SendAbuseNotices(ctx context.Context) {
 	})
 }
 
-// noticeDomain is the domain notices come from: the first local domain,
-// which is one this server signs for, or the host name without one.
+// noticeDomain is the domain notices come from: the hosted domain the
+// server's own host name belongs to (mail.example.com sends as
+// postmaster@example.com), else the first local domain, else the host name.
+// It used to be the first local domain whatever it was, and on a server
+// whose list starts with a test or alias domain the alerts came from a
+// domain with no SPF or DKIM of its own, which is a fine way to get them
+// filed as spam.
 func (s *Server) noticeDomain() string {
-	if s.config != nil {
-		for _, domain := range s.config.LocalDomains {
-			if domain = strings.TrimSpace(domain); domain != "" {
-				return strings.ToLower(domain)
-			}
+	if s.config == nil {
+		return "localhost"
+	}
+	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.config.Hostname), "."))
+	best, first := "", ""
+	for _, domain := range s.config.LocalDomains {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if domain == "" {
+			continue
 		}
-		if s.config.Hostname != "" {
-			return s.config.Hostname
+		if first == "" {
+			first = domain
 		}
+		if (host == domain || strings.HasSuffix(host, "."+domain)) && len(domain) > len(best) {
+			best = domain
+		}
+	}
+	switch {
+	case best != "":
+		return best
+	case first != "":
+		return first
+	case host != "":
+		return host
 	}
 	return "localhost"
 }

@@ -5,8 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261103-2fa">
+    <link rel="stylesheet" href="/static/styles.css?v=20261122-refresh">
+    <link rel="stylesheet" href="/static/shell.css?v=20261122-logship">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261122-refresh">
 </head>
 
 <body>
@@ -65,7 +66,7 @@
                     </svg>
                     <span>Elemta</span>
                 </div>
-                <button class="sidebar-toggle" id="sidebar-toggle">
+                <button class="icon-btn sidebar-toggle" id="sidebar-toggle" aria-label="Collapse or expand the menu" aria-expanded="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="3" y1="12" x2="21" y2="12" />
                         <line x1="3" y1="6" x2="21" y2="6" />
@@ -73,91 +74,137 @@
                     </svg>
                 </button>
             </div>
-            <nav class="sidebar-nav">
-                <a href="#" class="nav-item active" data-view="dashboard">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <nav class="sidebar-nav" aria-label="Main">
+                <div class="nav-group" hidden>
+                    <p class="nav-label">Overview</p>
+                    <a href="#/dashboard" class="nav-item" data-view="dashboard" title="Dashboard" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="3" width="7" height="7" />
                         <rect x="14" y="3" width="7" height="7" />
                         <rect x="14" y="14" width="7" height="7" />
                         <rect x="3" y="14" width="7" height="7" />
                     </svg>
-                    <span>Dashboard</span>
-                </a>
-                <a href="#" class="nav-item" data-view="mail-admin" id="nav-mailadmin" hidden>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg>
-                    <span>Mail Administration</span>
-                </a>
-                <a href="#" class="nav-item" data-view="health">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                    </svg>
-                    <span>Health</span>
-                </a>
-                <a href="#" class="nav-item" data-view="certificates">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-                    <span>Certificates</span>
-                </a>
-                <a href="#" class="nav-item" data-view="compliance" id="nav-compliance" hidden>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="6"/><path d="m21 21-6.5-6.5"/><path d="M7.5 10h5"/></svg>
-                    <span>Compliance</span>
-                </a>
-                <a href="#" class="nav-item" data-view="abuse">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>
-                    <span>Abuse</span>
-                </a>
-                <a href="#" class="nav-item" data-view="queues">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="2" y="3" width="20" height="5" rx="1" />
-                        <rect x="2" y="10" width="20" height="5" rx="1" />
-                        <rect x="2" y="17" width="20" height="5" rx="1" />
-                    </svg>
-                    <span>Mail Queues</span>
-                </a>
-                <a href="#" class="nav-item" data-view="reports">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <span>Dashboard</span>
+                        <span class="nav-badge" id="nav-attention" hidden></span>
+                    </a>
+                    <a href="#/reports" class="nav-item" data-view="reports" title="Reports" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="20" x2="18" y2="10" />
                         <line x1="12" y1="20" x2="12" y2="4" />
                         <line x1="6" y1="20" x2="6" y2="14" />
                     </svg>
-                    <span>Reports</span>
-                </a>
-                <!-- Hidden until the mass mailer plugin is on: a section that
-                     answers every click with "not enabled" is worse than one
-                     that is not there. -->
-                <a href="#" class="nav-item" data-view="campaigns" id="nav-campaigns" style="display: none;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <span>Reports</span>
+                    </a>
+                </div>
+                <div class="nav-group" hidden>
+                    <p class="nav-label">Mail</p>
+                    <a href="#/mail-admin" class="nav-item" data-view="mail-admin" id="nav-mailadmin" title="Accounts &amp; domains" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg>
+                        <span>Accounts &amp; domains</span>
+                    </a>
+                    <a href="#/queues" class="nav-item" data-view="queues" title="Queues" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="5" rx="1" />
+                        <rect x="2" y="10" width="20" height="5" rx="1" />
+                        <rect x="2" y="17" width="20" height="5" rx="1" />
+                    </svg>
+                        <span>Queues</span>
+                    </a>
+                    <a href="#/campaigns" class="nav-item" data-view="campaigns" id="nav-campaigns" title="Mass Mailer" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
                         <polyline points="22,6 12,13 2,6" />
                     </svg>
-                    <span>Mass Mailer</span>
-                </a>
-                <a href="#" class="nav-item" data-view="tracing">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <span>Mass Mailer</span>
+                    </a>
+                </div>
+                <div class="nav-group" hidden>
+                    <p class="nav-label">Investigate</p>
+                    <a href="#/tracing" class="nav-item" data-view="tracing" title="Message trace" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8" />
                         <line x1="21" y1="21" x2="16.65" y2="16.65" />
                     </svg>
-                    <span>Tracing</span>
-                </a>
-                <a href="#" class="nav-item" data-view="logs">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <span>Message trace</span>
+                    </a>
+                    <a href="#/logs" class="nav-item" data-view="logs" title="Logs" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                         <polyline points="14 2 14 8 20 8" />
                         <line x1="16" y1="13" x2="8" y2="13" />
                         <line x1="16" y1="17" x2="8" y2="17" />
                     </svg>
-                    <span>Logs</span>
-                </a>
-                <a href="#" class="nav-item" data-view="settings">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <span>Logs</span>
+                    </a>
+                    <a href="#/compliance" class="nav-item" data-view="compliance" id="nav-compliance" title="Compliance" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="6"/><path d="m21 21-6.5-6.5"/><path d="M7.5 10h5"/></svg>
+                        <span>Compliance</span>
+                    </a>
+                </div>
+                <div class="nav-group" hidden>
+                    <p class="nav-label">System</p>
+                    <a href="#/health" class="nav-item" data-view="health" title="Health" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                    </svg>
+                        <span>Health</span>
+                    </a>
+                    <a href="#/certificates" class="nav-item" data-view="certificates" title="Certificates" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                        <span>Certificates</span>
+                    </a>
+                    <a href="#/settings" class="nav-item" data-view="settings" title="Settings" hidden>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="3" />
                         <path
                             d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
                     </svg>
-                    <span>Settings</span>
-                </a>
+                        <span>Settings</span>
+                    </a>
+                </div>
             </nav>
             <div class="sidebar-footer">
-                <button class="theme-toggle" id="theme-toggle">
+                <div class="server-status" id="server-status">
+                    <span class="status-dot"></span>
+                    <span id="server-status-text">Connecting…</span>
+                </div>
+                <p class="sidebar-notice"><!-- elemta:notice --></p>
+            </div>
+        </aside>
+
+        <div class="sidebar-scrim" id="sidebar-scrim" hidden></div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-left">
+                    <button class="icon-btn mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Open the menu" aria-expanded="false" aria-controls="sidebar">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="3" y1="12" x2="21" y2="12" />
+                            <line x1="3" y1="6" x2="21" y2="6" />
+                            <line x1="3" y1="18" x2="21" y2="18" />
+                        </svg>
+                    </button>
+                    <div class="page-heading"><h1 id="page-title">Elemta</h1><span class="page-section" id="page-section"></span></div>
+                </div>
+                <div class="header-right">
+                    <div class="refresh-indicator" id="refresh-indicator">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10" />
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                        </svg>
+                    </div>
+                    <span class="last-updated" id="last-updated" data-needs="read"></span>
+                    <button class="jump-button" id="jump-open" type="button" aria-label="Jump to a page or account">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+                        <span>Jump to…</span><kbd>Ctrl K</kbd>
+                    </button>
+                    <button class="icon-btn" id="auto-refresh-toggle" onclick="toggleAutoRefreshPause()" data-needs="read" aria-label="Pause auto-refresh" title="Pause auto-refresh">
+                        <svg class="icon-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 5v14"/><path d="M15 5v14"/></svg>
+                        <svg class="icon-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="7 4 20 12 7 20"/></svg>
+                    </button>
+                    <button class="icon-btn theme-toggle" id="theme-toggle" aria-label="Switch between dark and light">
                     <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="5" />
                         <line x1="12" y1="1" x2="12" y2="3" />
@@ -173,39 +220,8 @@
                         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
                     </svg>
                 </button>
-                <div class="server-status">
-                    <span class="status-dot"></span>
-                    <span>Server Online</span>
-                </div>
-                <p class="sidebar-notice"><!-- elemta:notice --></p>
-            </div>
-        </aside>
-
-        <!-- Main Content -->
-        <main class="main-content">
-            <!-- Header -->
-            <header class="header">
-                <div class="header-left">
-                    <button class="mobile-menu-toggle" id="mobile-menu-toggle">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="3" y1="12" x2="21" y2="12" />
-                            <line x1="3" y1="6" x2="21" y2="6" />
-                            <line x1="3" y1="18" x2="21" y2="18" />
-                        </svg>
-                    </button>
-                    <h1 id="page-title">Dashboard</h1>
-                </div>
-                <div class="header-right">
-                    <div class="refresh-indicator" id="refresh-indicator">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="23 4 23 10 17 10" />
-                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                        </svg>
-                    </div>
-                    <span class="last-updated" id="last-updated">Updated just now</span>
-                    <button class="btn btn-secondary btn-sm" id="auto-refresh-toggle" onclick="toggleAutoRefreshPause()">Pause Auto-refresh</button>
                     <div class="user-menu" id="user-menu">
-                        <button class="user-btn" id="user-btn" onclick="toggleUserMenu()">
+                        <button class="user-btn" id="user-btn" onclick="toggleUserMenu()" aria-label="Your account">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                                 <circle cx="12" cy="7" r="4" />
@@ -248,102 +264,59 @@
             </header>
 
             <!-- Dashboard View -->
-            <section class="view active" id="view-dashboard">
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon active-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                            </svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="stat-active">0</span>
-                            <span class="stat-label">Active</span>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon deferred-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="12" cy="12" r="10" />
-                                <polyline points="12 6 12 12 16 14" />
-                            </svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="stat-deferred">0</span>
-                            <span class="stat-label">Deferred</span>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon hold-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                            </svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="stat-hold">0</span>
-                            <span class="stat-label">On Hold</span>
-                        </div>
-                    </div>
-                    <div class="stat-card failed-stat-card">
-                        <div class="stat-icon failed-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="12" cy="12" r="10" />
-                                <line x1="15" y1="9" x2="9" y2="15" />
-                                <line x1="9" y1="9" x2="15" y2="15" />
-                            </svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="stat-failed">0</span>
-                            <span class="stat-label">Failed</span>
-                        </div>
-                    </div>
+            <section class="view" id="view-dashboard">
+                <div class="overall" id="overall" role="status" hidden>
+                    <span class="overall-mark" id="overall-mark" aria-hidden="true"></span>
+                    <div><h2 id="overall-title"></h2><p id="overall-detail"></p></div>
                 </div>
-
-                <div class="dashboard-grid">
-                    <div class="card recent-activity">
-                        <div class="card-header">
-                            <h3>Recent Activity</h3>
-                            <a href="#" class="view-all" data-view="queues">View All</a>
+                <div class="stats-grid">
+                    <button class="stat-card" type="button" data-go="reports/delivery">
+                        <span class="stat-icon active-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 5 5L20 7"/></svg></span>
+                        <span class="stat-info"><span class="stat-value" id="overview-delivered">—</span><span class="stat-label">Delivered, 24 hours</span></span>
+                    </button>
+                    <button class="stat-card" type="button" data-go="reports/delivery">
+                        <span class="stat-icon hold-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 17 9 11l4 4 8-8"/><path d="M15 7h6v6"/></svg></span>
+                        <span class="stat-info"><span class="stat-value" id="overview-success">—</span><span class="stat-label">Success rate</span></span>
+                    </button>
+                    <button class="stat-card" type="button" data-go="queues">
+                        <span class="stat-icon deferred-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+                        <span class="stat-info"><span class="stat-value" id="overview-deferred">—</span><span class="stat-label">Deferrals, 24 hours</span></span>
+                    </button>
+                    <button class="stat-card" type="button" data-go="reports/delivery">
+                        <span class="stat-icon failed-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg></span>
+                        <span class="stat-info"><span class="stat-value" id="overview-failed">—</span><span class="stat-label">Failed, 24 hours</span></span>
+                    </button>
+                </div>
+                <div class="overview-grid-layout">
+                    <div class="overview-column">
+                        <div class="card">
+                            <div class="card-header"><h3>Mail, last 24 hours</h3><a href="#/reports/delivery" class="view-all" data-go="reports/delivery">Delivery report</a></div>
+                            <div class="card-body">
+                                <div class="overview-legend"><span><i class="overview-key overview-good"></i>Delivered</span><span><i class="overview-key overview-bad"></i>Deferred or failed</span></div>
+                                <div class="overview-chart" id="overview-chart"></div>
+                            </div>
                         </div>
-                        <div class="card-body" id="recent-activity">
-                            <div class="loading-placeholder">Loading...</div>
-                        </div>
+                        <div class="card attention-card" id="attention-card" hidden>
+                    <div class="card-header"><h3>Needs attention</h3><span class="field-hint" id="attention-count"></span></div>
+                    <div class="card-body"><ul class="attention-list" id="attention-list" aria-live="polite"></ul></div>
+                </div>
                     </div>
-                    <div class="card quick-actions">
-                        <div class="card-header">
-                            <h3>Quick Actions</h3>
-                        </div>
-                        <div class="card-body">
-                            <button class="action-btn" onclick="refreshAllData()">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="23 4 23 10 17 10" />
-                                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                                </svg>
-                                Refresh Data
-                            </button>
-                            <button class="action-btn" onclick="retryQueue('active')">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polygon points="5 3 19 12 5 21 5 3" />
-                                </svg>
-                                Process Active Queue
-                            </button>
-                            <button class="action-btn warning" onclick="retryQueue('deferred')">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <circle cx="12" cy="12" r="10" />
-                                    <polyline points="12 6 12 12 16 14" />
-                                </svg>
-                                Retry Deferred
-                            </button>
-                            <button class="action-btn danger" onclick="retryAllQueues()">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path
-                                        d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                                    <line x1="12" y1="9" x2="12" y2="13" />
-                                    <line x1="12" y1="17" x2="12.01" y2="17" />
-                                </svg>
-                                Retry All Queues
-                            </button>
+                    <div class="overview-column">
+                        <div class="card">
+                            <div class="card-header"><h3>Queue now</h3><a href="#/queues" class="view-all" data-go="queues">Open queues</a></div>
+                            <div class="card-body">
+                                <div class="queue-strip">
+                                    <div class="queue-count"><span class="stat-value" id="stat-active">0</span><span class="stat-label">Active</span></div>
+                                    <div class="queue-count"><span class="stat-value" id="stat-deferred">0</span><span class="stat-label">Deferred</span></div>
+                                    <div class="queue-count"><span class="stat-value" id="stat-hold">0</span><span class="stat-label">On hold</span></div>
+                                    <div class="queue-count failed-stat-card"><span class="stat-value" id="stat-failed">0</span><span class="stat-label">Failed</span></div>
+                                </div>
+                                <div id="recent-activity"><div class="loading-placeholder">Loading...</div></div>
+                                <div class="queue-buttons" data-needs="queue" hidden>
+                                    <button class="btn btn-secondary btn-sm" type="button" onclick="retryQueue('active')">Process active</button>
+                                    <button class="btn btn-secondary btn-sm" type="button" onclick="retryQueue('deferred')">Retry deferred</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -408,7 +381,7 @@
                 <div class="health-grid">
                     <div class="card">
                         <div class="card-header">
-                            <h3>System Information</h3>
+                            <h3>System</h3>
                             <button class="btn btn-secondary" onclick="refreshHealth()">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="23 4 23 10 17 10" />
@@ -425,7 +398,7 @@
                                 <dd id="health-server-version">-</dd>
                                 <dt>CPUs</dt>
                                 <dd id="health-cpus">-</dd>
-                                <dt>Listen Address</dt>
+                                <dt>Console listens on</dt>
                                 <dd id="health-listen-addr">-</dd>
                                 <dt>Auth Enabled</dt>
                                 <dd id="health-auth-enabled">-</dd>
@@ -436,7 +409,7 @@
                     </div>
                     <div class="card">
                         <div class="card-header">
-                            <h3>Memory Details</h3>
+                            <h3>Memory</h3>
                         </div>
                         <div class="card-body">
                             <dl class="info-grid">
@@ -457,7 +430,7 @@
                     </div>
                     <div class="card">
                         <div class="card-header">
-                            <h3>Queue Health</h3>
+                            <h3>Queue</h3>
                         </div>
                         <div class="card-body">
                             <dl class="info-grid">
@@ -471,8 +444,6 @@
                                 <dd id="queue-hold-health">-</dd>
                                 <dt class="failed-health-stat">Failed</dt>
                                 <dd id="queue-failed-health" class="failed-health-stat">-</dd>
-                                <dt>Processor Active</dt>
-                                <dd id="queue-processor">-</dd>
                                 <dt>Oldest Active Age</dt>
                                 <dd id="queue-oldest-active">-</dd>
                                 <dt>Oldest Deferred Age</dt>
@@ -491,16 +462,12 @@
                         </div>
                         <div class="card-body">
                             <dl class="info-grid">
-                                <dt>Messages/Minute</dt>
+                                <dt>Per minute (24 h average)</dt>
                                 <dd id="throughput-per-min">-</dd>
-                                <dt>Messages/Hour</dt>
+                                <dt>Per hour (24 h average)</dt>
                                 <dd id="throughput-per-hour">-</dd>
                                 <dt>Total Processed</dt>
                                 <dd id="throughput-total">-</dd>
-                                <dt>Active Connections</dt>
-                                <dd id="smtp-connections">-</dd>
-                                <dt>Total Connections</dt>
-                                <dd id="smtp-total-connections">-</dd>
                                 <dt>TLS Enabled</dt>
                                 <dd id="smtp-tls">-</dd>
                                 <dt>Timeout Errors (5m)</dt>
@@ -518,7 +485,7 @@
 
                 <div class="card" id="tls-cert-card" style="margin-top: 1.5rem;">
                     <div class="card-header">
-                        <h3>TLS Certificate</h3>
+                        <h3>TLS certificate</h3>
                         <button class="btn btn-secondary btn-sm" onclick="refreshCertificate()">Refresh</button>
                     </div>
                     <div class="card-body" id="tls-cert-body">
@@ -528,11 +495,21 @@
 
                 <div class="card" id="backup-card" style="margin-top: 1.5rem;">
                     <div class="card-header">
-                        <h3>Off-site Backups</h3>
+                        <h3>Off-site backups</h3>
                         <button class="btn btn-secondary btn-sm" onclick="refreshBackupStatus()">Refresh</button>
                     </div>
                     <div class="card-body" id="backup-body">
                         <div class="loading-placeholder">Checking backups...</div>
+                    </div>
+                </div>
+
+                <div class="card" id="dns-health-card" style="margin-top: 1.5rem;">
+                    <div class="card-header">
+                        <h3>DNS</h3>
+                        <button class="btn btn-secondary btn-sm" onclick="refreshDnsHealth()">Refresh</button>
+                    </div>
+                    <div class="card-body" id="dns-health-body">
+                        <div class="loading-placeholder">Loading the last DNS check...</div>
                     </div>
                 </div>
             </section>
@@ -584,7 +561,418 @@
                 <iframe name="compliance-download" id="compliance-download" title="Export download" hidden></iframe>
             </section>
 
-            <section class="view" id="view-abuse">
+            <section class="view" id="view-certificates">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Certificates</h3>
+                        <div>
+                            <button class="btn btn-secondary btn-sm" id="cert-sync" hidden onclick="syncCertificates()">Sync now</button>
+                            <button class="btn btn-secondary btn-sm" onclick="refreshCertificates()">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="field-hint">
+                            Every certificate SMTP, IMAP and POP3 serve. A client that asks for a name one of
+                            them covers gets that one; everyone else gets the primary. Let's Encrypt certificates
+                            renew by themselves; Sync now applies requests and copies renewals right away.
+                        </div>
+                        <div id="cert-list"><div class="loading-placeholder">Loading...</div></div>
+                        <div id="cert-requests" class="cert-requests"></div>
+                    </div>
+                </div>
+                <div class="card" id="cert-manage" style="margin-top: 1.5rem;" hidden>
+                    <div class="card-header"><h3>Add a certificate</h3></div>
+                    <div class="card-body cert-manage">
+                        <form id="cert-request-form" class="cert-form">
+                            <h4>Let's Encrypt</h4>
+                            <p class="field-hint">
+                                For host names that already point at this server. Add alternatives separated by
+                                commas, such as mail.example.org, imap.example.org: each gets its own certificate,
+                                which mail apps can't tell apart from one naming them all. Issued within a minute
+                                and renewed automatically. Each failed attempt counts
+                                toward Let's Encrypt's limit of 5 an hour, so set the DNS record first.
+                            </p>
+                            <div class="cert-inline">
+                                <label class="sr-only" for="cert-request-host">Host names</label>
+                                <input id="cert-request-host" type="text" placeholder="mail.example.org, imap.example.org" autocomplete="off" spellcheck="false" required>
+                                <button class="btn btn-primary" type="submit">Request certificate</button>
+                            </div>
+                        </form>
+                        <form id="cert-upload-form" class="cert-form">
+                            <h4>Upload your own</h4>
+                            <p class="field-hint">
+                                A certificate chain and its unencrypted private key, in PEM. It's filed under the
+                                certificate's first name and served to clients asking for any name it covers.
+                                Uploaded certificates aren't renewed: upload a new one before it expires.
+                            </p>
+                            <label for="cert-upload-cert">Certificate chain</label>
+                            <textarea id="cert-upload-cert" rows="5" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----" required></textarea>
+                            <input type="file" id="cert-upload-cert-file" accept=".pem,.crt,.cer" data-target="cert-upload-cert">
+                            <label for="cert-upload-key">Private key</label>
+                            <textarea id="cert-upload-key" rows="5" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----" autocomplete="off" required></textarea>
+                            <input type="file" id="cert-upload-key-file" accept=".pem,.key" data-target="cert-upload-key">
+                            <div><button class="btn btn-primary" type="submit">Upload certificate</button></div>
+                        </form>
+                    </div>
+                </div>
+                <div class="card" style="margin-top: 1.5rem;">
+                    <div class="card-header"><h3>Local domains</h3></div>
+                    <div class="card-body">
+                        <div class="field-hint">
+                            The certificate each domain's mail apps get, for mail.&lt;domain&gt; or the domain itself.
+                            A domain with none hands its users the primary certificate, which their apps refuse.
+                        </div>
+                        <div id="cert-domains"><div class="loading-placeholder">Loading...</div></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Queues View -->
+            <section class="view" id="view-queues">
+                <div class="queue-controls">
+                    <div class="queue-tabs">
+                        <button class="queue-tab active" data-queue="active">
+                            Active <span class="badge" id="badge-active">0</span>
+                        </button>
+                        <button class="queue-tab" data-queue="deferred">
+                            Deferred <span class="badge" id="badge-deferred">0</span>
+                        </button>
+                        <button class="queue-tab" data-queue="hold">
+                            Hold <span class="badge" id="badge-hold">0</span>
+                        </button>
+                        <button class="queue-tab" data-queue="failed">
+                            Failed <span class="badge" id="badge-failed">0</span>
+                        </button>
+                    </div>
+                    <div class="queue-actions">
+                        <button class="btn btn-secondary" onclick="refreshQueue()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10" />
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                            </svg>
+                            Refresh
+                        </button>
+                        <button class="btn btn-primary" data-needs="queue" onclick="retryCurrentQueue()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="5 3 19 12 5 21 5 3" />
+                            </svg>
+                            Retry Queue
+                        </button>
+                    </div>
+                </div>
+
+                <div class="queue-observability-grid" id="queue-observability">
+                    <div class="card queue-observability-card">
+                        <div class="card-header">
+                            <h3>Queue pressure</h3>
+                            <span class="queue-backend-badge" id="queue-backend">backend: -</span>
+                        </div>
+                        <div class="card-body queue-observability-body">
+                            <dl class="info-grid queue-observability-info">
+                                <dt>Total Messages</dt>
+                                <dd id="obs-total-messages">-</dd>
+                                <dt>Oldest Message</dt>
+                                <dd id="obs-oldest-message">-</dd>
+                                <dt>Oldest Age</dt>
+                                <dd id="obs-oldest-age">-</dd>
+                                <dt>Storage Used</dt>
+                                <dd id="obs-storage-used">-</dd>
+                            </dl>
+                        </div>
+                    </div>
+                    <div class="card queue-observability-card">
+                        <div class="card-header">
+                            <h3>Busiest destinations</h3>
+                        </div>
+                        <div class="card-body" id="obs-domain-hotspots">
+                            <div class="loading-placeholder">Loading...</div>
+                        </div>
+                    </div>
+                    <div class="card queue-observability-card">
+                        <div class="card-header">
+                            <h3>Worker claims</h3>
+                        </div>
+                        <div class="card-body" id="obs-claims">
+                            <div class="loading-placeholder">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="search-filter-bar">
+                    <div class="search-box">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                        <input type="text" id="search-input"
+                            placeholder="Search by sender, recipient, subject, or ID...">
+                    </div>
+                    <div class="filters">
+                        <select id="priority-filter" class="filter-select">
+                            <option value="">All Priorities</option>
+                            <option value="4">Critical</option>
+                            <option value="3">High</option>
+                            <option value="2">Normal</option>
+                            <option value="1">Low</option>
+                        </select>
+                        <select id="date-filter" class="filter-select">
+                            <option value="">All Time</option>
+                            <option value="1h">Last Hour</option>
+                            <option value="24h">Last 24 Hours</option>
+                            <option value="7d">Last 7 Days</option>
+                            <option value="30d">Last 30 Days</option>
+                        </select>
+                        <select id="page-size" class="filter-select">
+                            <option value="25">25 per page</option>
+                            <option value="50">50 per page</option>
+                            <option value="100">100 per page</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="batch-actions" id="batch-actions" style="display: none;">
+                    <span class="selected-count"><span id="selected-count">0</span> selected</span>
+                    <button class="btn btn-secondary" onclick="clearSelection()">Clear Selection</button>
+                    <button class="btn btn-primary" onclick="retrySelected()">Retry Selected</button>
+                    <button class="btn btn-danger" onclick="deleteSelected()">Delete Selected</button>
+                </div>
+
+                <div class="messages-table-container">
+                    <table class="messages-table">
+                        <thead>
+                            <tr>
+                                <th class="checkbox-col">
+                                    <input type="checkbox" id="select-all" onchange="toggleSelectAll()">
+                                </th>
+                                <th>ID</th>
+                                <th>From</th>
+                                <th>To</th>
+                                <th>Subject</th>
+                                <th>Priority</th>
+                                <th>Created</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="messages-tbody">
+                            <tr>
+                                <td colspan="9" class="loading-cell">Loading messages...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="pagination" id="pagination">
+                    <span class="pagination-info" id="pagination-info">Showing 0 messages</span>
+                    <div class="pagination-controls" id="pagination-controls"></div>
+                </div>
+            </section>
+
+            <!-- Compose View -->
+
+            <!-- Reports View -->
+            <section class="view" id="view-reports">
+                <nav class="section-tabs" aria-label="Reports">
+                    <button class="section-tab" type="button" data-section="delivery" hidden>Delivery</button>
+                    <button class="section-tab" type="button" data-section="senders" hidden>Senders &amp; destinations</button>
+                    <button class="section-tab" type="button" data-section="dmarc" hidden>DMARC</button>
+                    <button class="section-tab" type="button" data-section="abuse" hidden>Abuse</button>
+                </nav>
+                <div class="report-panel" data-section="delivery">
+                <p class="field-hint report-window" id="report-window" aria-live="polite"></p>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon active-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="report-delivered">0</span>
+                            <span class="stat-label">Delivered</span>
+                        </div>
+                    </div>
+                    <div class="stat-card failed-stat-card">
+                        <div class="stat-icon failed-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10" />
+                                <line x1="15" y1="9" x2="9" y2="15" />
+                                <line x1="9" y1="9" x2="15" y2="15" />
+                            </svg>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="report-failed">0</span>
+                            <span class="stat-label">Failed</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon deferred-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10" />
+                                <polyline points="12 6 12 12 16 14" />
+                            </svg>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="report-deferred">0</span>
+                            <span class="stat-label">Deferred</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon hold-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M19 5L5 19" /><circle cx="6.5" cy="6.5" r="2.5" /><circle cx="17.5" cy="17.5" r="2.5" />
+                            </svg>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="report-success-rate">0%</span>
+                            <span class="stat-label">Success rate</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="reports-grid">
+                    <div class="card chart-card">
+                        <div class="card-header">
+                            <h3>Delivery trends</h3>
+                            <div class="chart-controls">
+                                <div class="time-scale-selector">
+                                    <button class="time-scale-btn active" data-scale="hour" onclick="changeTimeScale('hour')">Hourly</button>
+                                    <button class="time-scale-btn" data-scale="day" onclick="changeTimeScale('day')">Daily</button>
+                                    <button class="time-scale-btn" data-scale="week" onclick="changeTimeScale('week')">Weekly</button>
+                                    <button class="time-scale-btn" data-scale="month" onclick="changeTimeScale('month')">Monthly</button>
+                                </div>
+                                <button class="btn btn-secondary" onclick="refreshReports()">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="23 4 23 10 17 10" />
+                                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                                    </svg>
+                                    Refresh
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-container" id="hourly-chart">
+                                <canvas id="hourly-chart-canvas"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Recent errors</h3>
+                        </div>
+                        <div class="card-body errors-list" id="recent-errors">
+                            <div class="loading-placeholder">No recent errors</div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Top failure reasons</h3>
+                        </div>
+                        <div class="card-body errors-list" id="top-error-reasons">
+                            <div class="loading-placeholder">No aggregated reasons</div>
+                        </div>
+                    </div>
+                </div>
+                </div>
+                <div class="report-panel" data-section="senders">
+                    <div class="card">
+                    <div class="card-header">
+                        <h3>Delivery by destination</h3>
+                        <button class="btn btn-secondary btn-sm" onclick="refreshDomainStats()">Refresh</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="field-hint">
+                            Worst delivery rate first. Destinations with very little traffic sort last,
+                            because one deferral out of two is chance rather than a problem.
+                        </div>
+                        <div id="domain-stats"><div class="loading-placeholder">Loading...</div></div>
+                    </div>
+                </div>
+                    <div class="card">
+                    <div class="card-header">
+                        <h3>Sender reputation</h3>
+                        <div class="chart-controls">
+                            <select id="sender-stats-days" class="filter-select" onchange="refreshSenderStats()" aria-label="Window">
+                                <option value="1">Today (UTC)</option>
+                                <option value="7">Last 7 days</option>
+                            </select>
+                            <button class="btn btn-secondary btn-sm" onclick="refreshSenderStats()">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="field-hint">
+                            Outcomes and complaint rates per sending pool, source address and mailbox provider.
+                            Gmail and Yahoo require a spam complaint rate below 0.1%, and never 0.3% or more.
+                        </div>
+                        <div id="sender-stats"><div class="loading-placeholder">Loading...</div></div>
+                    </div>
+                </div>
+                </div>
+                <div class="report-panel" data-section="dmarc" id="report-dmarc">
+                <div class="dmarc-range" role="group" aria-label="Period">
+                    <button type="button" class="btn btn-secondary btn-sm" data-dmarc-days="7" aria-pressed="false">7 days</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-dmarc-days="30" aria-pressed="true">30 days</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-dmarc-days="90" aria-pressed="false">90 days</button>
+                </div>
+                <p class="dmarc-notice" id="dmarc-notice" role="status" hidden></p>
+                <div class="card">
+                    <div class="card-header"><h3>Domains</h3><span class="field-hint">Who sent mail as your domains, from other servers' verified reports</span></div>
+                    <div class="dmarc-scroll"><table class="messages-table"><thead><tr><th>Domain</th><th>Policy</th><th>Messages</th><th>Passing</th><th>Reporters</th><th>Last report</th></tr></thead><tbody id="dmarc-domains"><tr><td colspan="6">Loading…</td></tr></tbody></table></div>
+                </div>
+                <div id="dmarc-detail" hidden>
+                    <h2 class="dmarc-heading" id="dmarc-title"></h2>
+                    <div class="dmarc-tiles">
+                        <div class="dmarc-tile"><small>Policy</small><span id="dmarc-policy"></span><small id="dmarc-policy-from"></small></div>
+                        <div class="dmarc-tile"><small>Messages</small><span id="dmarc-volume"></span></div>
+                        <div class="dmarc-tile"><small>Passing</small><span id="dmarc-aligned"></span></div>
+                        <div class="dmarc-tile"><small>Reporters</small><span id="dmarc-reporter-count"></span></div>
+                        <div class="dmarc-tile"><small>Last report</small><span id="dmarc-last"></span></div>
+                    </div>
+                    <ul class="dmarc-advice" id="dmarc-advice"></ul>
+                    <div class="card">
+                        <div class="card-header"><h3>Mail per day</h3><span class="field-hint">UTC, by each report's first day</span></div>
+                        <div class="card-body">
+                            <div class="dmarc-legend"><span><i class="dmarc-key dmarc-pass"></i>Passing DMARC</span><span><i class="dmarc-key dmarc-fail"></i>Failing DMARC</span></div>
+                            <div class="dmarc-chart" id="dmarc-chart"></div>
+                            <details><summary>Show as a table</summary><div class="dmarc-scroll"><table class="messages-table"><thead><tr><th>Day</th><th>Passing</th><th>Failing</th></tr></thead><tbody id="dmarc-daily"></tbody></table></div></details>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3>Sources</h3></div>
+                        <div class="dmarc-scroll"><table class="messages-table"><thead><tr><th>Address</th><th>What it looks like</th><th>Messages</th><th>SPF</th><th>DKIM</th><th>From domain</th><th>Action taken</th></tr></thead><tbody id="dmarc-sources"></tbody></table></div>
+                        <div class="card-body">
+                            <button type="button" class="btn btn-secondary btn-sm" id="dmarc-more" hidden></button>
+                            <p class="field-hint" id="dmarc-attribution" hidden>Places by <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">DB-IP</a>, looked up on this server.</p>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3>Reporters</h3></div>
+                        <div class="dmarc-scroll"><table class="messages-table"><thead><tr><th>Sender</th><th>Reports</th><th>Messages</th></tr></thead><tbody id="dmarc-reporters"></tbody></table></div>
+                        <div class="card-body">
+                            <p class="field-hint">Verified means the sender's domain is genuine, not that its numbers are. Be wary of a reporter you don't recognise.</p>
+                            <details id="dmarc-unverified-section" hidden><summary id="dmarc-unverified-summary"></summary><div class="dmarc-scroll"><table class="messages-table"><thead><tr><th>Claimed sender</th><th>Reports</th><th>Messages</th></tr></thead><tbody id="dmarc-unverified"></tbody></table></div></details>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3>Report address</h3></div>
+                        <div class="card-body">
+                            <p id="dmarc-setup-status"></p>
+                            <form class="dmarc-setup" id="dmarc-setup-form" hidden>
+                                <input id="dmarc-address" aria-label="Address the reports are sent to" type="email" placeholder="dmarc@example.com" autocomplete="off" required>
+                                <button type="submit" class="btn btn-primary" id="dmarc-save">Save address</button>
+                                <button type="button" class="btn btn-secondary" id="dmarc-remove" hidden>Stop reading</button>
+                            </form>
+                            <button type="button" class="btn btn-secondary" id="dmarc-backfill" hidden>Read earlier reports…</button>
+                            <p class="field-hint" id="dmarc-backfill-state" role="status"></p>
+                        </div>
+                    </div>
+                </div>
+                </div>
+                <div class="report-panel" data-section="abuse" id="report-abuse">
+                    <div class="panel-link">
+                        <p class="field-hint" id="abuse-mode-now"></p>
+                        <button class="btn btn-secondary btn-sm" type="button" data-go="settings/plugin-abuse">Abuse settings and rules</button>
+                    </div>
                 <p id="abuse-notice" class="abuse-notice" role="status" hidden></p>
                 <p id="abuse-you" class="abuse-notice" hidden>
                     You're working from <strong id="abuse-you-address"></strong>, which no allow rule covers, so too many mistyped passwords could block you too.
@@ -701,105 +1089,8 @@
                         </table></div>
                     </div>
                 </div>
-                <div class="card">
-                    <div class="card-header"><h3>Settings</h3></div>
-                    <div class="card-body">
-                        <form id="abuse-policy-form" class="abuse-form">
-                            <label for="abuse-mode">Mode</label>
-                            <select id="abuse-mode">
-                                <option value="enforce">Enforce</option>
-                                <option value="log">Log only: record what would happen and block nothing</option>
-                                <option value="off">Off</option>
-                            </select>
-                            <label for="abuse-connections">Connections per address</label>
-                            <input id="abuse-connections" type="number" min="1" max="100000" required>
-                            <p class="field-hint">Open connections one address may hold to each SMTP or mailbox server. An IPv6 client counts as its /64.</p>
-                            <label for="abuse-rate">New connections per minute, per address</label>
-                            <input id="abuse-rate" type="number" min="0" max="1000000" required>
-                            <p class="field-hint">Catches clients that connect and disconnect as fast as they can. 0 turns it off. Port 25 isn't counted.</p>
-                            <fieldset class="abuse-protocol-limits"><legend>Per protocol</legend>
-                                <table class="messages-table">
-                                    <thead><tr><th scope="col">Protocol</th><th scope="col">Connections</th><th scope="col">Per minute</th></tr></thead>
-                                    <tbody>
-                                    <tr><th scope="row">SMTP submission</th><td><input id="abuse-limit-smtp-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="SMTP submission connections per address"></td><td><input id="abuse-limit-smtp-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="SMTP submission new connections per minute"></td></tr>
-                                    <tr><th scope="row">IMAP</th><td><input id="abuse-limit-imap-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="IMAP connections per address"></td><td><input id="abuse-limit-imap-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="IMAP new connections per minute"></td></tr>
-                                    <tr><th scope="row">POP3</th><td><input id="abuse-limit-pop3-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="POP3 connections per address"></td><td><input id="abuse-limit-pop3-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="POP3 new connections per minute"></td></tr>
-                                    <tr><th scope="row">ManageSieve</th><td><input id="abuse-limit-sieve-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="ManageSieve connections per address"></td><td><input id="abuse-limit-sieve-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="ManageSieve new connections per minute"></td></tr>
-                                    </tbody>
-                                </table>
-                                <p class="field-hint">Leave a box empty to use the limits above. Each protocol is counted on its own. POP3 clients usually need far fewer connections than IMAP.</p>
-                            </fieldset>
-                            <label for="abuse-failures">Failed sign-ins before blocking</label>
-                            <input id="abuse-failures" type="number" min="1" max="100000" required>
-                            <label for="abuse-network">Failed sign-ins before blocking a whole /24 or /48</label>
-                            <input id="abuse-network" type="number" min="0" max="1000000" required>
-                            <p class="field-hint">Catches attackers spread across a rented block. 0 turns it off.</p>
-                            <label for="abuse-spray">Different accounts one address may fail against</label>
-                            <input id="abuse-spray" type="number" min="0" max="100000" required>
-                            <p class="field-hint">Catches password spraying: one password tried on many accounts, too few times each to reach the limit above. 0 turns it off.</p>
-                            <label for="abuse-targeted">Different addresses failing against one account before it's shielded</label>
-                            <input id="abuse-targeted" type="number" min="0" max="100000" required>
-                            <p class="field-hint">While shielded, the account's password works only from networks it has signed in from in the last 90 days; elsewhere a right password is answered like a wrong one, so guessing gets nowhere. App passwords and passkeys work from anywhere, and the account is never locked. It lasts until the attack stops for one window. 0 turns it off.</p>
-                            <label for="abuse-inbound">Messages per hour from one outside address</label>
-                            <input id="abuse-inbound" type="number" min="0" max="10000000" required>
-                            <p class="field-hint">Includes port 25. Over it, mail is deferred, so a real server retries later. Signed-in users and allowed relays don't count. 0 turns it off.</p>
-                            <label for="abuse-domain">Messages per hour claiming one sender domain</label>
-                            <input id="abuse-domain" type="number" min="0" max="10000000" required>
-                            <p class="field-hint">Catches a run forging one domain from many addresses, each under the limit above. Over it, that domain's mail is deferred. Large providers send a lot of real mail, so set it well above what you receive from them. 0 turns it off.</p>
-                            <label for="abuse-signin-alerts">Unusual sign-in alerts</label>
-                            <select id="abuse-signin-alerts"><option value="on">On</option><option value="off">Off</option></select>
-                            <p class="field-hint">Keeps each account's last sign-in location for 30 days and its countries for 90, to compare against. Off keeps nothing new.</p>
-                            <label for="abuse-alert-email">Email alerts to</label>
-                            <input id="abuse-alert-email" type="text" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="security@example.com">
-                            <p class="field-hint">Unusual sign-ins, accounts under attack and accounts put on hold are emailed here as they happen, up to 20 an hour. Separate addresses with commas. Empty sends nothing.</p>
-                            <label for="abuse-outbound">Recipients outside the server per hour, per account</label>
-                            <input id="abuse-outbound" type="number" min="0" max="10000000" required>
-                            <p class="field-hint">Over it, the account's outside mail is put on hold until you release it: a taken-over account sends far more than its owner. Mail inside the server still flows. 0 turns it off.</p>
-                            <label for="abuse-window">Counted over (minutes)</label>
-                            <input id="abuse-window" type="number" min="1" max="1440" required>
-                            <p class="field-hint">Failures add up across every service and account.</p>
-                            <label for="abuse-block">First block (minutes)</label>
-                            <input id="abuse-block" type="number" min="1" max="10080" required>
-                            <label for="abuse-max-block">Longest block (hours)</label>
-                            <input id="abuse-max-block" type="number" min="1" max="720" required>
-                            <p class="field-hint">Each repeat within a week lasts four times longer, up to the longest block.</p>
-                            <label for="abuse-firewall">Firewall</label>
-                            <select id="abuse-firewall">
-                                <option value="log">Log only: report what would be dropped</option>
-                                <option value="apply">Apply: drop blocked addresses at the host firewall</option>
-                                <option value="off">Off</option>
-                            </select>
-                            <p class="field-hint">Covers client ports, never port 25. Check your allow rules before applying.</p>
-                            <button class="btn btn-primary" type="submit">Save</button>
-                        </form>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>Allow and deny rules</h3></div>
-                    <div class="card-body">
-                        <p class="field-hint">Inbound rules cover clients connecting here and mail from outside. Outbound rules cover where mail is going. An address or network matches the client or the destination mail server; a domain or mail address matches the sender or the recipient. Allow beats deny, and never skips virus or spam scanning. An allow rule on an address or network for all protocols also means it's never limited or blocked: add your own address and monitoring.</p>
-                        <div class="ma-table-wrap"><table class="messages-table">
-                            <thead><tr><th>Action</th><th>Direction</th><th>Matches</th><th>Protocols</th><th>Expires</th><th>Note</th><th aria-label="Remove"></th></tr></thead>
-                            <tbody id="abuse-rules"></tbody>
-                        </table></div>
-                        <form id="abuse-rule-form" class="abuse-inline abuse-rule-form">
-                            <select id="abuse-rule-action" aria-label="Action"><option value="deny">Deny</option><option value="allow">Allow</option></select>
-                            <select id="abuse-rule-direction" aria-label="Direction"><option value="inbound">Inbound</option><option value="outbound">Outbound</option><option value="both">Both</option></select>
-                            <input id="abuse-rule-value" type="text" required maxlength="320" placeholder="203.0.113.0/24, example.org or a@example.org" aria-label="Address, network, domain or mail address" autocomplete="off" spellcheck="false">
-                            <input id="abuse-rule-days" type="number" min="0" max="3650" placeholder="Days" aria-label="Expires after this many days, empty for never">
-                            <input id="abuse-rule-note" type="text" maxlength="200" placeholder="Note" aria-label="Note">
-                            <fieldset class="abuse-rule-protocols"><legend>Protocols, for an inbound address or network. None means all.</legend>
-                                <label><input type="checkbox" data-abuse-protocol value="smtp"> SMTP</label>
-                                <label><input type="checkbox" data-abuse-protocol value="imap"> IMAP</label>
-                                <label><input type="checkbox" data-abuse-protocol value="pop3"> POP3</label>
-                                <label><input type="checkbox" data-abuse-protocol value="sieve"> ManageSieve</label>
-                                <label><input type="checkbox" data-abuse-protocol value="webmail"> Webmail</label>
-                                <label><input type="checkbox" data-abuse-protocol value="admin"> Admin console</label>
-                            </fieldset>
-                            <button class="btn btn-primary" type="submit">Add rule</button>
-                        </form>
-                    </div>
-                </div>
+
+
                 <div class="card">
                     <div class="card-header"><h3>History</h3></div>
                     <div class="card-body">
@@ -809,345 +1100,6 @@
                         </table></div>
                     </div>
                 </div>
-            </section>
-
-            <section class="view" id="view-certificates">
-                <div class="card">
-                    <div class="card-header">
-                        <h3>Certificates</h3>
-                        <div>
-                            <button class="btn btn-secondary btn-sm" id="cert-sync" hidden onclick="syncCertificates()">Sync now</button>
-                            <button class="btn btn-secondary btn-sm" onclick="refreshCertificates()">Refresh</button>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="field-hint">
-                            Every certificate SMTP, IMAP and POP3 serve. A client that asks for a name one of
-                            them covers gets that one; everyone else gets the primary. Let's Encrypt certificates
-                            renew by themselves; Sync now applies requests and copies renewals right away.
-                        </div>
-                        <div id="cert-list"><div class="loading-placeholder">Loading...</div></div>
-                        <div id="cert-requests" class="cert-requests"></div>
-                    </div>
-                </div>
-                <div class="card" id="cert-manage" style="margin-top: 1.5rem;" hidden>
-                    <div class="card-header"><h3>Add a certificate</h3></div>
-                    <div class="card-body cert-manage">
-                        <form id="cert-request-form" class="cert-form">
-                            <h4>Let's Encrypt</h4>
-                            <p class="field-hint">
-                                For host names that already point at this server. Add alternatives separated by
-                                commas, such as mail.example.org, imap.example.org: each gets its own certificate,
-                                which mail apps can't tell apart from one naming them all. Issued within a minute
-                                and renewed automatically. Each failed attempt counts
-                                toward Let's Encrypt's limit of 5 an hour, so set the DNS record first.
-                            </p>
-                            <div class="cert-inline">
-                                <label class="sr-only" for="cert-request-host">Host names</label>
-                                <input id="cert-request-host" type="text" placeholder="mail.example.org, imap.example.org" autocomplete="off" spellcheck="false" required>
-                                <button class="btn btn-primary" type="submit">Request certificate</button>
-                            </div>
-                        </form>
-                        <form id="cert-upload-form" class="cert-form">
-                            <h4>Upload your own</h4>
-                            <p class="field-hint">
-                                A certificate chain and its unencrypted private key, in PEM. It's filed under the
-                                certificate's first name and served to clients asking for any name it covers.
-                                Uploaded certificates aren't renewed: upload a new one before it expires.
-                            </p>
-                            <label for="cert-upload-cert">Certificate chain</label>
-                            <textarea id="cert-upload-cert" rows="5" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----" required></textarea>
-                            <input type="file" id="cert-upload-cert-file" accept=".pem,.crt,.cer" data-target="cert-upload-cert">
-                            <label for="cert-upload-key">Private key</label>
-                            <textarea id="cert-upload-key" rows="5" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----" autocomplete="off" required></textarea>
-                            <input type="file" id="cert-upload-key-file" accept=".pem,.key" data-target="cert-upload-key">
-                            <div><button class="btn btn-primary" type="submit">Upload certificate</button></div>
-                        </form>
-                    </div>
-                </div>
-                <div class="card" style="margin-top: 1.5rem;">
-                    <div class="card-header"><h3>Local domains</h3></div>
-                    <div class="card-body">
-                        <div class="field-hint">
-                            The certificate each domain's mail apps get, for mail.&lt;domain&gt; or the domain itself.
-                            A domain with none hands its users the primary certificate, which their apps refuse.
-                        </div>
-                        <div id="cert-domains"><div class="loading-placeholder">Loading...</div></div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Queues View -->
-            <section class="view" id="view-queues">
-                <div class="queue-controls">
-                    <div class="queue-tabs">
-                        <button class="queue-tab active" data-queue="active">
-                            Active <span class="badge" id="badge-active">0</span>
-                        </button>
-                        <button class="queue-tab" data-queue="deferred">
-                            Deferred <span class="badge" id="badge-deferred">0</span>
-                        </button>
-                        <button class="queue-tab" data-queue="hold">
-                            Hold <span class="badge" id="badge-hold">0</span>
-                        </button>
-                        <button class="queue-tab" data-queue="failed">
-                            Failed <span class="badge" id="badge-failed">0</span>
-                        </button>
-                    </div>
-                    <div class="queue-actions">
-                        <button class="btn btn-secondary" onclick="refreshQueue()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="23 4 23 10 17 10" />
-                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                            </svg>
-                            Refresh
-                        </button>
-                        <button class="btn btn-primary" onclick="retryCurrentQueue()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polygon points="5 3 19 12 5 21 5 3" />
-                            </svg>
-                            Retry Queue
-                        </button>
-                    </div>
-                </div>
-
-                <div class="queue-observability-grid" id="queue-observability">
-                    <div class="card queue-observability-card">
-                        <div class="card-header">
-                            <h3>Queue Pressure</h3>
-                            <span class="queue-backend-badge" id="queue-backend">backend: -</span>
-                        </div>
-                        <div class="card-body queue-observability-body">
-                            <dl class="info-grid queue-observability-info">
-                                <dt>Total Messages</dt>
-                                <dd id="obs-total-messages">-</dd>
-                                <dt>Oldest Message</dt>
-                                <dd id="obs-oldest-message">-</dd>
-                                <dt>Oldest Age</dt>
-                                <dd id="obs-oldest-age">-</dd>
-                                <dt>Storage Used</dt>
-                                <dd id="obs-storage-used">-</dd>
-                            </dl>
-                        </div>
-                    </div>
-                    <div class="card queue-observability-card">
-                        <div class="card-header">
-                            <h3>Domain Hotspots</h3>
-                        </div>
-                        <div class="card-body" id="obs-domain-hotspots">
-                            <div class="loading-placeholder">Loading...</div>
-                        </div>
-                    </div>
-                    <div class="card queue-observability-card">
-                        <div class="card-header">
-                            <h3>Worker Claims</h3>
-                        </div>
-                        <div class="card-body" id="obs-claims">
-                            <div class="loading-placeholder">Loading...</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="search-filter-bar">
-                    <div class="search-box">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="11" cy="11" r="8" />
-                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                        </svg>
-                        <input type="text" id="search-input"
-                            placeholder="Search by sender, recipient, subject, or ID...">
-                    </div>
-                    <div class="filters">
-                        <select id="priority-filter" class="filter-select">
-                            <option value="">All Priorities</option>
-                            <option value="4">Critical</option>
-                            <option value="3">High</option>
-                            <option value="2">Normal</option>
-                            <option value="1">Low</option>
-                        </select>
-                        <select id="date-filter" class="filter-select">
-                            <option value="">All Time</option>
-                            <option value="1h">Last Hour</option>
-                            <option value="24h">Last 24 Hours</option>
-                            <option value="7d">Last 7 Days</option>
-                            <option value="30d">Last 30 Days</option>
-                        </select>
-                        <select id="page-size" class="filter-select">
-                            <option value="25">25 per page</option>
-                            <option value="50">50 per page</option>
-                            <option value="100">100 per page</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="batch-actions" id="batch-actions" style="display: none;">
-                    <span class="selected-count"><span id="selected-count">0</span> selected</span>
-                    <button class="btn btn-secondary" onclick="clearSelection()">Clear Selection</button>
-                    <button class="btn btn-primary" onclick="retrySelected()">Retry Selected</button>
-                    <button class="btn btn-danger" onclick="deleteSelected()">Delete Selected</button>
-                </div>
-
-                <div class="messages-table-container">
-                    <table class="messages-table">
-                        <thead>
-                            <tr>
-                                <th class="checkbox-col">
-                                    <input type="checkbox" id="select-all" onchange="toggleSelectAll()">
-                                </th>
-                                <th>ID</th>
-                                <th>From</th>
-                                <th>To</th>
-                                <th>Subject</th>
-                                <th>Priority</th>
-                                <th>Created</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="messages-tbody">
-                            <tr>
-                                <td colspan="9" class="loading-cell">Loading messages...</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="pagination" id="pagination">
-                    <span class="pagination-info" id="pagination-info">Showing 0 messages</span>
-                    <div class="pagination-controls" id="pagination-controls"></div>
-                </div>
-            </section>
-
-            <!-- Compose View -->
-
-            <!-- Reports View -->
-            <section class="view" id="view-reports">
-                <p class="field-hint report-window" id="report-window" aria-live="polite"></p>
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon active-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="report-delivered">0</span>
-                            <span class="stat-label">Delivered</span>
-                        </div>
-                    </div>
-                    <div class="stat-card failed-stat-card">
-                        <div class="stat-icon failed-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="12" cy="12" r="10" />
-                                <line x1="15" y1="9" x2="9" y2="15" />
-                                <line x1="9" y1="9" x2="15" y2="15" />
-                            </svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="report-failed">0</span>
-                            <span class="stat-label">Failed</span>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon deferred-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="12" cy="12" r="10" />
-                                <polyline points="12 6 12 12 16 14" />
-                            </svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="report-deferred">0</span>
-                            <span class="stat-label">Deferred</span>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon hold-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M19 5L5 19" /><circle cx="6.5" cy="6.5" r="2.5" /><circle cx="17.5" cy="17.5" r="2.5" />
-                            </svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="report-success-rate">0%</span>
-                            <span class="stat-label">Success Rate</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="reports-grid">
-                    <div class="card chart-card">
-                        <div class="card-header">
-                            <h3>Delivery Trends</h3>
-                            <div class="chart-controls">
-                                <div class="time-scale-selector">
-                                    <button class="time-scale-btn active" data-scale="hour" onclick="changeTimeScale('hour')">Hourly</button>
-                                    <button class="time-scale-btn" data-scale="day" onclick="changeTimeScale('day')">Daily</button>
-                                    <button class="time-scale-btn" data-scale="week" onclick="changeTimeScale('week')">Weekly</button>
-                                    <button class="time-scale-btn" data-scale="month" onclick="changeTimeScale('month')">Monthly</button>
-                                </div>
-                                <button class="btn btn-secondary" onclick="refreshReports()">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="23 4 23 10 17 10" />
-                                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                                    </svg>
-                                    Refresh
-                                </button>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="chart-container" id="hourly-chart">
-                                <canvas id="hourly-chart-canvas"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Errors</h3>
-                        </div>
-                        <div class="card-body errors-list" id="recent-errors">
-                            <div class="loading-placeholder">No recent errors</div>
-                        </div>
-                    </div>
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Top Failure Reasons</h3>
-                        </div>
-                        <div class="card-body errors-list" id="top-error-reasons">
-                            <div class="loading-placeholder">No aggregated reasons</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <h3>Delivery by destination</h3>
-                        <button class="btn btn-secondary btn-sm" onclick="refreshDomainStats()">Refresh</button>
-                    </div>
-                    <div class="card-body">
-                        <div class="field-hint">
-                            Worst delivery rate first. Destinations with very little traffic sort last,
-                            because one deferral out of two is chance rather than a problem.
-                        </div>
-                        <div id="domain-stats"><div class="loading-placeholder">Loading...</div></div>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-header">
-                        <h3>Sender reputation</h3>
-                        <div class="chart-controls">
-                            <select id="sender-stats-days" class="filter-select" onchange="refreshSenderStats()" aria-label="Window">
-                                <option value="1">Today (UTC)</option>
-                                <option value="7">Last 7 days</option>
-                            </select>
-                            <button class="btn btn-secondary btn-sm" onclick="refreshSenderStats()">Refresh</button>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="field-hint">
-                            Outcomes and complaint rates per sending pool, source address and mailbox provider.
-                            Gmail and Yahoo require a spam complaint rate below 0.1%, and never 0.3% or more.
-                        </div>
-                        <div id="sender-stats"><div class="loading-placeholder">Loading...</div></div>
-                    </div>
                 </div>
             </section>
 
@@ -1155,7 +1107,7 @@
             <section class="view" id="view-logs">
                 <div class="card">
                     <div class="card-header">
-                        <h3>Email Logs</h3>
+                        <h3>Events</h3>
                         <div class="log-filters">
                             <div class="search-box log-search">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1394,7 +1346,7 @@
 
             <!-- Settings View -->
             <section class="view mail-admin" id="view-mail-admin">
-                <div class="ma-heading"><div><p class="ma-eyebrow">DIRECTORY</p><h2>Mail Administration</h2><p class="field-hint">Manage mailboxes, aliases, distribution lists, classes of service and local domains. Every change is recorded in the audit log.</p><p class="field-hint" id="ma-scope" hidden></p></div><div class="ma-heading-actions"><button class="btn btn-secondary" id="ma-purge" hidden>Purge deleted mailbox…</button><button class="btn btn-primary" id="ma-create">Create account</button><button class="btn btn-primary" id="ma-create-list" hidden>Create list</button><button class="btn btn-primary" id="ma-create-class" hidden>New class of service</button></div></div>
+                <div class="ma-heading"><div><p class="field-hint">Manage mailboxes, aliases, distribution lists, classes of service and local domains. Every change is recorded in the audit log.</p><p class="field-hint" id="ma-scope" hidden></p></div><div class="ma-heading-actions"><button class="btn btn-secondary" id="ma-purge" hidden>Purge deleted mailbox…</button><button class="btn btn-primary" id="ma-create">Create account</button><button class="btn btn-primary" id="ma-create-list" hidden>Create list</button><button class="btn btn-primary" id="ma-create-class" hidden>New class of service</button></div></div>
                 <p id="ma-notice" class="ma-notice" role="status" hidden></p>
                 <p id="ma-error" class="error-message" role="alert" hidden></p>
                 <div class="ma-workspace">
@@ -1428,6 +1380,22 @@
                         <p class="field-hint">Quota changes apply to new mail sessions. Disabling an account revokes its webmail sessions and recovery links.</p>
                     </form>
                     <section id="ma-account-extras">
+                        <section id="ma-support" hidden>
+                            <h4>Support</h4>
+                            <p class="field-hint" id="ma-support-error" role="alert" hidden></p>
+                            <dl class="ma-facts">
+                                <dt>Storage</dt><dd id="ma-support-storage">Loading…</dd>
+                                <dt>Two-step verification</dt><dd id="ma-support-two-step">Loading…</dd>
+                                <dt>Passkeys</dt><dd id="ma-support-passkeys">Loading…</dd>
+                            </dl>
+                            <button class="btn btn-secondary" type="button" id="ma-support-reset">Reset two-step and passkeys</button>
+                            <div class="ma-support-heading"><h5>App passwords</h5><button class="btn btn-secondary btn-sm" type="button" id="ma-support-revoke-all" hidden>Revoke all</button></div>
+                            <ul id="ma-app-password-list" class="ma-alias-list"></ul>
+                            <p class="field-hint">A revoked password can't sign in again. A mail app that is already connected stays connected until it closes.</p>
+                            <div class="ma-support-heading"><h5>Who can open this mailbox</h5></div>
+                            <ul id="ma-share-list" class="ma-alias-list"></ul>
+                            <form id="ma-share-form" class="ma-inline ma-share-form"><label class="sr-only" for="ma-share-member">Share this mailbox with</label><input id="ma-share-member" type="email" list="ma-account-options" placeholder="colleague@example.com" autocomplete="off" required><label class="ma-check"><input id="ma-share-send" type="checkbox"> May send as it</label><button class="btn btn-secondary" type="submit">Share mailbox</button></form>
+                        </section>
                         <section id="ma-account-policy" hidden>
                             <h4>Class of service</h4>
                             <form id="ma-policy-form" class="ma-form">
@@ -1475,6 +1443,20 @@
                          miss, and changes there were silently lost. Aliases and the
                          password reset act at once and keep their buttons. -->
                     <div class="ma-dialog-footer"><button class="btn btn-primary" type="submit" form="ma-account-form" id="ma-save">Save</button><span id="ma-save-status" class="field-hint" role="status"></span><button class="btn btn-secondary" type="button" id="ma-open-mailbox" hidden>Open mailbox</button><button class="btn btn-danger" type="button" id="ma-delete">Delete account</button></div>
+                </dialog>
+                <dialog id="ma-delete-dialog" class="ma-dialog" aria-labelledby="ma-delete-title">
+                    <div class="ma-dialog-heading"><div><p class="ma-eyebrow">DELETE ACCOUNT</p><h3 id="ma-delete-title">Delete account</h3></div></div>
+                    <p id="ma-delete-message" class="ma-save-error" role="alert" hidden></p>
+                    <form id="ma-delete-form" class="ma-form">
+                        <p>The account is removed: nobody can sign in to it and mail to it stops being delivered.</p>
+                        <label for="ma-delete-address">Type <strong id="ma-delete-target"></strong> to confirm</label>
+                        <input id="ma-delete-address" type="text" autocomplete="off" autocapitalize="none" spellcheck="false">
+                        <div id="ma-delete-purge-choice" hidden>
+                            <label class="ma-check"><input id="ma-delete-purge" type="checkbox" aria-describedby="ma-delete-purge-help"> Also permanently delete its mail</label>
+                            <p class="field-hint" id="ma-delete-purge-help">This includes folders, filters and settings, and can't be undone. Left unchecked, the mailbox is kept and can be purged later.</p>
+                        </div>
+                        <div class="ma-form-actions"><button class="btn btn-secondary" type="button" id="ma-delete-cancel">Cancel</button><button class="btn btn-danger" type="submit" id="ma-delete-confirm" disabled>Delete account</button></div>
+                    </form>
                 </dialog>
                 <dialog id="ma-domain-dialog" class="ma-dialog">
                     <div class="ma-dialog-heading"><div><p class="ma-eyebrow">DOMAIN SETTINGS</p><h3 id="ma-domain-title">Domain</h3></div><button type="button" class="btn btn-secondary" id="ma-domain-close">Close</button></div>
@@ -1530,23 +1512,34 @@
                 </dialog>
             </section>
             <section class="view" id="view-settings">
-                <div class="settings-tabs">
-                    <button class="settings-tab active" data-tab="ui">UI Settings</button>
-                    <button class="settings-tab" data-tab="server">Server Config</button>
-                    <button class="settings-tab" data-tab="plugins">Plugins</button>
-                    <!-- Tabs for configurable plugins are inserted here at runtime,
-                         and removed again when the plugin is disabled. -->
-                    <button class="settings-tab" data-tab="users" id="settings-tab-users">Users</button>
-                    <button class="settings-tab" data-tab="system">System</button>
-                </div>
-
+                <select class="settings-picker" id="settings-picker" aria-label="Settings section"></select>
+                <div class="settings-layout">
+                    <nav class="settings-nav" id="settings-nav" aria-label="Settings">
+                        <div class="settings-group" data-label="You" hidden>
+                            <p class="nav-label">You</p>
+                            <button class="settings-tab" type="button" data-tab="ui" hidden>Preferences</button>
+                            <button class="settings-tab" type="button" data-tab="account" hidden>Password &amp; two-step</button>
+                        </div>
+                        <div class="settings-group" data-label="Server" hidden>
+                            <p class="nav-label">Server</p>
+                            <button class="settings-tab" type="button" data-tab="server" hidden>Mail server</button>
+                            <button class="settings-tab" type="button" data-tab="notifications" hidden>Alert emails</button>
+                            <button class="settings-tab" type="button" data-tab="users" id="settings-tab-users" hidden>Console users</button>
+                            <button class="settings-tab" type="button" data-tab="system" hidden>Maintenance</button>
+                        </div>
+                        <div class="settings-group" data-label="Plugins" id="settings-plugin-tabs" hidden>
+                            <p class="nav-label">Plugins</p>
+                            <button class="settings-tab" type="button" data-tab="plugins" hidden>All plugins</button>
+                        </div>
+                    </nav>
+                    <div class="settings-content">
                 <!-- UI Settings Panel -->
-                <div class="settings-panel active" id="settings-ui">
+                <div class="settings-panel" id="settings-ui">
                     <div class="card" style="margin-bottom: 1.5rem;">
-                        <div class="card-header"><h3>Interface Settings</h3></div>
+                        <div class="card-header"><h3>Refresh and lists</h3></div>
                         <div class="card-body">
                             <div class="form-group">
-                                <label for="refresh-interval">Auto Refresh Interval</label>
+                                <label for="refresh-interval">Auto-refresh every</label>
                                 <select id="refresh-interval" onchange="updateRefreshInterval()">
                                     <option value="10000">10 seconds</option>
                                     <option value="30000" selected>30 seconds</option>
@@ -1556,7 +1549,7 @@
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label for="default-page-size">Default Page Size</label>
+                                <label for="default-page-size">Messages per page</label>
                                 <select id="default-page-size" onchange="updateDefaultPageSize()">
                                     <option value="25">25 messages</option>
                                     <option value="50">50 messages</option>
@@ -1583,7 +1576,7 @@
                 <div class="settings-panel" id="settings-server">
                     <div class="card">
                         <div class="card-header">
-                            <h3>Server Information</h3>
+                            <h3>Mail server</h3>
                             <button class="btn btn-primary btn-sm" onclick="refreshServerConfig()">Refresh</button>
                         </div>
                         <div class="card-body">
@@ -1600,11 +1593,13 @@
                                     </div>
                                     <div class="config-item">
                                         <label for="config-queue-dir">Queue Directory</label>
-                                        <input type="text" id="config-queue-dir">
+                                        <input type="text" id="config-queue-dir" readonly>
+                                        <div class="field-hint">Read-only. Changing it doesn't move queued mail.</div>
                                     </div>
                                     <div class="config-item">
-                                        <label for="config-max-size">Max Message Size</label>
-                                        <input type="text" id="config-max-size">
+                                        <label for="config-max-size">Max Message Size (bytes)</label>
+                                        <input type="number" id="config-max-size" min="65536" max="2147483647">
+                                        <div class="field-hint" id="config-max-size-human"></div>
                                     </div>
                                     <div class="config-item">
                                         <label for="config-failed-retention">Failed Queue Retention (hours)</label>
@@ -1621,7 +1616,7 @@
                                             Keep a copy of each delivered message for rollback safety
                                         </label>
                                         <div class="field-hint">
-                                            Off by default, and measured: draining the same 12,000-message queue gave
+                                            The shipped configuration has this off, and it was measured: draining the same 12,000-message queue gave
                                             137/s with this off and 87/s with it on. Keeping the copy costs roughly a
                                             third of delivery throughput, on every delivery.
                                             Turn it on only if you may roll this server back to a build older than the
@@ -1644,7 +1639,7 @@
                 <div class="settings-panel" id="settings-plugins">
                     <div class="card">
                         <div class="card-header">
-                            <h3>Plugin Management</h3>
+                            <h3>Plugins</h3>
                             <button class="btn btn-primary btn-sm" onclick="refreshPlugins()">Refresh</button>
                         </div>
                         <div class="card-body">
@@ -1654,96 +1649,50 @@
                     </div>
                 </div>
 
-                <!-- Rate Limiting Panel -->
-                <div class="settings-panel" id="settings-rate-limiting">
-                    <div class="card">
+                <!-- Users Panel. The account list needs user:view; changing your
+                     own password needs only a login, so that card always shows. -->
+
+
+                <!-- System Panel -->
+                <div class="settings-panel" id="settings-system">
+                    <div class="card" style="margin-bottom: 1.5rem;">
                         <div class="card-header">
-                            <h3>Rate Limiting</h3>
-                            <button class="btn btn-primary btn-sm" onclick="refreshRateLimiting()">Refresh</button>
+                            <h3>Maintenance</h3>
                         </div>
                         <div class="card-body">
-                            <div id="rate-limiting-loading" class="loading-placeholder">Loading rate limiting configuration...</div>
-                            <div id="rate-limiting-content" style="display: none;">
-                                <p class="field-hint" id="rate-limit-inert">These settings belong to the rate limiter plugin, which isn't loaded, so they change nothing. The limits that apply, on connections, sign-ins, mail per address and each account's outside mail, are under <strong>Abuse</strong>.</p>
-                                <div class="config-section">
-                                    <h4>Connection Limits</h4>
-                                    <div class="config-grid">
-                                        <div class="config-item">
-                                            <label for="rate-max-connections-ip">Max Connections per IP</label>
-                                            <input type="number" id="rate-max-connections-ip">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-connections-per-minute">Connection Rate per Minute</label>
-                                            <input type="number" id="rate-connections-per-minute">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-connection-burst">Connection Burst Size</label>
-                                            <input type="number" id="rate-connection-burst">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-connection-timeout">Connection Timeout</label>
-                                            <input type="text" id="rate-connection-timeout">
-                                        </div>
+                            <div class="system-actions">
+                                <div class="action-item">
+                                    <div class="action-info">
+                                        <h4>Restart Server</h4>
+                                        <p>Gracefully restart the Elemta server. This will terminate all active connections.</p>
                                     </div>
-                                </div>
-                                <div class="config-section">
-                                    <h4>Message Limits</h4>
-                                    <div class="config-grid">
-                                        <div class="config-item">
-                                            <label for="rate-messages-per-minute">Max Messages per Minute</label>
-                                            <input type="number" id="rate-messages-per-minute">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-messages-per-hour">Max Messages per Hour</label>
-                                            <input type="number" id="rate-messages-per-hour">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-recipients-per-message">Max Recipients per Message</label>
-                                            <input type="number" id="rate-recipients-per-message">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-max-message-size">Max Message Size</label>
-                                            <input type="text" id="rate-max-message-size">
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="settings-form-actions">
-                                    <button class="btn btn-primary" onclick="saveRateLimiting()">Save Rate Limiting</button>
-                                    <span id="rate-limiting-status"></span>
+                                    <button class="btn btn-danger" onclick="restartServer()">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                                            <polyline points="16 6 12 2 8 6" />
+                                            <line x1="12" y1="2" x2="12" y2="15" />
+                                        </svg>
+                                        Restart Server
+                                    </button>
                                 </div>
                             </div>
+                            <div id="system-status" class="system-status"></div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>About</h3>
+                        </div>
+                        <div class="card-body about-info">
+                            <p><strong>Elemta Mail Transfer Agent</strong></p>
+                            <p>A modern, high-performance MTA built with Go</p>
+                            <p class="version">Version <span id="about-version">unknown</span></p>
                         </div>
                     </div>
                 </div>
 
-                <!-- Users Panel. The account list needs user:view; changing your
-                     own password needs only a login, so that card always shows. -->
-                <div class="settings-panel" id="settings-users">
-                    <div class="card" id="users-card" style="margin-bottom: 1.5rem;">
-                        <div class="card-header">
-                            <h3>Dashboard users</h3>
-                            <button class="btn btn-secondary btn-sm" onclick="refreshUsers()">Refresh</button>
-                        </div>
-                        <div class="card-body">
-                            <p class="panel-intro">
-                                Accounts that can sign in to this dashboard and the admin API.
-                                <strong>admin</strong> can do everything, <strong>operator</strong> can manage
-                                queues, and <strong>user</strong> and <strong>readonly</strong> can only view.
-                                Changes apply immediately.
-                            </p>
-                            <div class="send-row">
-                                <input type="text" id="new-user-name" placeholder="Username" autocomplete="off">
-                                <input type="password" id="new-user-password" placeholder="Password (12+ characters)" autocomplete="new-password">
-                                <select id="new-user-role">
-                                    <option value="user">user</option>
-                                    <option value="operator">operator</option>
-                                    <option value="admin">admin</option>
-                                </select>
-                                <button class="btn btn-primary" onclick="createUser()">Add user</button>
-                            </div>
-                            <div id="users-list"></div>
-                        </div>
-                    </div>
+                <div class="settings-panel" id="settings-account">
+
                     <div class="card" style="margin-bottom: 1.5rem;">
                         <div class="card-header"><h3>Change my password</h3></div>
                         <div class="card-body">
@@ -1796,46 +1745,216 @@
                     </div>
                 </div>
 
-                <!-- System Panel -->
-                <div class="settings-panel" id="settings-system">
-                    <div class="card" style="margin-bottom: 1.5rem;">
+                <!-- The list needs user:view; changing your own password needs only a login. -->
+                <div class="settings-panel" id="settings-users">
+                    <div class="card" id="users-card" style="margin-bottom: 1.5rem;">
                         <div class="card-header">
-                            <h3>System Management</h3>
+                            <h3>Dashboard users</h3>
+                            <button class="btn btn-secondary btn-sm" onclick="refreshUsers()">Refresh</button>
                         </div>
                         <div class="card-body">
-                            <div class="system-actions">
-                                <div class="action-item">
-                                    <div class="action-info">
-                                        <h4>Restart Server</h4>
-                                        <p>Gracefully restart the Elemta server. This will terminate all active connections.</p>
-                                    </div>
-                                    <button class="btn btn-danger" onclick="restartServer()">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
-                                            <polyline points="16 6 12 2 8 6" />
-                                            <line x1="12" y1="2" x2="12" y2="15" />
-                                        </svg>
-                                        Restart Server
-                                    </button>
-                                </div>
+                            <p class="panel-intro">
+                                Accounts that can sign in to this dashboard and the admin API.
+                                <strong>admin</strong> can do everything, <strong>operator</strong> can manage
+                                queues, and <strong>user</strong> and <strong>readonly</strong> can only view.
+                                Changes apply immediately.
+                            </p>
+                            <div class="send-row">
+                                <input type="text" id="new-user-name" placeholder="Username" autocomplete="off">
+                                <input type="password" id="new-user-password" placeholder="Password (12+ characters)" autocomplete="new-password">
+                                <select id="new-user-role">
+                                    <option value="user">user</option>
+                                    <option value="operator">operator</option>
+                                    <option value="admin">admin</option>
+                                </select>
+                                <button class="btn btn-primary" onclick="createUser()">Add user</button>
                             </div>
-                            <div id="system-status" class="system-status"></div>
+                            <div id="users-list"></div>
                         </div>
                     </div>
+                </div>
+
+                <div class="settings-panel" id="settings-notifications">
                     <div class="card">
-                        <div class="card-header">
-                            <h3>About</h3>
+                        <div class="card-header"><h3>Alert emails</h3></div>
+                        <div class="card-body">
+                            <form id="alert-email-form" class="abuse-form">
+                                <label for="abuse-alert-email">Email alerts to</label>
+                                <input id="abuse-alert-email" type="text" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="postmaster@example.com">
+                                <p class="field-hint">Backups, DNS, certificates, disk space, the queue, unusual sign-ins and accounts put on hold are emailed here, up to 20 an hour. They are sent even with Abuse protection off. Separate addresses with commas. Empty sends nothing.</p>
+                                <button class="btn btn-primary" type="submit">Save</button>
+                                <p class="field-hint" id="alert-email-status" role="status"></p>
+                            </form>
                         </div>
-                        <div class="card-body about-info">
-                            <p><strong>Elemta Mail Transfer Agent</strong></p>
-                            <p>A modern, high-performance MTA built with Go</p>
-                            <p class="version">Version 1.0.0</p>
+                    </div>
+                </div>
+
+                <div class="settings-panel" id="settings-plugin-log_shipping" data-static-panel="true">
+                    <div class="stats-grid">
+                        <div class="stat-card"><span class="stat-info"><span class="stat-value" id="logship-state">—</span><span class="stat-label">Status</span></span></div>
+                        <div class="stat-card"><span class="stat-info"><span class="stat-value" id="logship-sent">—</span><span class="stat-label">Lines sent</span></span></div>
+                        <div class="stat-card"><span class="stat-info"><span class="stat-value" id="logship-waiting">—</span><span class="stat-label">Waiting</span></span></div>
+                        <div class="stat-card"><span class="stat-info"><span class="stat-value" id="logship-lost">—</span><span class="stat-label">Dropped or refused</span></span></div>
+                    </div>
+                    <p class="logship-detail" id="logship-detail" role="status"></p>
+                    <div class="card">
+                        <div class="card-header"><h3>Destination</h3></div>
+                        <div class="card-body">
+                            <form id="logship-form" class="logship-form">
+                                <label class="logship-check"><input id="logship-enabled" type="checkbox"> Ship logs from every service</label>
+                                <div class="logship-fields">
+                                    <label>Send to
+                                        <select id="logship-kind"><option value="elasticsearch">Elasticsearch</option><option value="logstash">Logstash (HTTP input)</option></select>
+                                    </label>
+                                    <label>Destination URL
+                                        <select id="logship-url" aria-describedby="logship-allowed"></select>
+                                    </label>
+                                    <label>Index prefix
+                                        <input id="logship-index" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="elemta-logs">
+                                    </label>
+                                    <label>Lowest level
+                                        <select id="logship-level"><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select>
+                                    </label>
+                                    <label>Sign in with
+                                        <select id="logship-auth"><option value="keep">The saved credential</option><option value="none">Nothing</option><option value="key">An API key</option><option value="basic">User name and password</option></select>
+                                    </label>
+                                    <label id="logship-key-field" hidden>API key
+                                        <input id="logship-key" type="password" maxlength="1024" autocomplete="new-password">
+                                    </label>
+                                    <label id="logship-user-field" hidden>User name
+                                        <input id="logship-user" type="text" maxlength="1024" autocomplete="off">
+                                    </label>
+                                    <label id="logship-password-field" hidden>Password
+                                        <input id="logship-password" type="password" maxlength="1024" autocomplete="new-password">
+                                    </label>
+                                </div>
+                                <p class="field-hint" id="logship-allowed"></p>
+                                <p class="logship-detail" id="logship-plain" hidden>This address is plain HTTP: logs and any credential cross the network unencrypted. Use HTTPS off this machine.</p>
+                                <label class="logship-check"><input id="logship-subjects" type="checkbox"> Include subjects</label>
+                                <p class="field-hint">Subjects are the content of people's mail, so they stay here unless you tick this. Passwords, tokens, typed command arguments and message lines are never sent. Addresses and IPs are.</p>
+                                <div class="logship-actions">
+                                    <button class="btn btn-primary" type="submit">Save</button>
+                                    <button class="btn btn-secondary" type="button" id="logship-test">Send a test line</button>
+                                </div>
+                                <p class="field-hint" id="logship-result" role="status"></p>
+                            </form>
                         </div>
+                    </div>
+                </div>
+
+                <div class="settings-panel" id="settings-plugin-abuse" data-static-panel="true">
+                    <div class="panel-link">
+                        <p class="field-hint">One policy for SMTP, IMAP, POP3, ManageSieve, webmail and this console. Changes apply within seconds, without a restart.</p>
+                        <button class="btn btn-secondary btn-sm" type="button" data-go="reports/abuse">See the report</button>
+                    </div>
+                    <p id="abuse-settings-notice" class="abuse-notice" role="status" hidden></p>
+                    <div class="card">
+                    <div class="card-header"><h3>Limits</h3></div>
+                    <div class="card-body">
+                        <form id="abuse-policy-form" class="abuse-form">
+                            <label for="abuse-mode">Mode</label>
+                            <select id="abuse-mode">
+                                <option value="enforce">Enforce</option>
+                                <option value="log">Log only: record what would happen and block nothing</option>
+                                <option value="off">Off</option>
+                            </select>
+                            <label for="abuse-connections">Connections per address</label>
+                            <input id="abuse-connections" type="number" min="1" max="100000" required>
+                            <p class="field-hint">Open connections one address may hold to each SMTP or mailbox server. An IPv6 client counts as its /64.</p>
+                            <label for="abuse-rate">New connections per minute, per address</label>
+                            <input id="abuse-rate" type="number" min="0" max="1000000" required>
+                            <p class="field-hint">Catches clients that connect and disconnect as fast as they can. 0 turns it off. Port 25 isn't counted.</p>
+                            <fieldset class="abuse-protocol-limits"><legend>Per protocol</legend>
+                                <table class="messages-table">
+                                    <thead><tr><th scope="col">Protocol</th><th scope="col">Connections</th><th scope="col">Per minute</th></tr></thead>
+                                    <tbody>
+                                    <tr><th scope="row">SMTP submission</th><td><input id="abuse-limit-smtp-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="SMTP submission connections per address"></td><td><input id="abuse-limit-smtp-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="SMTP submission new connections per minute"></td></tr>
+                                    <tr><th scope="row">IMAP</th><td><input id="abuse-limit-imap-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="IMAP connections per address"></td><td><input id="abuse-limit-imap-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="IMAP new connections per minute"></td></tr>
+                                    <tr><th scope="row">POP3</th><td><input id="abuse-limit-pop3-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="POP3 connections per address"></td><td><input id="abuse-limit-pop3-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="POP3 new connections per minute"></td></tr>
+                                    <tr><th scope="row">ManageSieve</th><td><input id="abuse-limit-sieve-connections" type="number" min="0" max="100000" placeholder="Same" aria-label="ManageSieve connections per address"></td><td><input id="abuse-limit-sieve-rate" type="number" min="0" max="1000000" placeholder="Same" aria-label="ManageSieve new connections per minute"></td></tr>
+                                    </tbody>
+                                </table>
+                                <p class="field-hint">Leave a box empty to use the limits above. Each protocol is counted on its own. POP3 clients usually need far fewer connections than IMAP.</p>
+                            </fieldset>
+                            <label for="abuse-failures">Failed sign-ins before blocking</label>
+                            <input id="abuse-failures" type="number" min="1" max="100000" required>
+                            <label for="abuse-network">Failed sign-ins before blocking a whole /24 or /48</label>
+                            <input id="abuse-network" type="number" min="0" max="1000000" required>
+                            <p class="field-hint">Catches attackers spread across a rented block. 0 turns it off.</p>
+                            <label for="abuse-spray">Different accounts one address may fail against</label>
+                            <input id="abuse-spray" type="number" min="0" max="100000" required>
+                            <p class="field-hint">Catches password spraying: one password tried on many accounts, too few times each to reach the limit above. 0 turns it off.</p>
+                            <label for="abuse-targeted">Different addresses failing against one account before it's shielded</label>
+                            <input id="abuse-targeted" type="number" min="0" max="100000" required>
+                            <p class="field-hint">While shielded, the account's password works only from networks it has signed in from in the last 90 days; elsewhere a right password is answered like a wrong one, so guessing gets nowhere. App passwords and passkeys work from anywhere, and the account is never locked. It lasts until the attack stops for one window. 0 turns it off.</p>
+                            <label for="abuse-inbound">Messages per hour from one outside address</label>
+                            <input id="abuse-inbound" type="number" min="0" max="10000000" required>
+                            <p class="field-hint">Includes port 25. Over it, mail is deferred, so a real server retries later. Signed-in users and allowed relays don't count. 0 turns it off.</p>
+                            <label for="abuse-domain">Messages per hour claiming one sender domain</label>
+                            <input id="abuse-domain" type="number" min="0" max="10000000" required>
+                            <p class="field-hint">Catches a run forging one domain from many addresses, each under the limit above. Over it, that domain's mail is deferred. Large providers send a lot of real mail, so set it well above what you receive from them. 0 turns it off.</p>
+                            <label for="abuse-signin-alerts">Unusual sign-in alerts</label>
+                            <select id="abuse-signin-alerts"><option value="on">On</option><option value="off">Off</option></select>
+                            <p class="field-hint">Keeps each account's last sign-in location for 30 days and its countries for 90, to compare against. Off keeps nothing new.</p>
+                            <label for="abuse-outbound">Recipients outside the server per hour, per account</label>
+                            <input id="abuse-outbound" type="number" min="0" max="10000000" required>
+                            <p class="field-hint">Over it, the account's outside mail is put on hold until you release it: a taken-over account sends far more than its owner. Mail inside the server still flows. 0 turns it off.</p>
+                            <label for="abuse-window">Counted over (minutes)</label>
+                            <input id="abuse-window" type="number" min="1" max="1440" required>
+                            <p class="field-hint">Failures add up across every service and account.</p>
+                            <label for="abuse-block">First block (minutes)</label>
+                            <input id="abuse-block" type="number" min="1" max="10080" required>
+                            <label for="abuse-max-block">Longest block (hours)</label>
+                            <input id="abuse-max-block" type="number" min="1" max="720" required>
+                            <p class="field-hint">Each repeat within a week lasts four times longer, up to the longest block.</p>
+                            <label for="abuse-firewall">Firewall</label>
+                            <select id="abuse-firewall">
+                                <option value="log">Log only: report what would be dropped</option>
+                                <option value="apply">Apply: drop blocked addresses at the host firewall</option>
+                                <option value="off">Off</option>
+                            </select>
+                            <p class="field-hint">Covers client ports, never port 25. Check your allow rules before applying.</p>
+                            <button class="btn btn-primary" type="submit">Save</button>
+                        </form>
+                    </div>
+                </div>
+                    <div class="card">
+                    <div class="card-header"><h3>Allow and deny rules</h3></div>
+                    <div class="card-body">
+                        <p class="field-hint">Inbound rules cover clients connecting here and mail from outside. Outbound rules cover where mail is going. An address or network matches the client or the destination mail server; a domain or mail address matches the sender or the recipient. Allow beats deny, and never skips virus or spam scanning. An allow rule on an address or network for all protocols also means it's never limited or blocked: add your own address and monitoring.</p>
+                        <div class="ma-table-wrap"><table class="messages-table">
+                            <thead><tr><th>Action</th><th>Direction</th><th>Matches</th><th>Protocols</th><th>Expires</th><th>Note</th><th aria-label="Remove"></th></tr></thead>
+                            <tbody id="abuse-rules"></tbody>
+                        </table></div>
+                        <form id="abuse-rule-form" class="abuse-inline abuse-rule-form">
+                            <select id="abuse-rule-action" aria-label="Action"><option value="deny">Deny</option><option value="allow">Allow</option></select>
+                            <select id="abuse-rule-direction" aria-label="Direction"><option value="inbound">Inbound</option><option value="outbound">Outbound</option><option value="both">Both</option></select>
+                            <input id="abuse-rule-value" type="text" required maxlength="320" placeholder="203.0.113.0/24, example.org or a@example.org" aria-label="Address, network, domain or mail address" autocomplete="off" spellcheck="false">
+                            <input id="abuse-rule-days" type="number" min="0" max="3650" placeholder="Days" aria-label="Expires after this many days, empty for never">
+                            <input id="abuse-rule-note" type="text" maxlength="200" placeholder="Note" aria-label="Note">
+                            <fieldset class="abuse-rule-protocols"><legend>Protocols, for an inbound address or network. None means all.</legend>
+                                <label><input type="checkbox" data-abuse-protocol value="smtp"> SMTP</label>
+                                <label><input type="checkbox" data-abuse-protocol value="imap"> IMAP</label>
+                                <label><input type="checkbox" data-abuse-protocol value="pop3"> POP3</label>
+                                <label><input type="checkbox" data-abuse-protocol value="sieve"> ManageSieve</label>
+                                <label><input type="checkbox" data-abuse-protocol value="webmail"> Webmail</label>
+                                <label><input type="checkbox" data-abuse-protocol value="admin"> Admin console</label>
+                            </fieldset>
+                            <button class="btn btn-primary" type="submit">Add rule</button>
+                        </form>
+                    </div>
+                </div>
+                </div>
                     </div>
                 </div>
             </section>
         </main>
     </div>
+
+    <dialog class="jump" id="jump" aria-label="Jump to">
+        <input id="jump-input" type="text" role="combobox" aria-expanded="true" aria-controls="jump-list" aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Page, setting, account, or something to trace">
+        <ul id="jump-list" role="listbox"></ul>
+    </dialog>
 
     <!-- Message Detail Modal -->
     <div class="modal" id="message-modal">
@@ -1958,11 +2077,15 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261103-compliance"></script>
-    <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
+    <script src="/static/shell.js?v=20261122-refresh"></script>
+    <script src="/static/overview.js?v=20261122-refresh"></script>
+    <script src="/static/logship.js?v=20261122-logship"></script>
+    <script src="/static/app.js?v=20261122-escaping"></script>
+    <script src="/static/campaigns.js?v=20261122-escaping"></script>
     <script src="/static/users.js?v=20261103-2fa"></script>
-    <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
-    <script src="/static/abuse.js?v=20261102-alertblock"></script>
+    <script src="/static/mail-admin.js?v=20261122-support"></script>
+    <script src="/static/abuse.js?v=20261122-refresh"></script>
+    <script src="/static/dmarc.js?v=20261122-refresh"></script>
     <script src="/static/compliance.js?v=20261103-compliance"></script>
     <script src="/static/security.js?v=20261103-2fa"></script>
 </body>

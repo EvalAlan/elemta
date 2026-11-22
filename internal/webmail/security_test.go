@@ -535,12 +535,13 @@ func TestSettingsTabs(t *testing.T) {
 	h := newSecurityHarness(t, &fakeSecurity{})
 	csrf := h.login()
 	tabs := map[string][]string{
-		"/settings":          {`action="/settings#general"`, `id="display_name"`},
-		"/settings/account":  {"<h1>Account</h1>"},
-		"/settings/security": {`action="/settings/2fa/begin#two-step"`, `action="/settings/app-passwords#app-passwords"`, `action="/settings/app-required#app-passwords"`},
-		"/settings/devices":  {"993", "587", "/dav/", "/contacts/export"},
-		"/filters":           {"Filters and out-of-office"},
-		"/folders":           {`action="/folders"`},
+		"/settings":               {`action="/settings#general"`, `id="display_name"`},
+		"/settings/account":       {"<h1>Account</h1>"},
+		"/settings/security":      {`action="/settings/2fa/begin#two-step"`, `action="/settings/app-passwords#app-passwords"`, `action="/settings/app-required#app-passwords"`},
+		"/settings/devices":       {"993", "587", "/dav/", "/contacts/export"},
+		"/filters":                {"<h1>Filters</h1>"},
+		"/settings/out-of-office": {"<h1>Out of office</h1>"},
+		"/folders":                {`action="/folders"`},
 	}
 	for path, wants := range tabs {
 		resp, page := h.get(path)

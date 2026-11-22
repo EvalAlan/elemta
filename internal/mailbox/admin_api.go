@@ -424,6 +424,7 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		}
 		return map[string]bool{"ok": true}, s.engine.RevokeCalendar(r.Context(), owner.ID, member.ID)
 	})
+	s.dmarcAPI(handle, decode)
 	handle("GET /v1/admin/resources", func(r *http.Request) (any, error) {
 		return s.engine.Resources(r.Context(), r.URL.Query().Get("domain"))
 	})
@@ -464,6 +465,7 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		}
 		return map[string]bool{"ok": true}, nil
 	})
+	s.supportAPI(handle)
 	handle("POST /v1/admin/accounts/{address}/purge", func(r *http.Request) (any, error) {
 		address := strings.ToLower(strings.TrimSpace(r.PathValue("address")))
 		if !strings.Contains(address, "@") || len(address) > 320 {

@@ -26,7 +26,7 @@ Main subcommands:
 - `web` — start web/API interface
 - `queue` — local queue management
 - `cert` — TLS/Let's Encrypt helper commands
-- `user` — dashboard/API accounts (also editable in Settings > Users)
+- `user` — dashboard/API accounts (also editable in Settings > Console users)
 - `dkim` — generate DKIM keys, print their DNS records, check DNS before a rotation
 
 Global flag:

@@ -113,6 +113,7 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	uid, hasUID := parseUID(q.Get("uid"))
 	remote := q.Get("remote") == "1"
 	loc := s.loc(sess)
+	s.refreshAway(r.Context(), sess)
 
 	// Tabs split the inbox only. A search looks across every tab, as the
 	// user is looking for something rather than browsing.
@@ -189,6 +190,9 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 					v.ThreadBefore = append(v.ThreadBefore, rel)
 				}
 			}
+		}
+		if v.Message != nil {
+			v.Unsub = s.unsubFor(sess, v.Message, folders)
 		}
 		var p Page
 		// Conversations are ordered by activity, so they apply to the date

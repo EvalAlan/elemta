@@ -49,6 +49,15 @@ type Session struct {
 	// prefs caches the user's settings, read once per session.
 	prefsMu sync.Mutex
 	prefs   *Settings
+
+	// away caches the out-of-office reply's state for the banner
+	// (outofoffice.go); awayLoading is set while a read is under way.
+	awayMu      sync.Mutex
+	away        *awayState
+	awayLoading bool
+	// subs is the Subscriptions page's last scan (subscriptions.go).
+	subsMu sync.Mutex
+	subs   *subscriptionsCache
 }
 
 // SessionManager creates, finds and expires sessions.

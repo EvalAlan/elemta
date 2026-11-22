@@ -417,3 +417,49 @@ CREATE TABLE IF NOT EXISTS mailbox_snoozes (
 );
 CREATE INDEX IF NOT EXISTS mailbox_snoozes_due ON mailbox_snoozes(until);
 CREATE INDEX IF NOT EXISTS mailbox_snoozes_account ON mailbox_snoozes(account);
+
+-- DMARC aggregate reports received about hosted domains (dmarc.go). Every
+-- cell keeps the addresses; each stores the reports delivered to it.
+CREATE TABLE IF NOT EXISTS mailbox_dmarc_addresses (
+    domain text PRIMARY KEY,
+    address text NOT NULL,
+    backfill_started timestamptz,
+    backfill_finished timestamptz,
+    backfill_read bigint NOT NULL DEFAULT 0,
+    backfill_stored bigint NOT NULL DEFAULT 0,
+    backfill_unindexed bigint NOT NULL DEFAULT 0,
+    backfill_error text NOT NULL DEFAULT ''
+);
+-- verified is part of the key, so that a forged report can't take the place
+-- of the real one with the same id.
+CREATE TABLE IF NOT EXISTS mailbox_dmarc_reports (
+    id bigserial PRIMARY KEY,
+    domain text NOT NULL,
+    policy_domain text NOT NULL,
+    verified boolean NOT NULL,
+    sender text NOT NULL,
+    report_id text NOT NULL,
+    org text NOT NULL,
+    p text NOT NULL,
+    sp text NOT NULL,
+    pct integer NOT NULL,
+    begins timestamptz NOT NULL,
+    ends timestamptz NOT NULL,
+    received timestamptz NOT NULL,
+    records integer NOT NULL,
+    UNIQUE (verified, sender, policy_domain, report_id)
+);
+CREATE INDEX IF NOT EXISTS mailbox_dmarc_reports_begins ON mailbox_dmarc_reports(begins);
+CREATE INDEX IF NOT EXISTS mailbox_dmarc_reports_received ON mailbox_dmarc_reports(domain, received);
+CREATE TABLE IF NOT EXISTS mailbox_dmarc_rows (
+    report bigint NOT NULL REFERENCES mailbox_dmarc_reports(id) ON DELETE CASCADE,
+    source_ip text NOT NULL,
+    header_from text NOT NULL,
+    messages bigint NOT NULL,
+    disposition text NOT NULL,
+    dkim text NOT NULL,
+    spf text NOT NULL,
+    dkim_domain text NOT NULL,
+    spf_domain text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mailbox_dmarc_rows_report ON mailbox_dmarc_rows(report);

@@ -17,6 +17,7 @@
             {{if .InboxTabs}}
             <button class="menu-item" form="mark-read" name="tab" value="{{.List.Tab}}">Mark {{.TabLabel}} read</button>
             <button class="menu-item" form="mark-read" name="tab" value="">Mark the whole inbox read</button>
+            {{if or (eq .List.Tab "promotions") (eq .List.Tab "updates") (eq .List.Tab "forums")}}<a class="menu-item" href="/settings/subscriptions">Unsubscribe from newsletters…</a>{{end}}
             {{else}}
             <button class="menu-item" form="mark-read" name="tab" value="">Mark {{folderLabel .Folder .Folders}} read</button>
             {{end}}
@@ -284,6 +285,28 @@
           <div class="muted small">To {{addrs .To}}{{if .Cc}} · Cc {{addrs .Cc}}{{end}}</div>
         </div>
       </div>
+      {{with $.Unsub}}
+      <div class="unsub-bar" data-unsub>
+        {{template "icon-mail"}}
+        {{if .Done}}
+        <span>You unsubscribed from {{.Sender}} on {{.Done}}.{{if .Still}} They're still sending.{{end}}</span>
+        {{if .Still}}<form action="/mail/block-sender" method="post" class="inline">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="sender" value="{{.Address}}"><input type="hidden" name="back" value="{{$.List.MessageURL $.Message.UID}}">
+          <button class="button small-button" type="submit">Block sender</button>
+        </form>{{else if .URL}}<a class="button small-button ghost" href="{{.URL}}" target="_blank" rel="noopener noreferrer">Their unsubscribe page</a>{{end}}
+        {{else}}
+        <span>Newsletter or mailing list from {{.Sender}}.</span>
+        {{if eq .Method "link"}}
+        <a class="button small-button" href="{{.URL}}" target="_blank" rel="noopener noreferrer" data-unsub-mark="{{.Action}}">Unsubscribe</a>
+        {{else}}
+        <form action="{{.Action}}" method="post" class="inline">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="back" value="{{$.List.MessageURL $.Message.UID}}">
+          <button class="button small-button" type="submit"{{if eq .Method "mail"}} data-confirm="Send an unsubscribe email to {{.MailTo}} from your address?"{{end}}>Unsubscribe</button>
+        </form>
+        {{end}}
+        {{end}}
+      </div>
+      {{end}}
       <div class="meta-row">
         {{with authChecks .AuthResults}}
         <ul class="chips" aria-label="Sender checks">

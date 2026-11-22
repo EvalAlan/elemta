@@ -300,6 +300,9 @@ type SMTPSubmitter struct {
 	Addr               string
 	TLSMode            string
 	InsecureSkipVerify bool
+	// ServerName is the name the certificate must carry; empty means
+	// Addr's host.
+	ServerName string
 	// LocalName is sent in EHLO.
 	LocalName string
 }
@@ -312,6 +315,9 @@ func (s SMTPSubmitter) Submit(ctx context.Context, user, password, from string, 
 	host, _, err := net.SplitHostPort(s.Addr)
 	if err != nil {
 		return fmt.Errorf("webmail: submission_addr: %w", err)
+	}
+	if s.ServerName != "" {
+		host = s.ServerName
 	}
 	tlsConf := &tls.Config{
 		ServerName: host,

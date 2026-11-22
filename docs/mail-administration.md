@@ -1,6 +1,6 @@
 # Mail administration
 
-Mailbox administration is available through **Mail Administration** in the
+Mailbox administration is available through **Accounts & domains** in the
 existing dashboard and `elemta provision` on the server. Both use the same
 service and directory. The console has a domain browser, searchable account
 and alias tables, and account details for names, status, quotas, aliases and
@@ -9,7 +9,7 @@ password resets. Dashboard administrators are separate from mailbox users;
 
 ## Open mailbox
 
-An administrator can select an active account in **Mail Administration** and
+An administrator can select an active account in **Accounts & domains** and
 choose **Open mailbox**. A new webmail tab opens with a banner naming the
 administrator, the account, and the access end time. Domain administrators can
 open only accounts in their assigned domains. Each issue is recorded in the
@@ -83,6 +83,23 @@ password alone leaves any passkey an intruder added in place. An administrator
 should verify the user's identity before running it. The CLI records the reset in the audit log. If the account's class
 requires two-step verification, the next webmail sign-in requires fresh setup.
 
+In the dashboard, the account dialog's **Support** section covers the same
+job and the others that come with it:
+
+- storage used against the quota in effect (also the **Used** column of the
+  accounts table);
+- whether two-step verification is on, how many recovery codes are left and
+  how many passkeys there are, with the reset above;
+- the account's app passwords, with when each was last used, to revoke one
+  or all. They can't be created or read there. Revoking refuses the next
+  sign-in; a mail app already connected stays connected until it closes;
+- who can open the mailbox (see Shared mailboxes below), to grant or remove.
+
+A domain administrator can do these for accounts in their own domains, with
+both sides of a share there. Each change is in the audit log
+(`two-factor-reset`, `app-password-revoke`, `mailbox-share`,
+`mailbox-share-remove`).
+
 Quota sizes accept integer bytes or suffixes such as `K`, `M`, `G`, `MiB`, and
 `GiB`. Suffixes use binary units; `5G` is 5 GiB. Zero means unlimited. Quotas
 are enforced by the mailbox server, including IMAP APPEND and delivery; updated
@@ -102,10 +119,40 @@ so retain, archive or purge those files according to the operator's policy.
 elemta --config /path/to/elemta.toml provision delete-account dana@example.com --confirm dana@example.com
 ```
 
+In the dashboard, **Delete account** asks for the address and has a box,
+off by default, to delete the mail permanently as well. Cancel and Esc change
+nothing.
+
 Delivery aliases point to one primary mailbox. They do not create another
 Maildir or another mailbox password. Mail apps sign in using the primary
 address. An alias does not automatically grant permission to send with that
 address; outbound sender permissions remain governed by `[auth.sender_aliases]`.
+
+## Needs attention and alert emails
+
+The Dashboard opens with **Needs attention**, for system administrators: what
+is wrong now, worst first, each with the page where it's dealt with. It
+gathers backups, the TLS certificate, the scheduled DNS checks, accounts held
+from sending, unusual sign-ins in the last day, and:
+
+| Check | Warning | Critical | Clears below |
+|---|---|---|---|
+| Disk space, and inodes, where the queue and configuration live | 85% | 95% | 82% (92% for critical) |
+| Longest wait in the active queue without progress | 15 min | 1 h | 10 min (45 min) |
+| Deferred messages | 100 | 1000 | 80 (800) |
+
+A wait in the active queue counts from when the message entered it, so a
+retry of mail deferred two days ago isn't reported as stuck. The queue is
+listed at most every five minutes, so those two can lag that far. Something
+that can't be read shows as "Couldn't check", never as fine.
+
+The disk and queue checks also email the alert addresses set in Settings >
+Alert emails: at once when one starts or gets worse, daily while it lasts, and once
+when it clears. Backup, DNS, certificate and abuse alerts are sent as before.
+
+These emails go out through this same server. They warn of trouble coming;
+they can't report that the server is down or that its disk is already full.
+Watch for that from outside it.
 
 ## Classes of service
 
@@ -211,6 +258,57 @@ which `scripts/dev-secrets.sh` does. Without it, mail is forwarded as before.
   refused once a colleague forwards it. Signing needs a DKIM key for the domain.
 - **Changing the secret.** Put the new one first, separated by a comma, and keep the
   old one for 21 days: the first signs, and all of them verify.
+
+## DMARC reports
+
+A domain whose DMARC record has `rua=mailto:...` is sent daily summaries of
+who sent mail in its name. When a system administrator registers that address
+for the domain (`PUT /api/provision/dmarc/addresses/{domain}`), the mailbox
+service reads those reports as they arrive. The mail is still delivered as
+before, and a report that can't be read never holds up or changes a delivery.
+
+- **What's read:** XML, gzip or zip aggregate reports about the registered
+  domain or its subdomains. Forensic (`ruf`) and TLS reports aren't.
+- **Trust:** anyone can mail the address. A report is *verified* when this
+  server saw its sender pass DMARC. That proves who sent it, not that they
+  report honestly, so the sender's domain is kept with every count.
+  Unverified reports are kept apart and limited to 200 a domain a day.
+- **Earlier reports:** `POST /api/provision/dmarc/addresses/{domain}/backfill`
+  reads the ones already in that address's mailbox. It reads only mail with
+  the address in To, Cc or Bcc, changes nothing, can be run again, and is
+  audited before it starts. The address must be an account or an alias.
+- **Reading:** `GET /api/provision/dmarc/summary` and `/sources`, with
+  `days` (1 to 400, 30 if unset) and optionally `domain`. Domain
+  administrators see their own domains; only system administrators change
+  addresses or start a backfill.
+- **Retention:** reports are kept 400 days. Unregistering keeps what was read.
+
+An address outside the domain also needs the authorization record
+`<domain>._report._dmarc.<address's domain>  TXT "v=DMARC1"`, or receivers
+won't send to it. The DNS health check warns when it's missing and shows
+what to publish.
+
+### The DMARC page
+
+**Reports > DMARC** in the console shows, for 7, 30 or 90 days, each domain's policy,
+volume, share passing, reporters and sources, from verified reports only. It
+pre-fills the report address from the domain's published `rua`.
+
+Each source gets a label:
+
+| Label | Meaning |
+|---|---|
+| this server | one of the mail host's own addresses |
+| aligned sender | passed SPF as this domain |
+| DKIM only: likely forwarder or sending service | passed by signature alone; the reports can't tell those two apart |
+| failing | passed neither |
+
+Forged mail is meant to fail, so failing alone raises nothing. The page
+points out failing mail that looks like the domain's own: from this server,
+from an address that also sends passing mail, or signed as the domain. At
+`p=none` or `p=quarantine` it suggests the next policy after 14 days of
+verified reports with none of those. It never changes DNS. Places come from
+the location database on this server; no address is looked up elsewhere.
 
 ## Distribution lists, domain aliases and catch-all
 

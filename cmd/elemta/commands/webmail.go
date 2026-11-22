@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/logging"
 	"log/slog"
 	"net/http"
 	"os"
@@ -34,6 +35,7 @@ func init() {
 }
 
 func runWebmail(cmd *cobra.Command, args []string) error {
+	defer collectLogs("webmail")()
 	var wc webmail.Config
 	if c := GetConfig(); c != nil && c.Webmail != nil {
 		wc = *c.Webmail
@@ -41,9 +43,18 @@ func runWebmail(cmd *cobra.Command, args []string) error {
 	if webmailListen != "" {
 		wc.Listen = webmailListen
 	}
+	// A deployment can set these from its environment: the saved
+	// configuration is kept across deploys, so a change to how the stack
+	// reaches the MTA would otherwise never get to a running system.
+	if v := os.Getenv("ELEMTA_WEBMAIL_SUBMISSION_ADDR"); v != "" {
+		wc.SubmissionAddr = v
+	}
+	if v := os.Getenv("ELEMTA_WEBMAIL_SUBMISSION_TLS_SERVER_NAME"); v != "" {
+		wc.SubmissionTLSServerName = v
+	}
 	wc = wc.WithDefaults()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), nil))
 	srv, err := webmail.NewServer(wc, nil, nil, logger)
 	if err != nil {
 		return fmt.Errorf("webmail: %w (configure the [webmail] table)", err)

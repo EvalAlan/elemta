@@ -108,7 +108,7 @@ step "Service credentials"
 # The location database for sign-in alerts (internal/geoip): DB-IP's free City
 # Lite, CC BY 4.0, published monthly. Fetched when missing or a month old.
 # Failing to fetch it never stops a deploy: without it the alerts that need a
-# location are off, and the Abuse page says so.
+# location are off, and the Abuse report says so.
 geoip_dir=$root/deployments/compose/.secrets/geoip
 geoip_db=$geoip_dir/dbip-city-lite.mmdb
 mkdir -p "$geoip_dir"
@@ -176,7 +176,7 @@ render "$root/config/elemta.toml" "$secrets/cloud/config/elemta.toml" \
     '/^\[tls\]/,/^\[/{s|^key_file = .*|&\nsni_cert_dir = "/app/tls/sni"|}' \
     "s|^lmtp_tls_ca_file = .*|lmtp_tls_ca_file = \"\"|" \
     "s|^lmtp_tls_server_name = .*|lmtp_tls_server_name = \"$d\"|" \
-    "s|^submission_addr = .*|submission_addr = \"$d:2588\"|" \
+    "s|^submission_tls_server_name = .*|submission_tls_server_name = \"$d\"|" \
     "s|^insecure_skip_verify = true|insecure_skip_verify = false|" \
     "s|^secure_cookies = false|secure_cookies = true|" \
     "s|^recovery_url = .*|recovery_url = \"https://$d\"|" \
@@ -360,7 +360,7 @@ for _ in $(seq 30); do
 done
 for x in $extra_domains; do
     if ! docker exec elemta-node0 grep -q "^local_domains = .*\"$x\"" "$runtime_config"; then
-        echo "cloud-deploy: $x is in EXTRA_MAIL_DOMAINS but not in the running configuration; add it under Mail Administration, or re-run with --reseed" >&2
+        echo "cloud-deploy: $x is in EXTRA_MAIL_DOMAINS but not in the running configuration; add it under Accounts & domains, or re-run with --reseed" >&2
     fi
 done
 
@@ -552,6 +552,7 @@ cat <<EOF
   $DKIM_SELECTOR._domainkey.$d.  TXT  "v=DKIM1; k=rsa; p=$dkim_p"
   _imaps._tcp.$d.         SRV  0 1 993 $d.
   _submission._tcp.$d.    SRV  0 1 587 $d.
+  _autodiscover._tcp.$d.  SRV  0 1 443 $d.
   Reverse DNS of $ip4 -> $d   (set at the hosting provider)
 EOF
 for x in $extra_domains; do
@@ -565,6 +566,7 @@ mail.$x, before moving the MX: a strict DMARC policy rejects unsigned mail.
   $x.                     TXT  "v=spf1 mx -all"   (or add ip4:$ip4 to the existing record)
   _imaps._tcp.$x.         SRV  0 1 993 mail.$x.
   _submission._tcp.$x.    SRV  0 1 587 mail.$x.
+  _autodiscover._tcp.$x.  SRV  0 1 443 mail.$x.
   $x.                     MX   10 mail.$x.   (last)
 EOF
 done
