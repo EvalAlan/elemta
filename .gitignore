@@ -196,3 +196,6 @@ deployments/kubernetes/production/linode/instance/
 
 # Copy of the dev server's configuration. Real values: never commit.
 .dev-server/
+
+# Log shipping's settings can hold a credential
+**/log-shipping.json

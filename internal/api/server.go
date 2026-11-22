@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/logging"
+	"github.com/EvalAlan/elemta/internal/logship"
 	"html"
 	"io"
 	"log"
@@ -195,6 +197,7 @@ type Server struct {
 	mainConfig *MainConfig // Main application configuration
 	configPath string      // Path to config file for persistence
 	abuse      *abuse.Engine
+	logShip    *logship.Shipper
 	// locations places sign-ins for alerts; nil without a database.
 	locations      *geoip.DB
 	httpServer     *http.Server
@@ -515,7 +518,7 @@ func (a *valkeyMetricsAdapter) GetRecentErrors(ctx context.Context, limit int64)
 // initializeAuth initializes the authentication system
 func (s *Server) initializeAuth() error {
 	// Create logger for auth initialization
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})).With(
 		"component", "api-auth",
@@ -848,6 +851,7 @@ func (s *Server) Start() error {
 	api.Handle("/messages/{id}/trace", s.requireAuthIfConfigured(http.HandlerFunc(s.handleTraceMessage))).Methods("GET")
 
 	s.abuseRoutes(api)
+	s.logShipRoutes(api)
 	api.Handle("/config/plugins", s.requireAuthIfConfigured(http.HandlerFunc(s.handleGetPlugins))).Methods("GET")
 
 	// Configuration management endpoints (write operations require auth)
@@ -939,6 +943,7 @@ func (s *Server) Start() error {
 	go s.watchBackups(s.stopDone)
 	go s.watchDNS(s.stopDone)
 	go s.watchResources(s.stopDone)
+	go s.runLogShipping(s.stopDone)
 	s.lifecycleMu.Unlock()
 
 	return nil
@@ -2410,6 +2415,9 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"requires_restart": false,
 		},
 	}...)
+	if s.logShip != nil && s.authMiddleware != nil {
+		plugins = append(plugins, s.logShipPlugin())
+	}
 
 	writeJSON(w, map[string]interface{}{
 		"plugins": plugins,
@@ -2893,6 +2901,14 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.setAbusePlugin(w, r, *pluginUpdate.Enabled)
+		return
+	}
+	if pluginName == "log_shipping" {
+		if pluginUpdate.Config != nil || pluginUpdate.Enabled == nil {
+			http.Error(w, "log shipping's settings are saved through /api/log-shipping", http.StatusBadRequest)
+			return
+		}
+		s.setLogShipPlugin(w, r, *pluginUpdate.Enabled)
 		return
 	}
 	wasDKIMSigning := s.mainConfig != nil && s.mainConfig.DKIM != nil && s.mainConfig.DKIM.Enabled && s.mainConfig.DKIM.Sign

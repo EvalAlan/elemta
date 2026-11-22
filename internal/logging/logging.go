@@ -407,7 +407,7 @@ func InitializeLogging(levelStr, logPath string) {
 
 	logFileMu.Lock()
 	defer logFileMu.Unlock()
-	var out io.Writer = os.Stdout
+	out := Stdout()
 	if logPath != "" {
 		if logFile == nil || logFilePath != logPath {
 			if err := os.MkdirAll(filepath.Dir(logPath), 0o750); err != nil {
@@ -425,7 +425,7 @@ func InitializeLogging(levelStr, logPath string) {
 			}
 		}
 		if logPath != "" {
-			out = io.MultiWriter(os.Stdout, logFile)
+			out = io.MultiWriter(out, logFile)
 		}
 	}
 	if logPath == "" && logFile != nil {

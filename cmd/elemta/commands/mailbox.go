@@ -28,6 +28,7 @@ var mailboxCmd = &cobra.Command{
 		defer stop()
 		initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
+		defer collectLogs("mailbox")()
 		service, err := mailbox.Open(initCtx, cfg, slog.Default())
 		if err != nil {
 			return err

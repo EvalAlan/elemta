@@ -26,6 +26,7 @@ import (
 
 	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/dnshealth"
+	"github.com/EvalAlan/elemta/internal/logship"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/EvalAlan/elemta/internal/queue"
@@ -1073,6 +1074,65 @@ func TestBrowserShell(t *testing.T) {
 			wait(`document.getElementById("jump").open`)
 			require.NoError(t, chromedp.Do(ctx, chromedp.SendKeys(chromedp.ID("jump-input"), "certif"), chromedp.KeyEvent(kb.Enter)))
 			wait(`location.hash === "#/certificates"`)
+		})
+	}
+}
+
+func TestBrowserLogShippingDestinations(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }))
+	defer sink.Close()
+	for name, allowed := range map[string][]string{"none listed": nil, "listed": {sink.URL}} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			base, _ := startProvisionAPIWith(t, func(s *Server) {
+				s.webRoot = webRoot
+				s.mainConfig = &MainConfig{Hostname: "mail.example.com"}
+				s.SetLogShipper(logship.NewShipper(dir, "", allowed, nil))
+			})
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+			defer cancel()
+			wait := func(expr string) {
+				t.Helper()
+				require.Eventually(t, func() bool {
+					v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+					return err == nil && v
+				}, 15*time.Second, 50*time.Millisecond, expr)
+			}
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(390, 900),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), "root"),
+				chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+			))
+			wait(`location.hash === "#/dashboard"`)
+			_, err := chromedp.Run(ctx, chromedp.Evaluate[bool](`(location.hash = "#/settings/plugin-log_shipping", true)`))
+			require.NoError(t, err)
+			wait(`document.getElementById("logship-allowed").textContent.includes("ELEMTA_LOG_SHIP_DESTINATIONS")`)
+			wait(`document.documentElement.scrollWidth <= window.innerWidth`)
+			wait(`document.getElementById("logship-test").disabled`)
+			if len(allowed) == 0 {
+				wait(`document.getElementById("logship-url").options.length === 1`)
+				return
+			}
+			require.NoError(t, chromedp.Do(ctx, chromedp.WaitVisible(chromedp.ID("logship-url"))))
+			_, err = chromedp.Run(ctx, chromedp.Evaluate[bool](`(() => {
+				const url = document.getElementById("logship-url"), kind = document.getElementById("logship-kind");
+				kind.value = "logstash"; url.selectedIndex = 1;
+				url.dispatchEvent(new Event("change", {bubbles: true}));
+				document.getElementById("logship-test").click();
+				return true })()`))
+			require.NoError(t, err)
+			wait(`document.getElementById("logship-result").textContent.includes("took a test line")`)
 		})
 	}
 }

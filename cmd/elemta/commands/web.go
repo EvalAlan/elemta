@@ -3,10 +3,12 @@ package commands
 import (
 	"context"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/logship"
 	"log"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -329,6 +331,8 @@ func runWeb(cmd *cobra.Command, args []string) {
 		},
 	}
 
+	defer collectLogs("admin")()
+
 	// Create and start API server.
 	//
 	// These failures are fatal and the container restart policy will bring the
@@ -375,6 +379,15 @@ func runWeb(cmd *cobra.Command, args []string) {
 	abuseEngine.Own(abusePolicy)
 	go abuseEngine.Run(context.Background())
 	server.SetAbuse(abuseEngine)
+	var logShippingDir string
+	if resolvedConfigPath != "" {
+		logShippingDir = filepath.Dir(resolvedConfigPath)
+	}
+	destinations, unusable := logship.ParseDestinations(os.Getenv(logship.DestinationsEnv))
+	if unusable > 0 {
+		slog.Warn("Some log shipping destinations aren't usable URLs and are ignored", "variable", logship.DestinationsEnv, "count", unusable)
+	}
+	server.SetLogShipper(logship.NewShipper(logShippingDir, os.Getenv("VALKEY_ADDR"), destinations, nil))
 	if (cfg.Abuse != nil && len(cfg.Abuse.Allowlist) > 0) || accessControlMoved {
 		// Saved once, so the file says what the services do. Failing only
 		// means doing it again next start: the rules are already in force.
