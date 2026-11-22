@@ -27,38 +27,7 @@ const campaignState = {
 // Visibility
 // ============================================================================
 
-// applyMassMailerVisibility shows the nav item only while the plugin is on.
-// A section that answers every click with "not enabled" is worse than one that
-// is not there at all.
-function applyMassMailerVisibility(plugins) {
-    const nav = document.getElementById('nav-campaigns');
-    if (!nav) return;
 
-    const plugin = (plugins || []).find(p => p.name === 'mass_mailer');
-    const enabled = !!(plugin && plugin.enabled);
-    nav.style.display = enabled ? '' : 'none';
-
-    // If the operator turns the plugin off while standing in the section, move
-    // them somewhere that still works rather than leaving a dead view up.
-    if (!enabled && document.getElementById('view-campaigns')?.classList.contains('active')) {
-        switchView('dashboard');
-    }
-}
-
-// refreshMassMailerVisibility asks the server directly, for page load and for
-// the case where the plugin list is not otherwise being fetched.
-async function refreshMassMailerVisibility() {
-    try {
-        const response = await fetch(`${API_BASE}/config/plugins`);
-        if (!response.ok) return;
-        const data = await response.json();
-        applyMassMailerVisibility(data.plugins || []);
-    } catch (error) {
-        // Not being able to ask is not a reason to show a section that may not
-        // work; leaving it hidden is the safe direction.
-        console.debug('mass mailer visibility check failed:', error);
-    }
-}
 
 // ============================================================================
 // Campaign list
@@ -893,7 +862,6 @@ async function deleteCampaign(id) {
 
 document.addEventListener('DOMContentLoaded', () => {
     initializeCampaignEditor();
-    refreshMassMailerVisibility();
 });
 
 // ============================================================================

@@ -369,7 +369,7 @@ func TestBrowserConsolePasskey(t *testing.T) {
 		click("#login-btn"),
 		chromedp.WaitVisible(chromedp.CSS(`.nav-item[data-view="settings"]`)),
 		click(`.nav-item[data-view="settings"]`),
-		click(`.settings-tab[data-tab="users"]`),
+		click(`.settings-tab[data-tab="account"]`),
 		chromedp.WaitVisible(chromedp.ID("tf-card")),
 		chromedp.SendKeys(chromedp.ID("tf-password"), testAdminPassword),
 		chromedp.SendKeys(chromedp.ID("tf-passkey-name"), "Test laptop"),
@@ -402,7 +402,7 @@ func TestBrowserConsolePasskey(t *testing.T) {
 	// An authenticator app, set up from the page; then the code signs in.
 	require.NoError(t, chromedp.Do(ctx,
 		click(`.nav-item[data-view="settings"]`),
-		click(`.settings-tab[data-tab="users"]`),
+		click(`.settings-tab[data-tab="account"]`),
 		chromedp.WaitVisible(chromedp.ID("tf-totp-on")),
 		chromedp.SendKeys(chromedp.ID("tf-password"), testAdminPassword),
 		click("#tf-totp-on"),
@@ -929,10 +929,12 @@ func TestBrowserDMARC(t *testing.T) {
 				chromedp.SendKeys(chromedp.ID("username"), user),
 				chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
 				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
-				chromedp.WaitReady(chromedp.CSS("#nav-dmarc:not([hidden])")),
+				chromedp.WaitReady(chromedp.CSS(`.nav-item[data-view="reports"]:not([hidden])`)),
 			))
 			run(`document.documentElement.setAttribute("data-theme", "` + c.theme + `")`)
-			run(`document.getElementById("nav-dmarc").click()`)
+			run(`document.querySelector('.nav-item[data-view="reports"]').click()`)
+			wait(`!!document.querySelector('.section-tab[data-section="dmarc"]:not([hidden])')`)
+			run(`document.querySelector('.section-tab[data-section="dmarc"]').click()`)
 			wait(`document.querySelectorAll("#dmarc-chart path").length > 27`)
 
 			text := func(id string) string { return `document.getElementById("` + id + `").textContent` }
@@ -946,14 +948,14 @@ func TestBrowserDMARC(t *testing.T) {
 			require.True(t, eval(`document.querySelector("#dmarc-reporters tr td:last-child").textContent === (`+strconv.FormatInt(verified, 10)+`).toLocaleString() && `+text("dmarc-volume")+` === Intl.NumberFormat(undefined, {notation: "compact", maximumFractionDigits: 1}).format(`+strconv.FormatInt(verified, 10)+`)`), "unverified reports in the total")
 			require.True(t, eval(text("dmarc-sources")+`.includes("this server") && `+text("dmarc-sources")+`.includes("likely forwarder")`), "source labels")
 			require.True(t, eval(text("dmarc-advice")+`.includes("2001:db8::25") && !`+text("dmarc-advice")+`.includes("203.0.113.9")`), "advice")
-			require.True(t, eval(text("dmarc-reporters")+`.includes("<b>not markup</b>") && !document.querySelector("#view-dmarc tbody b, #view-dmarc tbody i")`), "report text became markup")
+			require.True(t, eval(text("dmarc-reporters")+`.includes("<b>not markup</b>") && !document.querySelector("#report-dmarc tbody b, #report-dmarc tbody i")`), "report text became markup")
 			require.True(t, eval(text("dmarc-unverified-summary")+`.includes("(3)")`), "unverified are shown apart")
-			require.True(t, eval(`window.innerWidth === `+strconv.FormatInt(c.width, 10)+` && document.getElementById("view-dmarc").scrollWidth <= document.getElementById("view-dmarc").clientWidth`), "overflows sideways")
+			require.True(t, eval(`window.innerWidth === `+strconv.FormatInt(c.width, 10)+` && document.getElementById("report-dmarc").scrollWidth <= document.getElementById("report-dmarc").clientWidth`), "overflows sideways")
 
 			run(`document.querySelector("#dmarc-chart svg").focus()`)
 			wait(`!!document.querySelector("#dmarc-chart .dmarc-tip:not([hidden])")`)
 			if dir := os.Getenv("ELEMTA_DMARC_SCREENSHOTS"); dir != "" {
-				for i, id := range []string{"view-dmarc", "dmarc-chart", "dmarc-sources", "dmarc-setup-status"} {
+				for i, id := range []string{"report-dmarc", "dmarc-chart", "dmarc-sources", "dmarc-setup-status"} {
 					run(`document.getElementById("` + id + `").scrollIntoView({block: "` + []string{"start", "center", "center", "center"}[i] + `"})`)
 					png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot())
 					require.NoError(t, err)
@@ -981,6 +983,96 @@ func TestBrowserDMARC(t *testing.T) {
 			run(`window.confirm = () => true`)
 			run(`document.getElementById("dmarc-backfill").click()`)
 			wait(text("dmarc-backfill-state") + `.includes("27")`)
+		})
+	}
+}
+
+// The frame: the sidebar's order, who sees what, addresses that survive a
+// reload, the abuse plugin's two halves, and the jump box.
+func TestBrowserShell(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	for _, c := range []struct{ user, password, nav, landing string }{
+		{"root", testAdminPassword, "dashboard,reports,mail-admin,queues,tracing,logs,compliance,health,certificates,settings", "#/dashboard"},
+		{"viewer", testUserPassword, "dashboard,reports,queues,tracing,logs,health,certificates,settings", "#/dashboard"},
+	} {
+		t.Run(c.user, func(t *testing.T) {
+			base, _ := startProvisionAPIWith(t, func(s *Server) {
+				s.webRoot = webRoot
+				s.mainConfig = &MainConfig{Hostname: "mail.example.com"}
+			})
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 90*time.Second)
+			defer cancel()
+			eval := func(expr string) bool {
+				t.Helper()
+				v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+				require.NoError(t, err)
+				return v
+			}
+			wait := func(expr string) {
+				t.Helper()
+				require.Eventually(t, func() bool {
+					// Evaluating fails while a reload is under way.
+					v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+					return err == nil && v
+				}, 10*time.Second, 50*time.Millisecond, expr)
+			}
+			run := func(expr string) { t.Helper(); eval(`(` + expr + `, true)`) }
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(1280, 900),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), c.user),
+				chromedp.SendKeys(chromedp.ID("password"), c.password),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+				chromedp.WaitReady(chromedp.CSS(`.nav-item[data-view="settings"]:not([hidden])`)),
+			))
+			wait(`location.hash === "` + c.landing + `"`)
+			shown := func(sel, key string) string {
+				return `[...document.querySelectorAll('` + sel + `')].filter(e => !e.hidden).map(e => e.dataset.` + key + `).join(",")`
+			}
+			wait(shown(".nav-item[data-view]", "view") + ` === "` + c.nav + `"`)
+			if c.user == "viewer" {
+				require.True(t, eval(shown(".section-tab", "section")+` === "delivery,senders"`), "reports a viewer can't read")
+				require.True(t, eval(shown(".settings-tab", "tab")+` === "ui,account"`), "settings a viewer can't use")
+				require.True(t, eval(`document.querySelector(".queue-buttons").hidden`), "queue actions shown to a viewer")
+				run(`switchView("reports", "abuse")`)
+				wait(`location.hash === "#/reports/delivery"`)
+				return
+			}
+
+			run(`switchView("abuse")`) // where it used to be
+			wait(`location.hash === "#/reports/abuse" && document.getElementById("report-abuse").classList.contains("active")`)
+			run(`location.reload()`)
+			wait(`typeof shell !== "undefined" && location.hash === "#/reports/abuse" && !!document.querySelector("#report-abuse.active")`)
+
+			run(`switchView("settings", "plugins")`)
+			wait(`!!document.querySelector('.settings-tab[data-tab="plugin-abuse"]:not([hidden])')`)
+			run(`document.querySelector('.settings-tab[data-tab="plugin-abuse"]').click()`)
+			wait(`location.hash === "#/settings/plugin-abuse" && document.getElementById("abuse-connections").value !== ""`)
+			// The tab is made from the plugin list, which a fresh page lacks.
+			run(`(window.beforeReload = true, location.reload())`)
+			wait(`!window.beforeReload && typeof shell !== "undefined" && location.hash === "#/settings/plugin-abuse" && !!document.querySelector("#settings-plugin-abuse.active")`)
+			run(`history.back()`)
+			wait(`location.hash === "#/settings/plugins" && document.getElementById("settings-plugins").classList.contains("active")`)
+
+			// Switched off, both halves go and the alert addresses stay.
+			run(`(window.confirm = () => true, togglePlugin("abuse", false))`)
+			wait(`!document.querySelector('.settings-tab[data-tab="plugin-abuse"]') && document.querySelector('.section-tab[data-section="abuse"]').hidden`)
+			require.True(t, eval(`!document.querySelector('.settings-tab[data-tab="notifications"]').hidden`), "alert emails went with the plugin")
+			run(`togglePlugin("abuse", true)`)
+			wait(`!!document.querySelector('.settings-tab[data-tab="plugin-abuse"]') && !document.querySelector('.section-tab[data-section="abuse"]').hidden`)
+
+			run(`document.getElementById("jump-open").click()`)
+			wait(`document.getElementById("jump").open`)
+			require.NoError(t, chromedp.Do(ctx, chromedp.SendKeys(chromedp.ID("jump-input"), "certif"), chromedp.KeyEvent(kb.Enter)))
+			wait(`location.hash === "#/certificates"`)
 		})
 	}
 }

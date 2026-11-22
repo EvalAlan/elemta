@@ -273,7 +273,7 @@ func (s *Server) watchResources(stop <-chan struct{}) {
 			slog.Warn("Resource alert", "subject", n.subject)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if !s.abuse.Notify(ctx, n.subject, n.body) {
-				slog.Warn("Resource alert not emailed: set alert addresses on the Abuse page")
+				slog.Warn("Resource alert not emailed: set alert addresses in Settings > Alert emails")
 			}
 			cancel()
 		}

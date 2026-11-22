@@ -1,6 +1,6 @@
 # Mail administration
 
-Mailbox administration is available through **Mail Administration** in the
+Mailbox administration is available through **Accounts & domains** in the
 existing dashboard and `elemta provision` on the server. Both use the same
 service and directory. The console has a domain browser, searchable account
 and alias tables, and account details for names, status, quotas, aliases and
@@ -9,7 +9,7 @@ password resets. Dashboard administrators are separate from mailbox users;
 
 ## Open mailbox
 
-An administrator can select an active account in **Mail Administration** and
+An administrator can select an active account in **Accounts & domains** and
 choose **Open mailbox**. A new webmail tab opens with a banner naming the
 administrator, the account, and the access end time. Domain administrators can
 open only accounts in their assigned domains. Each issue is recorded in the
@@ -146,8 +146,8 @@ retry of mail deferred two days ago isn't reported as stuck. The queue is
 listed at most every five minutes, so those two can lag that far. Something
 that can't be read shows as "Couldn't check", never as fine.
 
-The disk and queue checks also email the alert addresses set on the Abuse
-page: at once when one starts or gets worse, daily while it lasts, and once
+The disk and queue checks also email the alert addresses set in Settings >
+Alert emails: at once when one starts or gets worse, daily while it lasts, and once
 when it clears. Backup, DNS, certificate and abuse alerts are sent as before.
 
 These emails go out through this same server. They warn of trouble coming;
@@ -290,7 +290,7 @@ what to publish.
 
 ### The DMARC page
 
-**DMARC** in the console shows, for 7, 30 or 90 days, each domain's policy,
+**Reports > DMARC** in the console shows, for 7, 30 or 90 days, each domain's policy,
 volume, share passing, reporters and sources, from verified reports only. It
 pre-fills the report address from the domain's published `rua`.
 

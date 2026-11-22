@@ -3,7 +3,7 @@
 // textContent, and the chart is built node by node.
 (function () {
     'use strict';
-    const view = document.getElementById('view-dmarc');
+    const view = document.getElementById('report-dmarc');
     if (!view) return;
     const el = id => document.getElementById(id);
     const SVG = 'http://www.w3.org/2000/svg';
@@ -63,7 +63,7 @@
             }
             render();
             if (report.domains.some(running)) {
-                poll = setTimeout(() => { if (view.classList.contains('active')) load(); }, 3000);
+                poll = setTimeout(() => { if (shell.is('reports', 'dmarc')) load(); }, 3000);
             }
         } catch (error) {
             if (seq === loading) notice(error.message, true);
@@ -165,7 +165,7 @@
     // text never scales.
     function draw() {
         const d = current(), box = el('dmarc-chart');
-        if (!d || !view.classList.contains('active')) return;
+        if (!d || !shell.is('reports', 'dmarc')) return;
         const width = box.clientWidth;
         if (!width) return;
         drawnWidth = width;

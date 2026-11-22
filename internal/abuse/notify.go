@@ -10,7 +10,7 @@ import (
 )
 
 // Alerts and holds are only useful if someone sees them, and nobody watches
-// the Abuse page. Whichever service notices something queues a notice in
+// Reports > Abuse. Whichever service notices something queues a notice in
 // Valkey; the MTA, which alone can send mail, takes them off and sends them to
 // the addresses in the policy. Without Valkey nothing is queued, as nothing
 // else here is shared either.
@@ -54,7 +54,7 @@ func (e *Engine) notify(ctx context.Context, subject, body string) {
 	switch {
 	case n == noticesPerHour+1:
 		subject = "More abuse alerts this hour"
-		body = fmt.Sprintf("More than %d alerts were raised this hour. No more will be emailed until the next hour; the Abuse page in the admin console lists them all.", noticesPerHour)
+		body = fmt.Sprintf("More than %d alerts were raised this hour. No more will be emailed until the next hour; Reports > Abuse in the admin console lists them all.", noticesPerHour)
 	case n > noticesPerHour+1:
 		return
 	}
@@ -148,7 +148,7 @@ func alertSubjectBody(a Alert) (string, string) {
 	} else {
 		b.WriteString("Nothing was blocked. If this wasn't the account's owner, change its password and reset two-step sign-in. ")
 	}
-	b.WriteString("The Abuse page in the admin console has the details and lets you block the address.\n")
+	b.WriteString("Reports > Abuse in the admin console has the details and lets you block the address.\n")
 	return kind + ": " + a.Account, b.String()
 }
 
@@ -156,6 +156,6 @@ func alertSubjectBody(a Alert) (string, string) {
 func holdSubjectBody(h Hold) (string, string) {
 	body := fmt.Sprintf("%s can't send mail outside the server: %s.\n\n"+
 		"A taken-over account sends far more than its owner does. Check the account, change its password if it was taken over, "+
-		"then release it under Accounts on hold on the Abuse page in the admin console. Mail inside the server still flows.\n", h.Account, h.Reason)
+		"then release it under Accounts on hold in Reports > Abuse in the admin console. Mail inside the server still flows.\n", h.Account, h.Reason)
 	return "Account on hold: " + h.Account, body
 }
