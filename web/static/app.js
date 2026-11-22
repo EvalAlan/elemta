@@ -293,7 +293,7 @@ async function loadAttention() {
         setOverallStatus(null);
         items = [{ severity: 'unknown', title: 'Needs attention', detail: "Couldn't check for problems." }];
     }
-    // With nothing to list, the banner above has already said so.
+    // With nothing to list there is nothing to show, as with the banner.
     card.hidden = !items.length;
     // Unchanged, it is left alone: rebuilding on every refresh would take
     // the focus off its links and be read out again.
@@ -312,10 +312,6 @@ async function loadAttention() {
     document.getElementById('attention-count').textContent = items.length ? String(items.length) : '';
     const list = document.getElementById('attention-list');
     list.replaceChildren();
-    if (!items.length) {
-        list.appendChild(make('li', 'attention-clear', 'Nothing needs attention.'));
-        return;
-    }
     for (const item of items) {
         const row = make('li', 'attention-item');
         row.appendChild(make('span', `attention-severity attention-${item.severity in labels ? item.severity : 'unknown'}`, labels[item.severity] || labels.unknown));

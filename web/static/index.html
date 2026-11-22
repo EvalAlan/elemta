@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261122-refresh">
-    <link rel="stylesheet" href="/static/shell.css?v=20261122-logship">
+    <link rel="stylesheet" href="/static/styles.css?v=20261122-dashboard">
+    <link rel="stylesheet" href="/static/shell.css?v=20261122-dashboard">
     <link rel="stylesheet" href="/static/mail-admin.css?v=20261122-refresh">
 </head>
 
@@ -300,6 +300,21 @@
                     <div class="card-header"><h3>Needs attention</h3><span class="field-hint" id="attention-count"></span></div>
                     <div class="card-body"><ul class="attention-list" id="attention-list" aria-live="polite"></ul></div>
                 </div>
+                        <div class="card" id="protection-card" hidden>
+                            <div class="card-header"><h3>Abuse, last 24 hours</h3><a href="#/reports/abuse" class="view-all" data-go="reports/abuse">Abuse report</a></div>
+                            <div class="card-body">
+                                <p class="protection-note" id="protection-note" hidden></p>
+                                <div class="queue-strip protection-strip">
+                                    <div class="queue-count"><span class="stat-value" id="protection-failures">—</span><span class="stat-label">Failed sign-ins</span></div>
+                                    <div class="queue-count"><span class="stat-value" id="protection-refused">—</span><span class="stat-label">Turned away</span></div>
+                                    <div class="queue-count"><span class="stat-value" id="protection-blocks">—</span><span class="stat-label">Blocks made</span></div>
+                                    <div class="queue-count"><span class="stat-value" id="protection-active">—</span><span class="stat-label">Blocked now</span></div>
+                                </div>
+                                <h4 class="protection-heading">Most failed sign-ins, last two hours</h4>
+                                <ul class="protection-top" id="protection-top"></ul>
+                                <p class="protection-empty" id="protection-empty" hidden>None.</p>
+                            </div>
+                        </div>
                     </div>
                     <div class="overview-column">
                         <div class="card">
@@ -2078,9 +2093,9 @@
     <div class="toast-container" id="toast-container"></div>
 
     <script src="/static/shell.js?v=20261122-refresh"></script>
-    <script src="/static/overview.js?v=20261122-refresh"></script>
+    <script src="/static/overview.js?v=20261122-dashboard"></script>
     <script src="/static/logship.js?v=20261122-logship"></script>
-    <script src="/static/app.js?v=20261122-escaping"></script>
+    <script src="/static/app.js?v=20261122-dashboard"></script>
     <script src="/static/campaigns.js?v=20261122-escaping"></script>
     <script src="/static/users.js?v=20261103-2fa"></script>
     <script src="/static/mail-admin.js?v=20261122-support"></script>
