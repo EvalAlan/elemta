@@ -2299,7 +2299,19 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	plugins := []map[string]interface{}{
+	plugins := []map[string]interface{}{}
+	// Abuse protection needs sign-in configured, as its API does. Off is a
+	// mode of its policy, so the switch here and the Mode setting are one.
+	if s.abuse != nil && s.authMiddleware != nil {
+		plugins = append(plugins, map[string]interface{}{
+			"name": "abuse", "title": "Abuse protection", "enabled": s.abuse.Policy().Mode != abuse.ModeOff,
+			"description":       "Connection and sign-in limits, blocks, holds and allow or deny rules, across every service",
+			"configurable":      true,
+			"requires_restart":  false,
+			"applies_on_reload": true,
+		})
+	}
+	plugins = append(plugins, []map[string]interface{}{
 		{
 			"name": "spf", "title": "SPF", "enabled": spfEnabled,
 			"description": "Verify the envelope sender against its published SPF policy",
@@ -2397,7 +2409,7 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"configurable":     true,
 			"requires_restart": false,
 		},
-	}
+	}...)
 
 	writeJSON(w, map[string]interface{}{
 		"plugins": plugins,
@@ -2873,6 +2885,14 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 	}
 	if pluginUpdate.Enabled == nil && pluginUpdate.Config == nil {
 		http.Error(w, "Send 'enabled' (boolean), 'config' (object), or both", http.StatusBadRequest)
+		return
+	}
+	if pluginName == "abuse" {
+		if pluginUpdate.Config != nil || pluginUpdate.Enabled == nil {
+			http.Error(w, "abuse protection's settings are saved through /api/abuse/policy", http.StatusBadRequest)
+			return
+		}
+		s.setAbusePlugin(w, r, *pluginUpdate.Enabled)
 		return
 	}
 	wasDKIMSigning := s.mainConfig != nil && s.mainConfig.DKIM != nil && s.mainConfig.DKIM.Enabled && s.mainConfig.DKIM.Sign

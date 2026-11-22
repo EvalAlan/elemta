@@ -108,7 +108,7 @@ step "Service credentials"
 # The location database for sign-in alerts (internal/geoip): DB-IP's free City
 # Lite, CC BY 4.0, published monthly. Fetched when missing or a month old.
 # Failing to fetch it never stops a deploy: without it the alerts that need a
-# location are off, and the Abuse page says so.
+# location are off, and the Abuse report says so.
 geoip_dir=$root/deployments/compose/.secrets/geoip
 geoip_db=$geoip_dir/dbip-city-lite.mmdb
 mkdir -p "$geoip_dir"
@@ -360,7 +360,7 @@ for _ in $(seq 30); do
 done
 for x in $extra_domains; do
     if ! docker exec elemta-node0 grep -q "^local_domains = .*\"$x\"" "$runtime_config"; then
-        echo "cloud-deploy: $x is in EXTRA_MAIL_DOMAINS but not in the running configuration; add it under Mail Administration, or re-run with --reseed" >&2
+        echo "cloud-deploy: $x is in EXTRA_MAIL_DOMAINS but not in the running configuration; add it under Accounts & domains, or re-run with --reseed" >&2
     fi
 done
 

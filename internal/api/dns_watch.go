@@ -98,7 +98,7 @@ func dnsProblemBody(r dnshealth.Report, ids []string) string {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("The Domains page in the admin console runs the check again on demand. You'll get one more email when it's clean.\n")
+	b.WriteString("Accounts & domains > Domains in the admin console runs the check again on demand. You'll get one more email when it's clean.\n")
 	return b.String()
 }
 
@@ -274,7 +274,7 @@ func (s *Server) watchDNS(stop <-chan struct{}) {
 			for _, n := range notices {
 				slog.Warn("DNS check alert", "subject", n.subject)
 				if !s.abuse.Notify(ctx, n.subject, n.body) {
-					slog.Warn("DNS check alert not emailed: set alert addresses on the Abuse page")
+					slog.Warn("DNS check alert not emailed: set alert addresses in Settings > Alert emails")
 				}
 			}
 		}

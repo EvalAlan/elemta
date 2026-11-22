@@ -87,7 +87,7 @@ func (s *Server) watchBackups(stop <-chan struct{}) {
 		slog.Warn("Backup alert", "subject", subject)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if !s.abuse.Notify(ctx, subject, body) {
-			slog.Warn("Backup alert not emailed: set alert addresses on the Abuse page")
+			slog.Warn("Backup alert not emailed: set alert addresses in Settings > Alert emails")
 		}
 		cancel()
 	}

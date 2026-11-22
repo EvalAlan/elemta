@@ -303,7 +303,7 @@ the previous one's code, because changes are additive; if a release says
 otherwise, restore the backup taken before it.
 
 **Rolling back from v0.7.0 to v0.6.0:** v0.7.0 moves the abuse allowlist and
-the `[access_control]` lists into the Abuse page's rules, and empties the old
+the `[access_control]` lists into Abuse protection's rules, and empties the old
 lists. v0.6.0 has no rules, so it starts normally but no longer applies those
 allows and denies. Put the old lists back by restoring the runtime
 configuration from the backup taken before the upgrade. This replaces the
@@ -319,7 +319,7 @@ rm -rf /tmp/elemta-config
 ```
 
 Without that backup, re-enter the entries: the rules that came from them are
-marked "From the allowlist" and "From [access_control]" on the Abuse page.
+marked "From the allowlist" and "From [access_control]" in Settings > Abuse protection.
 
 Mail a newer release stored in a form the older one can't read stays that way
 after a rollback. v0.6.0 can't read bodies compressed by v0.7.0 or later, so

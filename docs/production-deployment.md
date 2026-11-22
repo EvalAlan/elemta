@@ -183,7 +183,7 @@ elemta user remove alice --file /etc/elemta/users.txt
 ```
 
 After the first admin exists, accounts can also be managed in the dashboard
-under **Settings > Users**. Both edit the same file, and a running server picks
+under **Settings > Console users**. Both edit the same file, and a running server picks
 up changes on its next request; removing an account or resetting its password
 signs it out.
 
@@ -226,7 +226,7 @@ be sent over a plaintext connection.
 
 ### Two-step sign-in
 
-Each console user can add a second step under **Settings > Users > Two-step
+Each console user can add a second step under **Settings > Password & two-step > Two-step
 sign-in**:
 
 - **An authenticator app.** Scan the QR code, enter the code it shows, and keep

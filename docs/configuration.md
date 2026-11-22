@@ -191,7 +191,7 @@ and only if you understand that this re-opens the vector.
 ### Access control (allow / deny lists)
 
 > **Moving to rules.** Where Valkey is configured, the admin console turns these lists
-> into allow and deny rules on the Abuse page when it starts, and empties them here.
+> into allow and deny rules (Settings > Abuse protection) when it starts, and empties them here.
 > See "Allow and deny rules" in [abuse-protection.md](abuse-protection.md). The rest
 > of this section describes the lists for deployments without Valkey.
 

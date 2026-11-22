@@ -19,7 +19,7 @@ const (
 	attentionInfo     = "info"
 
 	// signInAlertWindow is how long an unusual sign-in stays on the list.
-	// The Abuse page keeps it until it's dismissed.
+	// The Abuse report keeps it until it's dismissed.
 	signInAlertWindow = 24 * time.Hour
 )
 
@@ -164,7 +164,7 @@ func (s *Server) abuseAttention(ctx context.Context, now time.Time) []attentionI
 	}
 	if len(s.abuse.Policy().AlertEmail) == 0 {
 		out = append(out, attentionItem{Severity: attentionInfo, Title: "Alert emails",
-			Detail: "No alert addresses are set, so none of these problems is emailed to anyone.", View: "abuse"})
+			Detail: "No alert addresses are set, so none of these problems is emailed to anyone.", View: "settings/notifications"})
 	}
 	return out
 }

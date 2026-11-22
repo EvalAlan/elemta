@@ -31,18 +31,21 @@ const API_BASE = '/api';
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
     initializeTheme();
-    initializeNavigation();
+    shell.initialize();
+    initializeControls();
     initializeEventListeners();
-    
+
     loadFromURL();
     // Check authentication status with a delay to ensure cookies are ready
     // after redirect, then load the server's data, unless the user is a
     // domain administrator, whom the API would refuse it.
     setTimeout(async () => {
         await checkAuthStatus();
+        await shell.start();
         if (authState.confined) return;
         refreshHealth(); // also sets the failed queue's visibility
-        refreshAllData();
+        // The Dashboard loads this itself.
+        if (!shell.is('dashboard')) refreshAllData();
         startAutoRefresh();
     }, 300);
 });
@@ -73,43 +76,7 @@ function toggleTheme() {
 // ============================================================================
 // Navigation
 // ============================================================================
-function initializeNavigation() {
-    // View navigation
-    document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.preventDefault();
-            switchView(item.dataset.view);
-        });
-    });
-
-    // View All links
-    document.querySelectorAll('.view-all[data-view]').forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.preventDefault();
-            switchView(item.dataset.view);
-        });
-    });
-
-    // Settings tabs navigation - use event delegation
-    document.addEventListener('click', (e) => {
-        const settingsTab = e.target.closest('.settings-tab[data-tab]');
-        if (settingsTab) {
-            e.preventDefault();
-            switchSettingsTab(settingsTab.dataset.tab);
-        }
-    });
-
-    // Sidebar toggle
-    document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
-        document.getElementById('sidebar').classList.toggle('collapsed');
-    });
-
-    // Mobile menu toggle
-    document.getElementById('mobile-menu-toggle')?.addEventListener('click', () => {
-        document.getElementById('sidebar').classList.toggle('open');
-    });
-
-    // Theme toggle
+function initializeControls() {
     document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
 
     // Queue tabs
@@ -126,16 +93,6 @@ function initializeNavigation() {
         });
     });
 
-    // Close sidebar on backdrop click (mobile)
-    document.addEventListener('click', (e) => {
-        const sidebar = document.getElementById('sidebar');
-        if (sidebar.classList.contains('open') &&
-            !sidebar.contains(e.target) &&
-            e.target !== document.getElementById('mobile-menu-toggle')) {
-            sidebar.classList.remove('open');
-        }
-    });
-
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
@@ -144,47 +101,13 @@ function initializeNavigation() {
     });
 }
 
-function switchView(viewName) {
-    // Update nav items
-    document.querySelectorAll('.nav-item').forEach(item => {
-        item.classList.toggle('active', item.dataset.view === viewName);
-    });
+// loadPage fetches what a page shows, each time it opens. A deploy, a slow
+// start or a cached page can otherwise leave one stuck on its placeholders.
+function loadPage(page, section) {
+    // Campaign progress polls itself; leaving the section stops it.
+    if (page !== 'campaigns') stopCampaignPolling();
 
-    // Update views
-    document.querySelectorAll('.view').forEach(view => {
-        view.classList.toggle('active', view.id === `view-${viewName}`);
-    });
-
-    // Update page title
-    const titles = {
-        dashboard: 'Dashboard',
-        health: 'Health',
-        certificates: 'Certificates',
-        abuse: 'Abuse',
-        dmarc: 'DMARC',
-        compliance: 'Compliance',
-        queues: 'Mail Queues',
-        reports: 'Reports',
-        tracing: 'Tracing',
-        campaigns: 'Mass Mailer',
-        logs: 'Logs',
-        'mail-admin': 'Mail Administration',
-        settings: 'Settings'
-    };
-    document.getElementById('page-title').textContent = titles[viewName] || viewName;
-
-    // Close mobile sidebar
-    document.getElementById('sidebar').classList.remove('open');
-
-    // Load view-specific data when the user opens a section. Do not rely on
-    // initial page load: remote deploys, slow API startup, and browser cache can
-    // otherwise leave sections stuck on placeholders.
-    // Campaign progress polls itself while a send is in flight; leaving the
-    // section stops it rather than leaving a timer running against an API
-    // nobody is looking at.
-    if (viewName !== 'campaigns') stopCampaignPolling();
-
-    switch (viewName) {
+    switch (page) {
         case 'dashboard':
             refreshAllData();
             refreshHealth();
@@ -201,12 +124,6 @@ function switchView(viewName) {
         case 'certificates':
             refreshCertificates();
             break;
-        case 'abuse':
-            refreshAbuse();
-            break;
-        case 'dmarc':
-            if (typeof openDMARC === 'function') openDMARC();
-            break;
         case 'compliance':
             if (typeof openCompliance === 'function') openCompliance();
             break;
@@ -214,9 +131,10 @@ function switchView(viewName) {
             refreshQueue();
             break;
         case 'reports':
-            refreshReports();
-            refreshDomainStats();
-            refreshSenderStats();
+            if (section === 'delivery') refreshReports();
+            else if (section === 'senders') { refreshDomainStats(); refreshSenderStats(); }
+            else if (section === 'dmarc') openDMARC();
+            else if (section === 'abuse') refreshAbuse();
             break;
         case 'campaigns':
             refreshCampaigns();
@@ -225,20 +143,16 @@ function switchView(viewName) {
         case 'logs':
             refreshLogs();
             break;
-        case 'settings': {
-            // The per-plugin tabs are built from the API response, so the tab
-            // bar has nothing in it until the plugin list has been fetched at
-            // least once. Settings opens on "UI Settings", which fetches
-            // nothing, so without this the plugin tabs appeared only after
-            // visiting the Plugins tab — they looked like they had failed.
-            refreshPlugins();
-            // Whichever panel is showing also needs current data: the panels
-            // keep whatever they were left with on the previous visit.
-            const activeTab = document.querySelector('.settings-tab.active')?.dataset.tab;
-            if (activeTab === 'server') refreshServerConfig();
-            else if (activeTab === 'users') refreshUsers();
+        case 'settings':
+            // The plugins' tabs come from the API, and the panels otherwise
+            // keep what the last visit left in them.
+            if (shell.allowed('configure')) refreshPlugins();
+            if (section === 'server') refreshServerConfig();
+            else if (section === 'users' || section === 'account') refreshUsers();
+            else if (section === 'plugin-abuse') refreshAbuseSettings();
+            else if (section === 'notifications') refreshAlertEmails();
+            else if (section === 'system') refreshHealth();
             break;
-        }
     }
 }
 
@@ -300,7 +214,7 @@ function updateURL() {
     const dateFilter = document.getElementById('date-filter')?.value;
     if (dateFilter) params.set('date', dateFilter);
 
-    window.history.replaceState({}, '', `?${params.toString()}`);
+    window.history.replaceState({}, '', `?${params.toString()}${window.location.hash}`);
 }
 
 function loadFromURL() {
@@ -343,6 +257,7 @@ async function refreshAllData() {
             loadQueueObservability(),
             loadQueue(state.currentQueue),
             loadRecentActivity(),
+            loadOverview(),
             loadAttention()
         ]);
         return true;
@@ -360,21 +275,25 @@ async function refreshAllData() {
 let attentionShown = '';
 async function loadAttention() {
     const card = document.getElementById('attention-card');
-    if (!card || !document.getElementById('view-dashboard').classList.contains('active')) return;
+    if (!card || !shell.is('dashboard')) return;
     let items;
     try {
         const response = await fetch(`${API_BASE}/attention`);
         if ([401, 403, 404].includes(response.status)) {
             card.hidden = true;
+            setOverallStatus(undefined);
             return;
         }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         items = (await response.json()).items;
+        setOverallStatus(items);
     } catch (error) {
         console.error('Attention check failed:', error);
+        setOverallStatus(null);
         items = [{ severity: 'unknown', title: 'Needs attention', detail: "Couldn't check for problems." }];
     }
-    card.hidden = false;
+    // With nothing to list, the banner above has already said so.
+    card.hidden = !items.length;
     // Unchanged, it is left alone: rebuilding on every refresh would take
     // the focus off its links and be read out again.
     const shown = JSON.stringify(items);
@@ -382,7 +301,7 @@ async function loadAttention() {
     attentionShown = shown;
 
     const labels = { critical: 'Critical', warning: 'Warning', unknown: "Couldn't check", info: 'Note' };
-    const pages = { health: 'Health', queues: 'Mail Queues', abuse: 'Abuse', certificates: 'Certificates' };
+    const pages = { health: 'Health', queues: 'Queues', abuse: 'Abuse report', certificates: 'Certificates', 'settings/notifications': 'Alert emails' };
     const make = (tag, className, text) => {
         const node = document.createElement(tag);
         if (className) node.className = className;
@@ -407,7 +326,7 @@ async function loadAttention() {
         if (pages[item.link]) {
             const open = make('button', 'btn btn-secondary btn-sm', pages[item.link]);
             open.type = 'button';
-            open.addEventListener('click', () => switchView(item.link));
+            open.addEventListener('click', () => switchView(...item.link.split('/')));
             row.appendChild(open);
         }
         list.appendChild(row);
@@ -1490,7 +1409,8 @@ async function autoRefreshTick() {
             loadRecentActivity(),
             refreshHealth()
         ]);
-        updateLastUpdated();
+        loadOverview();
+        loadAttention();
 
         if (results.some(ok => ok === false)) {
             throw new Error('Auto-refresh payload failed');
@@ -1524,19 +1444,20 @@ function updateAutoRefreshToggle() {
     if (!btn) return;
 
     if (state.refreshRate <= 0) {
-        btn.textContent = 'Auto-refresh disabled';
+        btn.classList.add('paused');
+        btn.title = 'Auto-refresh is off in Settings';
+        btn.setAttribute('aria-label', btn.title);
         btn.disabled = true;
         return;
     }
 
     btn.disabled = false;
-    if (state.autoRefreshPaused) {
-        btn.textContent = 'Resume Auto-refresh';
-    } else if (state.refreshErrorStreak > 0) {
-        btn.textContent = `Auto-refresh retrying (${state.refreshErrorStreak})`;
-    } else {
-        btn.textContent = 'Pause Auto-refresh';
-    }
+    let label = 'Pause auto-refresh';
+    if (state.autoRefreshPaused) label = 'Resume auto-refresh';
+    else if (state.refreshErrorStreak > 0) label = `Auto-refresh retrying (${state.refreshErrorStreak})`;
+    btn.classList.toggle('paused', state.autoRefreshPaused);
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
 }
 
 function showRefreshIndicator(show) {
@@ -1711,6 +1632,7 @@ async function checkAuthStatus() {
             authState.username = data.user?.Username || data.user?.username || data.username;
             authState.permissions = data.permissions || [];
             authState.roles = data.user?.Groups || [];
+            setServerReachable(true);
             updateUserUI();
         } else {
             // Not authenticated, keep default state
@@ -1799,33 +1721,16 @@ function updateUserUI() {
     const btnLogin = document.getElementById('btn-login');
     const btnLogout = document.getElementById('btn-logout');
     const btnApikeys = document.getElementById('btn-apikeys');
-    // There are no accounts to manage when the dashboard runs without login.
-    const usersTab = document.getElementById('settings-tab-users');
-    if (usersTab) usersTab.style.display = authState.isLoggedIn ? '' : 'none';
     const perms = authState.permissions || [];
-    const mailAdminNav = document.getElementById('nav-mailadmin');
-    const mailAdmin = perms.includes('system:admin') || perms.includes('mail:domain-admin');
-    if (mailAdminNav) mailAdminNav.hidden = !authState.isLoggedIn || !mailAdmin;
-    const dmarcNav = document.getElementById('nav-dmarc');
-    if (dmarcNav) dmarcNav.hidden = !authState.isLoggedIn || !mailAdmin;
-    const complianceNav = document.getElementById('nav-compliance');
-    if (complianceNav) complianceNav.hidden = !authState.isLoggedIn || !perms.includes('mail:compliance');
+    shell.setAuth(authState);
     // A domain administrator or compliance officer can't read the server's
-    // queues, logs or statistics (the API refuses them), so the dashboard
-    // shows only their own sections and Settings, and stops polling the rest.
+    // queues, logs or statistics, so the console stops polling for them.
     const confined = authState.isLoggedIn && (perms.includes('mail:domain-admin') || perms.includes('mail:compliance')) && !perms.includes('api:read');
     if (confined !== !!authState.confined) {
         authState.confined = confined;
-        document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-            if (!['mail-admin', 'dmarc', 'compliance', 'settings'].includes(item.dataset.view)) item.style.display = confined ? 'none' : '';
-        });
-        document.querySelectorAll('.settings-tab[data-tab]').forEach(item => {
-            if (!['ui', 'users'].includes(item.dataset.tab)) item.style.display = confined ? 'none' : '';
-        });
         if (confined) {
             state.autoRefreshPaused = true;
             if (state.refreshInterval) { clearTimeout(state.refreshInterval); state.refreshInterval = null; }
-            switchView(mailAdmin ? 'mail-admin' : 'compliance');
         }
     }
 
@@ -1865,22 +1770,6 @@ document.addEventListener('click', (e) => {
 // ============================================================================
 // Settings Tabs
 // ============================================================================
-function switchSettingsTab(tabName) {
-    // Update tab buttons
-    document.querySelectorAll('.settings-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.tab === tabName);
-    });
-
-    // Toggle panel visibility
-    document.querySelectorAll('.settings-panel').forEach(panel => {
-        panel.classList.toggle('active', panel.id === `settings-${tabName}`);
-    });
-
-    // Load data for specific tabs
-    if (tabName === 'server') refreshServerConfig();
-    else if (tabName === 'plugins') refreshPlugins();
-    else if (tabName === 'users') refreshUsers();
-}
 
 // ============================================================================
 // Configuration Management API
@@ -1964,6 +1853,10 @@ async function saveServerConfig() {
 // reports as configurable but that is missing here still gets a toggle; it just
 // has no tab, which is better than showing an empty one.
 const PLUGIN_SETTINGS_SCHEMA = {
+    abuse: {
+        // Limits and rules have a hand-built panel (abuse.js).
+        panelId: 'settings-plugin-abuse',
+    },
     spf: {
         testable: true,
         fields: [
@@ -2028,9 +1921,9 @@ const PLUGIN_SETTINGS_SCHEMA = {
         ],
     },
     access_control: {
-        // The Abuse page's rules do this with directions and across every
+        // Abuse protection's rules do this with directions and across every
         // protocol; these lists stay for configurations that already use them.
-        note: 'These lists have moved to the allow and deny rules on the Abuse page, which cover inbound and outbound mail and every protocol. Anything added here moves there when the console next starts, and applies to SMTP until then.',
+        note: 'These lists have moved to the allow and deny rules in the Abuse protection settings, which cover inbound and outbound mail and every protocol. Anything added here moves there when the console next starts, and applies to SMTP until then.',
         fields: [
             { key: 'allow_ips', label: 'Allowed addresses', type: 'list',
               hint: 'CIDR ranges or single addresses, one per line. An allow entry beats a deny entry.' },
@@ -2111,7 +2004,7 @@ async function refreshPlugins() {
         renderPluginTabs(plugins);
         // The mass mailer is a section of its own, so its nav item follows the
         // toggle in the same breath as the settings tabs do.
-        applyMassMailerVisibility(plugins);
+        shell.setPlugins(plugins);
 
         loadingEl.style.display = 'none';
         contentEl.style.display = 'block';
@@ -2146,13 +2039,13 @@ function renderPluginCard(plugin) {
             </div>
             <div class="plugin-status ${enabled ? 'on' : 'off'}">
                 ${enabled ? 'Enabled' : 'Disabled'}
-                ${plugin.requires_restart ? '<span class="plugin-note">restart required to apply</span>' : ''}
-                ${plugin.applies_on_reload ? '<span class="plugin-note">applied by the SMTP server within a few seconds</span>' : ''}
+                ${plugin.requires_restart ? '<span class="plugin-note restart">needs a restart</span>' : ''}
+                ${plugin.applies_on_reload ? '<span class="plugin-note">applies within seconds</span>' : ''}
             </div>
             <div class="plugin-description">${escapeHtml(plugin.description || '')}</div>
             ${summary ? `<div class="plugin-summary">${summary}</div>` : ''}
             ${operational ? `<div class="plugin-summary">${operational}</div>` : ''}
-            ${enabled && schema ? `<div class="plugin-summary"><a href="#" class="link-button"
+            ${enabled && schema ? `<div class="plugin-open"><a href="#" class="link-button"
                 onclick="switchSettingsTab('plugin-${escapeJsArg(name)}'); return false;">Open settings</a></div>` : ''}
         </div>
     `;
@@ -2206,7 +2099,7 @@ function pluginSummary(plugin) {
 // toggle answered "add at least one blocklist zone" and the form for adding
 // one appeared only once it was enabled.
 function renderPluginTabs(plugins) {
-    const tabBar = document.querySelector('.settings-tabs');
+    const tabBar = document.getElementById('settings-plugin-tabs');
     if (!tabBar) return;
 
     const wanted = plugins.filter(p =>
@@ -2224,8 +2117,7 @@ function renderPluginTabs(plugins) {
         }
     });
 
-    // Add tabs for newly enabled plugins, before the System tab.
-    const systemTab = tabBar.querySelector('.settings-tab[data-tab="system"]');
+    // Add tabs for newly enabled plugins, under "All plugins".
     wanted.forEach(plugin => {
         const tabId = `plugin-${plugin.name}`;
         if (tabBar.querySelector(`.settings-tab[data-tab="${tabId}"]`)) {
@@ -2238,8 +2130,7 @@ function renderPluginTabs(plugins) {
         tab.dataset.tab = tabId;
         tab.dataset.pluginTab = plugin.name;
         tab.textContent = plugin.title || plugin.name;
-        tab.addEventListener('click', () => switchSettingsTab(tabId));
-        tabBar.insertBefore(tab, systemTab || null);
+        tabBar.appendChild(tab);
 
         renderPluginPanel(plugin);
     });
@@ -2301,7 +2192,7 @@ function renderPluginPanel(plugin) {
         panel = document.createElement('div');
         panel.className = 'settings-panel';
         panel.id = panelId;
-        const container = document.querySelector('#view-settings');
+        const container = document.querySelector('#view-settings .settings-content');
         if (!container) return;
         container.appendChild(panel);
     }
@@ -2567,6 +2458,10 @@ function setSaveStatus(el, message, kind) {
 }
 
 async function togglePlugin(pluginName, enabled) {
+    if (pluginName === 'abuse' && !enabled && !window.confirm('Turn abuse protection off? Nothing is blocked, and connection limits fall back to the configuration file.')) {
+        refreshPlugins();
+        return;
+    }
     try {
         const response = await fetch(`${API_BASE}/config/plugins/${encodeURIComponent(pluginName)}`, {
             method: 'PUT',
@@ -2816,6 +2711,7 @@ async function refreshHealth() {
         // System info
         document.getElementById('health-go-version').textContent = health.go_version || '-';
         document.getElementById('health-server-version').textContent = health.server_version || '-';
+        document.getElementById('about-version').textContent = health.server_version || 'unknown';
         document.getElementById('health-cpus').textContent = health.num_cpu || '-';
         document.getElementById('health-listen-addr').textContent = health.configured_addr || '-';
         document.getElementById('health-auth-enabled').textContent = health.auth_enabled ? 'Yes' : 'No';

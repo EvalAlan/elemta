@@ -3,8 +3,10 @@
 // they only ever reach the page through textContent.
 (function () {
     'use strict';
-    const view = document.getElementById('view-abuse');
-    if (!view) return;
+    // What it is doing is a report; what it should do is the plugin's settings.
+    const view = document.getElementById('report-abuse');
+    const settings = document.getElementById('settings-plugin-abuse');
+    if (!view || !settings) return;
     const el = id => document.getElementById(id);
     let you = '', rules = [], range = '24h', timer = null;
 
@@ -27,9 +29,11 @@
         return response.json();
     }
     function notice(text, error = false) {
-        const line = el('abuse-notice');
-        line.textContent = text; line.hidden = !text;
-        line.classList.toggle('abuse-error', error);
+        ['abuse-notice', 'abuse-settings-notice'].forEach(id => {
+            const line = el(id);
+            line.textContent = text; line.hidden = !text;
+            line.classList.toggle('abuse-error', error);
+        });
     }
     function cell(row, value) {
         const td = document.createElement('td');
@@ -65,7 +69,6 @@
             el('abuse-limit-' + name + '-rate').value = limit.connections_per_minute || '';
         });
         el('abuse-signin-alerts').value = p.sign_in_alerts === 'off' ? 'off' : 'on';
-        el('abuse-alert-email').value = (p.alert_email || []).join(', ');
         el('abuse-firewall').value = p.firewall;
         el('abuse-failures').value = p.failures_per_address;
         el('abuse-window').value = p.window_minutes;
@@ -119,7 +122,6 @@
                 connections_per_minute: Number(el('abuse-limit-' + name + '-rate').value) || 0,
             })).filter(l => l.connections_per_address || l.connections_per_minute),
             sign_in_alerts: el('abuse-signin-alerts').value,
-            alert_email: el('abuse-alert-email').value.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean),
             firewall: el('abuse-firewall').value,
             failures_per_address: Number(el('abuse-failures').value),
             window_minutes: Number(el('abuse-window').value),
@@ -404,7 +406,12 @@
     async function refresh() {
         try {
             const [status, stats] = await Promise.all([call(''), call('/metrics?range=' + range)]);
-            fillPolicy(status.policy); fillStatus(status); fillYou(status);
+            const p = status.policy;
+            // The form is loaded by itself, so a refresh here can't wipe an edit.
+            rules = p.rules || [];
+            fillRules();
+            el('abuse-mode-now').textContent = { enforce: 'Enforcing.', log: 'Log only: recording what would be blocked, and blocking nothing.', off: 'Off.' }[p.mode] || '';
+            fillStatus(status); fillYou(status);
             fillBlocks(status.blocks || []); fillHolds(status.holds || []); fillAlerts(status.alerts || [], status.locations, status.policy); fillAccounts(status.accounts || []); fillEvents(status.events || []);
             fillEnforcers(status.enforcers || [], status.policy);
             lastStats = stats; fillTiles(stats, (status.blocks || []).length); fillTop(stats.top || []); drawGraphs();
@@ -413,13 +420,31 @@
     async function act(fn) {
         try { await fn(); await refresh(); } catch (error) { notice(error.message, true); }
     }
+    window.refreshAbuseSettings = async () => {
+        notice('');
+        try { fillPolicy((await call('')).policy); } catch (error) { notice(error.message, true); }
+    };
+    window.refreshAlertEmails = async () => {
+        const status = el('alert-email-status');
+        status.textContent = '';
+        try { el('abuse-alert-email').value = ((await call('')).policy.alert_email || []).join(', '); } catch (error) { status.textContent = error.message; }
+    };
+    el('alert-email-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const status = el('alert-email-status');
+        try {
+            // Only this field: the server keeps whatever isn't sent.
+            const saved = await call('/policy', 'PUT', { alert_email: el('abuse-alert-email').value.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean) });
+            status.textContent = saved.published ? 'Saved.' : 'Saved, but not published: the other services get it when Valkey returns.';
+        } catch (error) { status.textContent = error.message; }
+    });
     window.refreshAbuse = () => {
         notice('');
         // Stays current while the page is open, and leaves the form alone
         // while someone is editing it.
         clearInterval(timer);
         timer = setInterval(() => {
-            if (!view.classList.contains('active') || view.contains(document.activeElement) && document.activeElement.matches('input, select, textarea')) return;
+            if (!shell.is('reports', 'abuse') || view.contains(document.activeElement) && document.activeElement.matches('input, select, textarea')) return;
             refresh();
         }, 30000);
         return refresh();
@@ -435,7 +460,7 @@
         e.preventDefault();
         const rule = { action: el('abuse-rule-action').value, direction: el('abuse-rule-direction').value,
             value: el('abuse-rule-value').value.trim(), note: el('abuse-rule-note').value.trim() };
-        const protocols = [...view.querySelectorAll('[data-abuse-protocol]:checked')].map(b => b.value);
+        const protocols = [...settings.querySelectorAll('[data-abuse-protocol]:checked')].map(b => b.value);
         if (protocols.length) rule.protocols = protocols.join(',');
         const days = Number(el('abuse-rule-days').value);
         if (days > 0) rule.expires = new Date(Date.now() + days * 86400000).toISOString();
@@ -450,6 +475,8 @@
         if (policy.firewall === 'apply' && !exempt && !window.confirm('Apply blocks at the firewall with no allow rule for an address? A block could cut off your own network until it expires.')) return;
         act(async () => {
             const saved = await call('/policy', 'PUT', policy);
+            // Turning it off here is turning the plugin off.
+            if (typeof refreshPlugins === 'function') refreshPlugins();
             notice(saved.published
                 ? 'Saved. Every service applies it within a few seconds, with no restart.'
                 : 'Saved, but it could not be published: other services apply it when Valkey returns.', !saved.published);
