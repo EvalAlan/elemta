@@ -10,6 +10,7 @@
     // A domain administrator (scope.all false) sees only their domains, and
     // none of the system-wide controls; the server enforces the same.
     let scope = { all: true }, audit = [], auditDone = false;
+    let usage = new Map(), supportSequence = 0;
 
     // Settings a class of service, or an account's overrides, can hold
     // (internal/mailpolicy). Sizes and counts take "0" for unlimited; blank
@@ -58,6 +59,11 @@
     function cell(row, value) { const c = node('td'); if (value instanceof Node) c.appendChild(value); else c.textContent = String(value); row.appendChild(c); }
     function quota(bytes) { if (!bytes) return 'Unlimited'; if (bytes % (1 << 30) === 0) return (bytes / (1 << 30)) + ' GiB'; if (bytes % (1 << 20) === 0) return (bytes / (1 << 20)) + ' MiB'; if (bytes % 1024 === 0) return (bytes / 1024) + ' KiB'; return bytes.toLocaleString() + ' B'; }
     function sizeText(bytes) { if (!bytes) return '0'; if (bytes % (1 << 30) === 0) return (bytes / (1 << 30)) + 'G'; if (bytes % (1 << 20) === 0) return (bytes / (1 << 20)) + 'M'; if (bytes % 1024 === 0) return (bytes / 1024) + 'K'; return String(bytes); }
+    function storage(bytes) {
+        let n = bytes, unit = 0;
+        while (n >= 1024 && unit < 4) { n /= 1024; unit++; }
+        return (unit && n < 10 ? n.toFixed(1) : Math.round(n)) + ' ' + ['B', 'KiB', 'MiB', 'GiB', 'TiB'][unit];
+    }
     function parseQuota(raw) { const m = /^(\d+)\s*(B|K|KB|KIB|M|MB|MIB|G|GB|GIB)?$/i.exec(raw.trim()); if (!m) throw new Error('Enter a size such as 5G, or 0 for unlimited.'); const suffix = (m[2] || 'B').toUpperCase(); const n = Number(m[1]) * (suffix.startsWith('G') ? 2 ** 30 : suffix.startsWith('M') ? 2 ** 20 : suffix.startsWith('K') ? 1024 : 1); if (!Number.isSafeInteger(n) || n > 2 ** 50) throw new Error('Sizes must be no more than 1 PiB.'); return n; }
     function accountPath() { return '/accounts/' + encodeURIComponent(selected.address); }
     function isInherit(raw) { return raw.trim() === '' || raw.trim().toLowerCase() === 'inherit'; }
@@ -148,7 +154,7 @@
         if (tab === 'audit') { renderAudit(); return; }
         const head = el('ma-table-head'), body = el('ma-table-body'); head.replaceChildren(); body.replaceChildren();
         const headers = {
-            accounts: ['Address', 'Display name', 'Status', 'Quota', 'Aliases'],
+            accounts: mailboxAdmin ? ['Address', 'Display name', 'Status', 'Used', 'Quota', 'Aliases'] : ['Address', 'Display name', 'Status', 'Quota', 'Aliases'],
             aliases: ['Delivery alias', 'Mailbox account', ''],
             lists: ['List', 'Name', 'Members', 'Who may post', 'Owner'],
             classes: ['Class', 'Description', 'Accounts', 'Domains', 'Settings'],
@@ -167,7 +173,9 @@
             const row = node('tr');
             if (tab === 'accounts') {
                 cell(row, button(item.address, () => openAccount(item), 'ma-account-link')); cell(row, item.name);
-                cell(row, node('span', item.status, 'ma-status ' + item.status)); cell(row, quota(item.quota_bytes)); cell(row, item.aliases.length);
+                cell(row, node('span', item.status, 'ma-status ' + item.status));
+                if (mailboxAdmin) cell(row, usage ? storage(usage.get(item.address.toLowerCase()) || 0) : '—');
+                cell(row, quota(item.quota_bytes)); cell(row, item.aliases.length);
             } else if (tab === 'aliases') {
                 cell(row, item.alias); cell(row, button(item.account, () => openAccount(accounts.find(a => a.address === item.account)), 'ma-account-link'));
                 cell(row, button('Remove', () => perform(async () => {
@@ -214,9 +222,11 @@
         if (!status.available) throw new Error(status.reason);
         mailboxAdmin = !!status.mailbox_admin;
         scope = status.scope || { all: true };
-        const [a, d, l, c] = await Promise.all([request('/accounts'), request('/domains'), mailboxAdmin ? request('/lists') : null, mailboxAdmin ? request('/classes') : null]);
+        // Storage is an extra: without it the directory still has to load.
+        const [a, d, l, c, u] = await Promise.all([request('/accounts'), request('/domains'), mailboxAdmin ? request('/lists') : null, mailboxAdmin ? request('/classes') : null, mailboxAdmin ? request('/usage').catch(() => null) : null]);
         if (seq !== sequence) return;
         accounts = a.accounts; domains = d.domains;
+        usage = u ? new Map(u.usage.map(x => [x.address.toLowerCase(), x.used_bytes])) : null;
         el('ma-account-options').replaceChildren(...accounts.map(x => option(x.address, x.name || x.address, '')));
         lists = l ? l.lists : []; classes = c ? c.classes : [];
         domainClasses = {}; (c ? c.domains : []).forEach(x => { domainClasses[x.domain] = x.class; });
@@ -304,6 +314,60 @@
         const row = node('tr'); cell(row, 'Class in effect'); cell(row, e.class); cell(row, ''); body.prepend(row);
         if (view.held || e.legal_hold) { const held = node('tr'); cell(held, 'Messages on hold'); cell(held, view.held || 0); cell(held, 'export with provision export-held'); body.appendChild(held); }
     }
+    // Support loads by itself and can finish after the dialog has moved on to
+    // another account, so each load carries the account it was for, and so do
+    // the buttons it draws.
+    async function loadSupport() {
+        const seq = ++supportSequence, address = selected.address, base = accountPath();
+        el('ma-support-error').hidden = true;
+        ['ma-support-storage', 'ma-support-two-step', 'ma-support-passkeys'].forEach(id => { el(id).textContent = 'Loading…'; });
+        el('ma-app-password-list').replaceChildren(); el('ma-share-list').replaceChildren(); el('ma-support-revoke-all').hidden = true;
+        try {
+            const [security, shares] = await Promise.all([request(base + '/security'), request(base + '/shares')]);
+            if (seq !== supportSequence || !selected || selected.address !== address) return;
+            fillSupport(address, base, security, shares);
+        } catch (error) {
+            if (seq !== supportSequence) return;
+            ['ma-support-storage', 'ma-support-two-step', 'ma-support-passkeys'].forEach(id => { el(id).textContent = "Couldn't check"; });
+            el('ma-support-error').textContent = error.message; el('ma-support-error').hidden = false;
+        }
+    }
+    function fillSupport(address, base, security, shares) {
+        el('ma-support-storage').textContent = storage(security.used_bytes) + (security.quota_bytes
+            ? ' of ' + quota(security.quota_bytes) + ' (' + Math.round(security.used_bytes / security.quota_bytes * 100) + '%)' : ', no limit');
+        el('ma-support-two-step').textContent = security.totp
+            ? 'On, ' + security.recovery_left + (security.recovery_left === 1 ? ' recovery code left' : ' recovery codes left') : 'Off';
+        el('ma-support-passkeys').textContent = security.passkeys || 'None';
+        const passwords = el('ma-app-password-list');
+        passwords.replaceChildren();
+        security.app_passwords.forEach(p => {
+            const li = node('li'), about = node('span');
+            about.appendChild(node('span', p.name, 'ma-support-name'));
+            about.appendChild(node('small', 'Created ' + new Date(p.created).toLocaleDateString() + ' · ' + (p.last_used ? 'last used ' + new Date(p.last_used).toLocaleString() : 'never used'), 'field-hint'));
+            li.appendChild(about);
+            li.appendChild(button('Revoke', () => perform(async () => {
+                if (!window.confirm('Revoke the app password "' + p.name + '" of ' + address + '?')) return;
+                await request(base + '/app-passwords/' + p.id, 'DELETE');
+                await loadSupport(); message('App password revoked.');
+            })));
+            passwords.appendChild(li);
+        });
+        if (!security.app_passwords.length) passwords.appendChild(node('li', 'No app passwords.'));
+        el('ma-support-revoke-all').hidden = !security.app_passwords.length;
+        const members = el('ma-share-list');
+        members.replaceChildren();
+        shares.forEach(share => {
+            const li = node('li');
+            li.appendChild(node('span', share.member + (share.can_send ? ' · reads and sends' : ' · reads')));
+            li.appendChild(button('Remove', () => perform(async () => {
+                if (!window.confirm('Stop ' + share.member + ' opening the mailbox of ' + address + '?')) return;
+                await request(base + '/shares/' + encodeURIComponent(share.member), 'DELETE');
+                await loadSupport(); message('Mailbox sharing removed.');
+            })));
+            members.appendChild(li);
+        });
+        if (!shares.length) members.appendChild(node('li', 'Only its owner.'));
+    }
     const CALENDAR_LEVEL = { view: 'View', edit: 'Edit', delegate: 'Delegate' };
     function fillCalendarShares(shares) {
         const list = el('ma-calendar-list'); list.replaceChildren();
@@ -331,7 +395,11 @@
         fillAccount(account); el('ma-account-dialog').showModal();
         el('ma-calendar-section').hidden = !(account && mailboxAdmin);
         el('ma-resource-section').hidden = !(account && mailboxAdmin);
+        el('ma-support').hidden = !(account && mailboxAdmin);
+        el('ma-share-form').reset();
+        supportSequence++;
         if (account && mailboxAdmin) {
+            loadSupport();
             try { fillCalendarShares(await request(accountPath() + '/calendar-shares')); } catch (error) { message(error.message, true); }
             try { fillResource(await request(accountPath() + '/resource')); } catch (error) { message(error.message, true); }
             try { fillPolicy(await request(accountPath() + '/policy')); } catch (error) { message(error.message, true); }
@@ -340,7 +408,7 @@
     window.refreshMailAdmin = function () { refresh().catch(error => message(error.message, true)); };
     el('ma-create').addEventListener('click', () => openAccount(null));
     el('ma-close').addEventListener('click', () => { if (!busy) el('ma-account-dialog').close(); });
-    ['ma-account-dialog', 'ma-list-dialog', 'ma-class-dialog'].forEach(id => el(id).addEventListener('cancel', event => { if (busy) event.preventDefault(); }));
+    ['ma-account-dialog', 'ma-list-dialog', 'ma-class-dialog', 'ma-delete-dialog'].forEach(id => el(id).addEventListener('cancel', event => { if (busy) event.preventDefault(); }));
     el('ma-refresh').addEventListener('click', window.refreshMailAdmin);
     el('ma-open-mailbox').addEventListener('click', () => {
         if (busy || !selected) return;
@@ -431,12 +499,57 @@
         if (el('ma-password').value !== el('ma-confirm-password').value) throw new Error('The new passwords do not match.');
         const result = await request(accountPath() + '/password', 'POST', { password: el('ma-password').value }); el('ma-password').value = ''; el('ma-confirm-password').value = ''; message(result.status);
     }); });
-    el('ma-delete').addEventListener('click', () => perform(async () => {
-        const address = selected.address;
-        if (window.prompt('Delete this account? Type ' + address + ' to confirm:') !== address) return;
-        const purge = mailboxAdmin && window.confirm('Also permanently remove its mail, folders, filters and settings?\n\nOK purges the mailbox. Cancel keeps it, so the account could be recreated with its mail.');
-        const result = await request(accountPath(), 'DELETE', { confirm: address, purge }); selected = null; el('ma-account-dialog').close(); message(result.status); await refresh();
+    el('ma-support-reset').addEventListener('click', () => perform(async () => {
+        const address = selected.address, base = accountPath();
+        if (!window.confirm('Reset two-step verification for ' + address + '?\n\nThis removes the authenticator, recovery codes, every passkey and browser notifications. Check that you are talking to the account\'s owner first.')) return;
+        await request(base + '/reset-two-factor', 'POST');
+        await loadSupport(); message('Two-step verification and passkeys reset.');
     }));
+    el('ma-support-revoke-all').addEventListener('click', () => perform(async () => {
+        const address = selected.address, base = accountPath();
+        if (!window.confirm('Revoke every app password of ' + address + '? Mail apps using one will need a new one.')) return;
+        const result = await request(base + '/app-passwords', 'DELETE');
+        await loadSupport(); message('App passwords revoked: ' + result.revoked + '.');
+    }));
+    el('ma-share-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+        const member = el('ma-share-member').value.trim();
+        await request(accountPath() + '/shares/' + encodeURIComponent(member), 'PUT', { can_send: el('ma-share-send').checked });
+        el('ma-share-form').reset();
+        await loadSupport(); message('Mailbox shared with ' + member + '.');
+    }); });
+    // Deleting asks everything in one dialog, so that leaving it always means
+    // nothing happened. A second yes/no question about the mail can't offer
+    // that: both of its answers delete the account.
+    el('ma-delete').addEventListener('click', () => {
+        if (busy || !selected) return;
+        el('ma-delete-form').reset();
+        el('ma-delete-message').hidden = true;
+        el('ma-delete-target').textContent = selected.address;
+        el('ma-delete-purge-choice').hidden = !mailboxAdmin;
+        el('ma-delete-confirm').disabled = true;
+        el('ma-delete-dialog').showModal();
+        el('ma-delete-cancel').focus();
+    });
+    el('ma-delete-address').addEventListener('input', () => {
+        el('ma-delete-confirm').disabled = !selected || el('ma-delete-address').value.trim() !== selected.address;
+    });
+    el('ma-delete-cancel').addEventListener('click', () => { if (!busy) el('ma-delete-dialog').close(); });
+    el('ma-delete-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+        if (!selected || el('ma-delete-address').value.trim() !== selected.address) return;
+        const purge = mailboxAdmin && el('ma-delete-purge').checked;
+        el('ma-delete-message').hidden = true;
+        let result;
+        try {
+            result = await request(accountPath(), 'DELETE', { confirm: selected.address, purge });
+        } catch (error) {
+            // Only the delete's own failure belongs in this dialog: the account
+            // dialog behind it may still be reporting on what it was loading.
+            el('ma-delete-message').textContent = error.message; el('ma-delete-message').hidden = false;
+            throw error;
+        }
+        el('ma-delete-dialog').close(); el('ma-account-dialog').close(); selected = null;
+        message(result.status); await refresh();
+    }); });
     el('ma-purge').addEventListener('click', () => perform(async () => {
         const address = (window.prompt('Purge the mailbox of an account that has already been deleted. This permanently removes its mail.\n\nAccount address:') || '').trim();
         if (!address) return;
