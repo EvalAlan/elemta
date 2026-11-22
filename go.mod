@@ -20,7 +20,7 @@ require (
 	github.com/emersion/go-webdav v0.7.0
 	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/go-ldap/ldap/v3 v3.4.15
-	github.com/go-sql-driver/mysql v1.10.1
+	github.com/go-sql-driver/mysql v1.10.2
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
