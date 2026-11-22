@@ -1,9 +1,10 @@
 # Rate Limiting
 
-Elemta currently exposes rate limiting in two places:
+Two things limit clients and mail:
 
 1. SMTP/resource manager limits (`[resources]`)
-2. Rate-limiter plugin config (`[rate_limiter]`), used by web/config surfaces and plugin-oriented flows
+2. Abuse protection (`[abuse]`, edited in the admin console), for connections,
+   failed sign-ins and message counts across every service
 
 ## 1) SMTP/resource limits (primary runtime path)
 
@@ -20,23 +21,17 @@ max_requests_per_window = 5000
 
 Distributed mode (Valkey-backed checks) is configured via resource settings in the runtime config path.
 
-## 2) Rate limiter plugin config
+## 2) Abuse protection
 
-```toml
-[rate_limiter]
-enabled = true
-max_connections_per_ip = 100
-connection_rate_per_minute = 1000
-connection_burst_size = 200
-max_messages_per_minute = 300
-max_messages_per_hour = 10000
-max_auth_attempts_per_minute = 20
-auth_lockout_duration = "5m"
-valkey_url = ""
-valkey_key_prefix = "elemta:ratelimit:"
-```
+Connection, sign-in and message limits, shared by SMTP, IMAP, POP3,
+ManageSieve, webmail and the console, and changed without a restart. The
+settings and what each one does are in the admin console.
 
-This config is surfaced in API config endpoints and used where plugin-style rate limiting is enabled.
+## `[rate_limiter]` is not enforced
+
+The section still loads, so existing files keep working, but nothing in the
+mail path reads it: the built-in rate limiter plugin isn't loaded. The console
+no longer offers a switch for it. Set the limits with the two above.
 
 ## Operational checks
 

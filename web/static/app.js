@@ -236,7 +236,6 @@ function switchView(viewName) {
             // keep whatever they were left with on the previous visit.
             const activeTab = document.querySelector('.settings-tab.active')?.dataset.tab;
             if (activeTab === 'server') refreshServerConfig();
-            else if (activeTab === 'rate-limiting') refreshRateLimiting();
             else if (activeTab === 'users') refreshUsers();
             break;
         }
@@ -346,7 +345,6 @@ async function refreshAllData() {
             loadRecentActivity(),
             loadAttention()
         ]);
-        updateLastUpdated();
         return true;
     } catch (error) {
         console.error('Error refreshing data:', error);
@@ -431,9 +429,12 @@ async function loadQueueStats() {
         document.getElementById('badge-deferred').textContent = stats.deferred_count || 0;
         document.getElementById('badge-hold').textContent = stats.hold_count || 0;
         document.getElementById('badge-failed').textContent = stats.failed_count || 0;
+        setServerReachable(true);
+        updateLastUpdated();
         return true;
     } catch (error) {
         console.error('Error loading queue stats:', error);
+        setServerReachable(false);
         return false;
     }
 }
@@ -1543,8 +1544,22 @@ function showRefreshIndicator(show) {
     indicator.classList.toggle('active', show);
 }
 
+let lastUpdatedAt = 0;
 function updateLastUpdated() {
-    document.getElementById('last-updated').textContent = 'Updated just now';
+    lastUpdatedAt = Date.now();
+    showLastUpdated();
+}
+
+function showLastUpdated() {
+    const line = document.getElementById('last-updated');
+    if (line) line.textContent = lastUpdatedAt ? `Updated ${formatTimeAgo(lastUpdatedAt)}` : '';
+}
+setInterval(showLastUpdated, 15000);
+
+// The dot says whether the console last answered, which is all it can know.
+function setServerReachable(ok) {
+    document.getElementById('server-status').classList.toggle('offline', !ok);
+    document.getElementById('server-status-text').textContent = ok ? 'Console connected' : "Console isn't answering";
 }
 
 // ============================================================================
@@ -1864,7 +1879,6 @@ function switchSettingsTab(tabName) {
     // Load data for specific tabs
     if (tabName === 'server') refreshServerConfig();
     else if (tabName === 'plugins') refreshPlugins();
-    else if (tabName === 'rate-limiting') refreshRateLimiting();
     else if (tabName === 'users') refreshUsers();
 }
 
@@ -1889,6 +1903,7 @@ async function refreshServerConfig() {
         document.getElementById('config-listen-addr').value = config.listen_addr || '';
         document.getElementById('config-queue-dir').value = config.queue_dir || '';
         document.getElementById('config-max-size').value = config.max_size || '';
+        document.getElementById('config-max-size-human').textContent = config.max_size ? `Now ${(config.max_size / 1048576).toFixed(1)} MiB` : '';
         document.getElementById('config-queue-backend').value = config.queue_backend || 'file';
         // Absent means the shipped default, which keeps the copy.
         document.getElementById('config-retain-tombstone-body').checked =
@@ -1915,8 +1930,7 @@ async function saveServerConfig() {
         const config = {
             hostname: document.getElementById('config-hostname').value,
             listen_addr: document.getElementById('config-listen-addr').value,
-            queue_dir: document.getElementById('config-queue-dir').value,
-            max_size: document.getElementById('config-max-size').value,
+            max_size: Number(document.getElementById('config-max-size').value),
             failed_queue_retention_hours: parseInt(document.getElementById('config-failed-retention').value),
             // queue_backend is not sent: it is read-only here on purpose.
             queue_retain_tombstone_body: document.getElementById('config-retain-tombstone-body').checked
@@ -1930,7 +1944,7 @@ async function saveServerConfig() {
             body: JSON.stringify(config)
         });
         
-        if (!response.ok) throw new Error('Failed to save configuration');
+        if (!response.ok) throw new Error((await response.text()).trim() || 'Failed to save configuration');
         
         const result = await response.json();
         statusEl.textContent = result.message || 'Configuration saved successfully';
@@ -1950,11 +1964,6 @@ async function saveServerConfig() {
 // reports as configurable but that is missing here still gets a toggle; it just
 // has no tab, which is better than showing an empty one.
 const PLUGIN_SETTINGS_SCHEMA = {
-    rate_limiter: {
-        // The rate limiter has a hand-built panel already; its tab reuses it.
-        panelId: 'settings-rate-limiting',
-        onShow: () => refreshRateLimiting(),
-    },
     spf: {
         testable: true,
         fields: [
@@ -2646,83 +2655,7 @@ function showRestartRequired(message) {
 }
 
 
-async function refreshRateLimiting() {
-    const loadingEl = document.getElementById('rate-limiting-loading');
-    const contentEl = document.getElementById('rate-limiting-content');
-    
-    try {
-        loadingEl.style.display = 'block';
-        contentEl.style.display = 'none';
-        
-        const response = await fetch('/api/config');
-        if (!response.ok) throw new Error('Failed to load configuration');
-        
-        const config = await response.json();
-        const rateLimiter = config.rate_limiter;
-        
-        if (rateLimiter) {
-            // Populate connection limits
-            document.getElementById('rate-max-connections-ip').value = rateLimiter.max_connections_per_ip || '';
-            document.getElementById('rate-connections-per-minute').value = rateLimiter.connection_rate_per_minute || '';
-            document.getElementById('rate-connection-burst').value = rateLimiter.connection_burst_size || '';
-            document.getElementById('rate-connection-timeout').value = rateLimiter.connection_timeout || '';
-            
-            // Populate message limits
-            document.getElementById('rate-messages-per-minute').value = rateLimiter.max_messages_per_minute || '';
-            document.getElementById('rate-messages-per-hour').value = rateLimiter.max_messages_per_hour || '';
-            document.getElementById('rate-recipients-per-message').value = rateLimiter.max_recipients_per_message || '';
-            document.getElementById('rate-max-message-size').value = rateLimiter.max_message_size || '';
-        }
-        
-        loadingEl.style.display = 'none';
-        contentEl.style.display = 'block';
-    } catch (error) {
-        console.error('Error loading rate limiting config:', error);
-        loadingEl.innerHTML = `<div class="error-message">Failed to load rate limiting configuration: ${error.message}</div>`;
-    }
-}
 
-async function saveRateLimiting() {
-    const statusEl = document.getElementById('rate-limiting-status');
-    
-    try {
-        statusEl.textContent = 'Saving...';
-        statusEl.className = 'config-status';
-        
-        const rateLimiterConfig = {
-            max_connections_per_ip: parseInt(document.getElementById('rate-max-connections-ip').value),
-            connection_rate_per_minute: parseInt(document.getElementById('rate-connections-per-minute').value),
-            connection_burst_size: parseInt(document.getElementById('rate-connection-burst').value),
-            connection_timeout: document.getElementById('rate-connection-timeout').value,
-            max_messages_per_minute: parseInt(document.getElementById('rate-messages-per-minute').value),
-            max_messages_per_hour: parseInt(document.getElementById('rate-messages-per-hour').value),
-            max_recipients_per_message: parseInt(document.getElementById('rate-recipients-per-message').value),
-            max_message_size: document.getElementById('rate-max-message-size').value
-        };
-        
-        const response = await fetch('/api/config', {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ rate_limiter: rateLimiterConfig })
-        });
-        
-        if (!response.ok) throw new Error('Failed to save rate limiting configuration');
-        
-        const result = await response.json();
-        statusEl.textContent = result.message || 'Rate limiting configuration saved successfully';
-        statusEl.className = 'config-status success';
-        
-        if (result.requires_restart) {
-            statusEl.textContent += ' (restart required)';
-        }
-    } catch (error) {
-        console.error('Error saving rate limiting config:', error);
-        statusEl.textContent = `Error: ${error.message}`;
-        statusEl.className = 'config-status error';
-    }
-}
 
 async function restartServer() {
     // Callable from the System panel and from the restart-required banner, so
@@ -2904,7 +2837,6 @@ async function refreshHealth() {
         document.getElementById('queue-deferred-health').textContent = queue.deferred_count || 0;
         document.getElementById('queue-hold-health').textContent = queue.hold_count || 0;
         document.getElementById('queue-failed-health').textContent = queue.failed_count || 0;
-        document.getElementById('queue-processor').textContent = queue.processor_active ? 'Yes' : 'No';
         document.getElementById('queue-oldest-active').textContent = queue.oldest_active_age || '-';
         document.getElementById('queue-oldest-deferred').textContent = queue.oldest_deferred_age || '-';
         document.getElementById('queue-oldest-failed').textContent = queue.oldest_failed_age || '-';
@@ -2917,8 +2849,6 @@ async function refreshHealth() {
 
         // SMTP
         const smtp = health.smtp || {};
-        document.getElementById('smtp-connections').textContent = smtp.active_connections || 0;
-        document.getElementById('smtp-total-connections').textContent = smtp.total_connections || 0;
         document.getElementById('smtp-tls').textContent = smtp.tls_enabled ? 'Yes' : 'No';
         document.getElementById('smtp-timeout-5m').textContent = throughput.timeout_errors_5m || 0;
         document.getElementById('smtp-conn-close-5m').textContent = throughput.conn_close_errors_5m || 0;
