@@ -135,6 +135,66 @@ func TestBrowserDomainDNSHealth(t *testing.T) {
 	require.Empty(t, problems)
 }
 
+// The Health page shows what the scheduled DNS check last found, failing
+// domains first, and what DNS said stays text.
+func TestBrowserHealthDNSCard(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	base, _ := startProvisionAPIWith(t, func(s *Server) {
+		s.webRoot = webRoot
+		reports := []dnshealth.Report{
+			{Domain: "example.com", Checks: []dnshealth.Check{{ID: "mx", Name: "Incoming mail (MX)", Status: dnshealth.StatusOK}}},
+			{Domain: "example.net", Checks: []dnshealth.Check{
+				{ID: "spf", Name: "Sending permission (SPF)", Status: dnshealth.StatusFail, Summary: "<b>not markup</b>", Fix: "Publish this TXT record at example.net.", Record: "v=spf1 mx -all"},
+			}},
+		}
+		next, _ := dnsChanges(dnsWatchState{}, reports)
+		s.saveDNSWatch(recordSweep(dnsWatchFile{}, next, reports, time.Now().UTC()))
+	})
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.WindowSize(1280, 1100), chromedp.NoSandbox)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+	ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+	defer cancel()
+
+	click := func(selector string) chromedp.Action[chromedp.Void] {
+		return chromedp.Click(chromedp.CSS(selector), chromedp.NodeVisible)
+	}
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.Navigate(base+"/login"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "root"),
+		chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+		click("#login-btn"),
+		chromedp.WaitVisible(chromedp.CSS("[data-view=health]")),
+		click("[data-view=health]"),
+		chromedp.WaitVisible(chromedp.CSS("#dns-health-body .dns-health-problems")),
+	))
+	text := func(expr string) string {
+		t.Helper()
+		v, err := chromedp.Run(ctx, chromedp.Evaluate[string](expr))
+		require.NoError(t, err)
+		return v
+	}
+	if shot := os.Getenv("ELEMTA_TEST_SCREENSHOT"); shot != "" {
+		require.NoError(t, chromedp.Do(ctx, chromedp.ScrollIntoView(chromedp.ID("dns-health-card")), chromedp.Sleep(500*time.Millisecond)))
+		png, err := chromedp.Run(ctx, chromedp.Screenshot(chromedp.ID("dns-health-card")))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(shot, png, 0o600))
+	}
+	card := text(`document.getElementById("dns-health-body").textContent`)
+	for _, want := range []string{"1 domain has DNS problems.", "example.net", "Failing", "Sending permission (SPF)", "Publish this TXT record", "v=spf1 mx -all", "example.com", "OK"} {
+		require.Contains(t, card, want)
+	}
+	require.Less(t, strings.Index(card, "example.net"), strings.Index(card, "example.com"), "failing domain first")
+	require.Contains(t, card, "<b>not markup</b>")
+	require.Equal(t, "0", text(`String(document.querySelectorAll("#dns-health-body b").length)`))
+}
+
 // A compliance officer sees their own section and nothing of the server's,
 // and found mail, written by anyone, is shown as text.
 func TestBrowserComplianceSearch(t *testing.T) {

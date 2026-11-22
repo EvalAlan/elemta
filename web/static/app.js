@@ -195,6 +195,7 @@ function switchView(viewName) {
             refreshHealth();
             refreshCertificate();
             refreshBackupStatus();
+            refreshDnsHealth();
             break;
         case 'certificates':
             refreshCertificates();
@@ -3465,6 +3466,47 @@ async function refreshBackupStatus() {
     } catch (error) {
         console.error('Backup status check failed:', error);
         body.innerHTML = `<div class="error-message">Could not check backups: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+// refreshDnsHealth fills the Health page's DNS card from the scheduled
+// check's last results, so problems show without opening each domain. The
+// Domains page's Check DNS runs the same checks on demand.
+async function refreshDnsHealth() {
+    const body = document.getElementById('dns-health-body');
+    if (!body) return;
+    try {
+        const response = await fetch(`${API_BASE}/provision/dns-health/status`);
+        if (response.status === 403) {
+            document.getElementById('dns-health-card').hidden = true;
+            return;
+        }
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        const d = await response.json();
+        const status = (s, text) => `<span class="cert-status ${escapeHtml(s)}">${escapeHtml(text)}</span>`;
+        const head = `
+            <div class="cert-grid">
+                <div class="cert-row"><span class="cert-label">Status</span><span class="cert-value">${status(d.status, d.message)}</span></div>
+                <div class="cert-row"><span class="cert-label">Last checked</span><span class="cert-value">${d.checked ? escapeHtml(formatDate(d.checked)) : 'never'}</span></div>
+            </div>`;
+        const label = { ok: 'OK', warning: 'Warning', critical: 'Failing' };
+        const domains = (d.domains || []).map(dom => {
+            const since = dom.since ? ` <span class="field-hint">since ${escapeHtml(formatDate(dom.since))}</span>` : '';
+            const problems = (dom.problems || []).map(c => `
+                <li><strong>${escapeHtml(c.name)}</strong>: ${escapeHtml(c.summary)}
+                    ${c.fix ? `<div class="field-hint">${escapeHtml(c.fix)}</div>` : ''}
+                    ${c.record ? `<div class="cert-path">${escapeHtml(c.record)}</div>` : ''}</li>`).join('');
+            return `
+                <div class="cert-row">
+                    <span class="cert-label">${escapeHtml(dom.domain)}</span>
+                    <span class="cert-value">${status(dom.status, label[dom.status] || dom.status)}${since}
+                        ${problems ? `<ul class="dns-health-problems">${problems}</ul>` : ''}</span>
+                </div>`;
+        }).join('');
+        body.innerHTML = head + (domains ? `<div class="cert-grid" style="margin-top: 1rem;">${domains}</div>` : '');
+    } catch (error) {
+        console.error('DNS health check failed:', error);
+        body.innerHTML = `<div class="error-message">Could not load the DNS check: ${escapeHtml(error.message)}</div>`;
     }
 }
 

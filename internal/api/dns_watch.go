@@ -109,23 +109,100 @@ func (s *Server) dnsWatchPath() string {
 	return filepath.Join(filepath.Dir(s.configPath), "dns-health-state.json")
 }
 
-func (s *Server) loadDNSWatch() dnsWatchState {
+// dnsWatchFile is what the last sweep saw, kept for the next sweep's
+// comparison and for the Health page. The checks are kept as well as their
+// IDs so the page can say what's wrong without running the checks again.
+type dnsWatchFile struct {
+	Checked time.Time                  `json:"checked"`
+	Domains map[string]dnsDomainRecord `json:"domains"`
+}
+
+type dnsDomainRecord struct {
+	Problems []string `json:"problems"`
+	// Since is the first sweep that found a problem in the current run of
+	// them: how long mail may have been affected.
+	Since  *time.Time        `json:"since,omitempty"`
+	Checks []dnshealth.Check `json:"checks,omitempty"`
+}
+
+func (f dnsWatchFile) state() dnsWatchState {
 	st := dnsWatchState{}
-	if path := s.dnsWatchPath(); path != "" {
-		// #nosec G304 -- a fixed name beside the operator's configuration file
-		if data, err := os.ReadFile(path); err == nil {
-			_ = json.Unmarshal(data, &st)
-		}
+	for d, rec := range f.Domains {
+		st[d] = rec.Problems
 	}
 	return st
 }
 
-func (s *Server) saveDNSWatch(st dnsWatchState) {
+// recordSweep keeps the problem checks of a sweep whose comparison gave
+// next. A check DNS couldn't answer keeps what it said before, as its ID is
+// kept in problems.
+func recordSweep(prev dnsWatchFile, next dnsWatchState, reports []dnshealth.Report, now time.Time) dnsWatchFile {
+	out := dnsWatchFile{Checked: now, Domains: map[string]dnsDomainRecord{}}
+	for _, r := range reports {
+		ids := next[r.Domain]
+		rec := dnsDomainRecord{Problems: ids}
+		before := prev.Domains[r.Domain]
+		if len(ids) > 0 {
+			rec.Since = &now
+			if len(before.Problems) > 0 && before.Since != nil {
+				rec.Since = before.Since
+			}
+		}
+		for _, c := range r.Checks {
+			if !slices.Contains(ids, c.ID) {
+				continue
+			}
+			if c.Status == dnshealth.StatusUnknown {
+				if i := slices.IndexFunc(before.Checks, func(b dnshealth.Check) bool { return b.ID == c.ID }); i >= 0 {
+					c = before.Checks[i]
+				}
+			}
+			rec.Checks = append(rec.Checks, c)
+		}
+		out.Domains[r.Domain] = rec
+	}
+	return out
+}
+
+func (s *Server) loadDNSWatch() dnsWatchFile {
+	f := dnsWatchFile{Domains: map[string]dnsDomainRecord{}}
+	path := s.dnsWatchPath()
+	if path == "" {
+		return f
+	}
+	// #nosec G304 -- a fixed name beside the operator's configuration file
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return f
+	}
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(data, &probe) != nil {
+		return f
+	}
+	if _, ok := probe["domains"]; ok {
+		var cur dnsWatchFile
+		if json.Unmarshal(data, &cur) == nil && cur.Domains != nil {
+			return cur
+		}
+		return f
+	}
+	// Before the Health page showed it, the file held only each domain's
+	// problem IDs. Keep them, so the upgrade doesn't email them again.
+	var old dnsWatchState
+	if json.Unmarshal(data, &old) == nil {
+		for d, ids := range old {
+			f.Domains[d] = dnsDomainRecord{Problems: ids}
+		}
+	}
+	return f
+}
+
+func (s *Server) saveDNSWatch(f dnsWatchFile) {
 	path := s.dnsWatchPath()
 	if path == "" {
 		return
 	}
-	data, err := json.Marshal(st)
+	data, err := json.Marshal(f)
 	if err == nil {
 		tmp := path + ".new"
 		if err = os.WriteFile(tmp, data, 0o600); err == nil {
@@ -167,10 +244,12 @@ func (s *Server) dnsSweep(ctx context.Context) []dnshealth.Report {
 
 // watchDNS runs the sweep until stop closes.
 func (s *Server) watchDNS(stop <-chan struct{}) {
-	if s.abuse == nil || s.provisioner == nil {
+	// It runs without alert addresses too: the Health page shows what it
+	// finds, and Notify says when there's no one to email.
+	if s.provisioner == nil {
 		return
 	}
-	state := s.loadDNSWatch()
+	saved := s.loadDNSWatch()
 	timer := time.NewTimer(dnsWatchFirst)
 	defer timer.Stop()
 	for {
@@ -189,9 +268,9 @@ func (s *Server) watchDNS(stop <-chan struct{}) {
 		}()
 		reports := s.dnsSweep(ctx)
 		if ctx.Err() == nil && len(reports) > 0 {
-			var notices []dnsNotice
-			state, notices = dnsChanges(state, reports)
-			s.saveDNSWatch(state)
+			next, notices := dnsChanges(saved.state(), reports)
+			saved = recordSweep(saved, next, reports, time.Now().UTC())
+			s.saveDNSWatch(saved)
 			for _, n := range notices {
 				slog.Warn("DNS check alert", "subject", n.subject)
 				if !s.abuse.Notify(ctx, n.subject, n.body) {
