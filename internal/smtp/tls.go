@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/logging"
 	"log"
 	"log/slog"
 	"net"
@@ -67,7 +68,7 @@ type CertificateInfo struct {
 // NewTLSManager creates a new TLS manager
 func NewTLSManager(config *Config) (*TLSManager, error) {
 	// Create structured logger
-	slogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	slogger := slog.New(slog.NewJSONHandler(logging.Stdout(), &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 

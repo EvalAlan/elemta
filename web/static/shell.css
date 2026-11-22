@@ -242,3 +242,14 @@ g:hover > .overview-hit { fill: var(--bg-hover); }
 #view-certificates .card-body { overflow-x: auto; }
 #view-queues .messages-table-container { overflow-x: auto; }
 #view-queues .messages-table th, #view-queues .messages-table td { padding-left: 0.65rem; padding-right: 0.65rem; }
+
+/* Log shipping */
+.logship-detail { margin-bottom: 1rem; color: var(--text-secondary); font-size: 0.82rem; overflow-wrap: anywhere; }
+.logship-detail[hidden], .logship-fields [hidden] { display: none !important; }
+.logship-detail:empty { display: none; }
+.logship-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 1rem; margin: 1rem 0; }
+.logship-fields label { display: grid; gap: 0.35rem; min-width: 0; color: var(--text-secondary); font-size: 0.8rem; }
+.logship-fields input, .logship-fields select { width: 100%; min-width: 0; padding: 0.6rem 0.7rem; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-tertiary); color: var(--text-primary); font: inherit; font-size: 0.89rem; }
+.logship-check { display: flex; align-items: center; gap: 0.5rem; font-size: 0.89rem; }
+.logship-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0 0.5rem; }
+.report-panel .card-body { overflow-x: auto; }

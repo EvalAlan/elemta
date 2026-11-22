@@ -70,6 +70,7 @@ func startServer() {
 	}
 	logging.InitializeLogging(logLevel, cfg.Logging.File)
 	warnAboutUnusedLoggingSettings(cfg.Logging.Type, cfg.Logging.Output)
+	defer collectLogs("mta")()
 
 	slog.Info("Elemta MTA server starting", "event_type", "system",
 		"hostname", cfg.Hostname,

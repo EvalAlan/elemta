@@ -151,6 +151,7 @@ function loadPage(page, section) {
             else if (section === 'users' || section === 'account') refreshUsers();
             else if (section === 'plugin-abuse') refreshAbuseSettings();
             else if (section === 'notifications') refreshAlertEmails();
+            else if (section === 'plugin-log_shipping') refreshLogShipping();
             else if (section === 'system') refreshHealth();
             break;
     }
@@ -301,7 +302,7 @@ async function loadAttention() {
     attentionShown = shown;
 
     const labels = { critical: 'Critical', warning: 'Warning', unknown: "Couldn't check", info: 'Note' };
-    const pages = { health: 'Health', queues: 'Queues', abuse: 'Abuse report', certificates: 'Certificates', 'settings/notifications': 'Alert emails' };
+    const pages = { health: 'Health', queues: 'Queues', abuse: 'Abuse report', certificates: 'Certificates', 'settings/notifications': 'Alert emails', 'settings/plugin-log_shipping': 'Log shipping' };
     const make = (tag, className, text) => {
         const node = document.createElement(tag);
         if (className) node.className = className;
@@ -1853,6 +1854,10 @@ async function saveServerConfig() {
 // reports as configurable but that is missing here still gets a toggle; it just
 // has no tab, which is better than showing an empty one.
 const PLUGIN_SETTINGS_SCHEMA = {
+    log_shipping: {
+        // Destination, credential and status are hand-built (logship.js).
+        panelId: 'settings-plugin-log_shipping',
+    },
     abuse: {
         // Limits and rules have a hand-built panel (abuse.js).
         panelId: 'settings-plugin-abuse',
@@ -2458,6 +2463,10 @@ function setSaveStatus(el, message, kind) {
 }
 
 async function togglePlugin(pluginName, enabled) {
+    if (pluginName === 'log_shipping' && !enabled && !window.confirm('Turn log shipping off? Lines still waiting to be sent are discarded.')) {
+        refreshPlugins();
+        return;
+    }
     if (pluginName === 'abuse' && !enabled && !window.confirm('Turn abuse protection off? Nothing is blocked, and connection limits fall back to the configuration file.')) {
         refreshPlugins();
         return;

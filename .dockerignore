@@ -53,3 +53,6 @@ CLAUDE.md
 .aws/
 .ssh/
 deployments/compose/.secrets/
+
+# Log shipping's settings can hold a credential
+**/log-shipping.json

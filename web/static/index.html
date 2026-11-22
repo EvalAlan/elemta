@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261122-refresh">
-    <link rel="stylesheet" href="/static/shell.css?v=20261122-refresh">
+    <link rel="stylesheet" href="/static/shell.css?v=20261122-logship">
     <link rel="stylesheet" href="/static/mail-admin.css?v=20261122-refresh">
 </head>
 
@@ -1789,6 +1789,58 @@
                     </div>
                 </div>
 
+                <div class="settings-panel" id="settings-plugin-log_shipping" data-static-panel="true">
+                    <div class="stats-grid">
+                        <div class="stat-card"><span class="stat-info"><span class="stat-value" id="logship-state">—</span><span class="stat-label">Status</span></span></div>
+                        <div class="stat-card"><span class="stat-info"><span class="stat-value" id="logship-sent">—</span><span class="stat-label">Lines sent</span></span></div>
+                        <div class="stat-card"><span class="stat-info"><span class="stat-value" id="logship-waiting">—</span><span class="stat-label">Waiting</span></span></div>
+                        <div class="stat-card"><span class="stat-info"><span class="stat-value" id="logship-lost">—</span><span class="stat-label">Dropped or refused</span></span></div>
+                    </div>
+                    <p class="logship-detail" id="logship-detail" role="status"></p>
+                    <div class="card">
+                        <div class="card-header"><h3>Destination</h3></div>
+                        <div class="card-body">
+                            <form id="logship-form" class="logship-form">
+                                <label class="logship-check"><input id="logship-enabled" type="checkbox"> Ship logs from every service</label>
+                                <div class="logship-fields">
+                                    <label>Send to
+                                        <select id="logship-kind"><option value="elasticsearch">Elasticsearch</option><option value="logstash">Logstash (HTTP input)</option></select>
+                                    </label>
+                                    <label>URL
+                                        <input id="logship-url" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="https://elasticsearch.example.com:9200">
+                                    </label>
+                                    <label>Index prefix
+                                        <input id="logship-index" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="elemta-logs">
+                                    </label>
+                                    <label>Lowest level
+                                        <select id="logship-level"><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select>
+                                    </label>
+                                    <label>Sign in with
+                                        <select id="logship-auth"><option value="keep">The saved credential</option><option value="none">Nothing</option><option value="key">An API key</option><option value="basic">User name and password</option></select>
+                                    </label>
+                                    <label id="logship-key-field" hidden>API key
+                                        <input id="logship-key" type="password" maxlength="1024" autocomplete="new-password">
+                                    </label>
+                                    <label id="logship-user-field" hidden>User name
+                                        <input id="logship-user" type="text" maxlength="1024" autocomplete="off">
+                                    </label>
+                                    <label id="logship-password-field" hidden>Password
+                                        <input id="logship-password" type="password" maxlength="1024" autocomplete="new-password">
+                                    </label>
+                                </div>
+                                <p class="logship-detail" id="logship-plain" hidden>This address is plain HTTP: logs and any credential cross the network unencrypted. Use HTTPS off this machine.</p>
+                                <label class="logship-check"><input id="logship-subjects" type="checkbox"> Include subjects</label>
+                                <p class="field-hint">Subjects are the content of people's mail, so they stay here unless you tick this. Passwords, tokens, typed command arguments and message lines are never sent. Addresses and IPs are.</p>
+                                <div class="logship-actions">
+                                    <button class="btn btn-primary" type="submit">Save</button>
+                                    <button class="btn btn-secondary" type="button" id="logship-test">Send a test line</button>
+                                </div>
+                                <p class="field-hint" id="logship-result" role="status"></p>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="settings-panel" id="settings-plugin-abuse" data-static-panel="true">
                     <div class="panel-link">
                         <p class="field-hint">One policy for SMTP, IMAP, POP3, ManageSieve, webmail and this console. Changes apply within seconds, without a restart.</p>
@@ -2026,7 +2078,8 @@
 
     <script src="/static/shell.js?v=20261122-refresh"></script>
     <script src="/static/overview.js?v=20261122-refresh"></script>
-    <script src="/static/app.js?v=20261122-refresh"></script>
+    <script src="/static/logship.js?v=20261122-logship"></script>
+    <script src="/static/app.js?v=20261122-logship"></script>
     <script src="/static/campaigns.js?v=20261122-refresh"></script>
     <script src="/static/users.js?v=20261103-2fa"></script>
     <script src="/static/mail-admin.js?v=20261122-support"></script>

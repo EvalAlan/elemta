@@ -1,0 +1,20 @@
+{
+  "index_patterns": ["elemta-logs-*"],
+  "priority": 500,
+  "_meta": { "description": "Elemta service logs" },
+  "template": {
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "message": { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 512 } } },
+        "log": { "properties": { "level": { "type": "keyword", "ignore_above": 1024 } } },
+        "service": { "properties": { "name": { "type": "keyword", "ignore_above": 1024 } } },
+        "host": { "properties": { "name": { "type": "keyword", "ignore_above": 1024 } } },
+        "event": { "properties": { "action": { "type": "keyword", "ignore_above": 1024 } } },
+        "source": { "properties": { "ip": { "type": "ip", "ignore_malformed": true } } },
+        "elemta": { "type": "flattened", "ignore_above": 4096 }
+      }
+    }
+  }
+}

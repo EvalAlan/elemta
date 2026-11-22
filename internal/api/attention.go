@@ -52,6 +52,7 @@ func (s *Server) attention(ctx context.Context, now time.Time) []attentionItem {
 	out = append(out, s.certificateAttention()...)
 	out = append(out, s.dnsAttention(now)...)
 	out = append(out, s.abuseAttention(ctx, now)...)
+	out = append(out, s.logShipAttention(ctx, now)...)
 	rank := map[string]int{attentionCritical: 0, attentionWarning: 1, attentionUnknown: 2, attentionInfo: 3}
 	slices.SortStableFunc(out, func(a, b attentionItem) int { return rank[a.Severity] - rank[b.Severity] })
 	return out

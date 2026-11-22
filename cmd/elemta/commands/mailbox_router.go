@@ -25,6 +25,7 @@ var mailboxRouterCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer collectLogs("mailbox-router")()
 		router, err := mailbox.NewRouter(cfg, slog.Default())
 		if err != nil {
 			return err

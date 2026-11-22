@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/EvalAlan/elemta/internal/logging"
 	"log/slog"
 	"net/http"
 	"os"
@@ -34,6 +35,7 @@ func init() {
 }
 
 func runWebmail(cmd *cobra.Command, args []string) error {
+	defer collectLogs("webmail")()
 	var wc webmail.Config
 	if c := GetConfig(); c != nil && c.Webmail != nil {
 		wc = *c.Webmail
@@ -52,7 +54,7 @@ func runWebmail(cmd *cobra.Command, args []string) error {
 	}
 	wc = wc.WithDefaults()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), nil))
 	srv, err := webmail.NewServer(wc, nil, nil, logger)
 	if err != nil {
 		return fmt.Errorf("webmail: %w (configure the [webmail] table)", err)
