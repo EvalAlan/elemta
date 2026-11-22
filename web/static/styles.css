@@ -2907,7 +2907,6 @@ input:checked + .plugin-slider:before {
 .attention-critical { color: var(--accent-danger); }
 .attention-warning { color: var(--accent-warning); }
 .attention-unknown, .attention-info { color: var(--text-secondary); }
-.attention-clear { color: var(--accent-success); }
 @media (max-width: 600px) {
     .attention-item { grid-template-columns: minmax(0, 1fr); }
     .attention-item .btn { justify-self: start; }

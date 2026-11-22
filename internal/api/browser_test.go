@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/abuse"
 	"github.com/EvalAlan/elemta/internal/auth"
 	"github.com/EvalAlan/elemta/internal/dnshealth"
 	"github.com/EvalAlan/elemta/internal/logship"
@@ -1216,4 +1217,94 @@ func TestBrowserUntrustedTextStaysText(t *testing.T) {
 		}
 		return bad.concat(window.__ran.map(() => "script ran")).join("\n") })()`)
 	require.Empty(t, got)
+}
+
+// The Dashboard says nothing when nothing is wrong, and shows abuse
+// protection while it's on.
+func TestBrowserDashboardProtection(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	for _, c := range []struct {
+		name, mode string
+		width      int64
+		problem    bool
+	}{
+		{"quiet", abuse.ModeEnforce, 1280, false},
+		{"quiet phone", abuse.ModeEnforce, 390, false},
+		{"log only", abuse.ModeLog, 1280, false},
+		{"off", abuse.ModeOff, 1280, false},
+		{"problem", abuse.ModeEnforce, 1280, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			base, _ := startProvisionAPIWith(t, func(s *Server) {
+				s.webRoot = webRoot
+				s.mainConfig = &MainConfig{Hostname: "mail.example.com"}
+				// Nothing else on the host is this test's business.
+				s.monitor = nil
+				e := abuse.New("admin", "", nil)
+				p := abuse.DefaultPolicy()
+				p.Mode, p.AlertEmail = c.mode, []string{"ops@example.com"}
+				e.Own(p)
+				for range 3 {
+					e.Failure(context.Background(), "203.0.113.9:4000", "imap", "dana@example.com")
+				}
+				if c.mode == abuse.ModeEnforce {
+					_, err := e.BlockAddress(context.Background(), "203.0.113.9", "test", "root", time.Hour)
+					require.NoError(t, err)
+				}
+				s.SetAbuse(e)
+				f := dnsWatchFile{Checked: time.Now().UTC(), Domains: map[string]dnsDomainRecord{}}
+				if c.problem {
+					f.Domains["example.com"] = dnsDomainRecord{Problems: []string{"spf"}, Checks: []dnshealth.Check{{ID: "spf", Name: "SPF", Status: dnshealth.StatusFail, Summary: "No SPF record."}}}
+				}
+				s.saveDNSWatch(f)
+			})
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+			defer cancel()
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(c.width, 900),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), "root"),
+				chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+				chromedp.WaitVisible(chromedp.CSS("#overview-chart svg")),
+				// Both loads have answered by now, so hidden means hidden on purpose.
+				chromedp.Sleep(1500*time.Millisecond),
+			))
+			check := func(want bool, expr, why string) {
+				t.Helper()
+				v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+				require.NoError(t, err)
+				require.Equal(t, want, v, why)
+			}
+			check(c.problem, `document.getElementById("overall").offsetParent !== null`, "the banner is only for trouble")
+			check(c.problem, `document.getElementById("attention-card").offsetParent !== null`, "Needs attention is only for trouble")
+			on := c.mode != abuse.ModeOff
+			check(on, `document.getElementById("protection-card").offsetParent !== null`, "the card follows the plugin")
+			if on {
+				check(true, `document.getElementById("protection-top").textContent.includes("203.0.113.9")`, "who is failing")
+				check(c.mode == abuse.ModeEnforce, `!!document.querySelector("#protection-top .protection-blocked") && document.getElementById("protection-active").textContent === "1"`, "who is blocked")
+				check(c.mode == abuse.ModeLog, `document.getElementById("protection-note").textContent.includes("Log only")`, "log only says so")
+			}
+			check(true, `document.documentElement.scrollWidth <= window.innerWidth`, "overflows sideways")
+			if dir := os.Getenv("ELEMTA_DASHBOARD_SCREENSHOTS"); dir != "" {
+				png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot())
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(filepath.Join(dir, strings.ReplaceAll(c.name, " ", "-")+".png"), png, 0o600))
+				if c.width < 500 && on {
+					require.NoError(t, chromedp.Do(ctx, chromedp.ScrollIntoView(chromedp.ID("protection-card"))))
+					png, err = chromedp.Run(ctx, chromedp.CaptureScreenshot())
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(filepath.Join(dir, "phone-card.png"), png, 0o600))
+				}
+			}
+		})
+	}
 }

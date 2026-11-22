@@ -130,9 +130,14 @@ address; outbound sender permissions remain governed by `[auth.sender_aliases]`.
 
 ## Needs attention and alert emails
 
-The Dashboard opens with **Needs attention**, for system administrators: what
-is wrong now, worst first, each with the page where it's dealt with. It
-gathers backups, the TLS certificate, the scheduled DNS checks, accounts held
+The Dashboard has **Needs attention**, for system administrators: what
+is wrong now, worst first, each with the page where it's dealt with. When
+something is wrong, or a check couldn't run, a banner at the top says so; when
+all is well there is neither. While Abuse protection is on, the Dashboard also
+has a card with its last 24 hours and the addresses failing most in the last
+two.
+
+Needs attention gathers backups, the TLS certificate, the scheduled DNS checks, accounts held
 from sending, unusual sign-ins in the last day, and:
 
 | Check | Warning | Critical | Clears below |

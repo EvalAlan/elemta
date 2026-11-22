@@ -14,12 +14,13 @@
     }
     function short(n) { return n < 10000 ? Number(n).toLocaleString() : Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(n); }
 
-    // items is null when the checks couldn't be read, and undefined for
-    // someone who may not read them: neither may look like all is well.
+    // The banner is for trouble: with nothing wrong it isn't shown. items is
+    // null when the checks couldn't be read, which is trouble too, and
+    // undefined for someone who may not read them.
     window.setOverallStatus = function (items) {
         const banner = el('overall'), badge = el('nav-attention');
         if (items === undefined) { banner.hidden = true; badge.hidden = true; return; }
-        let level = 'ok', title = 'Everything looks good', detail = 'The checks found nothing that needs you.';
+        let level = '', title = '', detail = '';
         if (items === null) {
             level = 'unknown'; title = "Couldn't check the server"; detail = 'The status checks didn\'t answer.';
         } else {
@@ -37,9 +38,10 @@
             badge.textContent = problems;
             badge.classList.toggle('critical', critical > 0);
         }
-        banner.hidden = false;
+        banner.hidden = !level;
+        if (!level) return;
         banner.dataset.level = level;
-        el('overall-mark').textContent = { ok: '✓', warning: '!', critical: '!', unknown: '?' }[level];
+        el('overall-mark').textContent = { warning: '!', critical: '!', unknown: '?' }[level];
         el('overall-title').textContent = title;
         el('overall-detail').textContent = detail;
     };
@@ -91,8 +93,66 @@
         }
     }
 
+    async function getJSON(path) {
+        const response = await fetch(path);
+        if (!response.ok) throw Object.assign(new Error('HTTP ' + response.status), { status: response.status });
+        return response.json();
+    }
+
+    // What abuse protection did today, for whoever may read its report. Off,
+    // it has nothing to say and the card isn't shown.
+    async function loadProtection() {
+        const card = el('protection-card');
+        if (!shell.allowed('configure')) { card.hidden = true; return; }
+        const note = el('protection-note'), list = el('protection-top'), empty = el('protection-empty');
+        try {
+            const status = await getJSON('/api/abuse');
+            const mode = status.policy.mode;
+            if (mode === 'off') { card.hidden = true; return; }
+            const stats = await getJSON('/api/abuse/metrics?range=24h');
+            const blocks = status.blocks || [], top = (stats.top || []).slice(0, 5);
+            el('protection-failures').textContent = short(stats.failures);
+            el('protection-refused').textContent = short(stats.refused);
+            el('protection-blocks').textContent = short(stats.blocks);
+            el('protection-active').textContent = short(blocks.length);
+
+            const notes = [];
+            if (mode === 'log') notes.push('Log only: nothing is being blocked.');
+            if (!status.shared) notes.push("Valkey isn't available, so these are this console's counts alone.");
+            note.textContent = notes.join(' ');
+            note.hidden = !notes.length;
+
+            const blocked = new Set(blocks.map(block => block.network));
+            list.replaceChildren(...top.map(offender => {
+                const row = document.createElement('li');
+                const cell = (className, text) => {
+                    const span = document.createElement('span');
+                    span.className = className;
+                    span.textContent = text;
+                    row.appendChild(span);
+                };
+                cell('protection-network', offender.network);
+                if (blocked.has(offender.network)) cell('protection-blocked', 'Blocked');
+                cell('protection-count', short(offender.failures) + ' failed');
+                return row;
+            }));
+            empty.hidden = top.length > 0;
+            card.hidden = false;
+        } catch (error) {
+            if ([401, 403, 404].includes(error.status)) { card.hidden = true; return; }
+            console.error('Abuse protection unavailable:', error);
+            ['protection-failures', 'protection-refused', 'protection-blocks', 'protection-active'].forEach(id => { el(id).textContent = '—'; });
+            list.replaceChildren();
+            empty.hidden = true;
+            note.textContent = "Couldn't load abuse protection.";
+            note.hidden = false;
+            card.hidden = false;
+        }
+    }
+
     window.loadOverview = async function () {
         if (!shell.is('dashboard')) return;
+        loadProtection();
         try {
             const response = await fetch('/api/stats/delivery?timeScale=hour');
             if (!response.ok) throw new Error('HTTP ' + response.status);
