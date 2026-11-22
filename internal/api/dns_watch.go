@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -268,17 +269,66 @@ func (s *Server) watchDNS(stop <-chan struct{}) {
 		}()
 		reports := s.dnsSweep(ctx)
 		if ctx.Err() == nil && len(reports) > 0 {
+			s.dnsWatchMu.Lock()
+			// The file, not what this loop saw last: a check run from the
+			// Domains page since then has recorded what it found there.
+			if s.dnsWatchPath() != "" {
+				saved = s.loadDNSWatch()
+			}
 			next, notices := dnsChanges(saved.state(), reports)
 			saved = recordSweep(saved, next, reports, time.Now().UTC())
 			s.saveDNSWatch(saved)
-			for _, n := range notices {
-				slog.Warn("DNS check alert", "subject", n.subject)
-				if !s.abuse.Notify(ctx, n.subject, n.body) {
-					slog.Warn("DNS check alert not emailed: set alert addresses in Settings > Alert emails")
-				}
-			}
+			s.dnsWatchMu.Unlock()
+			s.sendDNSNotices(ctx, notices)
 		}
 		cancel()
 		timer.Reset(dnsWatchEvery)
 	}
+}
+
+func (s *Server) sendDNSNotices(ctx context.Context, notices []dnsNotice) {
+	for _, n := range notices {
+		slog.Warn("DNS check alert", "subject", n.subject)
+		if !s.abuse.Notify(ctx, n.subject, n.body) {
+			slog.Warn("DNS check alert not emailed: set alert addresses in Settings > Alert emails")
+		}
+	}
+}
+
+// recordDNSCheck keeps what a check run from the Domains page found, as if
+// the sweep had found it. Without this, fixing a record and checking again
+// still showed the old problem on the Dashboard and the Health page until
+// the next sweep, up to six hours later. The alert addresses hear about the
+// change as they would from the sweep, which won't see it as one any more.
+func (s *Server) recordDNSCheck(ctx context.Context, view domainSettingsView, r dnshealth.Report) {
+	// The sweep skips suspended domains, and would drop them again.
+	if s.dnsWatchPath() == "" || (view.Status != "" && view.Status != mailpolicy.DomainActive) || r.Domain == "" {
+		return
+	}
+	s.dnsWatchMu.Lock()
+	f, notices := recordCheck(s.loadDNSWatch(), r, time.Now().UTC())
+	s.saveDNSWatch(f)
+	s.dnsWatchMu.Unlock()
+	if len(notices) > 0 {
+		// The page has its answer; the email needn't hold it up or end with it.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+			defer cancel()
+			s.sendDNSNotices(ctx, notices)
+		}()
+	}
+}
+
+// recordCheck folds one domain's report into what the last sweep saw. The
+// time of the sweep stays, as the Health page says when the sweep last ran.
+func recordCheck(prev dnsWatchFile, r dnshealth.Report, now time.Time) (dnsWatchFile, []dnsNotice) {
+	reports := []dnshealth.Report{r}
+	next, notices := dnsChanges(prev.state(), reports)
+	one := recordSweep(prev, next, reports, now)
+	out := dnsWatchFile{Checked: prev.Checked, Domains: maps.Clone(prev.Domains)}
+	if out.Domains == nil {
+		out.Domains = map[string]dnsDomainRecord{}
+	}
+	out.Domains[r.Domain] = one.Domains[r.Domain]
+	return out, notices
 }

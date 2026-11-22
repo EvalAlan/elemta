@@ -221,9 +221,11 @@ func (s *Server) domainSettingsRoutes(protected *mux.Router) {
 		if err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(ctx, dnsHealthTimeout)
+		cctx, cancel := context.WithTimeout(ctx, dnsHealthTimeout)
 		defer cancel()
-		writeJSON(w, s.runDNSHealth(ctx, view))
+		report := s.runDNSHealth(cctx, view)
+		s.recordDNSCheck(ctx, view, report)
+		writeJSON(w, report)
 		return nil
 	})).Methods("GET")
 	protected.HandleFunc("/domains/{domain}/status", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {

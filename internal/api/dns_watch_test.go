@@ -223,3 +223,71 @@ func TestDNSHealthStatusRoute(t *testing.T) {
 		t.Fatalf("admin got %d %s", code, body)
 	}
 }
+
+// Fixing a record and running the check from the Domains page clears the
+// problem on the Dashboard and the Health page then, not at the next sweep.
+func TestOnDemandCheckUpdatesTheDNSState(t *testing.T) {
+	spf := dnshealth.StatusFail
+	var srv *Server
+	base, _ := startProvisionAPIWith(t, func(s *Server) {
+		srv = s
+		s.dnsHealth = func(_ context.Context, o dnshealth.Options) dnshealth.Report {
+			return dnsReport(o.Domain, map[string]dnshealth.Status{"spf": spf})
+		}
+		reports := []dnshealth.Report{dnsReport("example.com", map[string]dnshealth.Status{"spf": dnshealth.StatusFail}), dnsReport("example.org", nil)}
+		next, _ := dnsChanges(dnsWatchState{}, reports)
+		s.saveDNSWatch(recordSweep(dnsWatchFile{}, next, reports, time.Now().UTC().Add(-time.Hour)))
+	})
+	all := func(string) bool { return true }
+	swept := srv.loadDNSWatch().Checked
+	if st := srv.dnsHealthStatus(time.Now(), all); st.Message != "1 domain has DNS problems." {
+		t.Fatalf("before: %+v", st)
+	}
+
+	spf = dnshealth.StatusOK
+	if code, body := userRequest(t, "GET", base+"/api/provision/domains/example.com/dns-health", "root", testAdminPassword, nil); code != http.StatusOK {
+		t.Fatalf("check = %d %s", code, body)
+	}
+	st := srv.dnsHealthStatus(time.Now(), all)
+	if st.Status != "ok" || st.Message != "Every domain passed." || len(st.Domains) != 2 {
+		t.Fatalf("after the check: %+v", st)
+	}
+	f := srv.loadDNSWatch()
+	if !f.Checked.Equal(swept) {
+		t.Errorf("the sweep's time moved: %v, was %v", f.Checked, swept)
+	}
+	// The next sweep sees nothing new, so nobody hears about it twice.
+	if _, n := dnsChanges(f.state(), []dnshealth.Report{dnsReport("example.com", nil), dnsReport("example.org", nil)}); len(n) != 0 {
+		t.Errorf("sweep after the check would email %v", n)
+	}
+
+	// And a check that finds a problem puts it on the Dashboard too.
+	spf = dnshealth.StatusWarn
+	userRequest(t, "GET", base+"/api/provision/domains/example.com/dns-health", "root", testAdminPassword, nil)
+	if st := srv.dnsHealthStatus(time.Now(), all); st.Message != "1 domain has DNS problems." || st.Domains[0].Since == "" {
+		t.Fatalf("new problem: %+v", st)
+	}
+}
+
+func TestRecordCheckKeepsOtherDomains(t *testing.T) {
+	now := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	reports := []dnshealth.Report{dnsReport("a.example", map[string]dnshealth.Status{"mx": dnshealth.StatusFail}), dnsReport("b.example", map[string]dnshealth.Status{"dkim": dnshealth.StatusWarn})}
+	next, _ := dnsChanges(dnsWatchState{}, reports)
+	prev := recordSweep(dnsWatchFile{}, next, reports, now)
+
+	f, n := recordCheck(prev, dnsReport("a.example", nil), now.Add(time.Hour))
+	if len(n) != 1 || !strings.Contains(n[0].subject, "healthy again") {
+		t.Errorf("notices %v", n)
+	}
+	if len(f.Domains["a.example"].Problems) != 0 || len(f.Domains["b.example"].Problems) != 1 || !f.Checked.Equal(now) {
+		t.Errorf("record %+v", f)
+	}
+	if len(prev.Domains["a.example"].Problems) != 1 {
+		t.Error("the previous state was changed in place")
+	}
+	// DNS that can't answer neither clears a problem nor raises one.
+	f, n = recordCheck(prev, dnsReport("a.example", map[string]dnshealth.Status{"mx": dnshealth.StatusUnknown}), now.Add(time.Hour))
+	if len(n) != 0 || len(f.Domains["a.example"].Problems) != 1 {
+		t.Errorf("unknown: %v %+v", n, f.Domains["a.example"])
+	}
+}
