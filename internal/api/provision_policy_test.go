@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -15,16 +16,19 @@ import (
 // fakeMailboxAdmin is just enough of the mailbox admin API for the
 // dashboard routes: classes, account policy, purge, lists and routes.
 type fakeMailboxAdmin struct {
-	mu      sync.Mutex
-	classes map[string]mailpolicy.Class
-	policy  map[string]mailpolicy.AccountPolicy
-	lists   map[string]mailpolicy.List
-	routes  map[string]mailpolicy.DomainRoute
-	purged  []string
-	held    map[string]bool
-	audit   []mailpolicy.AuditEntry
-	queries []string // audit queries received
-	access  []string
+	mu       sync.Mutex
+	classes  map[string]mailpolicy.Class
+	policy   map[string]mailpolicy.AccountPolicy
+	lists    map[string]mailpolicy.List
+	routes   map[string]mailpolicy.DomainRoute
+	purged   []string
+	held     map[string]bool
+	audit    []mailpolicy.AuditEntry
+	queries  []string // audit queries received
+	access   []string
+	security map[string]mailpolicy.AccountSecurity
+	shares   map[string][]mailpolicy.Share
+	resets   []string
 	// userOff are protocols each account's owner turned off themselves.
 	userOff map[string][]string
 }
@@ -86,6 +90,73 @@ func (f *fakeMailboxAdmin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a := strings.TrimSuffix(strings.TrimPrefix(p, "accounts/"), "/purge")
 		f.purged = append(f.purged, a)
 		_ = enc.Encode(mailpolicy.PurgeResult{Address: a, Accounts: 1, Messages: 7})
+	case p == "usage":
+		out := []mailpolicy.Usage{}
+		for a, st := range f.security {
+			out = append(out, mailpolicy.Usage{Address: a, UsedBytes: st.UsedBytes})
+		}
+		_ = enc.Encode(out)
+	case strings.HasPrefix(p, "accounts/") && strings.HasSuffix(p, "/security"):
+		a := strings.TrimSuffix(strings.TrimPrefix(p, "accounts/"), "/security")
+		st := f.security[a]
+		if st.AppPasswords == nil {
+			st.AppPasswords = []mailpolicy.AppPassword{}
+		}
+		_ = enc.Encode(st)
+	case strings.HasPrefix(p, "accounts/") && strings.HasSuffix(p, "/reset-two-factor"):
+		a := strings.TrimSuffix(strings.TrimPrefix(p, "accounts/"), "/reset-two-factor")
+		f.resets = append(f.resets, a)
+		if st, ok := f.security[a]; ok {
+			st.TOTP, st.Passkeys, st.RecoveryLeft = false, 0, 0
+			f.security[a] = st
+		}
+		_ = enc.Encode(map[string]bool{"ok": true})
+	case strings.HasPrefix(p, "accounts/") && strings.Contains(p, "/app-passwords"):
+		a, id, one := strings.Cut(strings.TrimPrefix(p, "accounts/"), "/app-passwords/")
+		a = strings.TrimSuffix(a, "/app-passwords")
+		st := f.security[a]
+		kept := []mailpolicy.AppPassword{}
+		for _, ap := range st.AppPasswords {
+			if one && strconv.FormatInt(ap.ID, 10) != id {
+				kept = append(kept, ap)
+			}
+		}
+		n := len(st.AppPasswords) - len(kept)
+		if one && n == 0 {
+			fail(http.StatusNotFound, "not found")
+			return
+		}
+		st.AppPasswords = kept
+		f.security[a] = st
+		_ = enc.Encode(map[string]any{"revoked": n})
+	case strings.HasPrefix(p, "accounts/") && strings.HasSuffix(p, "/shares"):
+		out := f.shares[strings.TrimSuffix(strings.TrimPrefix(p, "accounts/"), "/shares")]
+		if out == nil {
+			out = []mailpolicy.Share{}
+		}
+		_ = enc.Encode(out)
+	case strings.HasPrefix(p, "accounts/") && strings.Contains(p, "/shares/"):
+		a, member, _ := strings.Cut(strings.TrimPrefix(p, "accounts/"), "/shares/")
+		share := mailpolicy.Share{Mailbox: a, Member: member}
+		kept := []mailpolicy.Share{}
+		for _, s := range f.shares[a] {
+			if s.Member != member {
+				kept = append(kept, s)
+			}
+		}
+		if r.Method == http.MethodPut {
+			var in struct {
+				CanSend bool `json:"can_send"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			share.CanSend = in.CanSend
+			kept = append(kept, share)
+		}
+		if f.shares == nil {
+			f.shares = map[string][]mailpolicy.Share{}
+		}
+		f.shares[a] = kept
+		_ = enc.Encode(share)
 	case strings.HasPrefix(p, "addresses/"):
 		_ = enc.Encode(mailpolicy.AddressInfo{Address: strings.TrimPrefix(p, "addresses/")})
 	case p == "lists":

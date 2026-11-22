@@ -83,6 +83,23 @@ password alone leaves any passkey an intruder added in place. An administrator
 should verify the user's identity before running it. The CLI records the reset in the audit log. If the account's class
 requires two-step verification, the next webmail sign-in requires fresh setup.
 
+In the dashboard, the account dialog's **Support** section covers the same
+job and the others that come with it:
+
+- storage used against the quota in effect (also the **Used** column of the
+  accounts table);
+- whether two-step verification is on, how many recovery codes are left and
+  how many passkeys there are, with the reset above;
+- the account's app passwords, with when each was last used, to revoke one
+  or all. They can't be created or read there. Revoking refuses the next
+  sign-in; a mail app already connected stays connected until it closes;
+- who can open the mailbox (see Shared mailboxes below), to grant or remove.
+
+A domain administrator can do these for accounts in their own domains, with
+both sides of a share there. Each change is in the audit log
+(`two-factor-reset`, `app-password-revoke`, `mailbox-share`,
+`mailbox-share-remove`).
+
 Quota sizes accept integer bytes or suffixes such as `K`, `M`, `G`, `MiB`, and
 `GiB`. Suffixes use binary units; `5G` is 5 GiB. Zero means unlimited. Quotas
 are enforced by the mailbox server, including IMAP APPEND and delivery; updated
