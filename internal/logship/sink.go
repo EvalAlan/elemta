@@ -9,8 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -77,11 +81,45 @@ type sink struct {
 }
 
 func newSink(s Settings, c Credential) *sink {
+	dialer := &net.Dialer{Timeout: sendTimeout, Control: checkDestination}
+	transport := &http.Transport{
+		Proxy:               nil, // never an environment proxy: it would dial for us, unchecked
+		DialContext:         dialer.DialContext,
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: sendTimeout,
+		IdleConnTimeout:     30 * time.Second,
+	}
 	return &sink{settings: s, credential: c, http: &http.Client{
-		Timeout: sendTimeout,
+		Timeout:   sendTimeout,
+		Transport: transport,
 		// A redirect would take the credential somewhere nobody chose.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
+}
+
+var errDestination = errors.New("logs can't be sent to link-local, cloud metadata, multicast or unspecified addresses")
+
+// Cloud metadata services that aren't at a link-local address.
+var metadataAddrs = []netip.Addr{netip.MustParseAddr("fd00:ec2::254"), netip.MustParseAddr("100.100.100.200")}
+
+// checkDestination runs on every connection, after the name is resolved. A
+// log cluster is usually on a private network, so those are allowed; an
+// instance's metadata, which hands out the machine's credentials, never is.
+func checkDestination(_, address string, _ syscall.RawConn) error {
+	ap, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return errDestination
+	}
+	ip := ap.Addr().Unmap().WithZone("")
+	if ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return errDestination
+	}
+	for _, m := range metadataAddrs {
+		if ip == m {
+			return errDestination
+		}
+	}
+	return nil
 }
 
 func (s *sink) post(ctx context.Context, method, path, kind string, body []byte) (int, []byte, error) {
@@ -175,10 +213,7 @@ func (s *sink) sendLogstash(ctx context.Context, batch []entry) (delivery, error
 	var out delivery
 	docs := make([]map[string]any, len(batch))
 	for i, e := range batch {
-		d := make(map[string]any, len(e.doc)+2)
-		for k, v := range e.doc {
-			d[k] = v
-		}
+		d := maps.Clone(e.doc)
 		d["log_id"] = e.id
 		d["index_prefix"] = s.settings.Index
 		docs[i] = d

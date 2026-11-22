@@ -311,3 +311,14 @@ func TestOnlyAPermissionProblemBlamesPermissions(t *testing.T) {
 		require.Equal(t, blamed, strings.Contains(err.Error(), "manage_index_templates"), status)
 	}
 }
+
+func TestDestinationsRefused(t *testing.T) {
+	for _, addr := range []string{"169.254.169.254:80", "[::ffff:169.254.169.254]:80", "[fe80::1%eth0]:80", "[fd00:ec2::254]:80", "100.100.100.200:80", "0.0.0.0:9200", "[::]:9200", "224.0.0.1:80"} {
+		require.ErrorIs(t, checkDestination("tcp", addr, nil), errDestination, addr)
+	}
+	for _, addr := range []string{"127.0.0.1:9200", "10.0.0.5:9200", "[fd12::5]:9200", "203.0.113.4:443"} {
+		require.NoError(t, checkDestination("tcp", addr, nil), addr)
+	}
+	err := NewShipper(t.TempDir(), "", nil).Test(context.Background(), Settings{URL: "http://169.254.169.254"}, nil)
+	require.ErrorIs(t, err, errDestination)
+}

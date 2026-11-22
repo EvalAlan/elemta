@@ -31,6 +31,10 @@ It needs no shared log volume, no agent and no access to the Docker socket.
 Each service needs `VALKEY_ADDR`, as abuse protection does. Changes apply
 within about five seconds, without a restart.
 
+Run several consoles only with one runtime configuration volume between them,
+as the HA and scale deployments do. Consoles with settings files of their own
+on one Valkey would each send the lines to their own destination.
+
 ### Elasticsearch
 
 1. Open Settings, All plugins, then Log shipping's settings.
@@ -62,6 +66,13 @@ Use `deployments/elk/logstash-shipping.conf` as the pipeline and mount
 `/usr/share/logstash/elemta/logs-template.json`. In the console choose Logstash,
 enter the input's URL (port 8080 in that file) and the user name and password
 it was started with.
+
+### Where it can send
+
+Anywhere an administrator names, private networks and loopback included,
+since that is where log clusters are. Link-local, cloud metadata, multicast
+and unspecified addresses are refused on every connection, redirects aren't
+followed, and proxy settings from the environment aren't used.
 
 ### What is sent
 
