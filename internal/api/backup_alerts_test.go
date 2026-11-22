@@ -70,14 +70,14 @@ func TestBackupAlerter(t *testing.T) {
 		}
 	}
 
-	step(0, BackupStatus{Status: "unknown"}, false, "")                          // not set up: silent
-	step(0, st("ok"), false, "")                                                 // fine: silent
-	step(10*time.Minute, st("warning"), true, "Backup problem")                  // worse: tell
-	step(20*time.Minute, st("warning"), false, "")                               // same: don't repeat
-	step(30*time.Minute, st("critical"), true, "have stopped")                   // worse again: tell
-	step(40*time.Minute, st("warning"), false, "")                               // better but bad: quiet
-	step(50*time.Minute, st("critical"), true, "have stopped")                   // relapse: tell
-	step(50*time.Minute+backupAlertRepeat, st("critical"), true, "have stopped") // a day on: remind
-	step(25*time.Hour+time.Minute, st("ok"), true, "working again")              // recovered: tell once
+	step(0, BackupStatus{Status: "unknown"}, false, "")                    // not set up: silent
+	step(0, st("ok"), false, "")                                           // fine: silent
+	step(10*time.Minute, st("warning"), true, "Backup problem")            // worse: tell
+	step(20*time.Minute, st("warning"), false, "")                         // same: don't repeat
+	step(30*time.Minute, st("critical"), true, "have stopped")             // worse again: tell
+	step(40*time.Minute, st("warning"), false, "")                         // better but bad: quiet
+	step(50*time.Minute, st("critical"), true, "have stopped")             // relapse: tell
+	step(50*time.Minute+alertRepeat, st("critical"), true, "have stopped") // a day on: remind
+	step(25*time.Hour+time.Minute, st("ok"), true, "working again")        // recovered: tell once
 	step(26*time.Hour, st("ok"), false, "")
 }
