@@ -126,3 +126,22 @@
 .abuse-attribution a { color: var(--accent-primary); }
 #view-abuse .messages-table td:has(> .abuse-actions) { max-width: none; overflow: visible; }
 .abuse-actions { display: inline-flex; gap: .4rem; }
+#ma-delete-dialog .ma-dialog-heading { position: static; }
+#ma-delete-confirm:disabled { opacity: .45; cursor: not-allowed; }
+.ma-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .4rem 1rem; margin-bottom: .75rem; font-size: .875rem; }
+.ma-facts dt { color: var(--text-secondary); }
+.ma-facts dd { margin: 0; overflow-wrap: anywhere; }
+.ma-support-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-top: 1rem; }
+.ma-support-heading h5 { font-size: .875rem; margin: 0; }
+.ma-support-name, #ma-app-password-list small { display: block; }
+#ma-app-password-list li > span { min-width: 0; }
+.ma-share-form { flex-wrap: wrap; }
+.ma-share-form input[type=email] { flex: 1 1 14rem; }
+.ma-share-form .ma-check { display: flex; align-items: center; gap: .4rem; font-size: .875rem; }
+.ma-share-form input[type=checkbox] { flex: none; }
+@media (max-width: 600px) {
+    /* The footer's three buttons and the policy table are wider than a phone. */
+    .ma-dialog-footer { flex-wrap: wrap; }
+    .ma-effective { overflow-x: auto; }
+    .ma-effective th, .ma-effective td { white-space: normal; padding-left: .4rem; padding-right: .4rem; }
+}
