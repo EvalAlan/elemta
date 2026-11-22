@@ -212,6 +212,34 @@ which `scripts/dev-secrets.sh` does. Without it, mail is forwarded as before.
 - **Changing the secret.** Put the new one first, separated by a comma, and keep the
   old one for 21 days: the first signs, and all of them verify.
 
+## DMARC reports
+
+A domain whose DMARC record has `rua=mailto:...` is sent daily summaries of
+who sent mail in its name. When a system administrator registers that address
+for the domain (`PUT /api/provision/dmarc/addresses/{domain}`), the mailbox
+service reads those reports as they arrive. The mail is still delivered as
+before, and a report that can't be read never holds up or changes a delivery.
+
+- **What's read:** XML, gzip or zip aggregate reports about the registered
+  domain or its subdomains. Forensic (`ruf`) and TLS reports aren't.
+- **Trust:** anyone can mail the address. A report is *verified* when this
+  server saw its sender pass DMARC. That proves who sent it, not that they
+  report honestly, so the sender's domain is kept with every count.
+  Unverified reports are kept apart and limited to 200 a domain a day.
+- **Earlier reports:** `POST /api/provision/dmarc/addresses/{domain}/backfill`
+  reads the ones already in that address's mailbox. It reads only mail with
+  the address in To, Cc or Bcc, changes nothing, can be run again, and is
+  audited before it starts. The address must be an account or an alias.
+- **Reading:** `GET /api/provision/dmarc/summary` and `/sources`, with
+  `days` (1 to 400, 30 if unset) and optionally `domain`. Domain
+  administrators see their own domains; only system administrators change
+  addresses or start a backfill.
+- **Retention:** reports are kept 400 days. Unregistering keeps what was read.
+
+An address outside the domain also needs the authorization record
+`<domain>._report._dmarc.<address's domain>  TXT "v=DMARC1"`, or receivers
+won't send to it.
+
 ## Distribution lists, domain aliases and catch-all
 
 Beyond accounts and their aliases, an address can be a distribution list, a
