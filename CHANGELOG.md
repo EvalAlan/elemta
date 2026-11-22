@@ -1,5 +1,101 @@
 # Elemta Changelog
 
+## v0.11.0 (2026-11-22)
+
+**A security release: upgrade, then reload any open admin console tab.**
+Text from mail could become script in a signed-in administrator's browser.
+It also brings a rebuilt admin console, account support, DMARC reports,
+alerts for the things that fail quietly, log shipping to Elasticsearch or
+Logstash, and newsletter unsubscribe, out of office and mail app setup in
+the webmail.
+
+### Security
+
+- **Stored cross-site scripting in the admin console** (critical; v0.5.0 to
+  v0.10.0). A message's subject or addresses, or a remote server's error,
+  could run script in the session of an administrator who looked at Queues
+  or Reports, and do whatever that administrator can. Sending the server
+  mail was enough; no account was needed. If you can't upgrade at once,
+  don't open Queues, Reports, Logs or message tracing in the console.
+  Restricting who can reach the console doesn't fix it, because the script
+  arrives by mail.
+- x/crypto 0.59.0 and x/net 0.63.0. The directory and CLI images install
+  Alpine's current security fixes when they are built.
+
+### Upgrade notes
+
+- **Check your message size limit.** In v0.10.0 and earlier, saving any
+  setting in the console could write `[server] max_size` over the top-level
+  `max_size`, for example turning 50 MB into 25 MB. That no longer happens,
+  but a value already changed stays changed.
+- **The Rate Limiting screen is gone.** Its settings never limited
+  anything. Connection, sign-in and message limits are in `[resources]`
+  and Abuse protection; see docs/rate-limiting.md.
+- **The console is reorganised.** Abuse and DMARC are under Reports. Abuse
+  protection's settings are under Settings > Plugins, and the alert
+  addresses under Settings > Alert emails.
+- **New alert emails** go to the existing alert addresses, for backups, WAL
+  upload, certificates, DNS, disk and queue. The first DNS check, five
+  minutes after start, emails whatever is already wrong. Alerts are now
+  sent from the hosted domain the server's hostname belongs to.
+- **The cloud overlay no longer gives the MTA the mail domain as a network
+  alias.** The webmail submits to `elemta:2588` and checks the certificate
+  against the mail domain; the overlay sets both. With an overlay of your
+  own, set `ELEMTA_WEBMAIL_SUBMISSION_ADDR` and
+  `ELEMTA_WEBMAIL_SUBMISSION_TLS_SERVER_NAME` if it relied on that alias.
+- **`/unsubscribe/` is public** on the mail host, for Mass Mailer's signed
+  one-click links. Nothing else of the console is.
+- **`[logging] file` is honoured**; before, it was ignored. The log file
+  rotates at 25 MB and keeps one older copy. The TLS and API sign-in lines
+  on standard output are now JSON, like the rest.
+- **Outlook on an extra domain** needs its `_autodiscover._tcp` SRV record,
+  which `cloud-deploy.sh` now prints.
+- **Log shipping is off** until `ELEMTA_LOG_SHIP_DESTINATIONS` lists where
+  logs may go and an administrator switches it on; see docs/logging.md.
+- The new DMARC tables are created on start and are additive. To roll
+  back, check out v0.10.0 as docs/production-compose.md describes, and
+  remember that it has the vulnerability above.
+
+### What's new
+
+- **A rebuilt admin console.** Four groups in the sidebar, each role seeing
+  only what it can use, one Reports page, grouped Settings, a layout that
+  works on phones, pages with addresses, and Ctrl+K to jump to any of them.
+- **The Dashboard says what needs attention**, worst first: backups,
+  certificates, DNS, abuse holds, disk space and a queue that stops moving.
+  A check that couldn't run says so.
+- **Account support.** Storage against quota, two-step reset, app password
+  revocation and shared mailbox access, from the account's dialog.
+- **DMARC reports.** Reports sent to addresses you register are read at
+  delivery and shown by domain and source, with verified reports apart
+  from the rest. DNS health also checks that reports sent to another
+  domain's address are authorised.
+- **Abuse protection is a plugin**, with a switch, a settings tab and a
+  report.
+- **DNS health on a schedule.** Every hosted domain is checked every six
+  hours, shown on the Health page and emailed when that changes.
+- **Log shipping.** Every service's log to Elasticsearch or Logstash,
+  without an agent or a shared volume, with secrets redacted and subjects
+  left out unless chosen.
+- **One-click unsubscribe in Mass Mailer campaigns** (RFC 8058), signed
+  with DKIM.
+- **Unsubscribe in the webmail.** A button on newsletters, and a
+  Subscriptions page to leave, file, clear or block them.
+- **Out of office has its own page**, and a banner while replies are on.
+- **Mail app setup.** Outlook finds the server from the address alone, and
+  iPhone, iPad and Mac install a profile with mail, calendar and contacts.
+
+### Fixes
+
+- Deleting an account is one dialog. Before, Cancel on "also purge the
+  mail?" still deleted the account.
+- Saving in the console writes only what changed, the message size field
+  works, and hostname, listen address and size show what the server uses.
+- Health shows a 24-hour message rate and no longer reports figures it
+  couldn't know.
+- The scheduled DNS check asks the stack's resolver, so the main mail
+  domain is no longer reported without MX and SPF.
+
 ## v0.10.0 (2026-11-21)
 
 The webmail's message list is rebuilt for phones and computers alike: inbox
