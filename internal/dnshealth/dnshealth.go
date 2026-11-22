@@ -607,7 +607,9 @@ func (c *checker) tlsRPT(ctx context.Context) Check {
 func (c *checker) autoconfig(ctx context.Context) Check {
 	check := Check{ID: "autoconfig", Name: "Mail app setup (SRV)", Status: StatusOK, Summary: "Mail apps can find this server."}
 	var missing []string
-	for _, service := range []string{"imaps", "submission"} {
+	// _autodiscover is Outlook's: it points Outlook at the host that
+	// answers /autodiscover/autodiscover.xml (the webmail does).
+	for _, service := range []string{"imaps", "submission", "autodiscover"} {
 		_, records, err := c.Resolver.LookupSRV(ctx, service, "tcp", c.Domain)
 		name := "_" + service + "._tcp." + c.Domain
 		switch {

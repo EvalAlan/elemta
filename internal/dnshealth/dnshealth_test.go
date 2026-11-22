@@ -106,8 +106,9 @@ func healthy() *fakeDNS {
 		},
 		ptr: map[string][]string{"192.0.2.1": {"mail.host.test."}},
 		srv: map[string][]*net.SRV{
-			"_imaps._tcp.example.org":      {{Target: "mail.host.test.", Port: 993}},
-			"_submission._tcp.example.org": {{Target: "mail.host.test.", Port: 587}},
+			"_imaps._tcp.example.org":        {{Target: "mail.host.test.", Port: 993}},
+			"_submission._tcp.example.org":   {{Target: "mail.host.test.", Port: 587}},
+			"_autodiscover._tcp.example.org": {{Target: "mail.host.test.", Port: 443}},
 		},
 	}
 }

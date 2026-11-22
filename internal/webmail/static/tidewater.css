@@ -2436,6 +2436,9 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 .subs-who { display: flex; flex-direction: column; gap: 2px; flex: 1 1 16em; min-width: 0; }
 .subs-who > span { overflow-wrap: anywhere; }
 .subs-who .chip { align-self: flex-start; }
+/* Settings > Mail apps: the Apple profile (autosetup.go). */
+.apple-setup { margin: 8px 0 16px; }
+.apple-setup .small { margin: 6px 0 0; }
 .row .later-time { color: var(--accent); white-space: nowrap; }
 .menu-body input[type="datetime-local"] { min-height: 36px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); padding: 0 8px; max-width: 100%; }
 .menu-body .menu-item .muted { margin-left: 8px; }

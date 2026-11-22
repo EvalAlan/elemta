@@ -173,6 +173,7 @@ change to the rendering, such as a new default in the script.
 | `TXT _dmarc.dev.example.net` | optional; without it the parent domain's policy applies |
 | `SRV _imaps._tcp.dev.example.net` | `0 1 993 dev.example.net.` |
 | `SRV _submission._tcp.dev.example.net` | `0 1 587 dev.example.net.` |
+| `SRV _autodiscover._tcp.dev.example.net` | `0 1 443 dev.example.net.` (Outlook's automatic setup) |
 | Reverse DNS of the IPv4 address | `dev.example.net`, set at the hosting provider |
 
 Leave out an AAAA record unless the stack is given IPv6. Outbound mail leaves

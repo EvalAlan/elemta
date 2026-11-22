@@ -554,7 +554,12 @@
   {{$pop := or (not (and .Security .Security.Status)) .Security.Status.POP3On}}
   <div class="card" id="mail-apps">
     <h2 class="card-title">Mail apps</h2>
-    <p class="muted">Thunderbird and other apps that support automatic setup only need your address. For others, use:</p>
+    <p class="muted">Thunderbird and Outlook set themselves up from your address and password.</p>
+    {{if $imap}}<div class="apple-setup">
+      <a class="button" href="/settings/devices/apple.mobileconfig" download data-apple-profile>Set up an iPhone, iPad or Mac</a>
+      <p class="small muted">Downloads a profile that adds your mail, calendar and contacts. On an iPhone or iPad, open this page in Safari, tap the button, then install the profile in Settings (it's listed at the top, under your name). On a Mac, open the file and install it in System Settings, Privacy and Security, Profiles. You'll be asked for your password{{if $app}} (use an <a href="/settings/security#app-passwords">app password</a>){{end}}. The profile is marked "not verified" because it isn't signed; that's expected.</p>
+    </div>{{end}}
+    <p class="muted">For other apps, use:</p>
     <div class="table-wrap"><table class="table settings-table">
       <thead><tr><th>Protocol</th><th>Server</th><th>Port</th><th>Security</th></tr></thead>
       <tbody>

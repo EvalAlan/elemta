@@ -237,6 +237,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /verify-recovery", s.verifyPage)
 	mux.HandleFunc("POST /verify-recovery", s.verifySubmit)
 	mux.HandleFunc("POST /settings/recovery", s.authed(s.recoverySubmit))
+	// Outlook's Autodiscover asks with either capitalisation (autosetup.go).
+	mux.HandleFunc("POST /autodiscover/autodiscover.xml", s.autodiscover)
+	mux.HandleFunc("POST /Autodiscover/Autodiscover.xml", s.autodiscover)
+	mux.HandleFunc("GET /settings/devices/apple.mobileconfig", s.authed(s.appleProfileDownload))
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.loginSubmit)
 	mux.HandleFunc("POST /login/admin", s.adminLoginSubmit)

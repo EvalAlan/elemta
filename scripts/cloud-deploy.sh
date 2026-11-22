@@ -552,6 +552,7 @@ cat <<EOF
   $DKIM_SELECTOR._domainkey.$d.  TXT  "v=DKIM1; k=rsa; p=$dkim_p"
   _imaps._tcp.$d.         SRV  0 1 993 $d.
   _submission._tcp.$d.    SRV  0 1 587 $d.
+  _autodiscover._tcp.$d.  SRV  0 1 443 $d.
   Reverse DNS of $ip4 -> $d   (set at the hosting provider)
 EOF
 for x in $extra_domains; do
@@ -565,6 +566,7 @@ mail.$x, before moving the MX: a strict DMARC policy rejects unsigned mail.
   $x.                     TXT  "v=spf1 mx -all"   (or add ip4:$ip4 to the existing record)
   _imaps._tcp.$x.         SRV  0 1 993 mail.$x.
   _submission._tcp.$x.    SRV  0 1 587 mail.$x.
+  _autodiscover._tcp.$x.  SRV  0 1 443 mail.$x.
   $x.                     MX   10 mail.$x.   (last)
 EOF
 done

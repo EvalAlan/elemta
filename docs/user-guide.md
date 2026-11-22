@@ -55,8 +55,20 @@ Sign in at your server's address with your full email address and password.
 
 ## Mail apps
 
-Thunderbird, and other apps that support automatic setup, need only your email
-address and password. For other apps, enter these settings, replacing
+Thunderbird and Outlook need only your email address and password: they find
+the server themselves.
+
+**iPhone, iPad and Mac:** under Settings → Mail apps and sync, choose **Set up
+an iPhone, iPad or Mac**. It downloads a profile that adds your mail, calendar
+and contacts together. On an iPhone or iPad, open the webmail in Safari, tap
+the button, then open Settings, where the downloaded profile is listed at the
+top, and install it. On a Mac, open the downloaded file and install it under
+System Settings → Privacy and Security → Profiles. You're asked for your
+password (an app password if your account requires them). The profile shows as
+"not verified" because it isn't signed; that's expected. Downloading and
+installing it again replaces it rather than adding a second account.
+
+For other apps, enter these settings, replacing
 `mail.example.com` with the server shown under Settings → Mail apps and sync:
 
 | Protocol | Server | Port | Security |
@@ -87,8 +99,9 @@ off, it says so and you can't turn it on.
 Calendar, tasks and contacts sync over CalDAV and CardDAV:
 
 - **Android:** use [DAVx⁵](https://www.davx5.com/).
-- **iPhone and iPad:** add an account under Settings → Calendar → Accounts and
-  choose Other → CalDAV, then Contacts → Accounts → Other → CardDAV.
+- **iPhone, iPad and Mac:** the setup profile above adds both. By hand: add
+  an account under Settings → Calendar → Accounts and choose Other → CalDAV,
+  then Contacts → Accounts → Other → CardDAV.
 - **Thunderbird:** add a calendar or address book "on the network".
 
 Use the server address shown under Settings → Mail apps and sync, your email

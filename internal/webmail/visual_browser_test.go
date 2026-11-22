@@ -97,6 +97,7 @@ func TestBrowserVisualQA(t *testing.T) {
 		"calendar":      "/calendar?view=week",
 		"compose":       "/compose",
 		"settings":      "/settings",
+		"devices":       "/settings/devices",
 		"contacts":      "/contacts",
 		"subscriptions": "/settings/subscriptions",
 		"out-of-office": "/settings/out-of-office",
