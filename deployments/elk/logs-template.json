@@ -1,6 +1,6 @@
 {
   "index_patterns": ["elemta-logs-*"],
-  "priority": 500,
+  "priority": 511,
   "_meta": { "description": "Elemta service logs" },
   "template": {
     "mappings": {

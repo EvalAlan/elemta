@@ -288,3 +288,26 @@ func TestLogstashTemplateIsTheSame(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, string(want), string(got))
 }
+
+func TestOverlappingPrefixesGetTheirOwnPriority(t *testing.T) {
+	priority := func(prefix string) float64 {
+		raw, err := template(prefix)
+		require.NoError(t, err)
+		var body struct {
+			Priority float64 `json:"priority"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &body))
+		return body.Priority
+	}
+	require.Greater(t, priority("elemta-logs-prod"), priority("elemta-logs"), "the narrower pattern has to win")
+}
+
+func TestOnlyAPermissionProblemBlamesPermissions(t *testing.T) {
+	for status, blamed := range map[int]bool{400: false, 401: true, 403: true} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
+		_, err := newSink(Settings{URL: srv.URL}.WithDefaults(), Credential{}).send(context.Background(), []entry{newEntry("1", "mta", "h", `{"msg":"x"}`, time.Now())})
+		srv.Close()
+		require.Error(t, err)
+		require.Equal(t, blamed, strings.Contains(err.Error(), "manage_index_templates"), status)
+	}
+}

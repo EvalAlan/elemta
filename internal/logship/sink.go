@@ -18,6 +18,8 @@ const (
 	sendTimeout     = 20 * time.Second
 	maxAnswerBytes  = 8 << 20
 	maxReasonLength = 300
+
+	templatePriority = 500
 )
 
 // Credential is how the console signs in to the destination: an API key, or
@@ -138,8 +140,11 @@ func template(prefix string) ([]byte, error) {
 	keyword := m{"type": "keyword", "ignore_above": 1024}
 	return json.Marshal(m{
 		"index_patterns": []string{prefix + "-*"},
-		// Above the broad elemta-* template of the development overlay.
-		"priority": 500,
+		// Above the broad elemta-* template of the development overlay, and
+		// higher the longer the prefix: elemta-logs-* also covers
+		// elemta-logs-prod-*, and Elasticsearch refuses two templates that
+		// overlap at one priority.
+		"priority": templatePriority + len(prefix),
 		"_meta":    m{"description": "Elemta service logs"},
 		"template": m{
 			"mappings": m{
@@ -210,7 +215,11 @@ func (s *sink) sendElasticsearch(ctx context.Context, batch []entry) (delivery, 
 			return out, err
 		}
 		if status < 200 || status > 299 {
-			return out, refusal("the index template couldn't be saved (the credential needs manage_index_templates)", status, answer)
+			doing := "the index template couldn't be saved"
+			if status == http.StatusUnauthorized || status == http.StatusForbidden {
+				doing += " (check the credential, and that it has manage_index_templates)"
+			}
+			return out, refusal(doing, status, answer)
 		}
 		s.templated = true
 	}
