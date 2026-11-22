@@ -35,10 +35,24 @@ Run several consoles only with one runtime configuration volume between them,
 as the HA and scale deployments do. Consoles with settings files of their own
 on one Valkey would each send the lines to their own destination.
 
+### Allow the destination first
+
+List where logs may go in the admin console's environment, then restart it:
+
+```
+ELEMTA_LOG_SHIP_DESTINATIONS=https://elasticsearch.example.com:9200,https://logstash.example.com:8080
+```
+
+Separate them with commas. With Compose put it in the env file the
+stack is started with (`.secrets/cloud.env` for the cloud deploy). With
+Kubernetes set it on the admin container. The console offers only these URLs
+and can't add to them, so a hijacked administrator's session can't send the
+logs somewhere else. With none listed, nothing can be sent.
+
 ### Elasticsearch
 
 1. Open Settings, All plugins, then Log shipping's settings.
-2. Enter the URL, for example `https://elasticsearch.example.com:9200`, and an
+2. Choose the URL and enter an
    API key or user name and password. It needs `manage_index_templates` on the
    cluster, and `create_index` and `create_doc` on `elemta-logs-*`.
 3. **Send a test line**, then tick **Ship logs** and save.
@@ -64,13 +78,15 @@ aren't refused. Search it by exact value.
 Use `deployments/elk/logstash-shipping.conf` as the pipeline and mount
 `deployments/elk/logs-template.json` at
 `/usr/share/logstash/elemta/logs-template.json`. In the console choose Logstash,
-enter the input's URL (port 8080 in that file) and the user name and password
-it was started with.
+choose the input's URL (port 8080 in that file, and it has to be listed as
+above) and enter the user name and password it was started with.
 
 ### Where it can send
 
-Anywhere an administrator names, private networks and loopback included,
-since that is where log clusters are. Link-local, cloud metadata, multicast
+Only the URLs in `ELEMTA_LOG_SHIP_DESTINATIONS`, matched whole: scheme, host,
+port and path. They can be on private networks or loopback, since that is
+where log clusters are. Removing one and restarting stops shipping to it; the
+Dashboard warns and lines wait. Even for a listed URL, link-local, cloud metadata, multicast
 and unspecified addresses are refused on every connection, redirects aren't
 followed, and proxy settings from the environment aren't used.
 

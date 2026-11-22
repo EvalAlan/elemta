@@ -11,7 +11,7 @@ import (
 func TestLogShippingAPI(t *testing.T) {
 	base, _ := startProvisionAPIWith(t, func(s *Server) {
 		s.mainConfig = &MainConfig{Hostname: "mail.example.com"}
-		s.SetLogShipper(logship.NewShipper(t.TempDir(), "", nil))
+		s.SetLogShipper(logship.NewShipper(t.TempDir(), "", []string{"https://es.example.com:9200"}, nil))
 	})
 	call := func(user, password, method, path string, body any) (int, string) {
 		return userRequest(t, method, base+"/api"+path, user, password, body)
@@ -32,6 +32,11 @@ func TestLogShippingAPI(t *testing.T) {
 	code, body = call("root", testAdminPassword, "GET", "/log-shipping", nil)
 	require.Equal(t, http.StatusOK, code, body)
 	require.Contains(t, body, `"credential_set":true`)
+
+	require.Contains(t, body, `"destinations":["https://es.example.com:9200"]`)
+	code, body = call("root", testAdminPassword, "POST", "/log-shipping/test", map[string]any{"settings": map[string]any{"url": "http://127.0.0.1:1"}})
+	require.Equal(t, http.StatusBadRequest, code, body)
+	require.Contains(t, body, logship.DestinationsEnv)
 
 	// Nothing can carry the logs, so it can't be switched on.
 	code, body = call("root", testAdminPassword, "PUT", "/config/plugins/log_shipping", map[string]any{"enabled": true})

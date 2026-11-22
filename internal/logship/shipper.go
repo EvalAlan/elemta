@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,19 +45,21 @@ type Shipper struct {
 	addr  string
 	log   *slog.Logger
 	owner string
+	// destinations are the only places anything is sent.
+	destinations []string
 
 	mu     sync.Mutex
 	client valkey.Client
 }
 
-// NewShipper keeps its settings in dir.
-func NewShipper(dir, addr string, log *slog.Logger) *Shipper {
+// NewShipper keeps its settings in dir and sends only to destinations.
+func NewShipper(dir, addr string, destinations []string, log *slog.Logger) *Shipper {
 	if log == nil {
 		log = slog.Default()
 	}
 	var id [12]byte
 	_, _ = rand.Read(id[:])
-	s := &Shipper{addr: addr, log: log.With("component", "log-shipping"), owner: hex.EncodeToString(id[:])}
+	s := &Shipper{addr: addr, destinations: slices.Clone(destinations), log: log.With("component", "log-shipping"), owner: hex.EncodeToString(id[:])}
 	if dir != "" {
 		s.path = filepath.Join(dir, fileName)
 	}
@@ -106,6 +109,32 @@ func (s *Shipper) Settings() (Settings, bool, error) {
 	return f.Settings, f.Credential.set(), err
 }
 
+// Destinations are the URLs logs may be sent to.
+func (s *Shipper) Destinations() []string {
+	return append([]string{}, s.destinations...)
+}
+
+var errUnlisted = invalid{errors.New("that destination isn't allowed: list its URL in " + DestinationsEnv + " on the admin console and restart it")}
+
+// approved finds url in the operator's list and returns the list's own copy,
+// which is the one requests are made to.
+func (s *Shipper) approved(url string) (string, error) {
+	for _, d := range s.destinations {
+		if d == url {
+			return d, nil
+		}
+	}
+	return "", errUnlisted
+}
+
+func (s *Shipper) sinkFor(f saved) (*sink, error) {
+	base, err := s.approved(f.Settings.URL)
+	if err != nil {
+		return nil, err
+	}
+	return newSink(base, f.Settings, f.Credential), nil
+}
+
 // merge is the file as it would be. A nil credential keeps the saved one,
 // if the destination is the same.
 func (s *Shipper) merge(next Settings, c *Credential) (saved, error) {
@@ -149,6 +178,12 @@ func (s *Shipper) Save(ctx context.Context, next Settings, c *Credential) error 
 	if err != nil {
 		return err
 	}
+	// Only when on: switching off has to work after the list has changed.
+	if f.Settings.Enabled {
+		if _, err := s.approved(f.Settings.URL); err != nil {
+			return err
+		}
+	}
 	data, err := json.Marshal(f)
 	if err != nil {
 		return err
@@ -185,6 +220,10 @@ func (s *Shipper) Test(ctx context.Context, next Settings, c *Credential) error 
 	if err != nil {
 		return err
 	}
+	to, err := s.sinkFor(f)
+	if err != nil {
+		return err
+	}
 	host, err := os.Hostname()
 	if err != nil {
 		host = "unknown"
@@ -196,7 +235,7 @@ func (s *Shipper) Test(ctx context.Context, next Settings, c *Credential) error 
 	}
 	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
-	out, err := newSink(f.Settings, f.Credential).send(ctx, []entry{newEntry(strconv.FormatInt(now.UnixNano(), 10), "admin", host, string(line), now)})
+	out, err := to.send(ctx, []entry{newEntry(strconv.FormatInt(now.UnixNano(), 10), "admin", host, string(line), now)})
 	if err != nil {
 		return err
 	}
@@ -271,7 +310,20 @@ func (s *Shipper) Run(ctx context.Context) {
 			continue
 		}
 		if out == nil || using != f {
-			out, using, failures = newSink(f.Settings, f.Credential), f, 0
+			// Checked here too: the file can outlive the list it was saved under.
+			next, err := s.sinkFor(f)
+			if err != nil {
+				out = nil
+				if failures == 0 {
+					s.log.Warn("Log shipping has nowhere allowed to send; logs wait in Valkey", "error", err)
+					failures = 1
+				}
+				if err := s.record(ctx, client, delivery{}, err); err != nil {
+					s.log.Debug("Log shipping's status wasn't recorded", "error", err)
+				}
+				continue
+			}
+			out, using, failures = next, f, 0
 		}
 		err = s.ship(ctx, client, out)
 		switch {

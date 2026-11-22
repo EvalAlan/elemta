@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,7 +97,13 @@ func TestSettings(t *testing.T) {
 
 func TestCredentialStaysWithItsDestination(t *testing.T) {
 	dir := t.TempDir()
-	s := NewShipper(dir, "", nil)
+	var got string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer other.Close()
+	s := NewShipper(dir, "", []string{"https://es.example.com:9200", other.URL}, nil)
 	ctx := context.Background()
 	require.NoError(t, s.Save(ctx, Settings{URL: "https://es.example.com:9200"}, &Credential{APIKey: "k3y"}))
 	info, err := os.Stat(filepath.Join(dir, fileName))
@@ -108,12 +115,6 @@ func TestCredentialStaysWithItsDestination(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, set, "an edit lost the credential")
 
-	var got string
-	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.Header.Get("Authorization")
-		_, _ = w.Write([]byte("ok"))
-	}))
-	defer other.Close()
 	require.NoError(t, s.Test(ctx, Settings{URL: other.URL, Kind: KindLogstash}, nil))
 	require.Empty(t, got, "the credential went to another host")
 
@@ -180,7 +181,7 @@ func TestElasticsearch(t *testing.T) {
 	for i, msg := range []string{"good", "bad", "busy", "also good"} {
 		batch = append(batch, newEntry(string(rune('a'+i)), "mta", "h", `{"msg":"`+msg+`"}`, now))
 	}
-	s := newSink(Settings{URL: srv.URL}.WithDefaults(), Credential{})
+	s := newSink(srv.URL, Settings{}.WithDefaults(), Credential{})
 	out, err := s.send(context.Background(), batch)
 	require.Error(t, err, "a 429 has to be retried")
 	require.Equal(t, []string{"a", "b", "d"}, out.done)
@@ -203,7 +204,7 @@ func TestRedirectIsNotFollowed(t *testing.T) {
 	defer other.Close()
 	srv := httptest.NewServer(http.RedirectHandler(other.URL, http.StatusTemporaryRedirect))
 	defer srv.Close()
-	s := newSink(Settings{Kind: KindLogstash, URL: srv.URL}.WithDefaults(), Credential{Username: "u", Password: "p"})
+	s := newSink(srv.URL, Settings{Kind: KindLogstash}.WithDefaults(), Credential{Username: "u", Password: "p"})
 	_, err := s.send(context.Background(), []entry{newEntry("1", "mta", "h", `{"msg":"x"}`, time.Now())})
 	require.Error(t, err)
 	require.False(t, followed)
@@ -235,7 +236,7 @@ func TestPipeline(t *testing.T) {
 	es := &fakeES{down: true, docs: map[string]map[string]any{}}
 	srv := httptest.NewServer(es)
 	defer srv.Close()
-	s := NewShipper(t.TempDir(), addr, nil)
+	s := NewShipper(t.TempDir(), addr, []string{srv.URL}, nil)
 	set := Settings{Enabled: true, URL: srv.URL}.WithDefaults()
 	require.NoError(t, s.Save(ctx, set, nil))
 
@@ -247,7 +248,7 @@ func TestPipeline(t *testing.T) {
 		c.flush(ctx)
 		c.client.Close()
 	}
-	out := newSink(set, Credential{})
+	out := newSink(srv.URL, set, Credential{})
 	require.Error(t, s.ship(ctx, client, out))
 	st, err := s.Status(ctx)
 	require.NoError(t, err)
@@ -305,7 +306,7 @@ func TestOverlappingPrefixesGetTheirOwnPriority(t *testing.T) {
 func TestOnlyAPermissionProblemBlamesPermissions(t *testing.T) {
 	for status, blamed := range map[int]bool{400: false, 401: true, 403: true} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
-		_, err := newSink(Settings{URL: srv.URL}.WithDefaults(), Credential{}).send(context.Background(), []entry{newEntry("1", "mta", "h", `{"msg":"x"}`, time.Now())})
+		_, err := newSink(srv.URL, Settings{}.WithDefaults(), Credential{}).send(context.Background(), []entry{newEntry("1", "mta", "h", `{"msg":"x"}`, time.Now())})
 		srv.Close()
 		require.Error(t, err)
 		require.Equal(t, blamed, strings.Contains(err.Error(), "manage_index_templates"), status)
@@ -319,6 +320,89 @@ func TestDestinationsRefused(t *testing.T) {
 	for _, addr := range []string{"127.0.0.1:9200", "10.0.0.5:9200", "[fd12::5]:9200", "203.0.113.4:443"} {
 		require.NoError(t, checkDestination("tcp", addr, nil), addr)
 	}
-	err := NewShipper(t.TempDir(), "", nil).Test(context.Background(), Settings{URL: "http://169.254.169.254"}, nil)
+	// Listed or not.
+	err := NewShipper(t.TempDir(), "", []string{"http://169.254.169.254"}, nil).Test(context.Background(), Settings{URL: "http://169.254.169.254"}, nil)
 	require.ErrorIs(t, err, errDestination)
+}
+
+func TestParseDestinations(t *testing.T) {
+	got, unusable := ParseDestinations(" https://es.example.com:9200/,http://10.0.0.5:8080\nhttps://es.example.com:9200 https://u:p@x.example.com file:///etc/passwd ")
+	require.Equal(t, []string{"https://es.example.com:9200", "http://10.0.0.5:8080"}, got)
+	require.Equal(t, 2, unusable)
+	got, unusable = ParseDestinations("")
+	require.Empty(t, got)
+	require.Zero(t, unusable)
+}
+
+func TestOnlyListedDestinations(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+	listed := srv.URL + "/in"
+	s := NewShipper(t.TempDir(), "unused", []string{listed}, nil)
+
+	for name, url := range map[string]string{
+		"another host":   "https://attacker.example.net",
+		"same host":      srv.URL,
+		"another path":   srv.URL + "/other",
+		"climbing out":   listed + "/../other",
+		"longer":         listed + "side",
+		"encoded":        srv.URL + "/%69n",
+		"another scheme": strings.Replace(listed, "http:", "https:", 1),
+		"nothing":        "",
+	} {
+		err := s.Test(ctx, Settings{Kind: KindLogstash, URL: url}, nil)
+		require.True(t, IsInvalid(err), name)
+		require.True(t, IsInvalid(s.Save(ctx, Settings{Enabled: true, Kind: KindLogstash, URL: url}, nil)), name)
+	}
+	require.Zero(t, hits.Load(), "a request was made to somewhere unlisted")
+
+	require.NoError(t, s.Test(ctx, Settings{Kind: KindLogstash, URL: listed + "/"}, nil))
+	require.EqualValues(t, 1, hits.Load())
+
+	_, err := NewShipper(t.TempDir(), "", nil, nil).approved(listed)
+	require.Error(t, err, "no list has to mean nowhere")
+}
+
+// A file saved under an older list, or written some other way.
+func TestRunKeepsToTheList(t *testing.T) {
+	addr := os.Getenv("ELEMTA_TEST_VALKEY")
+	if addr == "" {
+		t.Skip("set ELEMTA_TEST_VALKEY")
+	}
+	ctx := context.Background()
+	client, err := valkeyaddr.NewClient(addr, nil)
+	require.NoError(t, err)
+	clean := func() {
+		_ = client.Do(ctx, client.B().Del().Key(keyPolicy, keyStream, keyStatus, keyLock).Build()).Error()
+	}
+	clean()
+	t.Cleanup(func() { clean(); client.Close() })
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	set := Settings{Enabled: true, Kind: KindLogstash, URL: srv.URL}.WithDefaults()
+	require.NoError(t, NewShipper(dir, addr, []string{srv.URL}, nil).Save(ctx, set, nil))
+	require.NoError(t, client.Do(ctx, client.B().Xadd().Key(keyStream).Id("*").FieldValue().
+		FieldValue("s", "mta").FieldValue("h", "h").FieldValue("e", `{"msg":"x"}`).Build()).Error())
+
+	s := NewShipper(dir, addr, nil, nil)
+	run, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); s.Run(run) }()
+	defer func() { stop(); <-done }()
+	require.Eventually(t, func() bool {
+		h, err := client.Do(ctx, client.B().Hgetall().Key(keyStatus).Build()).AsStrMap()
+		return err == nil && strings.Contains(h["last_error"], DestinationsEnv) && h["failing_since"] != ""
+	}, 10*time.Second, 50*time.Millisecond)
+	require.Zero(t, hits.Load())
+
+	set.Enabled = false
+	require.NoError(t, NewShipper(dir, addr, nil, nil).Save(ctx, set, nil), "switching off has to work without a list")
 }

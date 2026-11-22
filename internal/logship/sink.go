@@ -74,13 +74,16 @@ type delivery struct {
 }
 
 type sink struct {
+	// base is the operator's copy of the destination, never settings.URL,
+	// which came in a request.
+	base       string
 	settings   Settings
 	credential Credential
 	http       *http.Client
 	templated  bool
 }
 
-func newSink(s Settings, c Credential) *sink {
+func newSink(base string, s Settings, c Credential) *sink {
 	dialer := &net.Dialer{Timeout: sendTimeout, Control: checkDestination}
 	transport := &http.Transport{
 		Proxy:               nil, // never an environment proxy: it would dial for us, unchecked
@@ -89,7 +92,7 @@ func newSink(s Settings, c Credential) *sink {
 		TLSHandshakeTimeout: sendTimeout,
 		IdleConnTimeout:     30 * time.Second,
 	}
-	return &sink{settings: s, credential: c, http: &http.Client{
+	return &sink{base: base, settings: s, credential: c, http: &http.Client{
 		Timeout:   sendTimeout,
 		Transport: transport,
 		// A redirect would take the credential somewhere nobody chose.
@@ -123,8 +126,8 @@ func checkDestination(_, address string, _ syscall.RawConn) error {
 }
 
 func (s *sink) post(ctx context.Context, method, path, kind string, body []byte) (int, []byte, error) {
-	// #nosec G704 -- the destination is a system administrator's setting
-	req, err := http.NewRequestWithContext(ctx, method, s.settings.URL+path, bytes.NewReader(body))
+	// #nosec G704 -- base is from the operator's list in the environment
+	req, err := http.NewRequestWithContext(ctx, method, s.base+path, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, err
 	}

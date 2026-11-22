@@ -3,7 +3,7 @@
 (function () {
     'use strict';
     const el = id => document.getElementById(id);
-    const PLACEHOLDER = { elasticsearch: 'https://elasticsearch.example.com:9200', logstash: 'https://logstash.example.com:8080' };
+    const VARIABLE = 'ELEMTA_LOG_SHIP_DESTINATIONS';
     let timer = null, savedOrigin = '', credentialSet = false;
 
     async function call(path, method = 'GET', body) {
@@ -29,7 +29,18 @@
         el('logship-key-field').hidden = auth.value !== 'key';
         el('logship-user-field').hidden = el('logship-password-field').hidden = auth.value !== 'basic';
         el('logship-plain').hidden = !/^\s*http:/i.test(url);
-        el('logship-url').placeholder = PLACEHOLDER[el('logship-kind').value];
+        el('logship-test').disabled = !url;
+    }
+
+    function fillDestinations(allowed, saved) {
+        const select = el('logship-url');
+        select.replaceChildren(new Option(allowed.length ? 'Choose one' : 'None allowed yet', ''));
+        allowed.forEach(url => select.add(new Option(url, url)));
+        if (saved && !allowed.includes(saved)) select.add(new Option(saved + ' (not allowed)', saved));
+        select.value = saved;
+        el('logship-allowed').textContent = allowed.length
+            ? 'To allow another, add it to ' + VARIABLE + " in the admin console's environment and restart it."
+            : "The server's operator lists where logs may go: set " + VARIABLE + " in the admin console's environment, for example https://elasticsearch.example.com:9200, and restart it.";
     }
 
     function fillStatus(data) {
@@ -58,7 +69,7 @@
         const s = data.settings;
         el('logship-enabled').checked = s.enabled;
         el('logship-kind').value = s.kind;
-        el('logship-url').value = s.url;
+        fillDestinations(data.destinations, s.url);
         el('logship-index').value = s.index;
         el('logship-level').value = s.min_level;
         el('logship-subjects').checked = s.include_subjects;
@@ -136,7 +147,7 @@
             } catch (error) {
                 result.textContent = error.message;
             }
-            test.disabled = false;
+            syncFields();
         });
     });
 })();

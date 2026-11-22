@@ -13,8 +13,10 @@ import (
 	"log/slog"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Where logs can go.
@@ -82,11 +84,15 @@ func (s Settings) Validate() error {
 	}
 	if s.URL == "" {
 		if s.Enabled {
-			return errors.New("enter the destination's URL before switching log shipping on")
+			return errors.New("choose a destination before switching log shipping on")
 		}
 		return nil
 	}
-	u, err := url.Parse(s.URL)
+	return checkURL(s.URL)
+}
+
+func checkURL(raw string) error {
+	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return errors.New("the URL must start with http:// or https:// and name a host")
 	}
@@ -97,6 +103,27 @@ func (s Settings) Validate() error {
 		return errors.New("the URL can't have a query or fragment")
 	}
 	return nil
+}
+
+// DestinationsEnv lists where logs may be sent. It is in the environment
+// because the console can write its own configuration: whoever takes over an
+// administrator's session mustn't be able to add to the list, or they could
+// have every service's log sent to them, or reach into the private network.
+const DestinationsEnv = "ELEMTA_LOG_SHIP_DESTINATIONS"
+
+// ParseDestinations reads the list, separated by commas or spaces, and counts
+// what it couldn't use. Those aren't returned: one can hold a password.
+func ParseDestinations(list string) (urls []string, unusable int) {
+	for _, u := range strings.FieldsFunc(list, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		u = strings.TrimRight(u, "/")
+		switch {
+		case checkURL(u) != nil:
+			unusable++
+		case !slices.Contains(urls, u):
+			urls = append(urls, u)
+		}
+	}
+	return urls, unusable
 }
 
 // origin is what a credential belongs to.

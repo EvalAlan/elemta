@@ -101,6 +101,9 @@ services:
       - NODE_ID=web
       - VALKEY_ADDR=elemta-valkey:6379
       - ELEMTA_CONFIG_RESEED=${ELEMTA_CONFIG_RESEED:-}
+      # Where log shipping may send (docs/logging.md). The console can pick
+      # from this list and can't add to it.
+      - ELEMTA_LOG_SHIP_DESTINATIONS=${ELEMTA_LOG_SHIP_DESTINATIONS:-}
     healthcheck:
       # /api/health is public so probes have something to ask; / is behind login.
       test: ["CMD", "curl", "-f", "http://localhost:8025/api/health"]

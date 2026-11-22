@@ -83,7 +83,7 @@ func (s *Server) handleLogShip(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "The status can't be read", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"settings": set, "status": status})
+	writeJSON(w, map[string]any{"settings": set, "status": status, "destinations": s.logShip.Destinations()})
 }
 
 type logShipRequest struct {

@@ -1806,8 +1806,8 @@
                                     <label>Send to
                                         <select id="logship-kind"><option value="elasticsearch">Elasticsearch</option><option value="logstash">Logstash (HTTP input)</option></select>
                                     </label>
-                                    <label>URL
-                                        <input id="logship-url" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="https://elasticsearch.example.com:9200">
+                                    <label>Destination URL
+                                        <select id="logship-url" aria-describedby="logship-allowed"></select>
                                     </label>
                                     <label>Index prefix
                                         <input id="logship-index" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="elemta-logs">
@@ -1828,6 +1828,7 @@
                                         <input id="logship-password" type="password" maxlength="1024" autocomplete="new-password">
                                     </label>
                                 </div>
+                                <p class="field-hint" id="logship-allowed"></p>
                                 <p class="logship-detail" id="logship-plain" hidden>This address is plain HTTP: logs and any credential cross the network unencrypted. Use HTTPS off this machine.</p>
                                 <label class="logship-check"><input id="logship-subjects" type="checkbox"> Include subjects</label>
                                 <p class="field-hint">Subjects are the content of people's mail, so they stay here unless you tick this. Passwords, tokens, typed command arguments and message lines are never sent. Addresses and IPs are.</p>
