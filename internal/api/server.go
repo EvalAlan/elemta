@@ -201,6 +201,7 @@ type Server struct {
 	listener       net.Listener
 	restarting     atomic.Bool
 	queueMgr       *queue.Manager
+	monitor        *resourceMonitor
 	listenAddr     string
 	webRoot        string
 	authSystem     *auth.Auth
@@ -334,6 +335,7 @@ func NewServer(config *Config, mainConfig *MainConfig, queueDir string, failedQu
 		mainConfig: mainConfig,
 		configPath: configPath,
 		queueMgr:   queueMgr,
+		monitor:    newResourceMonitor(queueMgr, queueDir, configPath),
 		listenAddr: listenAddr,
 		webRoot:    webRoot,
 	}
@@ -806,6 +808,11 @@ func (s *Server) Start() error {
 	// Off-site backups: when the last one ran and whether it worked, from
 	// the host job's status file. Read-only, behind dashboard auth.
 	api.Handle("/backup/status", s.requireAuthIfConfigured(http.HandlerFunc(s.handleBackupStatus))).Methods("GET")
+	// Needs attention names accounts and the server's weak points, so only a
+	// system administrator reads it, and never a console without sign-in.
+	if s.authMiddleware != nil {
+		api.Handle("/attention", s.authMiddleware.RequirePermission(auth.PermissionSystemAdmin)(http.HandlerFunc(s.handleAttention))).Methods("GET")
+	}
 	// Requesting, uploading and removing certificates change what the mail
 	// services present, and a sync runs a host job, so they take the same
 	// permission as a restart.
@@ -928,6 +935,7 @@ func (s *Server) Start() error {
 	close(s.ready)
 	go s.watchBackups(s.stopDone)
 	go s.watchDNS(s.stopDone)
+	go s.watchResources(s.stopDone)
 	s.lifecycleMu.Unlock()
 
 	return nil

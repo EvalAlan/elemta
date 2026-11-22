@@ -339,7 +339,8 @@ async function refreshAllData() {
             loadQueueStats(),
             loadQueueObservability(),
             loadQueue(state.currentQueue),
-            loadRecentActivity()
+            loadRecentActivity(),
+            loadAttention()
         ]);
         updateLastUpdated();
         return true;
@@ -348,6 +349,66 @@ async function refreshAllData() {
         return false;
     } finally {
         showRefreshIndicator(false);
+    }
+}
+
+// loadAttention fills the Dashboard's problem list. Only system
+// administrators may read it; for anyone else the card stays hidden. Details
+// quote DNS and status files, so they are only ever set as text.
+let attentionShown = '';
+async function loadAttention() {
+    const card = document.getElementById('attention-card');
+    if (!card || !document.getElementById('view-dashboard').classList.contains('active')) return;
+    let items;
+    try {
+        const response = await fetch(`${API_BASE}/attention`);
+        if ([401, 403, 404].includes(response.status)) {
+            card.hidden = true;
+            return;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        items = (await response.json()).items;
+    } catch (error) {
+        console.error('Attention check failed:', error);
+        items = [{ severity: 'unknown', title: 'Needs attention', detail: "Couldn't check for problems." }];
+    }
+    card.hidden = false;
+    // Unchanged, it is left alone: rebuilding on every refresh would take
+    // the focus off its links and be read out again.
+    const shown = JSON.stringify(items);
+    if (shown === attentionShown) return;
+    attentionShown = shown;
+
+    const labels = { critical: 'Critical', warning: 'Warning', unknown: "Couldn't check", info: 'Note' };
+    const pages = { health: 'Health', queues: 'Mail Queues', abuse: 'Abuse', certificates: 'Certificates' };
+    const make = (tag, className, text) => {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+    };
+    document.getElementById('attention-count').textContent = items.length ? String(items.length) : '';
+    const list = document.getElementById('attention-list');
+    list.replaceChildren();
+    if (!items.length) {
+        list.appendChild(make('li', 'attention-clear', 'Nothing needs attention.'));
+        return;
+    }
+    for (const item of items) {
+        const row = make('li', 'attention-item');
+        row.appendChild(make('span', `attention-severity attention-${item.severity in labels ? item.severity : 'unknown'}`, labels[item.severity] || labels.unknown));
+        const what = make('div', 'attention-what');
+        what.appendChild(make('strong', '', item.title));
+        what.appendChild(make('p', '', item.detail));
+        if (item.since) what.appendChild(make('small', 'field-hint', `since ${formatDate(item.since)}`));
+        row.appendChild(what);
+        if (pages[item.link]) {
+            const open = make('button', 'btn btn-secondary btn-sm', pages[item.link]);
+            open.type = 'button';
+            open.addEventListener('click', () => switchView(item.link));
+            row.appendChild(open);
+        }
+        list.appendChild(row);
     }
 }
 

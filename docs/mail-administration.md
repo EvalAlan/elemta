@@ -107,6 +107,32 @@ Maildir or another mailbox password. Mail apps sign in using the primary
 address. An alias does not automatically grant permission to send with that
 address; outbound sender permissions remain governed by `[auth.sender_aliases]`.
 
+## Needs attention and alert emails
+
+The Dashboard opens with **Needs attention**, for system administrators: what
+is wrong now, worst first, each with the page where it's dealt with. It
+gathers backups, the TLS certificate, the scheduled DNS checks, accounts held
+from sending, unusual sign-ins in the last day, and:
+
+| Check | Warning | Critical | Clears below |
+|---|---|---|---|
+| Disk space, and inodes, where the queue and configuration live | 85% | 95% | 82% (92% for critical) |
+| Longest wait in the active queue without progress | 15 min | 1 h | 10 min (45 min) |
+| Deferred messages | 100 | 1000 | 80 (800) |
+
+A wait in the active queue counts from when the message entered it, so a
+retry of mail deferred two days ago isn't reported as stuck. The queue is
+listed at most every five minutes, so those two can lag that far. Something
+that can't be read shows as "Couldn't check", never as fine.
+
+The disk and queue checks also email the alert addresses set on the Abuse
+page: at once when one starts or gets worse, daily while it lasts, and once
+when it clears. Backup, DNS, certificate and abuse alerts are sent as before.
+
+These emails go out through this same server. They warn of trouble coming;
+they can't report that the server is down or that its disk is already full.
+Watch for that from outside it.
+
 ## Classes of service
 
 A class of service is a named set of rules for what an account may do.

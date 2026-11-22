@@ -25,6 +25,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/dnshealth"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/provision"
+	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/runtime"
 	cdpwebauthn "github.com/chromedp/cdproto/webauthn"
@@ -488,4 +489,60 @@ func TestBrowserAccountShowsUserProtocolChoice(t *testing.T) {
 	}
 	require.Equal(t, "Off | turned off by the user", row("IMAP"))
 	require.True(t, strings.HasPrefix(row("POP3"), "On | "), row("POP3"))
+}
+
+// The Dashboard's list: worst first, text only, its buttons lead to the page,
+// and it fits a phone.
+func TestBrowserAttention(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	for _, size := range []struct {
+		name          string
+		width, height int64
+	}{{"desktop", 1280, 1000}, {"phone", 390, 850}} {
+		t.Run(size.name, func(t *testing.T) {
+			base, _ := startProvisionAPIWith(t, func(s *Server) {
+				s.webRoot = webRoot
+				s.monitor = &resourceMonitor{levels: map[string]int{}, diskPaths: []string{"/queue"},
+					disk: func(string) (diskUsage, error) { return diskUsage{SpacePercent: 96, FreeBytes: 3 << 30}, nil },
+					list: func(queue.QueueType) ([]queue.Message, error) { return make([]queue.Message, 120), nil }}
+				reports := []dnshealth.Report{{Domain: "example.com", Checks: []dnshealth.Check{
+					{ID: "dmarc", Name: "Forgery policy (DMARC)", Status: dnshealth.StatusWarn, Summary: "<b>not markup</b>"}}}}
+				next, _ := dnsChanges(dnsWatchState{}, reports)
+				s.saveDNSWatch(recordSweep(dnsWatchFile{}, next, reports, time.Now().UTC()))
+			})
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+			defer cancel()
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(size.width, size.height),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), "root"),
+				chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+				chromedp.WaitVisible(chromedp.CSS("#attention-list .attention-item")),
+			))
+			eval := func(expr string) bool {
+				t.Helper()
+				v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+				require.NoError(t, err)
+				return v
+			}
+			require.True(t, eval(`document.querySelector("#attention-list .attention-item").textContent.includes("Disk space")`), "worst first")
+			require.True(t, eval(`document.getElementById("attention-list").textContent.includes("<b>not markup</b>") && !document.querySelector("#attention-list b")`), "a detail became markup")
+			require.True(t, eval(`document.getElementById("attention-card").scrollWidth <= document.getElementById("attention-card").clientWidth`), "overflows sideways")
+			if dir := os.Getenv("ELEMTA_ATTENTION_SCREENSHOTS"); dir != "" {
+				png, err := chromedp.Run(ctx, chromedp.Screenshot(chromedp.ID("attention-card")))
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "attention-"+size.name+".png"), png, 0o600))
+			}
+			require.True(t, eval(`(document.querySelector("#attention-list .attention-item button").click(), document.getElementById("view-health").classList.contains("active"))`), "the button opens Health")
+		})
+	}
 }
