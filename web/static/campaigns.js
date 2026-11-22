@@ -433,7 +433,9 @@ function sanitizeEmailHTML(html) {
     if (!html) return '';
     const doc = new DOMParser().parseFromString(String(html), 'text/html');
 
-    doc.querySelectorAll('script, iframe, object, embed, link, meta, base, form, input, button, style')
+    // svg and math parse by other rules, and markup safe in them can turn
+    // into something else when it is serialised and parsed again as HTML.
+    doc.querySelectorAll('script, iframe, object, embed, link, meta, base, form, input, button, style, svg, math, template, noscript')
         .forEach(el => el.remove());
 
     doc.querySelectorAll('*').forEach(el => {
@@ -444,7 +446,7 @@ function sanitizeEmailHTML(html) {
                 el.removeAttribute(attr.name);
                 continue;
             }
-            if (name === 'href' || name === 'src' || name === 'srcset' || name === 'action' || name === 'formaction') {
+            if (name === 'href' || name === 'xlink:href' || name === 'src' || name === 'srcset' || name === 'action' || name === 'formaction') {
                 const value = attr.value.trim();
                 if (!ALLOWED_URL_SCHEMES.test(value)) {
                     el.removeAttribute(attr.name);

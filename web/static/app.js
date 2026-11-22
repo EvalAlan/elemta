@@ -1111,9 +1111,9 @@ async function refreshLogs(options = {}) {
             const eventTypeClass = getEventTypeClass(log.event_type);
 
             return `
-                        <tr class="log-row ${level.toLowerCase()}">
+                        <tr class="log-row ${escapeHtml(level.toLowerCase())}">
                             <td class="log-time-cell">${escapeHtml(time)}</td>
-                            <td><span class="log-level-badge ${level.toLowerCase()}">${level}</span></td>
+                            <td><span class="log-level-badge ${escapeHtml(level.toLowerCase())}">${escapeHtml(level)}</span></td>
                             <td><span class="log-type-badge ${eventTypeClass}">${escapeHtml(eventType)}</span></td>
                             <td class="log-message-cell">
                                 <div class="log-msg-text">${escapeHtml(log.msg || '')}</div>
@@ -1521,11 +1521,17 @@ function showToast(message, type = 'info') {
 // ============================================================================
 // Utility Functions
 // ============================================================================
+// escapeHtml makes text safe both between tags and inside a quoted attribute.
+// Much of what the console shows is written by whoever sent the mail, so both
+// kinds of quote have to go as well: serialising a text node leaves them.
 function escapeHtml(text) {
     if (text === null || text === undefined) return '';
-    const div = document.createElement('div');
-    div.textContent = String(text);
-    return div.innerHTML;
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function getPriorityLabel(priority) {
@@ -1561,8 +1567,13 @@ async function copyMessageId(id) {
     }
 }
 
+// escapeJsArg makes a value safe as a quoted argument in an inline handler.
+// The browser decodes the attribute as HTML before it reads it as JavaScript,
+// so a character that means something to either is written as \\uXXXX, which
+// means nothing to HTML and only itself to JavaScript.
 function escapeJsArg(value) {
-    return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return String(value ?? '').replace(/[^A-Za-z0-9 _.,:@/-]/g,
+        c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
 }
 
 function queueStatusClass(queueType) {
@@ -1806,7 +1817,7 @@ async function refreshServerConfig() {
         contentEl.style.display = 'block';
     } catch (error) {
         console.error('Error loading server config:', error);
-        loadingEl.innerHTML = `<div style="color: #ef4444; padding: 1rem;">Failed to load configuration: ${error.message}</div>`;
+        loadingEl.innerHTML = `<div style="color: #ef4444; padding: 1rem;">Failed to load configuration: ${escapeHtml(error.message)}</div>`;
     }
 }
 
@@ -2638,7 +2649,7 @@ async function loadAPIKeys() {
                     <span class="apikey-meta">Created: ${formatDate(key.created_at)}</span>
                 </div>
                 <div class="apikey-actions">
-                    <button class="btn btn-danger btn-sm" onclick="revokeAPIKey('${key.id}')">Revoke</button>
+                    <button class="btn btn-danger btn-sm" onclick="revokeAPIKey('${escapeJsArg(key.id)}')">Revoke</button>
                 </div>
             </div>
         `).join('');
@@ -3007,7 +3018,7 @@ function renderRecentErrors(errors) {
                 <div class="error-message">${escapeHtml(err.error)}</div>
                 <div class="error-meta">${escapeHtml(err.recipient)} • ${formatTimeAgo(err.timestamp)}</div>
                 <div style="margin-top: 0.35rem;">
-                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch(decodeURIComponent('${encodeURIComponent(err.error || '')}'))">View related logs</button>
+                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch('${escapeJsArg(err.error)}')">View related logs</button>
                 </div>
             </div>
         </div>
@@ -3029,7 +3040,7 @@ function renderTopErrorReasons(reasons) {
                 <div class="error-message">${escapeHtml(reason.reason || 'unknown error')}</div>
                 <div class="error-meta">${reason.count || 0} event(s)</div>
                 <div style="margin-top: 0.35rem;">
-                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch(decodeURIComponent('${encodeURIComponent(reason.reason || '')}'))">View matching logs</button>
+                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch('${escapeJsArg(reason.reason)}')">View matching logs</button>
                 </div>
             </div>
         </div>
@@ -3088,7 +3099,7 @@ function renderMessagePreview(message) {
                     </svg>
                     HTML content rendered in sandbox
                 </div>
-                <iframe class="preview-frame" sandbox="allow-same-origin" srcdoc="${escapeHtml(body).replace(/"/g, '&quot;')}"></iframe>
+                <iframe class="preview-frame" sandbox="" srcdoc="${escapeHtml(body)}"></iframe>
             </div>
         `;
     } else {

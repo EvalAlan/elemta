@@ -1136,3 +1136,84 @@ func TestBrowserLogShippingDestinations(t *testing.T) {
 		})
 	}
 }
+
+// Mail, remote servers and logs write much of what the console shows. None
+// of it may become script: not through an attribute, and not through the
+// argument of an inline handler.
+func TestBrowserUntrustedTextStaysText(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	base, _ := startProvisionAPIWith(t, func(s *Server) { s.webRoot = webRoot })
+	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+	ctx, cancel := context.WithTimeout(browserCtx, 90*time.Second)
+	defer cancel()
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.EmulateViewport(1400, 900),
+		chromedp.Navigate(base+"/login"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "root"),
+		chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+		chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+		chromedp.WaitVisible(chromedp.CSS(`.nav-item[data-view="queues"]`)),
+		chromedp.Sleep(1500*time.Millisecond),
+	))
+	run := func(expr string) string {
+		t.Helper()
+		v, err := chromedp.Run(ctx, chromedp.Evaluate[string](expr))
+		require.NoError(t, err)
+		return v
+	}
+	run(`(() => { window.__ran = []; window.hook = () => { window.__ran.push("hook"); return "" };
+		window.payloads = [
+			'plain text',
+			'x" data-injected="1" y="',
+			"x' data-injected='1",
+			"550 '-hook()-'",
+			"x');hook();('",
+			"x&#39;);hook();(&#39;",
+			"x\\');hook();//",
+			'x" onmouseover="hook()',
+			'<img src=x onerror="hook()">',
+			"line\u2028break \u00e9\u6f22\ud83d\ude00",
+		];
+		window.drilldownLogsBySearch = v => window.__got.push(v);
+		window.viewMessage = window.copyMessageId = window.toggleMessageSelection = v => window.__got.push(v);
+		window.retryMessage = window.holdMessage = window.deleteMessage = v => window.__got.push(v);
+		window.__got = [];
+		return "" })()`)
+	got := run(`(() => {
+		const bad = [];
+		for (const p of window.payloads) {
+			state.messages = [{ id: p, from: p, to: [p], subject: p, priority: 2, created_at: new Date().toISOString() }];
+			state.currentPage = 1;
+			for (const id of ["search-input", "priority-filter", "date-filter"]) { const e = document.getElementById(id); if (e) e.value = ""; }
+			if (typeof filterMessages === "function") filterMessages(); else state.filteredMessages = state.messages;
+			renderMessages();
+			const row = document.querySelector("#messages-tbody tr");
+			if (!row || row.querySelector("[data-injected], img")) { bad.push("queue markup: " + p); continue }
+			if (![...row.querySelectorAll("[title]")].some(e => e.title === p)) bad.push("queue title changed: " + p);
+			window.__got = [];
+			try { row.querySelector(".message-id").click() } catch (e) {}
+			if (window.__got[0] !== p) bad.push("queue argument changed: " + p);
+
+			renderRecentErrors([{ error: p, recipient: p, timestamp: new Date().toISOString() }]);
+			renderTopErrorReasons([{ reason: p, count: 1 }]);
+			for (const id of ["recent-errors", "top-error-reasons"]) {
+				const box = document.getElementById(id);
+				if (box.querySelector("[data-injected], img")) bad.push(id + " markup: " + p);
+				window.__got = [];
+				box.querySelector("button").click();
+				if (window.__got[0] !== p) bad.push(id + " argument changed: " + p);
+			}
+			const d = document.createElement("div");
+			d.innerHTML = '<i title="' + escapeHtml(p) + '"></i>';
+			if (d.firstChild.attributes.length !== 1 || d.firstChild.title !== p) bad.push("escapeHtml: " + p);
+		}
+		return bad.concat(window.__ran.map(() => "script ran")).join("\n") })()`)
+	require.Empty(t, got)
+}
