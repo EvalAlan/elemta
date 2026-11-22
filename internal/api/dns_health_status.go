@@ -16,9 +16,10 @@ import (
 
 // dnsCheckResolver is the resolver the DNS checks ask. They must see what
 // the rest of the internet sees, and inside Compose the default resolver is
-// Docker's, which answers container names itself: the MTA's network alias
-// is the mail domain (so webmail can verify its certificate), and Docker
-// then says that domain has no MX. ELEMTA_DNS_CHECK_RESOLVER names a DNS
+// Docker's, which answers container names and network aliases itself. When
+// one of those is a hosted domain (the cloud overlay used to give the MTA
+// the mail domain as an alias), Docker says that domain has no MX and
+// points it at a private address. ELEMTA_DNS_CHECK_RESOLVER names a DNS
 // server to ask directly instead, an address with an optional port; the
 // compose files set it to the stack's own resolver.
 var dnsCheckResolver = sync.OnceValue(newDNSCheckResolver)
