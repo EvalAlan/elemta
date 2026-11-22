@@ -2425,6 +2425,17 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 .away-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 0 12px; padding: 8px 14px; border-radius: var(--radius); background: var(--accent-soft); color: var(--ink); }
 .away-banner .icon { flex: none; color: var(--accent); }
 .away-banner > span { flex: 1 1 12em; }
+/* A newsletter's unsubscribe (unsubscribe.go): quiet, under the sender. */
+.unsub-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 8px 0 4px; padding: 6px 12px; border-radius: var(--radius); background: var(--ground); color: var(--muted); font-size: 0.875rem; }
+.unsub-bar .icon { flex: none; }
+.unsub-bar > span { flex: 1 1 14em; }
+/* Settings > Subscriptions (subscriptions.go): one row per sender. */
+.subs-list { list-style: none; margin: 0; padding: 0; }
+.subs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.subs-row:first-child { border-top: 0; }
+.subs-who { display: flex; flex-direction: column; gap: 2px; flex: 1 1 16em; min-width: 0; }
+.subs-who > span { overflow-wrap: anywhere; }
+.subs-who .chip { align-self: flex-start; }
 .row .later-time { color: var(--accent); white-space: nowrap; }
 .menu-body input[type="datetime-local"] { min-height: 36px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); padding: 0 8px; max-width: 100%; }
 .menu-body .menu-item .muted { margin-left: 8px; }

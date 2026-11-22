@@ -27,7 +27,9 @@ const (
 // Server is the webmail HTTP application.
 type Server struct {
 	// images is the remote image proxy, nil when image_proxy is off.
-	images   *imageProxy
+	images *imageProxy
+	// unsub posts one-click unsubscribes (unsubscribe.go).
+	unsub    *unsubscriber
 	objectDB *sql.DB
 	cfg      Config
 	sessions *SessionManager
@@ -109,7 +111,7 @@ func NewServer(cfg Config, dial Dialer, submit Submitter, log *slog.Logger) (*Se
 		passwords: passwords, mailSettings: mailSettings, recoveryMail: make(chan struct{}, 4),
 		cfg: cfg, sessions: sessions, dial: dial, submit: submit, tmpl: tmpl, sieve: sieve, sends: newSendQueue(),
 		log: log, limiter: newLoginLimiter(15 * time.Minute), now: time.Now, dav: newDAVPool(),
-		defaultLoc: cfg.location(),
+		defaultLoc: cfg.location(), unsub: newUnsubscriber(),
 	}
 	if *cfg.ImageProxy {
 		images, err := newImageProxy(cfg.ImageCacheDir, int64(cfg.ImageCacheMB)<<20, int64(cfg.ImageMaxMB)<<20, log)
@@ -297,6 +299,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/senders", s.authed(s.sendersSubmit))
 	mux.HandleFunc("POST /settings/retention", s.authed(s.retentionSubmit))
 	mux.HandleFunc("POST /mail/block-sender", s.authed(s.blockSender))
+	mux.HandleFunc("POST /mail/unsubscribe", s.authed(s.unsubscribeSubmit))
+	mux.HandleFunc("GET /settings/subscriptions", s.authed(s.subscriptionsPage))
+	mux.HandleFunc("POST /settings/subscriptions", s.authed(s.subscriptionsSubmit))
 	mux.HandleFunc("GET /contacts", s.authed(s.contactsPage))
 	mux.HandleFunc("POST /contacts", s.authed(s.contactsSubmit))
 	mux.HandleFunc("GET /contacts/export", s.authed(s.contactsExport))
@@ -439,6 +444,8 @@ type view struct {
 	Undo *undoMove
 	// PendingSend is a message waiting out its undo delay (sendlater.go).
 	PendingSend *pendingNotice
+	// Unsub is the newsletter bar over the open message (unsubscribe.go).
+	Unsub *unsubView
 	// Later is scheduled send and snooze on the mail page (schedule.go).
 	Later *laterView
 	// SendFailures are delayed sends that didn't go, said once.
@@ -466,7 +473,9 @@ type view struct {
 	Calendar     *calendarView
 	Tasks        *tasksView
 	Filters      *filtersView
-	Status       int
+	// Subscriptions is Settings > Subscriptions (subscriptions.go).
+	Subscriptions *subscriptionsView
+	Status        int
 	// Loc and Clock24 control how times are shown.
 	Loc     *time.Location
 	Clock24 bool
@@ -649,6 +658,12 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"filters-saved":              "Filters saved.",
 	"vacation-saved":             "Out-of-office reply saved.",
 	"vacation-off":               "Automatic replies are off.",
+	"unsubscribed":               "Unsubscribed. It can take the sender a day or two to stop.",
+	"unsubscribe-sent":           "Unsubscribe request sent. It can take the sender a day or two to stop.",
+	"unsubscribe-failed":         "The sender didn't accept the unsubscribe. Try their unsubscribe page, or block them.",
+	"sender-archived":            "Their mail in the inbox moved to Archive.",
+	"sender-deleted":             "Their mail in the inbox moved to Trash.",
+	"sender-tab":                 "Their mail goes to that tab now, and so will what they send next.",
 }
 
 // ---- login -----------------------------------------------------------------

@@ -50,6 +50,7 @@ Sign in at your server's address with your full email address and password.
 | Mail apps and sync | Settings for mail, calendar and contacts apps, exports |
 | Out of office | The automatic reply while you're away |
 | Filters | Rules that sort incoming mail |
+| Subscriptions | Newsletters and mailing lists, with unsubscribe |
 | Folders | Create, rename and delete folders |
 
 ## Mail apps
@@ -202,6 +203,25 @@ get one.
 While the reply is on, or set to start, a bar across the top of the webmail
 says so until when, with **Edit** and **Turn off**. Turning it off keeps your
 message for next time.
+
+## Unsubscribing
+
+A newsletter or mailing list message shows a bar under the sender with
+**Unsubscribe**. Depending on what the sender supports, the webmail either
+unsubscribes you straight away, sends the sender a short unsubscribe email
+from your address (it asks first), or opens the sender's own unsubscribe page
+in a new tab. Junk never offers it: unsubscribing from spam only tells the
+spammer your address is read.
+
+The message remembers that you unsubscribed. If the sender is still writing
+a few days later, it offers **Block sender** instead.
+
+**Settings → Subscriptions** lists the newsletters and lists in your inbox
+and archive, busiest first, with how many messages and when the last came.
+Each one has **Unsubscribe**, and under **Their mail**: archive or delete all
+of it in the inbox, always file it under an inbox tab, or block the sender.
+With inbox tabs on, the Promotions, Updates and Forums tabs link to this page
+from their menu.
 
 ## Filters
 

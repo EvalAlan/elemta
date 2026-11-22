@@ -512,3 +512,30 @@ func TestIMAPStoreSchedulingMethod(t *testing.T) {
 		t.Error("conversation list lost the scheduling fields")
 	}
 }
+
+func TestIMAPStoreBulkMessagesAndUIDsFrom(t *testing.T) {
+	st := dialTest(t, startIMAP(t))
+	ctx := context.Background()
+	appendTo(t, st, "INBOX", testMessage(1, "Ordinary"))
+	appendTo(t, st, "INBOX", []byte(newsletter("<https://shop.example/u>", "List-Unsubscribe=One-Click", "dkim=pass")))
+	appendTo(t, st, "INBOX", []byte(strings.Replace(newsletter("", "", ""), "news@shop.example", "news@shop.example.evil", 1)))
+
+	got, err := st.BulkMessages(ctx, "INBOX", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The third has only List-Id, which counts too.
+	if len(got) != 2 || got[0].From.Email != "news@shop.example" || got[0].ListUnsubscribePost == "" || got[0].Date.IsZero() || got[1].ListID == "" {
+		t.Fatalf("bulk = %+v", got)
+	}
+	if got, _ := st.BulkMessages(ctx, "INBOX", 1); len(got) != 1 || got[0].From.Email != "news@shop.example.evil" {
+		t.Fatalf("limit keeps the newest: %+v", got)
+	}
+	uids, err := st.UIDsFrom(ctx, "INBOX", "News@Shop.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(uids) != 1 || uids[0] != got[0].UID {
+		t.Fatalf("UIDsFrom = %v (exact sender only)", uids)
+	}
+}

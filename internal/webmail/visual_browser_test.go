@@ -79,15 +79,27 @@ var visualPalettes = []string{"", "tidewater", "forest", "plum", "sand", "graphi
 func TestBrowserVisualQA(t *testing.T) {
 	b := newBrowser(t)
 	seedLongInbox(b, nil)
+	// A newsletter, and the out-of-office reply on, so every page shows
+	// the away banner and one message shows the unsubscribe bar.
+	openNewsletter(b.h, newsletter("<https://shop.example/prefs>", "", "dkim=pass"))
+	away, err := generateSieve(FilterSet{Vacation: Vacation{Enabled: true, Body: "Away", Days: 1, End: time.Now().AddDate(0, 0, 7).Format("2006-01-02")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := &fakeSieve{scripts: map[string]string{sieveScriptName: away}, active: sieveScriptName}
+	b.h.server.sieve = func(context.Context, string, string) (SieveConn, error) { return fs, nil }
 	b.login()
 	shots := os.Getenv("ELEMTA_SCREENSHOTS")
 	pages := map[string]string{
-		"inbox":    "/mail?f=INBOX",
-		"mail":     "/mail?f=INBOX&uid=7",
-		"calendar": "/calendar?view=week",
-		"compose":  "/compose",
-		"settings": "/settings",
-		"contacts": "/contacts",
+		"inbox":         "/mail?f=INBOX",
+		"mail":          "/mail?f=INBOX&uid=7",
+		"newsletter":    "/mail?f=INBOX&uid=9",
+		"calendar":      "/calendar?view=week",
+		"compose":       "/compose",
+		"settings":      "/settings",
+		"contacts":      "/contacts",
+		"subscriptions": "/settings/subscriptions",
+		"out-of-office": "/settings/out-of-office",
 	}
 	var problems []string
 	for _, width := range []struct {

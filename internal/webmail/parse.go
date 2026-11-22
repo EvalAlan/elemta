@@ -68,6 +68,11 @@ type Message struct {
 	// AuthResults is the topmost Authentication-Results header, which on a
 	// mailbox fed by Elemta is the one Elemta itself added.
 	AuthResults string
+	// ListUnsubscribe, ListUnsubscribePost and ListID are the mailing-list
+	// headers unsubscribing reads (unsubscribe.go).
+	ListUnsubscribe     string
+	ListUnsubscribePost string
+	ListID              string
 }
 
 // Part is an attachment or an inline resource (such as a cid: image).
@@ -190,6 +195,9 @@ func parseMessage(raw []byte) (*Message, error) {
 	msg.InReplyTo = h.Get("In-Reply-To")
 	msg.References = h.Get("References")
 	msg.AuthResults = h.Get("Authentication-Results")
+	msg.ListUnsubscribe = h.Get("List-Unsubscribe")
+	msg.ListUnsubscribePost = h.Get("List-Unsubscribe-Post")
+	msg.ListID = h.Get("List-Id")
 	msg.From = headerAddresses(h, "From")
 	msg.ReplyTo = headerAddresses(h, "Reply-To")
 	msg.To = headerAddresses(h, "To")

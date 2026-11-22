@@ -55,6 +55,9 @@ type Session struct {
 	awayMu      sync.Mutex
 	away        *awayState
 	awayLoading bool
+	// subs is the Subscriptions page's last scan (subscriptions.go).
+	subsMu sync.Mutex
+	subs   *subscriptionsCache
 }
 
 // SessionManager creates, finds and expires sessions.

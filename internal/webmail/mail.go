@@ -191,6 +191,9 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 				}
 			}
 		}
+		if v.Message != nil {
+			v.Unsub = s.unsubFor(sess, v.Message, folders)
+		}
 		var p Page
 		// Conversations are ordered by activity, so they apply to the date
 		// order only; Drafts are never grouped.
