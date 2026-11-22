@@ -810,6 +810,12 @@ try again rather than publishing anything. This server's identity comes from
 `hostname`, so that name has to resolve. Answers come through the stack's own
 resolver, so a record you just changed can take until its TTL runs out to show.
 
+What the check finds replaces what the scheduled check last saw for that
+domain. Fix a record, choose **Check DNS**, and the problem leaves Needs
+attention and the Health page then, not at the next scheduled check. The alert
+addresses get the "healthy again" email (or the problem email) as they would
+from the scheduled check.
+
 An MTA-STS failure deserves quick attention. A policy in `enforce` mode that
 doesn't list your MX makes senders that honour it refuse to deliver, and senders
 that saved a policy keep following it until its `max_age` runs out, even after
