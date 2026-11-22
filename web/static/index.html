@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261122-dmarc">
+    <link rel="stylesheet" href="/static/styles.css?v=20261122-settings">
     <link rel="stylesheet" href="/static/mail-admin.css?v=20261122-support">
 </head>
 
@@ -177,9 +177,9 @@
                         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
                     </svg>
                 </button>
-                <div class="server-status">
+                <div class="server-status" id="server-status">
                     <span class="status-dot"></span>
-                    <span>Server Online</span>
+                    <span id="server-status-text">Connecting…</span>
                 </div>
                 <p class="sidebar-notice"><!-- elemta:notice --></p>
             </div>
@@ -495,7 +495,7 @@
                                 <dd id="health-server-version">-</dd>
                                 <dt>CPUs</dt>
                                 <dd id="health-cpus">-</dd>
-                                <dt>Listen Address</dt>
+                                <dt>Console listens on</dt>
                                 <dd id="health-listen-addr">-</dd>
                                 <dt>Auth Enabled</dt>
                                 <dd id="health-auth-enabled">-</dd>
@@ -541,8 +541,6 @@
                                 <dd id="queue-hold-health">-</dd>
                                 <dt class="failed-health-stat">Failed</dt>
                                 <dd id="queue-failed-health" class="failed-health-stat">-</dd>
-                                <dt>Processor Active</dt>
-                                <dd id="queue-processor">-</dd>
                                 <dt>Oldest Active Age</dt>
                                 <dd id="queue-oldest-active">-</dd>
                                 <dt>Oldest Deferred Age</dt>
@@ -561,16 +559,12 @@
                         </div>
                         <div class="card-body">
                             <dl class="info-grid">
-                                <dt>Messages/Minute</dt>
+                                <dt>Per minute (24 h average)</dt>
                                 <dd id="throughput-per-min">-</dd>
-                                <dt>Messages/Hour</dt>
+                                <dt>Per hour (24 h average)</dt>
                                 <dd id="throughput-per-hour">-</dd>
                                 <dt>Total Processed</dt>
                                 <dd id="throughput-total">-</dd>
-                                <dt>Active Connections</dt>
-                                <dd id="smtp-connections">-</dd>
-                                <dt>Total Connections</dt>
-                                <dd id="smtp-total-connections">-</dd>
                                 <dt>TLS Enabled</dt>
                                 <dd id="smtp-tls">-</dd>
                                 <dt>Timeout Errors (5m)</dt>
@@ -1710,11 +1704,13 @@
                                     </div>
                                     <div class="config-item">
                                         <label for="config-queue-dir">Queue Directory</label>
-                                        <input type="text" id="config-queue-dir">
+                                        <input type="text" id="config-queue-dir" readonly>
+                                        <div class="field-hint">Read-only. Changing it doesn't move queued mail.</div>
                                     </div>
                                     <div class="config-item">
-                                        <label for="config-max-size">Max Message Size</label>
-                                        <input type="text" id="config-max-size">
+                                        <label for="config-max-size">Max Message Size (bytes)</label>
+                                        <input type="number" id="config-max-size" min="65536" max="2147483647">
+                                        <div class="field-hint" id="config-max-size-human"></div>
                                     </div>
                                     <div class="config-item">
                                         <label for="config-failed-retention">Failed Queue Retention (hours)</label>
@@ -1731,7 +1727,7 @@
                                             Keep a copy of each delivered message for rollback safety
                                         </label>
                                         <div class="field-hint">
-                                            Off by default, and measured: draining the same 12,000-message queue gave
+                                            The shipped configuration has this off, and it was measured: draining the same 12,000-message queue gave
                                             137/s with this off and 87/s with it on. Keeping the copy costs roughly a
                                             third of delivery throughput, on every delivery.
                                             Turn it on only if you may roll this server back to a build older than the
@@ -1760,68 +1756,6 @@
                         <div class="card-body">
                             <div id="plugins-loading" class="loading-placeholder">Loading plugins...</div>
                             <div id="plugins-content" style="display: none;"><div id="plugins-list"></div></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Rate Limiting Panel -->
-                <div class="settings-panel" id="settings-rate-limiting">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Rate Limiting</h3>
-                            <button class="btn btn-primary btn-sm" onclick="refreshRateLimiting()">Refresh</button>
-                        </div>
-                        <div class="card-body">
-                            <div id="rate-limiting-loading" class="loading-placeholder">Loading rate limiting configuration...</div>
-                            <div id="rate-limiting-content" style="display: none;">
-                                <p class="field-hint" id="rate-limit-inert">These settings belong to the rate limiter plugin, which isn't loaded, so they change nothing. The limits that apply, on connections, sign-ins, mail per address and each account's outside mail, are under <strong>Abuse</strong>.</p>
-                                <div class="config-section">
-                                    <h4>Connection Limits</h4>
-                                    <div class="config-grid">
-                                        <div class="config-item">
-                                            <label for="rate-max-connections-ip">Max Connections per IP</label>
-                                            <input type="number" id="rate-max-connections-ip">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-connections-per-minute">Connection Rate per Minute</label>
-                                            <input type="number" id="rate-connections-per-minute">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-connection-burst">Connection Burst Size</label>
-                                            <input type="number" id="rate-connection-burst">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-connection-timeout">Connection Timeout</label>
-                                            <input type="text" id="rate-connection-timeout">
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="config-section">
-                                    <h4>Message Limits</h4>
-                                    <div class="config-grid">
-                                        <div class="config-item">
-                                            <label for="rate-messages-per-minute">Max Messages per Minute</label>
-                                            <input type="number" id="rate-messages-per-minute">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-messages-per-hour">Max Messages per Hour</label>
-                                            <input type="number" id="rate-messages-per-hour">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-recipients-per-message">Max Recipients per Message</label>
-                                            <input type="number" id="rate-recipients-per-message">
-                                        </div>
-                                        <div class="config-item">
-                                            <label for="rate-max-message-size">Max Message Size</label>
-                                            <input type="text" id="rate-max-message-size">
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="settings-form-actions">
-                                    <button class="btn btn-primary" onclick="saveRateLimiting()">Save Rate Limiting</button>
-                                    <span id="rate-limiting-status"></span>
-                                </div>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -2068,7 +2002,7 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js?v=20261122-dmarc"></script>
+    <script src="/static/app.js?v=20261122-settings"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261103-2fa"></script>
     <script src="/static/mail-admin.js?v=20261122-support"></script>

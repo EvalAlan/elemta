@@ -12,7 +12,7 @@ Typical plugin-driven checks include:
 
 - spam scoring/classification
 - malware/virus scanning
-- policy/rate-limit enforcement
+- policy enforcement
 - message annotation/rejection decisions
 
 ---
@@ -29,7 +29,6 @@ Related sections (depending on enabled plugins):
 
 - `[antispam]`
 - `[antivirus]`
-- `[rate_limiter]`
 
 ---
 

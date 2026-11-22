@@ -2164,14 +2164,6 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate limiter plugin - we have direct config access
-	rateLimiterEnabled := false
-	if s.mainConfig.RateLimiterPluginConfig != nil {
-		if rateLimiterConfig, ok := s.mainConfig.RateLimiterPluginConfig.(*config.RateLimiterPluginConfig); ok {
-			rateLimiterEnabled = rateLimiterConfig.Enabled
-		}
-	}
-
 	// Scanner state comes from configuration. This process does not run the
 	// scanners — the SMTP node does — so what is reported here is what the
 	// shipped config asks for, which is also what the UI can meaningfully
@@ -2346,15 +2338,9 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 			"status":            arcOperational,
 			"metrics":           []string{"elemta_mail_auth_results_total{method=\"arc\"}"},
 		},
-		{
-			"name":             "rate_limiter",
-			"title":            "Rate Limiting",
-			"enabled":          rateLimiterEnabled,
-			"description":      "Rate limiting and connection management",
-			"config":           s.mainConfig.RateLimiterPluginConfig,
-			"configurable":     true,
-			"requires_restart": false,
-		},
+		// [rate_limiter] isn't listed: nothing in the mail path reads it, so a
+		// switch for it promised limits that weren't there. Abuse protection
+		// and [resources] are what limit connections and mail.
 		{
 			"name":              "clamav",
 			"title":             "Antivirus",
@@ -2432,27 +2418,46 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 
 	requiresRestart := false
 
-	// Apply server config fields
+	// Everything is checked before anything changes, so a refused save
+	// doesn't leave half of itself in memory for the next one to write.
+	maxSize := s.mainConfig.MaxSize
+	if raw, ok := configUpdate["max_size"]; ok {
+		n, valid := messageSize(raw)
+		if !valid || n != maxSize && (n < minMessageSize || n > maxMessageSize) {
+			http.Error(w, "max_size is a whole number of bytes, from 65536 to 2147483647", http.StatusBadRequest)
+			return
+		}
+		maxSize = n
+	}
+	if v, ok := configUpdate["queue_dir"].(string); ok && v != s.mainConfig.QueueDir {
+		// Like the backend: changing it doesn't move the mail, it orphans it.
+		http.Error(w, "queue_dir is set in the configuration file: changing it doesn't move queued mail", http.StatusBadRequest)
+		return
+	}
+	if v, ok := configUpdate["max_workers"].(float64); ok && int(v) != s.mainConfig.MaxWorkers {
+		http.Error(w, "max_workers is set in the configuration file", http.StatusBadRequest)
+		return
+	}
+
+	var changed []string
 	if v, ok := configUpdate["hostname"].(string); ok && v != s.mainConfig.Hostname {
 		s.mainConfig.Hostname = v
 		requiresRestart = true
+		changed = append(changed, "hostname")
 	}
 	if v, ok := configUpdate["listen_addr"].(string); ok && v != s.mainConfig.ListenAddr {
 		s.mainConfig.ListenAddr = v
 		requiresRestart = true
+		changed = append(changed, "listen_addr")
 	}
-	if v, ok := configUpdate["queue_dir"].(string); ok && v != s.mainConfig.QueueDir {
-		s.mainConfig.QueueDir = v
+	if maxSize != s.mainConfig.MaxSize {
+		s.mainConfig.MaxSize = maxSize
 		requiresRestart = true
+		changed = append(changed, "max_size")
 	}
-	if v, ok := configUpdate["max_size"].(float64); ok {
-		s.mainConfig.MaxSize = int64(v)
-	}
-	if v, ok := configUpdate["max_workers"].(float64); ok {
-		s.mainConfig.MaxWorkers = int(v)
-	}
-	if v, ok := configUpdate["failed_queue_retention_hours"].(float64); ok {
+	if v, ok := configUpdate["failed_queue_retention_hours"].(float64); ok && int(v) != s.mainConfig.FailedQueueRetentionHours {
 		s.mainConfig.FailedQueueRetentionHours = int(v)
+		changed = append(changed, "failed_queue_retention_hours")
 	}
 	// Only tombstones written after this takes effect are affected, so it needs
 	// no restart. queue_backend is deliberately not accepted here.
@@ -2467,7 +2472,7 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Persist to disk
 	if s.configPath != "" {
-		if err := s.persistConfig(); err != nil {
+		if err := s.persistConfig(changed...); err != nil {
 			slog.Error("Failed to persist configuration", "error", err)
 			http.Error(w, fmt.Sprintf("Failed to save configuration: %v", err), http.StatusInternalServerError)
 			return
@@ -2484,6 +2489,26 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		"message":          msg,
 		"requires_restart": requiresRestart,
 	})
+}
+
+const (
+	minMessageSize = 64 << 10
+	maxMessageSize = 1<<31 - 1
+)
+
+// messageSize reads a size in bytes sent as a number or as a number in a
+// string. The console sent the string for as long as the field existed, and
+// it was ignored without a word.
+func messageSize(raw interface{}) (int64, bool) {
+	switch v := raw.(type) {
+	case float64:
+		n := int64(v)
+		return n, float64(n) == v
+	case string:
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		return n, err == nil
+	}
+	return 0, false
 }
 
 // applyRateLimiterUpdate applies rate limiter fields from a map to the in-memory config
@@ -2541,7 +2566,12 @@ func (s *Server) applyRateLimiterUpdate(rl map[string]interface{}) {
 //
 // Editing the keys in place cannot do that. A setting this code has never heard
 // of survives, as do comments and ordering.
-func (s *Server) persistConfig() error {
+//
+// changed names the top-level keys this save changed, and only those are
+// written. They used to be written on every save, from whatever the console
+// had resolved them to, so switching SPF on could lower the message size
+// limit.
+func (s *Server) persistConfig(changed ...string) error {
 	if s.configPath == "" {
 		return fmt.Errorf("no config file path is known")
 	}
@@ -2564,11 +2594,17 @@ func (s *Server) persistConfig() error {
 		key     string
 		value   interface{}
 	}
-	edits := []edit{
-		{"", "hostname", s.mainConfig.Hostname},
-		{"", "listen_addr", s.mainConfig.ListenAddr},
-		{"", "max_size", s.mainConfig.MaxSize},
-		{"", "failed_queue_retention_hours", s.mainConfig.FailedQueueRetentionHours},
+	topLevel := map[string]interface{}{
+		"hostname":                     s.mainConfig.Hostname,
+		"listen_addr":                  s.mainConfig.ListenAddr,
+		"max_size":                     s.mainConfig.MaxSize,
+		"failed_queue_retention_hours": s.mainConfig.FailedQueueRetentionHours,
+	}
+	var edits []edit
+	for _, key := range changed {
+		if value, ok := topLevel[key]; ok {
+			edits = append(edits, edit{"", key, value})
+		}
 	}
 	// Domain provisioning owns local_domains. Saving an unrelated dashboard
 	// setting must not overwrite changes made by a concurrent provisioning CLI.

@@ -21,20 +21,12 @@ import (
 // convertToAPIMainConfig converts config.Config to api.MainConfig
 func convertToAPIMainConfig(cfg *config.Config) *api.MainConfig {
 	// Use Server struct fields for primary config, fallback to top-level fields
-	hostname := cfg.Server.Hostname
-	if hostname == "" {
-		hostname = cfg.Hostname // fallback
-	}
-
-	listenAddr := cfg.Server.Listen
-	if listenAddr == "" {
-		listenAddr = cfg.ListenAddr // fallback
-	}
-
-	maxSize := cfg.Server.MaxSize
-	if maxSize == 0 {
-		maxSize = cfg.MaxSize // fallback
-	}
+	// Resolved as the SMTP server resolves them: the flat key wins over
+	// [server]. Read the other way round, the console showed one value while
+	// the server used the other.
+	hostname := cfg.EffectiveHostname()
+	listenAddr := cfg.EffectiveListenAddr()
+	maxSize := cfg.EffectiveMaxSize()
 
 	// The list SMTP accepts mail for, so the console reports on the same one.
 	localDomains := cfg.EffectiveLocalDomains()
