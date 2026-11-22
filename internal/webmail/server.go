@@ -309,6 +309,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /calendar/rsvp", s.authed(s.rsvpSubmit))
 	mux.HandleFunc("GET /calendar/export", s.authed(s.calendarExport))
 	mux.HandleFunc("POST /calendar/import", s.authed(s.calendarImport))
+	mux.HandleFunc("GET /settings/out-of-office", s.authed(s.outOfOfficePage))
 	mux.HandleFunc("GET /filters", s.authed(s.filtersPage))
 	mux.HandleFunc("POST /filters", s.authed(s.filtersSubmit))
 	mux.HandleFunc("GET /tasks", s.authed(s.tasksPage))
@@ -481,8 +482,11 @@ type view struct {
 	// Palette is the colour scheme, empty for the default.
 	Palette string
 	// SettingsTab is the settings section shown, for the settings
-	// sidebar: general, account, security, devices, filters or folders.
+	// sidebar: general, account, security, devices, out-of-office,
+	// filters or folders.
 	SettingsTab string
+	// Away is the out-of-office banner, while the reply is on or due.
+	Away *awayView
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
@@ -503,6 +507,10 @@ func (s *Server) render(w http.ResponseWriter, name string, status int, v any) {
 			pv.ReminderSound = cached.ReminderTone()
 			if s.sends != nil {
 				pv.SendFailures = s.sends.takeFailures(pv.Session.ID)
+			}
+			// Not on its own settings page, which says the same at length.
+			if vac, ok := s.awayCached(pv.Session); ok && s.awayApplies(pv.Session) && pv.SettingsTab != "out-of-office" {
+				pv.Away = awayBanner(vac, time.Now(), pv.Loc)
 			}
 		}
 		if pv.App == "" {
@@ -640,6 +648,7 @@ var notices = map[string]string{ // #nosec G101 -- messages shown on the page, n
 	"task-deleted":               "Task deleted.",
 	"filters-saved":              "Filters saved.",
 	"vacation-saved":             "Out-of-office reply saved.",
+	"vacation-off":               "Automatic replies are off.",
 }
 
 // ---- login -----------------------------------------------------------------

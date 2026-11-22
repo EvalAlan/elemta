@@ -113,6 +113,7 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess *Session)
 	uid, hasUID := parseUID(q.Get("uid"))
 	remote := q.Get("remote") == "1"
 	loc := s.loc(sess)
+	s.refreshAway(r.Context(), sess)
 
 	// Tabs split the inbox only. A search looks across every tab, as the
 	// user is looking for something rather than browsing.
