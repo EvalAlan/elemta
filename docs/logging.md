@@ -92,11 +92,13 @@ followed, and proxy settings from the environment aren't used.
 
 ### What is sent
 
+The same redaction as the local log (see "What the log holds" below), and
+subjects are left out unless you choose to include them.
+
 - Fields named like passwords, tokens, cookies and keys are redacted, as are
   credentials inside URLs.
 - A typed SMTP command is sent only for known verbs, AUTH without its
   arguments. Command parameters and lines of a message are never sent.
-- Subjects are left out unless you choose to include them.
 - **Addresses and IPs are sent.** Treat the log cluster as holding personal
   data.
 
@@ -145,6 +147,25 @@ docker compose -f deployments/compose/docker-compose.yml logs -f elemta
 curl -s http://127.0.0.1:8025/api/health | jq
 curl -s http://127.0.0.1:8025/api/logging/level | jq
 ```
+
+## What the log holds
+
+Every Elemta process redacts its log before writing it, to stdout and to the
+log file alike, whatever the line:
+
+- Fields named like passwords, tokens, cookies and keys show `[redacted]`.
+  A yes/no field such as `has_password` stays.
+- A user and password inside a URL, such as a Valkey or database address,
+  become `[redacted]@`, in any field, in the message and in errors.
+- A client's command is kept only when SMTP or LMTP knows its verb, and AUTH
+  never keeps its arguments. Anything else a client types shows
+  `[redacted]`: after a refused AUTH, a mail app often sends the password
+  next, as what looks like an unknown command.
+- Lines of a message and other raw client input (`line`, `args`,
+  `parameters`, `sanitized_input`) show `[redacted]`.
+
+Subjects, addresses and IPs stay in the local log. Log shipping leaves
+subjects out too unless you include them.
 
 ## Best practices
 

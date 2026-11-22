@@ -433,7 +433,7 @@ func InitializeLogging(levelStr, logPath string) {
 		logFile, logFilePath = nil, ""
 	}
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: level})))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(out, Options(level))))
 	globalLogLevelManager.SetLevel(level)
 	slog.Info("logging initialized", "log_level", LevelToString(level), "log_file", logPath)
 }

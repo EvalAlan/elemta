@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/EvalAlan/elemta/internal/logging"
 	"github.com/EvalAlan/elemta/internal/mailbox"
 	"github.com/spf13/cobra"
 )
@@ -42,7 +43,7 @@ elemtaMailboxCell. A move that stops part way can be run again.`,
 			if err != nil {
 				return err
 			}
-			dst, err := mailbox.Open(cmd.Context(), cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+			dst, err := mailbox.Open(cmd.Context(), cfg, slog.New(slog.NewTextHandler(os.Stderr, logging.Options(nil))))
 			if err != nil {
 				return fmt.Errorf("destination cell: %w", err)
 			}

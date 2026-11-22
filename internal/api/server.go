@@ -521,9 +521,7 @@ func (a *valkeyMetricsAdapter) GetRecentErrors(ctx context.Context, limit int64)
 // initializeAuth initializes the authentication system
 func (s *Server) initializeAuth() error {
 	// Create logger for auth initialization
-	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})).With(
+	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), logging.Options(slog.LevelInfo))).With(
 		"component", "api-auth",
 	)
 

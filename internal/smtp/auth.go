@@ -96,9 +96,7 @@ func AuthDataSourceConfig(config *AuthConfig) datasource.Config {
 
 // NewAuthenticator creates a new SMTP authenticator
 func NewAuthenticator(config *AuthConfig) (*SMTPAuthenticator, error) {
-	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
+	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), logging.Options(slog.LevelDebug)))
 
 	auth := &SMTPAuthenticator{
 		config: config,

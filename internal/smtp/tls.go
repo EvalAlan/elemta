@@ -68,9 +68,7 @@ type CertificateInfo struct {
 // NewTLSManager creates a new TLS manager
 func NewTLSManager(config *Config) (*TLSManager, error) {
 	// Create structured logger
-	slogger := slog.New(slog.NewJSONHandler(logging.Stdout(), &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	slogger := slog.New(slog.NewJSONHandler(logging.Stdout(), logging.Options(slog.LevelInfo)))
 
 	manager := &TLSManager{
 		config:            config,
