@@ -1056,6 +1056,9 @@ func TestBrowserShell(t *testing.T) {
 			wait(`!!document.querySelector('.settings-tab[data-tab="plugin-abuse"]:not([hidden])')`)
 			run(`document.querySelector('.settings-tab[data-tab="plugin-abuse"]').click()`)
 			wait(`location.hash === "#/settings/plugin-abuse" && document.getElementById("abuse-connections").value !== ""`)
+			// The tab is made from the plugin list, which a fresh page lacks.
+			run(`(window.beforeReload = true, location.reload())`)
+			wait(`!window.beforeReload && typeof shell !== "undefined" && location.hash === "#/settings/plugin-abuse" && !!document.querySelector("#settings-plugin-abuse.active")`)
 			run(`history.back()`)
 			wait(`location.hash === "#/settings/plugins" && document.getElementById("settings-plugins").classList.contains("active")`)
 

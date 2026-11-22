@@ -380,7 +380,11 @@ const shell = (function () {
     }
 
     async function start() {
-        if (can.read(auth)) {
+        if (can.configure(auth)) {
+            // This also makes the plugins' settings tabs, which an address
+            // may name: they have to exist before it is resolved.
+            await refreshPlugins();
+        } else if (can.read(auth)) {
             try {
                 const response = await fetch('/api/config/plugins');
                 if (response.ok) setPlugins((await response.json()).plugins);
