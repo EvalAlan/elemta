@@ -5,29 +5,14 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/netip"
-	"regexp"
-	"slices"
 	"strings"
 	"time"
-)
 
-// secretNames end the names of fields whose values never leave the process.
-var secretNames = []string{"password", "passwd", "passphrase", "secret", "token", "authorization", "auth_header", "cookie", "csrf", "api_key", "apikey", "private_key", "credential", "credentials"}
-
-// What a client typed can be anything, under any name. So a command is
-// shipped only if SMTP or LMTP knows its verb, parameters never, and a line
-// of a message never.
-var (
-	commandNames = []string{"command", "cmd", "original_line"}
-	typedNames   = []string{"line", "args", "parameters"}
-	commandVerbs = []string{"HELO", "EHLO", "LHLO", "MAIL", "RCPT", "DATA", "BDAT", "BURL", "RSET", "NOOP", "QUIT", "VRFY", "EXPN", "HELP", "STARTTLS"}
-
-	// urlPassword finds the user and password of a URL, inside any text.
-	urlPassword = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^/\s"<>]*@`)
+	"github.com/EvalAlan/elemta/internal/logging"
 )
 
 const (
-	redacted      = "[redacted]"
+	redacted      = logging.Redacted
 	shortenTo     = 256
 	maxEventDepth = 16
 )
@@ -95,26 +80,30 @@ func prepare(line []byte, p policy, now time.Time) []byte {
 	return nil
 }
 
+// scrub applies the process log's rules (internal/logging) to a line again,
+// for components whose logger doesn't, then drops subjects unless wanted.
 func scrub(m map[string]any, subjects bool, depth int) {
 	for k, v := range m {
 		name := strings.ReplaceAll(strings.ToLower(k), "-", "_")
-		switch {
-		case slices.ContainsFunc(secretNames, func(s string) bool { return strings.HasSuffix(name, s) }):
+		switch logging.FieldKind(k) {
+		case "secret":
 			// Whether there was one is useful, and no secret.
 			if _, yesNo := v.(bool); !yesNo {
 				m[k] = redacted
 			}
-		case slices.Contains(typedNames, name):
+		case "typed":
 			m[k] = redacted
-		case slices.Contains(commandNames, name):
+		case "command":
 			if s, ok := v.(string); ok {
-				m[k] = safeCommand(s)
+				m[k] = logging.SafeCommand(s)
 			} else {
 				m[k] = redacted
 			}
-		case !subjects && (name == "subject" || strings.HasSuffix(name, "_subject")):
-			delete(m, k)
 		default:
+			if !subjects && (name == "subject" || strings.HasSuffix(name, "_subject")) {
+				delete(m, k)
+				continue
+			}
 			m[k] = scrubValue(v, subjects, depth+1)
 		}
 	}
@@ -123,7 +112,7 @@ func scrub(m map[string]any, subjects bool, depth int) {
 func scrubValue(v any, subjects bool, depth int) any {
 	switch t := v.(type) {
 	case string:
-		return urlPassword.ReplaceAllString(t, "${1}"+redacted+"@")
+		return logging.ScrubText(t)
 	case map[string]any:
 		if depth >= maxEventDepth {
 			return redacted
@@ -138,22 +127,6 @@ func scrubValue(v any, subjects bool, depth int) any {
 		}
 	}
 	return v
-}
-
-func safeCommand(s string) string {
-	f := strings.Fields(s)
-	switch {
-	case len(f) == 0:
-		return ""
-	case strings.EqualFold(f[0], "AUTH"):
-		if len(f) == 1 {
-			return f[0]
-		}
-		return "AUTH " + redacted
-	case slices.Contains(commandVerbs, strings.ToUpper(f[0])):
-		return urlPassword.ReplaceAllString(s, "${1}"+redacted+"@")
-	}
-	return redacted
 }
 
 // clientKeys are the names the services log the other end's address under.

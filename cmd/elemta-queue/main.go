@@ -5,13 +5,12 @@ import (
 	"os"
 
 	"github.com/EvalAlan/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/logging"
 	"github.com/EvalAlan/elemta/internal/queue"
 )
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})).With("component", "queue-cli")
+	logger := slog.New(slog.NewTextHandler(os.Stdout, logging.Options(slog.LevelInfo))).With("component", "queue-cli")
 
 	configPath := os.Getenv("ELEMTA_CONFIG_PATH")
 	cfg, err := config.LoadConfig(configPath)

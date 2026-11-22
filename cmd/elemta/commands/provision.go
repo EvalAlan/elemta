@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/EvalAlan/elemta/internal/config"
+	"github.com/EvalAlan/elemta/internal/logging"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/EvalAlan/elemta/internal/webmail"
@@ -43,7 +44,7 @@ func openProvision(c *config.Config, path string) (*provision.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	mail, err := webmail.NewServer(wc, nil, nil, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	mail, err := webmail.NewServer(wc, nil, nil, slog.New(slog.NewJSONHandler(os.Stderr, logging.Options(nil))))
 	if err != nil {
 		return nil, err
 	}
