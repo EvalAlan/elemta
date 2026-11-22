@@ -48,7 +48,8 @@ Sign in at your server's address with your full email address and password.
 | Account | Change your password, set a recovery email |
 | Security | Two-step verification and app passwords |
 | Mail apps and sync | Settings for mail, calendar and contacts apps, exports |
-| Filters and out-of-office | Rules that sort incoming mail, and automatic replies |
+| Out of office | The automatic reply while you're away |
+| Filters | Rules that sort incoming mail |
 | Folders | Create, rename and delete folders |
 
 ## Mail apps
@@ -191,17 +192,23 @@ The webmail's code comes from the server, so this protects mail that's stored, a
 against someone reading the server's disks. It can't protect you from the server
 itself being changed to steal your passphrase.
 
-## Filters and out-of-office
+## Out of office
 
-Under **Settings → Filters and out-of-office**:
+Under **Settings → Out of office** (on a phone, tap your initials, then **Out
+of office**), turn on an automatic answer, optionally between two dates. Each
+sender gets it once every few days, and mailing lists and automated mail never
+get one.
 
-- **Out-of-office reply:** an automatic answer, optionally between two dates.
-  Each sender gets it once every few days, and mailing lists and automated mail
-  never get one.
-- **Filters:** rules that match incoming mail by sender, recipient, subject,
-  body, size or any header. They can move or copy it to a folder, mark it read,
-  flag or tag it, forward it, delete it, or reject it. Filters run on the
-  server, so they work even when no app is open.
+While the reply is on, or set to start, a bar across the top of the webmail
+says so until when, with **Edit** and **Turn off**. Turning it off keeps your
+message for next time.
+
+## Filters
+
+Under **Settings → Filters**: rules that match incoming mail by sender,
+recipient, subject, body, size or any header. They can move or copy it to a
+folder, mark it read, flag or tag it, forward it, delete it, or reject it.
+Filters run on the server, so they work even when no app is open.
 
 ## Passwords
 

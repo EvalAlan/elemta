@@ -2420,6 +2420,11 @@ input[type="file"]::file-selector-button:hover { border-color: var(--muted); }
 .later-banner { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; padding: 10px 14px; border-radius: var(--radius); background: var(--accent-soft); color: var(--ink); }
 .later-banner .icon { flex: none; color: var(--accent); }
 .later-banner form { margin-left: auto; }
+/* Out-of-office is on (outofoffice.go): across every page, so a reply
+   left running is hard to forget. */
+.away-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 0 12px; padding: 8px 14px; border-radius: var(--radius); background: var(--accent-soft); color: var(--ink); }
+.away-banner .icon { flex: none; color: var(--accent); }
+.away-banner > span { flex: 1 1 12em; }
 .row .later-time { color: var(--accent); white-space: nowrap; }
 .menu-body input[type="datetime-local"] { min-height: 36px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); padding: 0 8px; max-width: 100%; }
 .menu-body .menu-item .muted { margin-left: 8px; }

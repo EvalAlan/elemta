@@ -54,7 +54,8 @@
       <summary class="avatar" title="{{.Session.Address}}">{{initials (addrOf .Session.Address)}}<span class="visually-hidden">Account</span></summary>
       <div class="menu-body">
         <p class="small muted account-address">{{.Session.Address}}</p>
-        {{if not .Session.AdminActor}}<a href="/settings">{{template "icon-gear"}}Settings</a>{{end}}
+        {{if not .Session.AdminActor}}<a href="/settings">{{template "icon-gear"}}Settings</a>
+        <a href="/settings/out-of-office">{{template "icon-clock"}}Out of office</a>{{end}}
         <form action="/settings/theme" method="post">
           <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
           <button class="menu-item" type="submit" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}" data-theme-toggle>{{template "icon-moon"}}{{template "icon-sun"}}<span>Light or dark theme</span></button>
@@ -105,6 +106,16 @@
   </aside>
   <main id="main" class="content">
     {{range .SendFailures}}<p class="problem" role="alert">{{.}}</p>{{end}}
+    {{with .Away}}<div class="away-banner" role="status" data-away>
+      {{template "icon-clock"}}
+      <span>{{if .Starts}}Automatic replies start {{.Starts}}{{else}}Automatic replies are on{{end}}{{with .Until}} until {{.}}{{end}}.</span>
+      <a class="button small-button" href="/settings/out-of-office">Edit</a>
+      <form action="/filters" method="post" class="inline">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="op" value="vacation-off">
+        <input type="hidden" name="back" value="{{if $.List}}{{$.List.URL}}{{else}}/mail{{end}}">
+        <button class="button small-button" type="submit">Turn off</button>
+      </form>
+    </div>{{end}}
     {{if .Notice}}{{if .PendingSend}}{{with .PendingSend}}<div class="notice" role="status" data-send-left="{{.Left}}"><span data-send-status>Sending…</span>
       <form class="inline undo-form" action="/compose/undo" method="post">
         <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
