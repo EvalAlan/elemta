@@ -38,6 +38,7 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		writeJSON(w, map[string]any{"available": true, "min_password_length": max(10, s.provisioner.MinPasswordLength), "mailbox_admin": s.provisioner.Mailbox != nil, "scope": scopeOf(r).view()})
 	}).Methods("GET")
 	s.provisionPolicyRoutes(protected)
+	s.provisionSupportRoutes(protected)
 	protected.HandleFunc("/accounts/{address}/access", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		address, err := provision.Address(mux.Vars(r)["address"])
 		if err != nil {

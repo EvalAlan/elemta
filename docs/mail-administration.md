@@ -83,6 +83,23 @@ password alone leaves any passkey an intruder added in place. An administrator
 should verify the user's identity before running it. The CLI records the reset in the audit log. If the account's class
 requires two-step verification, the next webmail sign-in requires fresh setup.
 
+In the dashboard, the account dialog's **Support** section covers the same
+job and the others that come with it:
+
+- storage used against the quota in effect (also the **Used** column of the
+  accounts table);
+- whether two-step verification is on, how many recovery codes are left and
+  how many passkeys there are, with the reset above;
+- the account's app passwords, with when each was last used, to revoke one
+  or all. They can't be created or read there. Revoking refuses the next
+  sign-in; a mail app already connected stays connected until it closes;
+- who can open the mailbox (see Shared mailboxes below), to grant or remove.
+
+A domain administrator can do these for accounts in their own domains, with
+both sides of a share there. Each change is in the audit log
+(`two-factor-reset`, `app-password-revoke`, `mailbox-share`,
+`mailbox-share-remove`).
+
 Quota sizes accept integer bytes or suffixes such as `K`, `M`, `G`, `MiB`, and
 `GiB`. Suffixes use binary units; `5G` is 5 GiB. Zero means unlimited. Quotas
 are enforced by the mailbox server, including IMAP APPEND and delivery; updated
@@ -102,10 +119,40 @@ so retain, archive or purge those files according to the operator's policy.
 elemta --config /path/to/elemta.toml provision delete-account dana@example.com --confirm dana@example.com
 ```
 
+In the dashboard, **Delete account** asks for the address and has a box,
+off by default, to delete the mail permanently as well. Cancel and Esc change
+nothing.
+
 Delivery aliases point to one primary mailbox. They do not create another
 Maildir or another mailbox password. Mail apps sign in using the primary
 address. An alias does not automatically grant permission to send with that
 address; outbound sender permissions remain governed by `[auth.sender_aliases]`.
+
+## Needs attention and alert emails
+
+The Dashboard opens with **Needs attention**, for system administrators: what
+is wrong now, worst first, each with the page where it's dealt with. It
+gathers backups, the TLS certificate, the scheduled DNS checks, accounts held
+from sending, unusual sign-ins in the last day, and:
+
+| Check | Warning | Critical | Clears below |
+|---|---|---|---|
+| Disk space, and inodes, where the queue and configuration live | 85% | 95% | 82% (92% for critical) |
+| Longest wait in the active queue without progress | 15 min | 1 h | 10 min (45 min) |
+| Deferred messages | 100 | 1000 | 80 (800) |
+
+A wait in the active queue counts from when the message entered it, so a
+retry of mail deferred two days ago isn't reported as stuck. The queue is
+listed at most every five minutes, so those two can lag that far. Something
+that can't be read shows as "Couldn't check", never as fine.
+
+The disk and queue checks also email the alert addresses set on the Abuse
+page: at once when one starts or gets worse, daily while it lasts, and once
+when it clears. Backup, DNS, certificate and abuse alerts are sent as before.
+
+These emails go out through this same server. They warn of trouble coming;
+they can't report that the server is down or that its disk is already full.
+Watch for that from outside it.
 
 ## Classes of service
 

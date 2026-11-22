@@ -84,6 +84,10 @@ func (e *Engine) Policy() Policy {
 	return e.policy
 }
 
+// UsesValkey reports whether this service was given a Valkey to share state
+// through, whether or not it can reach it.
+func (e *Engine) UsesValkey() bool { return e != nil && e.addr != "" }
+
 // Shared reports whether this service can reach Valkey.
 func (e *Engine) Shared(ctx context.Context) bool {
 	client := e.valkey()

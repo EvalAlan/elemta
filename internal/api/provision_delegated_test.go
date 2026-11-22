@@ -162,6 +162,16 @@ func TestDelegatedDomainAdministration(t *testing.T) {
 		{"POST", "/lists", map[string]any{"address": "team@other.example"}},
 		{"PUT", "/lists/team@other.example", map[string]any{"name": "x"}},
 		{"PUT", "/domains/other.example/catch-all", map[string]any{"address": "dana@example.com"}},
+		// Account support, on either side of a share.
+		{"GET", "/accounts/eve@other.example/security", nil},
+		{"POST", "/accounts/eve@other.example/reset-two-factor", nil},
+		{"DELETE", "/accounts/eve@other.example/app-passwords", nil},
+		{"DELETE", "/accounts/eve@other.example/app-passwords/1", nil},
+		{"GET", "/accounts/eve@other.example/shares", nil},
+		{"PUT", "/accounts/eve@other.example/shares/dana@example.com", map[string]any{"can_send": true}},
+		{"DELETE", "/accounts/eve@other.example/shares/dana@example.com", nil},
+		{"PUT", "/accounts/dana@example.com/shares/eve@other.example", map[string]any{"can_send": true}},
+		{"DELETE", "/accounts/dana@example.com/shares/eve@other.example", nil},
 		// System-wide settings, even for their own domain.
 		{"POST", "/domains", map[string]any{"name": "third.example"}},
 		{"PUT", "/classes/staff", map[string]any{"settings": map[string]any{"quota_bytes": 0}}},
@@ -181,6 +191,11 @@ func TestDelegatedDomainAdministration(t *testing.T) {
 	directory.mu.Lock()
 	directory.accounts["alias@example.com"] = &provision.Account{Address: "eve@other.example", Status: "active"}
 	directory.mu.Unlock()
+	for _, c := range [][2]string{{"GET", "/security"}, {"POST", "/reset-two-factor"}, {"DELETE", "/app-passwords"}, {"DELETE", "/app-passwords/1"}, {"GET", "/shares"}, {"DELETE", "/shares/dana@example.com"}} {
+		code, body := deleg(c[0], "/api/provision/accounts/alias@example.com"+c[1], nil)
+		require.Equal(t, http.StatusBadRequest, code, "alias of another domain's account: %s %s: %s", c[0], c[1], body)
+	}
+	require.Empty(t, fake.resets)
 	code, body = deleg("POST", "/api/provision/accounts/alias@example.com/access", nil)
 	require.Equal(t, http.StatusBadRequest, code, body)
 	require.Equal(t, []string{"dana@example.com"}, fake.access)
@@ -211,6 +226,34 @@ func TestDelegatedDomainAdministration(t *testing.T) {
 	code, body = deleg("PUT", "/api/provision/accounts/dana@example.com/policy", map[string]any{"class": ""})
 	require.Equal(t, http.StatusForbidden, code, body)
 	require.Contains(t, body, "legal hold")
+
+	// Support, inside their domains.
+	fake.mu.Lock()
+	fake.security = map[string]mailpolicy.AccountSecurity{
+		"dana@example.com":  {UsedBytes: 2048, TOTP: true, AppPasswords: []mailpolicy.AppPassword{{ID: 1, Name: "Phone"}, {ID: 2, Name: "Laptop"}}},
+		"eve@other.example": {UsedBytes: 4096},
+	}
+	fake.mu.Unlock()
+	code, body = deleg("GET", "/api/provision/usage", nil)
+	require.Equal(t, http.StatusOK, code, body)
+	require.Contains(t, body, "dana@example.com")
+	require.NotContains(t, body, "eve@other.example")
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/security", nil},
+		{"POST", "/reset-two-factor", nil},
+		{"DELETE", "/app-passwords/1", nil},
+		{"DELETE", "/app-passwords", nil},
+		{"PUT", "/shares/lee@example.com", map[string]any{"can_send": true}},
+		{"GET", "/shares", nil},
+		{"DELETE", "/shares/lee@example.com", nil},
+	} {
+		code, body := deleg(c.method, "/api/provision/accounts/dana@example.com"+c.path, c.body)
+		require.Equal(t, http.StatusOK, code, "%s %s: %s", c.method, c.path, body)
+	}
+	require.Equal(t, []string{"dana@example.com"}, fake.resets)
 
 	// Domain assignment through the Users API.
 	code, body = root("POST", "/api/users", map[string]any{"username": "lee-admin", "password": "long-enough-password", "role": "domain-admin"})
@@ -246,6 +289,10 @@ func TestDelegatedDomainAdministration(t *testing.T) {
 	require.Contains(t, actions["account-policy dana@example.com"].Detail, "class staff")
 	require.Equal(t, "(system)", actions["dashboard-user-create lee-admin"].Domain)
 	require.Contains(t, actions["dashboard-user-role lee-admin"].Detail, "domains example.com")
+	require.Equal(t, "deleg", actions["two-factor-reset dana@example.com"].Actor)
+	require.Equal(t, "all (1)", actions["app-password-revoke dana@example.com"].Detail)
+	require.Equal(t, "lee@example.com read and send", actions["mailbox-share dana@example.com"].Detail)
+	require.Equal(t, "lee@example.com", actions["mailbox-share-remove dana@example.com"].Detail)
 	for _, e := range fake.audit {
 		require.NotContains(t, e.Detail, "password", "audit entries never carry passwords")
 	}

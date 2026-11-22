@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261122-dmarc">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261103-2fa">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261122-support">
 </head>
 
 <body>
@@ -253,6 +253,10 @@
 
             <!-- Dashboard View -->
             <section class="view active" id="view-dashboard">
+                <div class="card attention-card" id="attention-card" hidden>
+                    <div class="card-header"><h3>Needs attention</h3><span class="field-hint" id="attention-count"></span></div>
+                    <div class="card-body"><ul class="attention-list" id="attention-list" aria-live="polite"></ul></div>
+                </div>
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-icon active-icon">
@@ -1504,6 +1508,22 @@
                         <p class="field-hint">Quota changes apply to new mail sessions. Disabling an account revokes its webmail sessions and recovery links.</p>
                     </form>
                     <section id="ma-account-extras">
+                        <section id="ma-support" hidden>
+                            <h4>Support</h4>
+                            <p class="field-hint" id="ma-support-error" role="alert" hidden></p>
+                            <dl class="ma-facts">
+                                <dt>Storage</dt><dd id="ma-support-storage">Loading…</dd>
+                                <dt>Two-step verification</dt><dd id="ma-support-two-step">Loading…</dd>
+                                <dt>Passkeys</dt><dd id="ma-support-passkeys">Loading…</dd>
+                            </dl>
+                            <button class="btn btn-secondary" type="button" id="ma-support-reset">Reset two-step and passkeys</button>
+                            <div class="ma-support-heading"><h5>App passwords</h5><button class="btn btn-secondary btn-sm" type="button" id="ma-support-revoke-all" hidden>Revoke all</button></div>
+                            <ul id="ma-app-password-list" class="ma-alias-list"></ul>
+                            <p class="field-hint">A revoked password can't sign in again. A mail app that is already connected stays connected until it closes.</p>
+                            <div class="ma-support-heading"><h5>Who can open this mailbox</h5></div>
+                            <ul id="ma-share-list" class="ma-alias-list"></ul>
+                            <form id="ma-share-form" class="ma-inline ma-share-form"><label class="sr-only" for="ma-share-member">Share this mailbox with</label><input id="ma-share-member" type="email" list="ma-account-options" placeholder="colleague@example.com" autocomplete="off" required><label class="ma-check"><input id="ma-share-send" type="checkbox"> May send as it</label><button class="btn btn-secondary" type="submit">Share mailbox</button></form>
+                        </section>
                         <section id="ma-account-policy" hidden>
                             <h4>Class of service</h4>
                             <form id="ma-policy-form" class="ma-form">
@@ -1551,6 +1571,20 @@
                          miss, and changes there were silently lost. Aliases and the
                          password reset act at once and keep their buttons. -->
                     <div class="ma-dialog-footer"><button class="btn btn-primary" type="submit" form="ma-account-form" id="ma-save">Save</button><span id="ma-save-status" class="field-hint" role="status"></span><button class="btn btn-secondary" type="button" id="ma-open-mailbox" hidden>Open mailbox</button><button class="btn btn-danger" type="button" id="ma-delete">Delete account</button></div>
+                </dialog>
+                <dialog id="ma-delete-dialog" class="ma-dialog" aria-labelledby="ma-delete-title">
+                    <div class="ma-dialog-heading"><div><p class="ma-eyebrow">DELETE ACCOUNT</p><h3 id="ma-delete-title">Delete account</h3></div></div>
+                    <p id="ma-delete-message" class="ma-save-error" role="alert" hidden></p>
+                    <form id="ma-delete-form" class="ma-form">
+                        <p>The account is removed: nobody can sign in to it and mail to it stops being delivered.</p>
+                        <label for="ma-delete-address">Type <strong id="ma-delete-target"></strong> to confirm</label>
+                        <input id="ma-delete-address" type="text" autocomplete="off" autocapitalize="none" spellcheck="false">
+                        <div id="ma-delete-purge-choice" hidden>
+                            <label class="ma-check"><input id="ma-delete-purge" type="checkbox" aria-describedby="ma-delete-purge-help"> Also permanently delete its mail</label>
+                            <p class="field-hint" id="ma-delete-purge-help">This includes folders, filters and settings, and can't be undone. Left unchecked, the mailbox is kept and can be purged later.</p>
+                        </div>
+                        <div class="ma-form-actions"><button class="btn btn-secondary" type="button" id="ma-delete-cancel">Cancel</button><button class="btn btn-danger" type="submit" id="ma-delete-confirm" disabled>Delete account</button></div>
+                    </form>
                 </dialog>
                 <dialog id="ma-domain-dialog" class="ma-dialog">
                     <div class="ma-dialog-heading"><div><p class="ma-eyebrow">DOMAIN SETTINGS</p><h3 id="ma-domain-title">Domain</h3></div><button type="button" class="btn btn-secondary" id="ma-domain-close">Close</button></div>
@@ -2037,7 +2071,7 @@
     <script src="/static/app.js?v=20261122-dmarc"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261103-2fa"></script>
-    <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
+    <script src="/static/mail-admin.js?v=20261122-support"></script>
     <script src="/static/abuse.js?v=20261102-alertblock"></script>
     <script src="/static/dmarc.js?v=20261122-dmarc"></script>
     <script src="/static/compliance.js?v=20261103-compliance"></script>

@@ -3293,6 +3293,23 @@ input:checked + .plugin-slider:before {
 .domain-rate-warn { color: var(--accent-warning); }
 .domain-rate-bad { color: var(--accent-danger); }
 
+/* Needs attention, on the Dashboard */
+.attention-card { margin-bottom: 1.5rem; }
+.attention-card[hidden] { display: none; }
+.attention-list { list-style: none; margin: 0; padding: 0; }
+.attention-item { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr) auto; gap: 0.25rem 1rem; align-items: start; padding: 0.75rem 0; }
+.attention-item + .attention-item { border-top: 1px solid var(--border-color); }
+.attention-what p { margin: 0.15rem 0 0; font-size: 0.875rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+.attention-severity { font-size: 0.8rem; font-weight: 600; padding-top: 0.1rem; }
+.attention-critical { color: var(--accent-danger); }
+.attention-warning { color: var(--accent-warning); }
+.attention-unknown, .attention-info { color: var(--text-secondary); }
+.attention-clear { color: var(--accent-success); }
+@media (max-width: 600px) {
+    .attention-item { grid-template-columns: minmax(0, 1fr); }
+    .attention-item .btn { justify-self: start; }
+}
+
 /* DMARC reports. The pair is checked for colour-blind separation and 3:1 on
    the card in each theme. */
 #view-dmarc { --dmarc-pass: #3987e5; --dmarc-fail: #d95926; }

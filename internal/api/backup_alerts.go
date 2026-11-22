@@ -17,20 +17,10 @@ import (
 // and emails the alert addresses (the Abuse settings' "alert email") when it
 // gets worse, again each day it stays bad, and once when it recovers.
 
-const (
-	backupAlertPoll = 10 * time.Minute
-	// backupAlertRepeat reminds while a problem lasts, without filling
-	// the inbox.
-	backupAlertRepeat = 24 * time.Hour
-)
+const backupAlertPoll = 10 * time.Minute
 
-// backupAlerter decides which status changes are worth an email. It is
-// in-memory, so a restart while backups are broken sends one more alert,
-// which is a reminder rather than noise.
-type backupAlerter struct {
-	level int // of the last alert sent: 0 none, 1 warning, 2 critical
-	sent  time.Time
-}
+// backupAlerter words the emails; alerter decides when there is one.
+type backupAlerter struct{ alerter }
 
 func backupLevel(status string) int {
 	switch status {
@@ -48,20 +38,13 @@ func (a *backupAlerter) next(st BackupStatus, host string, now time.Time) (subje
 		return "", "", false
 	}
 	level := backupLevel(st.Status)
-	switch {
-	case level == 0 && a.level > 0:
-		a.level, a.sent = 0, time.Time{}
+	send, recovered := a.observe(level, now)
+	if !send {
+		return "", "", false
+	}
+	if recovered {
 		return "Backups are working again on " + host,
 			fmt.Sprintf("The backup problem reported earlier has cleared.\n\n%s\n\nLast good backup: %s\n", st.Message, orNone(st.LastSuccess)), true
-	case level == 0:
-		return "", "", false
-	case level > a.level || now.Sub(a.sent) >= backupAlertRepeat:
-		a.level, a.sent = level, now
-	default:
-		// Better than before but still bad: remember the lower level so a
-		// relapse is reported, without sending anything now.
-		a.level = level
-		return "", "", false
 	}
 	subject = "Backup problem on " + host
 	if level == 2 {
@@ -87,13 +70,7 @@ func (s *Server) watchBackups(stop <-chan struct{}) {
 	if s.abuse == nil || s.backupStatusPath() == "" {
 		return
 	}
-	host := ""
-	if s.mainConfig != nil {
-		host = s.mainConfig.Hostname
-	}
-	if host == "" {
-		host, _ = os.Hostname()
-	}
+	host := s.alertHost()
 	var a backupAlerter
 	ticker := time.NewTicker(backupAlertPoll)
 	defer ticker.Stop()
@@ -114,4 +91,13 @@ func (s *Server) watchBackups(stop <-chan struct{}) {
 		}
 		cancel()
 	}
+}
+
+// alertHost names this server in alert emails.
+func (s *Server) alertHost() string {
+	if s.mainConfig != nil && s.mainConfig.Hostname != "" {
+		return s.mainConfig.Hostname
+	}
+	host, _ := os.Hostname()
+	return host
 }
