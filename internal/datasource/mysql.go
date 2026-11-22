@@ -45,9 +45,7 @@ func NewMySQL(config Config) *MySQL {
 	}
 
 	// Create logger for security operations
-	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})).With(
+	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), logging.Options(slog.LevelInfo))).With(
 		"component", "mysql-datasource",
 		"database", config.Database,
 	)

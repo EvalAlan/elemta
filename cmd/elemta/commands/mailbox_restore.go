@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/EvalAlan/elemta/internal/logging"
 	"github.com/EvalAlan/elemta/internal/mailbox"
 	"github.com/spf13/cobra"
 )
@@ -114,5 +115,5 @@ func openMailboxService(cmd *cobra.Command) (*mailbox.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mailbox.Open(cmd.Context(), cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return mailbox.Open(cmd.Context(), cfg, slog.New(slog.NewTextHandler(os.Stderr, logging.Options(nil))))
 }
