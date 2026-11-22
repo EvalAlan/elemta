@@ -521,6 +521,11 @@ func TestRouterHTTP(t *testing.T) {
 	if status != http.StatusOK || json.Unmarshal([]byte(body), &domains) != nil || len(domains) != 1 || domains[0]["domain"] != "b.example" {
 		t.Fatalf("domains from every cell: %d %s", status, body)
 	}
+	// Storage is listed from both.
+	status, body = do(http.MethodGet, "/v1/admin/usage", "", nil)
+	if status != http.StatusOK || !strings.Contains(body, rig.cellA.account.Address) || !strings.Contains(body, rig.cellB.account.Address) {
+		t.Fatalf("usage from every cell: %d %s", status, body)
+	}
 	if ds, _ := rig.cellA.engine.Domains(context.Background()); len(ds) != 0 {
 		t.Error("cell a got b.example's policy")
 	}

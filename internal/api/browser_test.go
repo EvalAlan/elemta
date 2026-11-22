@@ -635,3 +635,107 @@ func TestBrowserDeleteAccountDialog(t *testing.T) {
 	require.Equal(t, []string{dana.Address}, fake.purged)
 	fake.mu.Unlock()
 }
+
+// The support section, at desktop and phone width: what it shows, that names
+// the account's owner chose stay text, and that each button does its one job.
+func TestBrowserAccountSupport(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	for _, size := range []struct {
+		name          string
+		width, height int64
+	}{{"desktop", 1280, 1100}, {"phone", 390, 850}} {
+		t.Run(size.name, func(t *testing.T) {
+			const address = "dana@example.com"
+			used := time.Date(2026, 1, 2, 15, 4, 0, 0, time.UTC)
+			fake := &fakeMailboxAdmin{classes: map[string]mailpolicy.Class{}, policy: map[string]mailpolicy.AccountPolicy{}, lists: map[string]mailpolicy.List{}, routes: map[string]mailpolicy.DomainRoute{},
+				security: map[string]mailpolicy.AccountSecurity{address: {UsedBytes: 3 << 29, QuotaBytes: 5 << 30, TOTP: true, RecoveryLeft: 7, Passkeys: 2,
+					AppPasswords: []mailpolicy.AppPassword{{ID: 1, Name: "<b>Phone</b>", Created: used, LastUsed: &used}, {ID: 2, Name: "Laptop", Created: used}}}},
+				shares: map[string][]mailpolicy.Share{address: {{Mailbox: address, Member: "lee@example.com"}}}}
+			mailbox := httptest.NewServer(fake)
+			defer mailbox.Close()
+			directory := &mapDirectory{accounts: map[string]*provision.Account{address: {Address: address, Name: "Dana", Status: "active", QuotaBytes: 5 << 30, Aliases: []string{}}}}
+			base, _ := startProvisionAPIWith(t, func(s *Server) {
+				s.webRoot = webRoot
+				client, err := mailpolicy.NewClient(mailbox.URL, "token")
+				require.NoError(t, err)
+				s.provisioner.Directory = directory
+				s.provisioner.Mailbox = client
+			})
+
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+			defer cancel()
+			eval := func(expr string) bool {
+				t.Helper()
+				v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+				require.NoError(t, err)
+				return v
+			}
+			wait := func(expr string) {
+				t.Helper()
+				require.Eventually(t, func() bool { return eval(expr) }, 10*time.Second, 50*time.Millisecond, expr)
+			}
+			do := func(expr string) { t.Helper(); eval(`(` + expr + `, true)`) }
+			idle := func() { t.Helper(); wait(`!document.getElementById("ma-support-reset").disabled`) }
+
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(size.width, size.height),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), "root"),
+				chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+				chromedp.WaitReady(chromedp.CSS("#nav-mailadmin:not([hidden])")),
+			))
+			do(`document.getElementById("nav-mailadmin").click()`)
+			wait(`!!document.querySelector("#ma-table-body .ma-account-link")`)
+			require.True(t, eval(`document.getElementById("ma-table-body").textContent.includes("1.5 GiB")`), "Used column")
+			do(`document.querySelector("#ma-table-body .ma-account-link").click()`)
+			require.True(t, eval(`window.innerWidth === `+strconv.FormatInt(size.width, 10)), "not at the asked width")
+			wait(`document.getElementById("ma-support-storage").textContent.includes("30%")`)
+			require.True(t, eval(`document.getElementById("ma-support-two-step").textContent === "On, 7 recovery codes left"`))
+			require.True(t, eval(`document.getElementById("ma-app-password-list").textContent.includes("<b>Phone</b>") && !document.querySelector("#ma-app-password-list b")`), "a name became markup")
+			require.True(t, eval(`document.getElementById("ma-share-list").textContent.includes("lee@example.com")`))
+			require.True(t, eval(`document.getElementById("ma-account-dialog").scrollWidth <= document.getElementById("ma-account-dialog").clientWidth`), "overflows sideways")
+			if dir := os.Getenv("ELEMTA_SUPPORT_SCREENSHOTS"); dir != "" {
+				// The dialog scrolls, so the panel takes two screens.
+				for i, id := range []string{"ma-support", "ma-app-password-list"} {
+					do(`document.getElementById("` + id + `").scrollIntoView({block: "start"})`)
+					do(`document.getElementById("ma-account-dialog").scrollBy(0, -140)`)
+					png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot())
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(filepath.Join(dir, "support-"+size.name+"-"+strconv.Itoa(i)+".png"), png, 0o600))
+				}
+			}
+
+			do(`window.confirm = () => false`)
+			do(`document.getElementById("ma-support-reset").click()`)
+			idle()
+			fake.mu.Lock()
+			require.Empty(t, fake.resets, "reset without a yes")
+			fake.mu.Unlock()
+
+			do(`window.confirm = () => true`)
+			do(`document.querySelector("#ma-app-password-list button").click()`)
+			wait(`!document.getElementById("ma-app-password-list").textContent.includes("Phone") && document.getElementById("ma-app-password-list").textContent.includes("Laptop")`)
+			idle()
+			do(`document.getElementById("ma-support-revoke-all").click()`)
+			wait(`document.getElementById("ma-app-password-list").textContent === "No app passwords."`)
+			idle()
+			do(`document.getElementById("ma-support-reset").click()`)
+			wait(`document.getElementById("ma-support-two-step").textContent === "Off"`)
+			idle()
+			do(`document.querySelector("#ma-share-list button").click()`)
+			wait(`document.getElementById("ma-share-list").textContent === "Only its owner."`)
+			idle()
+			do(`(document.getElementById("ma-share-member").value = "sam@example.com", document.getElementById("ma-share-send").checked = true, document.getElementById("ma-share-form").requestSubmit())`)
+			wait(`document.getElementById("ma-share-list").textContent.includes("sam@example.com · reads and sends")`)
+		})
+	}
+}

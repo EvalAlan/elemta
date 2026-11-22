@@ -43,6 +43,7 @@ var (
 	gatheredPaths = map[string]bool{
 		"GET /v1/admin/domains": true, "GET /v1/admin/routes": true, "GET /v1/admin/domain-status": true,
 		"GET /v1/admin/lists": true, "GET /v1/admin/audit": true, "POST /v1/admin/compliance/search": true,
+		"GET /v1/admin/usage": true,
 	}
 )
 

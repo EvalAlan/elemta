@@ -464,6 +464,7 @@ func (s *Service) adminAPI(mux *http.ServeMux) {
 		}
 		return map[string]bool{"ok": true}, nil
 	})
+	s.supportAPI(handle)
 	handle("POST /v1/admin/accounts/{address}/purge", func(r *http.Request) (any, error) {
 		address := strings.ToLower(strings.TrimSpace(r.PathValue("address")))
 		if !strings.Contains(address, "@") || len(address) > 320 {
