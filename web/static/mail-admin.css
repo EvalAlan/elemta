@@ -126,3 +126,5 @@
 .abuse-attribution a { color: var(--accent-primary); }
 #view-abuse .messages-table td:has(> .abuse-actions) { max-width: none; overflow: visible; }
 .abuse-actions { display: inline-flex; gap: .4rem; }
+#ma-delete-dialog .ma-dialog-heading { position: static; }
+#ma-delete-confirm:disabled { opacity: .45; cursor: not-allowed; }

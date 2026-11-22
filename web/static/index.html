@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
     <link rel="stylesheet" href="/static/styles.css?v=20261030-certmanage">
-    <link rel="stylesheet" href="/static/mail-admin.css?v=20261103-2fa">
+    <link rel="stylesheet" href="/static/mail-admin.css?v=20261122-delete">
 </head>
 
 <body>
@@ -1486,6 +1486,20 @@
                          password reset act at once and keep their buttons. -->
                     <div class="ma-dialog-footer"><button class="btn btn-primary" type="submit" form="ma-account-form" id="ma-save">Save</button><span id="ma-save-status" class="field-hint" role="status"></span><button class="btn btn-secondary" type="button" id="ma-open-mailbox" hidden>Open mailbox</button><button class="btn btn-danger" type="button" id="ma-delete">Delete account</button></div>
                 </dialog>
+                <dialog id="ma-delete-dialog" class="ma-dialog" aria-labelledby="ma-delete-title">
+                    <div class="ma-dialog-heading"><div><p class="ma-eyebrow">DELETE ACCOUNT</p><h3 id="ma-delete-title">Delete account</h3></div></div>
+                    <p id="ma-delete-message" class="ma-save-error" role="alert" hidden></p>
+                    <form id="ma-delete-form" class="ma-form">
+                        <p>The account is removed: nobody can sign in to it and mail to it stops being delivered.</p>
+                        <label for="ma-delete-address">Type <strong id="ma-delete-target"></strong> to confirm</label>
+                        <input id="ma-delete-address" type="text" autocomplete="off" autocapitalize="none" spellcheck="false">
+                        <div id="ma-delete-purge-choice" hidden>
+                            <label class="ma-check"><input id="ma-delete-purge" type="checkbox" aria-describedby="ma-delete-purge-help"> Also permanently delete its mail</label>
+                            <p class="field-hint" id="ma-delete-purge-help">This includes folders, filters and settings, and can't be undone. Left unchecked, the mailbox is kept and can be purged later.</p>
+                        </div>
+                        <div class="ma-form-actions"><button class="btn btn-secondary" type="button" id="ma-delete-cancel">Cancel</button><button class="btn btn-danger" type="submit" id="ma-delete-confirm" disabled>Delete account</button></div>
+                    </form>
+                </dialog>
                 <dialog id="ma-domain-dialog" class="ma-dialog">
                     <div class="ma-dialog-heading"><div><p class="ma-eyebrow">DOMAIN SETTINGS</p><h3 id="ma-domain-title">Domain</h3></div><button type="button" class="btn btn-secondary" id="ma-domain-close">Close</button></div>
                     <p id="ma-domain-message" role="status" hidden></p>
@@ -1971,7 +1985,7 @@
     <script src="/static/app.js?v=20261103-compliance"></script>
     <script src="/static/campaigns.js?v=20260812-domain-stats"></script>
     <script src="/static/users.js?v=20261103-2fa"></script>
-    <script src="/static/mail-admin.js?v=20261031-aliasform"></script>
+    <script src="/static/mail-admin.js?v=20261122-delete"></script>
     <script src="/static/abuse.js?v=20261102-alertblock"></script>
     <script src="/static/compliance.js?v=20261103-compliance"></script>
     <script src="/static/security.js?v=20261103-2fa"></script>

@@ -340,7 +340,7 @@
     window.refreshMailAdmin = function () { refresh().catch(error => message(error.message, true)); };
     el('ma-create').addEventListener('click', () => openAccount(null));
     el('ma-close').addEventListener('click', () => { if (!busy) el('ma-account-dialog').close(); });
-    ['ma-account-dialog', 'ma-list-dialog', 'ma-class-dialog'].forEach(id => el(id).addEventListener('cancel', event => { if (busy) event.preventDefault(); }));
+    ['ma-account-dialog', 'ma-list-dialog', 'ma-class-dialog', 'ma-delete-dialog'].forEach(id => el(id).addEventListener('cancel', event => { if (busy) event.preventDefault(); }));
     el('ma-refresh').addEventListener('click', window.refreshMailAdmin);
     el('ma-open-mailbox').addEventListener('click', () => {
         if (busy || !selected) return;
@@ -431,12 +431,39 @@
         if (el('ma-password').value !== el('ma-confirm-password').value) throw new Error('The new passwords do not match.');
         const result = await request(accountPath() + '/password', 'POST', { password: el('ma-password').value }); el('ma-password').value = ''; el('ma-confirm-password').value = ''; message(result.status);
     }); });
-    el('ma-delete').addEventListener('click', () => perform(async () => {
-        const address = selected.address;
-        if (window.prompt('Delete this account? Type ' + address + ' to confirm:') !== address) return;
-        const purge = mailboxAdmin && window.confirm('Also permanently remove its mail, folders, filters and settings?\n\nOK purges the mailbox. Cancel keeps it, so the account could be recreated with its mail.');
-        const result = await request(accountPath(), 'DELETE', { confirm: address, purge }); selected = null; el('ma-account-dialog').close(); message(result.status); await refresh();
-    }));
+    // Deleting asks everything in one dialog, so that leaving it always means
+    // nothing happened. A second yes/no question about the mail can't offer
+    // that: both of its answers delete the account.
+    el('ma-delete').addEventListener('click', () => {
+        if (busy || !selected) return;
+        el('ma-delete-form').reset();
+        el('ma-delete-message').hidden = true;
+        el('ma-delete-target').textContent = selected.address;
+        el('ma-delete-purge-choice').hidden = !mailboxAdmin;
+        el('ma-delete-confirm').disabled = true;
+        el('ma-delete-dialog').showModal();
+        el('ma-delete-cancel').focus();
+    });
+    el('ma-delete-address').addEventListener('input', () => {
+        el('ma-delete-confirm').disabled = !selected || el('ma-delete-address').value.trim() !== selected.address;
+    });
+    el('ma-delete-cancel').addEventListener('click', () => { if (!busy) el('ma-delete-dialog').close(); });
+    el('ma-delete-form').addEventListener('submit', event => { event.preventDefault(); perform(async () => {
+        if (!selected || el('ma-delete-address').value.trim() !== selected.address) return;
+        const purge = mailboxAdmin && el('ma-delete-purge').checked;
+        el('ma-delete-message').hidden = true;
+        let result;
+        try {
+            result = await request(accountPath(), 'DELETE', { confirm: selected.address, purge });
+        } catch (error) {
+            // Only the delete's own failure belongs in this dialog: the account
+            // dialog behind it may still be reporting on what it was loading.
+            el('ma-delete-message').textContent = error.message; el('ma-delete-message').hidden = false;
+            throw error;
+        }
+        el('ma-delete-dialog').close(); el('ma-account-dialog').close(); selected = null;
+        message(result.status); await refresh();
+    }); });
     el('ma-purge').addEventListener('click', () => perform(async () => {
         const address = (window.prompt('Purge the mailbox of an account that has already been deleted. This permanently removes its mail.\n\nAccount address:') || '').trim();
         if (!address) return;
