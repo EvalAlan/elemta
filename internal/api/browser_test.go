@@ -522,7 +522,7 @@ func TestBrowserDeleteAccountDialog(t *testing.T) {
 		s.provisioner.Mailbox = client
 	})
 
-	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.WindowSize(390, 850), chromedp.NoSandbox)
+	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	defer cancelAlloc()
 	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
@@ -559,6 +559,8 @@ func TestBrowserDeleteAccountDialog(t *testing.T) {
 	}
 
 	require.NoError(t, chromedp.Do(ctx,
+		// Emulated, because headless Chrome won't make a window under 500px.
+		chromedp.EmulateViewport(390, 850),
 		chromedp.Navigate(base+"/login"),
 		chromedp.WaitVisible(chromedp.ID("password")),
 		chromedp.SendKeys(chromedp.ID("username"), "root"),
@@ -572,6 +574,7 @@ func TestBrowserDeleteAccountDialog(t *testing.T) {
 	wait(`!!document.querySelector("#ma-table-body .ma-account-link")`)
 
 	open()
+	require.True(t, eval(`window.innerWidth === 390`), "not at phone width")
 	require.True(t, eval(`document.activeElement.id === "ma-delete-cancel"`), "Cancel has the focus")
 	require.True(t, eval(`document.getElementById("ma-delete-confirm").disabled`), "Delete waits for the address")
 	require.False(t, eval(`document.getElementById("ma-delete-purge").checked`), "purge is off by default")
