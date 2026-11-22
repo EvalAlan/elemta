@@ -238,7 +238,30 @@ before, and a report that can't be read never holds up or changes a delivery.
 
 An address outside the domain also needs the authorization record
 `<domain>._report._dmarc.<address's domain>  TXT "v=DMARC1"`, or receivers
-won't send to it.
+won't send to it. The DNS health check warns when it's missing and shows
+what to publish.
+
+### The DMARC page
+
+**DMARC** in the console shows, for 7, 30 or 90 days, each domain's policy,
+volume, share passing, reporters and sources, from verified reports only. It
+pre-fills the report address from the domain's published `rua`.
+
+Each source gets a label:
+
+| Label | Meaning |
+|---|---|
+| this server | one of the mail host's own addresses |
+| aligned sender | passed SPF as this domain |
+| DKIM only: likely forwarder or sending service | passed by signature alone; the reports can't tell those two apart |
+| failing | passed neither |
+
+Forged mail is meant to fail, so failing alone raises nothing. The page
+points out failing mail that looks like the domain's own: from this server,
+from an address that also sends passing mail, or signed as the domain. At
+`p=none` or `p=quarantine` it suggests the next policy after 14 days of
+verified reports with none of those. It never changes DNS. Places come from
+the location database on this server; no address is looked up elsewhere.
 
 ## Distribution lists, domain aliases and catch-all
 

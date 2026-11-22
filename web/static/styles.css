@@ -3292,3 +3292,53 @@ input:checked + .plugin-slider:before {
 .domain-rate-ok { color: var(--accent-success); }
 .domain-rate-warn { color: var(--accent-warning); }
 .domain-rate-bad { color: var(--accent-danger); }
+
+/* DMARC reports. The pair is checked for colour-blind separation and 3:1 on
+   the card in each theme. */
+#view-dmarc { --dmarc-pass: #3987e5; --dmarc-fail: #d95926; }
+[data-theme="light"] #view-dmarc { --dmarc-pass: #2a78d6; --dmarc-fail: #eb6834; }
+#nav-dmarc[hidden], #view-dmarc [hidden] { display: none !important; }
+#view-dmarc .card { margin-bottom: 1.25rem; min-width: 0; }
+#view-dmarc small { display: block; }
+#view-dmarc .card-header { flex-wrap: wrap; gap: 0.5rem; }
+.dmarc-range { display: flex; gap: 0.4rem; margin-bottom: 1rem; }
+.dmarc-range button[aria-pressed="true"] { border-color: var(--accent-primary); color: var(--text-primary); }
+.dmarc-notice { padding: 0.75rem; margin-bottom: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-sm); }
+.dmarc-error { color: var(--accent-danger); }
+.dmarc-scroll { overflow-x: auto; }
+.dmarc-pick { padding: 0; border: 0; background: none; color: var(--accent-primary); font: inherit; text-align: left; cursor: pointer; }
+.dmarc-pick[aria-pressed="true"] { color: var(--text-primary); font-weight: 650; text-decoration: underline; text-underline-offset: 0.25rem; }
+.dmarc-heading { margin: 1.5rem 0 0.75rem; overflow-wrap: anywhere; }
+.dmarc-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+.dmarc-tile { min-width: 0; padding: 0.875rem 1rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); }
+.dmarc-tile > span { display: block; font-size: 1.4rem; font-weight: 650; overflow-wrap: anywhere; }
+.dmarc-tile small { color: var(--text-secondary); }
+.dmarc-advice { list-style: none; margin: 0 0 1.25rem; padding: 0; display: grid; gap: 0.5rem; }
+.dmarc-advice:empty { display: none; }
+.dmarc-advice li { display: grid; gap: 0.2rem; padding: 0.75rem 1rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); font-size: 0.875rem; overflow-wrap: anywhere; }
+.dmarc-advice li.dmarc-advice-warning { border-left: 4px solid var(--accent-warning); }
+.dmarc-advice li.dmarc-advice-ok { border-left: 4px solid var(--accent-success); }
+.dmarc-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-bottom: 0.5rem; font-size: 0.8rem; color: var(--text-secondary); }
+.dmarc-legend span, .dmarc-tip span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.dmarc-key { width: 0.7rem; height: 0.7rem; flex: none; border-radius: 2px; }
+.dmarc-pass { fill: var(--dmarc-pass); background: var(--dmarc-pass); }
+.dmarc-fail { fill: var(--dmarc-fail); background: var(--dmarc-fail); }
+.dmarc-chart { position: relative; width: 100%; min-width: 0; min-height: 220px; }
+.dmarc-chart svg { display: block; max-width: 100%; }
+.dmarc-chart svg:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.dmarc-grid { stroke: var(--border-color); stroke-width: 1; }
+.dmarc-axis { stroke: var(--border-strong); stroke-width: 1; }
+.dmarc-tick { fill: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.dmarc-hit { fill: transparent; }
+.dmarc-hit-on { fill: var(--bg-hover); }
+.dmarc-chart path { pointer-events: none; }
+.dmarc-tip { position: absolute; top: 4px; z-index: 2; display: grid; gap: 0.15rem; padding: 0.5rem 0.65rem; font-size: 0.8rem; white-space: nowrap; pointer-events: none; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.dmarc-empty { position: absolute; inset: 80px 0 auto; text-align: center; color: var(--text-secondary); font-size: 0.85rem; pointer-events: none; }
+#view-dmarc details summary { cursor: pointer; padding: 0.4rem 0; color: var(--accent-primary); }
+.dmarc-setup { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: 0.75rem 0; }
+.dmarc-setup input { flex: 1 1 16rem; min-width: 0; padding: 0.6rem 0.75rem; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font: inherit; }
+#view-dmarc .messages-table td { white-space: normal; overflow-wrap: normal; max-width: 22rem; }
+@media (forced-colors: active) {
+    .dmarc-pass { fill: CanvasText; }
+    .dmarc-fail { fill: Highlight; }
+}

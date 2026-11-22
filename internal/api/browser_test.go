@@ -10,11 +10,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -488,4 +491,189 @@ func TestBrowserAccountShowsUserProtocolChoice(t *testing.T) {
 	}
 	require.Equal(t, "Off | turned off by the user", row("IMAP"))
 	require.True(t, strings.HasPrefix(row("POP3"), "On | "), row("POP3"))
+}
+
+// The DMARC page with seeded reports, for both roles and both widths and
+// themes: numbers, chart, text that stays text, and setup.
+func TestBrowserDMARC(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	for _, c := range []struct {
+		name          string
+		width, height int64
+		theme         string
+		delegated     bool
+	}{{"desktop", 1280, 1000, "dark", false}, {"phone", 390, 850, "light", false}, {"delegated", 390, 850, "dark", true}} {
+		t.Run(c.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var registered, backfilled bool
+			now := time.Now().UTC()
+			var summary []mailpolicy.DMARCDay
+			for i := 1; i < 28; i++ {
+				day := now.AddDate(0, 0, -i).Format("2006-01-02")
+				summary = append(summary, mailpolicy.DMARCDay{Domain: "example.com", PolicyDomain: "example.com", Day: day, Sender: "receiver.example",
+					Org: "<b>not markup</b>", Verified: true, P: "none", Reports: 1, Messages: int64(400 + i*37%300), Aligned: int64(380 + i*37%300 - i*11%70)})
+			}
+			summary = append(summary,
+				mailpolicy.DMARCDay{Domain: "example.com", Day: now.AddDate(0, 0, -2).Format("2006-01-02"), Sender: "claimed.example", Reports: 3, Messages: 900000},
+				mailpolicy.DMARCDay{Domain: "other.example", Day: now.AddDate(0, 0, -2).Format("2006-01-02"), Sender: "receiver.example", Verified: true, P: "reject", Reports: 1, Messages: 5, Aligned: 5})
+			src := func(ip, dkim, spf, signer string, n int64) mailpolicy.DMARCSource {
+				return mailpolicy.DMARCSource{Domain: "example.com", SourceIP: ip, HeaderFrom: "example.com", Disposition: "none", DKIM: dkim, SPF: spf, DKIMDomain: signer, Verified: true, Messages: n}
+			}
+			sources := []mailpolicy.DMARCSource{src("192.0.2.1", "pass", "pass", "example.com", 9000), src("198.51.100.20", "pass", "fail", "example.com", 2100),
+				src("2001:db8::25", "fail", "fail", "example.com", 340), src("203.0.113.9", "fail", "fail", "<i>evil</i>", 60)}
+			mailbox := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				enc := json.NewEncoder(w)
+				// As the mailbox does, only the domains asked for.
+				want := func(d string) bool {
+					q := r.URL.Query()["domain"]
+					return len(q) == 0 || slices.Contains(q, d)
+				}
+				switch r.URL.Path {
+				case "/v1/admin/dmarc/addresses":
+					list := []mailpolicy.DMARCAddress{}
+					if registered {
+						a := mailpolicy.DMARCAddress{Domain: "example.com", Address: "rua@example.com"}
+						if backfilled {
+							a.BackfillStarted, a.BackfillFinished, a.BackfillRead, a.BackfillStored = &now, &now, 27, 27
+						}
+						list = append(list, a)
+					}
+					_ = enc.Encode(list)
+				case "/v1/admin/dmarc/summary":
+					out := []mailpolicy.DMARCDay{}
+					for _, d := range summary {
+						if want(d.Domain) {
+							out = append(out, d)
+						}
+					}
+					_ = enc.Encode(out)
+				case "/v1/admin/dmarc/sources":
+					out := []mailpolicy.DMARCSource{}
+					for _, s := range sources {
+						if want(s.Domain) {
+							out = append(out, s)
+						}
+					}
+					_ = enc.Encode(out)
+				case "/v1/admin/dmarc/addresses/example.com":
+					registered = true
+					_, _ = w.Write([]byte("{}"))
+				case "/v1/admin/dmarc/addresses/example.com/backfill":
+					backfilled = true
+					_, _ = w.Write([]byte("{}"))
+				default:
+					_, _ = w.Write([]byte("{}"))
+				}
+			}))
+			defer mailbox.Close()
+
+			dir := t.TempDir()
+			hash, err := auth.HashPassword(testAdminPassword)
+			require.NoError(t, err)
+			users := filepath.Join(dir, "users")
+			require.NoError(t, os.WriteFile(users, []byte("root:"+hash+":admin\ndeleg:"+hash+":domain-admin,domain:example.com\n"), 0o600))
+			config := filepath.Join(dir, "elemta.toml")
+			require.NoError(t, os.WriteFile(config, []byte("local_domains = [\"example.com\", \"other.example\"]\n"), 0o600))
+			s, err := NewServer(&Config{Enabled: true, ListenAddr: "127.0.0.1:0", WebRoot: webRoot, AuthEnabled: true, AuthFile: users}, &MainConfig{Hostname: "mail.example.com"}, dir, 0, config)
+			require.NoError(t, err)
+			client, err := mailpolicy.NewClient(mailbox.URL, "token")
+			require.NoError(t, err)
+			s.SetProvisioner(&provision.Service{Directory: &mapDirectory{accounts: map[string]*provision.Account{}}, Routing: provision.FileDomains{Path: config}, Mailbox: client})
+			s.dmarcLookup = func(_ context.Context, d string) (dnshealth.DMARCPolicy, error) {
+				return dnshealth.DMARCPolicy{From: d, Policy: "none", Reports: []string{"rua@" + d}}, nil
+			}
+			s.hostLookup = func(context.Context, string) ([]net.IPAddr, error) {
+				return []net.IPAddr{{IP: net.ParseIP("192.0.2.1")}}, nil
+			}
+			require.NoError(t, s.Start())
+			t.Cleanup(func() { _ = s.Stop() })
+			base := "http://" + waitReady(t, s)
+
+			opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+			defer cancelAlloc()
+			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+			defer cancelBrowser()
+			ctx, cancel := context.WithTimeout(browserCtx, 60*time.Second)
+			defer cancel()
+			eval := func(expr string) bool {
+				t.Helper()
+				v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+				require.NoError(t, err)
+				return v
+			}
+			wait := func(expr string) {
+				t.Helper()
+				require.Eventually(t, func() bool { return eval(expr) }, 10*time.Second, 50*time.Millisecond, expr)
+			}
+			run := func(expr string) { t.Helper(); eval(`(` + expr + `, true)`) }
+			user := "root"
+			if c.delegated {
+				user = "deleg"
+			}
+			require.NoError(t, chromedp.Do(ctx,
+				chromedp.EmulateViewport(c.width, c.height),
+				chromedp.Navigate(base+"/login"),
+				chromedp.WaitVisible(chromedp.ID("password")),
+				chromedp.SendKeys(chromedp.ID("username"), user),
+				chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+				chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+				chromedp.WaitReady(chromedp.CSS("#nav-dmarc:not([hidden])")),
+			))
+			run(`document.documentElement.setAttribute("data-theme", "` + c.theme + `")`)
+			run(`document.getElementById("nav-dmarc").click()`)
+			wait(`document.querySelectorAll("#dmarc-chart path").length > 27`)
+
+			text := func(id string) string { return `document.getElementById("` + id + `").textContent` }
+			require.True(t, eval(text("dmarc-title")+` === "example.com"`))
+			var verified int64
+			for _, d := range summary {
+				if d.Domain == "example.com" && d.Verified {
+					verified += d.Messages
+				}
+			}
+			require.True(t, eval(`document.querySelector("#dmarc-reporters tr td:last-child").textContent === (`+strconv.FormatInt(verified, 10)+`).toLocaleString() && `+text("dmarc-volume")+` === Intl.NumberFormat(undefined, {notation: "compact", maximumFractionDigits: 1}).format(`+strconv.FormatInt(verified, 10)+`)`), "unverified reports in the total")
+			require.True(t, eval(text("dmarc-sources")+`.includes("this server") && `+text("dmarc-sources")+`.includes("likely forwarder")`), "source labels")
+			require.True(t, eval(text("dmarc-advice")+`.includes("2001:db8::25") && !`+text("dmarc-advice")+`.includes("203.0.113.9")`), "advice")
+			require.True(t, eval(text("dmarc-reporters")+`.includes("<b>not markup</b>") && !document.querySelector("#view-dmarc tbody b, #view-dmarc tbody i")`), "report text became markup")
+			require.True(t, eval(text("dmarc-unverified-summary")+`.includes("(3)")`), "unverified are shown apart")
+			require.True(t, eval(`window.innerWidth === `+strconv.FormatInt(c.width, 10)+` && document.getElementById("view-dmarc").scrollWidth <= document.getElementById("view-dmarc").clientWidth`), "overflows sideways")
+
+			run(`document.querySelector("#dmarc-chart svg").focus()`)
+			wait(`!!document.querySelector("#dmarc-chart .dmarc-tip:not([hidden])")`)
+			if dir := os.Getenv("ELEMTA_DMARC_SCREENSHOTS"); dir != "" {
+				for i, id := range []string{"view-dmarc", "dmarc-chart", "dmarc-sources", "dmarc-setup-status"} {
+					run(`document.getElementById("` + id + `").scrollIntoView({block: "` + []string{"start", "center", "center", "center"}[i] + `"})`)
+					png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot())
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(filepath.Join(dir, "dmarc-"+c.name+"-"+strconv.Itoa(i)+".png"), png, 0o600))
+				}
+			}
+
+			run(`document.querySelector("[data-dmarc-days='7']").click()`)
+			wait(`document.querySelectorAll("#dmarc-daily tr").length === 7`)
+			require.True(t, eval(`!`+text("dmarc-advice")+`.includes("Ready to tighten")`))
+
+			if c.delegated {
+				require.True(t, eval(`!`+text("dmarc-domains")+`.includes("other.example")`), "another domain's row")
+				require.True(t, eval(`document.getElementById("dmarc-setup-form").hidden && document.getElementById("dmarc-backfill").hidden`), "setup shown to a domain administrator")
+				return
+			}
+			require.True(t, eval(`document.getElementById("dmarc-address").value === "rua@example.com"`), "pre-filled from rua")
+			run(`document.getElementById("dmarc-setup-form").requestSubmit()`)
+			wait(`!document.getElementById("dmarc-backfill").hidden && !document.getElementById("dmarc-backfill").disabled`)
+			run(`window.confirm = () => false`)
+			run(`document.getElementById("dmarc-backfill").click()`)
+			mu.Lock()
+			require.False(t, backfilled, "read a mailbox without a yes")
+			mu.Unlock()
+			run(`window.confirm = () => true`)
+			run(`document.getElementById("dmarc-backfill").click()`)
+			wait(text("dmarc-backfill-state") + `.includes("27")`)
+		})
+	}
 }

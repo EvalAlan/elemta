@@ -53,6 +53,7 @@ func dmarcSelection(r *http.Request) ([]string, int, error) {
 }
 
 func (s *Server) dmarcRoutes(protected *mux.Router) {
+	s.dmarcReportRoutes(protected)
 	protected.HandleFunc("/dmarc/addresses", s.provisionCall(func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 		c, err := s.provisioner.MailboxAdmin()
 		if err != nil {

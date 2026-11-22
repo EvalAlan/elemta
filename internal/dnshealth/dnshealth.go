@@ -107,7 +107,7 @@ func Run(ctx context.Context, o Options) Report {
 	c := &checker{Options: o}
 	c.serverIPs, c.serverErr = c.addresses(ctx, o.Hostname)
 
-	checks := []func(context.Context) Check{c.mx, c.reverseDNS, c.spf, c.dkim, c.dmarc, c.mtaSTS, c.tlsRPT, c.autoconfig}
+	checks := []func(context.Context) Check{c.mx, c.reverseDNS, c.spf, c.dkim, c.dmarc, c.dmarcReports, c.mtaSTS, c.tlsRPT, c.autoconfig}
 	report := Report{Domain: o.Domain, Hostname: o.Hostname, Status: StatusOK, Checked: time.Now().UTC(), Checks: make([]Check, len(checks))}
 	var wg sync.WaitGroup
 	for i, check := range checks {
