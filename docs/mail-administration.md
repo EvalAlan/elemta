@@ -102,6 +102,10 @@ so retain, archive or purge those files according to the operator's policy.
 elemta --config /path/to/elemta.toml provision delete-account dana@example.com --confirm dana@example.com
 ```
 
+In the dashboard, **Delete account** asks for the address and has a box,
+off by default, to delete the mail permanently as well. Cancel and Esc change
+nothing.
+
 Delivery aliases point to one primary mailbox. They do not create another
 Maildir or another mailbox password. Mail apps sign in using the primary
 address. An alias does not automatically grant permission to send with that
