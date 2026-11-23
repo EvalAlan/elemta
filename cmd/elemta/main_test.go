@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,4 +235,33 @@ func TestServerCommand(t *testing.T) {
 	}
 
 	t.Log("Server command test passed")
+}
+
+// Only the services write the shared log file. A command a timer runs every
+// 15 seconds filled a fifth of it.
+func TestOnlyServicesWriteTheLogFile(t *testing.T) {
+	root := commands.GetRootCmd()
+	for args, want := range map[string]bool{
+		"server":                 true,
+		"web":                    true,
+		"webmail":                true,
+		"mailbox":                true,
+		"mailbox-router":         true,
+		"abuse firewall-plan":    false,
+		"abuse firewall-report":  false,
+		"webmail reset-password": false,
+		"queue":                  false,
+		"version":                false,
+	} {
+		cmd, _, err := root.Find(strings.Fields(args))
+		if err != nil {
+			t.Fatalf("%s: %v", args, err)
+		}
+		if got := writesLogFile(cmd); got != want {
+			t.Errorf("%s: writesLogFile = %v, want %v", args, got, want)
+		}
+	}
+	if writesLogFile(root) {
+		t.Error("the bare command writes the log file")
+	}
 }
