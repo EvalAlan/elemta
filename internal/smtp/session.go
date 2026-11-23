@@ -420,8 +420,11 @@ func (s *Session) verifyAuthenticationContent(ctx context.Context, mailFrom stri
 		}
 	}
 
+	// sender_authentication, not authentication: that type is a sign-in (SMTP
+	// AUTH, IMAP, the webmail), and these checks of incoming mail were being
+	// counted as SMTP sign-ins in the console's Logs tab and the log cluster.
 	s.logger.InfoContext(ctx, "Sender authentication checked",
-		"event_type", "authentication",
+		"event_type", "sender_authentication",
 		"client_ip", host,
 		"mail_from", mailFrom,
 		"spf", results.SPF.Value,
@@ -455,7 +458,7 @@ func (s *Session) verifyAuthenticationContent(ctx context.Context, mailFrom stri
 		// be set aside, not bounced. Marking it lets the downstream filter act
 		// while the message is still delivered.
 		s.logger.InfoContext(ctx, "DMARC policy asks for quarantine; marking rather than refusing",
-			"event_type", "authentication")
+			"event_type", "sender_authentication")
 	}
 	return nil
 }

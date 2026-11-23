@@ -37,6 +37,10 @@ var logCategories = map[string]string{
 	"virus_detected":       "scan",
 	"dangerous_attachment": "scan",
 	"quarantine":           "scan",
+	// SPF, DKIM, DMARC and ARC results for incoming mail. Logged as
+	// "authentication" until 2026-11; lines from before then sit under
+	// Authentication.
+	"sender_authentication": "scan",
 
 	"security":                  "security",
 	"desynchronization_attempt": "security",
