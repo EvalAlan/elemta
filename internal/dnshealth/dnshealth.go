@@ -417,6 +417,26 @@ func (c *checker) dkim(ctx context.Context) Check {
 	return check
 }
 
+// dmarcRunTogether finds tags written without the ';' before them, as in
+// "rua=mailto:a@example.com ruf=mailto:a@example.com pct=100". Receivers split
+// the record only at ';', so the later tags become part of the earlier one's
+// value: here rua is no address at all, and ruf and pct are lost. It returns
+// the tags affected and the record with the separators added.
+func dmarcRunTogether(record string) ([]string, string) {
+	var tags []string
+	fixed := dmarcGlued.ReplaceAllStringFunc(record, func(m string) string {
+		sub := dmarcGlued.FindStringSubmatch(m)
+		tags = append(tags, strings.ToLower(sub[2]))
+		return sub[1] + "; " + sub[2] + "="
+	})
+	return tags, fixed
+}
+
+// dmarcGlued is a known DMARC tag (RFC 7489 §6.3, and np, psd and t from
+// DMARCbis) after whitespace inside another tag's value: anything but a ';'
+// before the space.
+var dmarcGlued = regexp.MustCompile(`(?i)([^;\s])\s+(v|p|sp|rua|ruf|adkim|aspf|pct|fo|rf|ri|np|psd|t)\s*=`)
+
 func dmarcTags(record string) map[string]string {
 	tags := map[string]string{}
 	for _, part := range strings.Split(record, ";") {
@@ -487,6 +507,21 @@ func (c *checker) dmarc(ctx context.Context) Check {
 	default:
 		check.Status, check.Summary = StatusFail, "The record has no valid policy, so receivers ignore it."
 		check.Fix, check.Record = "Replace it with this one.", suggestion
+	}
+	if glued, fixed := dmarcRunTogether(records[0]); len(glued) > 0 {
+		at := c.Domain
+		if inherited != "" {
+			at = inherited
+		}
+		problem := "The record has no ';' before " + strings.Join(glued, ", ") + ", so receivers read " +
+			map[bool]string{true: "it", false: "them"}[len(glued) == 1] + " as part of the tag before and ignore " +
+			map[bool]string{true: "it", false: "them"}[len(glued) == 1] + "."
+		if check.Status == StatusFail {
+			check.Summary += " " + problem
+		} else {
+			check.Status, check.Summary = StatusWarn, check.Summary+" "+problem
+		}
+		check.Fix, check.Record = "Replace the TXT record at _dmarc."+at+" with this one.", fixed
 	}
 	return check
 }
