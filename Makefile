@@ -118,6 +118,9 @@ gotchas:
 	@echo "  • The Mass Mailer opens with a demo campaign — a draft addressed to this"
 	@echo "    stack's own mailboxes, never sent. Delete it and it stays gone until the"
 	@echo "    campaign list is empty again; ELEMTA_DEMO_DATA=false turns it off."
+	@echo "  • The admin console's CSP refuses inline script, so onclick=\"...\" does nothing."
+	@echo "    Use data-click=\"fn\" (data-change, data-input, data-submit) with data-args, and"
+	@echo "    add fn to the allowed list in web/static/actions.js; the api tests check both."
 
 build:
 	@echo "Building elemta server and utilities..."

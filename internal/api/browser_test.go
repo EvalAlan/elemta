@@ -32,6 +32,7 @@ import (
 	"github.com/EvalAlan/elemta/internal/provision"
 	"github.com/EvalAlan/elemta/internal/queue"
 	"github.com/chromedp/cdproto/cdp"
+	cdplog "github.com/chromedp/cdproto/log"
 	"github.com/chromedp/cdproto/runtime"
 	cdpwebauthn "github.com/chromedp/cdproto/webauthn"
 	"github.com/chromedp/chromedp"
@@ -1307,4 +1308,172 @@ func TestBrowserDashboardProtection(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The console runs under its CSP: nothing it does is refused, the controls
+// that used to be inline handlers still work, and the dispatcher calls only
+// what it lists.
+func TestBrowserConsoleCSP(t *testing.T) {
+	webRoot, err := filepath.Abs("../../web/static")
+	require.NoError(t, err)
+	t.Chdir("../..")
+	base, _ := startProvisionAPIWith(t, func(s *Server) {
+		s.webRoot = webRoot
+		s.mainConfig = &MainConfig{Hostname: "mail.example.com"}
+	})
+	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath(t)), chromedp.NoSandbox)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+	ctx, cancel := context.WithTimeout(browserCtx, 90*time.Second)
+	defer cancel()
+
+	// The browser logs every refusal, from the page or any frame in it.
+	var mu sync.Mutex
+	var refused, problems []string
+	entries := chromedp.Events(browserCtx, cdplog.EntryAdded)
+	exceptions := chromedp.Events(browserCtx, runtime.ExceptionThrown)
+	go func() {
+		for ev, err := range entries {
+			if err != nil {
+				return
+			}
+			if strings.Contains(ev.Entry.Text, "Content Security Policy") {
+				mu.Lock()
+				refused = append(refused, ev.Entry.Text)
+				mu.Unlock()
+			}
+		}
+	}()
+	go func() {
+		for ev, err := range exceptions {
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			problems = append(problems, (&chromedp.ExceptionError{ExceptionDetails: ev.ExceptionDetails}).Error())
+			mu.Unlock()
+		}
+	}()
+	require.NoError(t, chromedp.Do(ctx, chromedp.Func(func(ctx context.Context, tg *chromedp.Target) error {
+		if _, err := cdp.Call(ctx, tg, runtime.Enable, cdp.Empty{}); err != nil {
+			return err
+		}
+		_, err := cdp.Call(ctx, tg, cdplog.Enable, cdp.Empty{})
+		return err
+	})))
+	refusals := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(refused)
+	}
+	eval := func(expr string) string {
+		t.Helper()
+		v, err := chromedp.Run(ctx, chromedp.Evaluate[string](expr))
+		require.NoError(t, err)
+		return v
+	}
+	wait := func(expr string) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			v, err := chromedp.Run(ctx, chromedp.Evaluate[bool](expr))
+			return err == nil && v
+		}, 10*time.Second, 50*time.Millisecond, expr)
+	}
+
+	// Signing in uses the sign-in page's script, now a file of its own.
+	require.NoError(t, chromedp.Do(ctx,
+		chromedp.EmulateViewport(1280, 900),
+		chromedp.Navigate(base+"/login"),
+		chromedp.WaitVisible(chromedp.ID("password")),
+		chromedp.SendKeys(chromedp.ID("username"), "root"),
+		chromedp.SendKeys(chromedp.ID("password"), testAdminPassword),
+		chromedp.Click(chromedp.CSS("#login-btn"), chromedp.NodeVisible),
+		chromedp.WaitReady(chromedp.CSS(`.nav-item[data-view="settings"]:not([hidden])`)),
+	))
+
+	// Every view, and the controls that were inline handlers.
+	for _, view := range []string{"dashboard", "reports", "mail-admin", "queues", "tracing", "logs", "compliance", "health", "certificates", "settings"} {
+		eval(`(document.querySelector('.nav-item[data-view="` + view + `"]').click(), "")`)
+		wait(`location.hash.startsWith("#/` + view + `")`)
+	}
+	eval(`(switchView("settings", "ui"), "")`)
+	eval(`(document.querySelector('[data-click="setTheme"][data-args*="light"]').click(), "")`)
+	wait(`document.documentElement.getAttribute("data-theme") === "light"`)
+	eval(`(document.querySelector('[data-click="setTheme"][data-args*="dark"]').click(), "")`)
+	wait(`document.documentElement.getAttribute("data-theme") === "dark"`)
+	eval(`(showToast("hello", "info"), "")`)
+	eval(`(document.querySelector(".toast .toast-close").click(), "")`)
+	wait(`!document.querySelector(".toast")`)
+	eval(`(switchView("settings", "plugins"), "")`)
+	wait(`!!document.querySelector('[data-change="togglePlugin"]')`)
+
+	// Every action named on the page is a function the dispatcher can reach:
+	// a name defined inside a closure would pass the static check and fail
+	// here.
+	require.Empty(t, eval(`[...document.querySelectorAll("[data-click],[data-change],[data-input],[data-submit]")]
+		.flatMap(e => ["click", "change", "input", "submit"].map(k => e.getAttribute("data-" + k)).filter(Boolean))
+		.filter(n => !["dismiss", "removeRow", "openFilePicker"].includes(n) && typeof window[n] !== "function")
+		.join(",")`))
+
+	// Arguments arrive as they were, whatever they hold, and the markers
+	// reach the control.
+	got := eval(`(() => {
+		window.__got = [];
+		window.viewMessage = (...a) => { window.__got.push(a) };
+		const odd = ['x" y="1', "x');hook();('", '{"$":"value"}', "$value", "line é漢😀"];
+		const box = document.createElement("div");
+		document.body.appendChild(box);
+		box.innerHTML = odd.map(v => '<button data-click="viewMessage" data-args="' + actionArgs(v, 7, null, true) + '">x</button>').join("")
+			+ '<select data-change="viewMessage" data-args="' + actionArgs({ $: "value" }, { $: "this" }) + '"><option>a</option><option>b</option></select>';
+		box.querySelectorAll("button").forEach(b => b.click());
+		const sel = box.querySelector("select");
+		sel.value = "b";
+		sel.dispatchEvent(new Event("change", { bubbles: true }));
+		const bad = [];
+		odd.forEach((v, i) => { const a = window.__got[i]; if (!a || a[0] !== v || a[1] !== 7 || a[2] !== null || a[3] !== true) bad.push("args: " + v) });
+		const last = window.__got[odd.length];
+		if (!last || last[0] !== "b" || last[1] !== sel) bad.push("markers");
+		box.remove();
+		return bad.join("\n") })()`)
+	require.Empty(t, got)
+
+	// A name outside the list is not called, even if the page defines it.
+	require.Equal(t, "false", eval(`(() => {
+		window.__evil = false;
+		window.notAnAction = () => { window.__evil = true };
+		const b = document.createElement("button");
+		b.setAttribute("data-click", "notAnAction");
+		document.body.appendChild(b); b.click(); b.remove();
+		return String(window.__evil) })()`))
+
+	require.Empty(t, refusals(), "the console did something its CSP refuses")
+
+	// The campaign preview's stylesheet is allowed by hash, and the frame
+	// inherits the page's policy. Same-origin here only so the test can read
+	// the frame; the console's own preview frame is fully sandboxed.
+	styled, err := chromedp.Run(ctx, chromedp.Evaluate[string](`new Promise(done => {
+		const frame = (html) => new Promise(loaded => {
+			const f = document.createElement("iframe");
+			f.sandbox = "allow-same-origin"; f.onload = () => loaded(f); f.srcdoc = html; document.body.appendChild(f);
+		});
+		frame(buildPreviewDocument()).then(f => {
+			const b = getComputedStyle(f.contentDocument.body);
+			const preview = b.backgroundColor + " " + b.paddingTop;
+			return frame("<style>body{background:red}</style><p>x</p>").then(g =>
+				done(preview + "|" + getComputedStyle(g.contentDocument.body).backgroundColor));
+		});
+	})`, chromedp.EvalAwaitPromise))
+	require.NoError(t, err)
+	require.Equal(t, "rgb(255, 255, 255) 20px|rgba(0, 0, 0, 0)", styled)
+
+	// And a refusal in the page is seen, so the empty list above means
+	// something.
+	eval(`(() => { const s = document.createElement("style"); s.textContent = "body{}"; document.head.appendChild(s); return "" })()`)
+	require.Eventually(t, func() bool { return len(refusals()) > 0 }, 5*time.Second, 50*time.Millisecond, "an inline style element was not refused")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Empty(t, problems)
 }

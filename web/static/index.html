@@ -200,7 +200,7 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
                         <span>Jump to…</span><kbd>Ctrl K</kbd>
                     </button>
-                    <button class="icon-btn" id="auto-refresh-toggle" onclick="toggleAutoRefreshPause()" data-needs="read" aria-label="Pause auto-refresh" title="Pause auto-refresh">
+                    <button class="icon-btn" id="auto-refresh-toggle" data-click="toggleAutoRefreshPause" data-needs="read" aria-label="Pause auto-refresh" title="Pause auto-refresh">
                         <svg class="icon-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 5v14"/><path d="M15 5v14"/></svg>
                         <svg class="icon-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="7 4 20 12 7 20"/></svg>
                     </button>
@@ -221,7 +221,7 @@
                     </svg>
                 </button>
                     <div class="user-menu" id="user-menu">
-                        <button class="user-btn" id="user-btn" onclick="toggleUserMenu()" aria-label="Your account">
+                        <button class="user-btn" id="user-btn" data-click="toggleUserMenu" aria-label="Your account">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                                 <circle cx="12" cy="7" r="4" />
@@ -233,7 +233,7 @@
                                 <span class="user-name" id="user-name">-</span>
                                 <span class="user-role" id="user-role">-</span>
                             </div>
-                            <button class="dropdown-item" id="btn-login" onclick="showLoginModal()">
+                            <button class="dropdown-item" id="btn-login" data-click="showLoginModal">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
                                     <polyline points="10 17 15 12 10 7" />
@@ -241,7 +241,7 @@
                                 </svg>
                                 Login
                             </button>
-                            <button class="dropdown-item" id="btn-apikeys" onclick="showAPIKeysModal()"
+                            <button class="dropdown-item" id="btn-apikeys" data-click="showAPIKeysModal"
                                 style="display: none;">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path
@@ -249,7 +249,7 @@
                                 </svg>
                                 API Keys
                             </button>
-                            <button class="dropdown-item danger" id="btn-logout" onclick="handleLogout()"
+                            <button class="dropdown-item danger" id="btn-logout" data-click="handleLogout"
                                 style="display: none;">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -328,8 +328,8 @@
                                 </div>
                                 <div id="recent-activity"><div class="loading-placeholder">Loading...</div></div>
                                 <div class="queue-buttons" data-needs="queue" hidden>
-                                    <button class="btn btn-secondary btn-sm" type="button" onclick="retryQueue('active')">Process active</button>
-                                    <button class="btn btn-secondary btn-sm" type="button" onclick="retryQueue('deferred')">Retry deferred</button>
+                                    <button class="btn btn-secondary btn-sm" type="button" data-click="retryQueue" data-args='["active"]'>Process active</button>
+                                    <button class="btn btn-secondary btn-sm" type="button" data-click="retryQueue" data-args='["deferred"]'>Retry deferred</button>
                                 </div>
                             </div>
                         </div>
@@ -397,7 +397,7 @@
                     <div class="card">
                         <div class="card-header">
                             <h3>System</h3>
-                            <button class="btn btn-secondary" onclick="refreshHealth()">
+                            <button class="btn btn-secondary" data-click="refreshHealth">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="23 4 23 10 17 10" />
                                     <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
@@ -467,7 +467,7 @@
                                 <dd id="queue-oldest-failed" class="failed-health-stat">-</dd>
                             </dl>
                             <div style="margin-top: 0.75rem;">
-                                <button class="btn btn-secondary btn-sm" onclick="drilldownQueueRiskLogs()">View Queue Risk Logs</button>
+                                <button class="btn btn-secondary btn-sm" data-click="drilldownQueueRiskLogs">View Queue Risk Logs</button>
                             </div>
                         </div>
                     </div>
@@ -491,8 +491,8 @@
                                 <dd id="smtp-conn-close-5m">-</dd>
                             </dl>
                             <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                                <button class="btn btn-secondary btn-sm" onclick="drilldownTimeoutLogs()">View Timeout Logs</button>
-                                <button class="btn btn-secondary btn-sm" onclick="drilldownConnectionCloseLogs()">View Conn-Close Logs</button>
+                                <button class="btn btn-secondary btn-sm" data-click="drilldownTimeoutLogs">View Timeout Logs</button>
+                                <button class="btn btn-secondary btn-sm" data-click="drilldownConnectionCloseLogs">View Conn-Close Logs</button>
                             </div>
                         </div>
                     </div>
@@ -501,7 +501,7 @@
                 <div class="card" id="tls-cert-card" style="margin-top: 1.5rem;">
                     <div class="card-header">
                         <h3>TLS certificate</h3>
-                        <button class="btn btn-secondary btn-sm" onclick="refreshCertificate()">Refresh</button>
+                        <button class="btn btn-secondary btn-sm" data-click="refreshCertificate">Refresh</button>
                     </div>
                     <div class="card-body" id="tls-cert-body">
                         <div class="loading-placeholder">Checking the certificate...</div>
@@ -511,7 +511,7 @@
                 <div class="card" id="backup-card" style="margin-top: 1.5rem;">
                     <div class="card-header">
                         <h3>Off-site backups</h3>
-                        <button class="btn btn-secondary btn-sm" onclick="refreshBackupStatus()">Refresh</button>
+                        <button class="btn btn-secondary btn-sm" data-click="refreshBackupStatus">Refresh</button>
                     </div>
                     <div class="card-body" id="backup-body">
                         <div class="loading-placeholder">Checking backups...</div>
@@ -521,7 +521,7 @@
                 <div class="card" id="dns-health-card" style="margin-top: 1.5rem;">
                     <div class="card-header">
                         <h3>DNS</h3>
-                        <button class="btn btn-secondary btn-sm" onclick="refreshDnsHealth()">Refresh</button>
+                        <button class="btn btn-secondary btn-sm" data-click="refreshDnsHealth">Refresh</button>
                     </div>
                     <div class="card-body" id="dns-health-body">
                         <div class="loading-placeholder">Loading the last DNS check...</div>
@@ -581,8 +581,8 @@
                     <div class="card-header">
                         <h3>Certificates</h3>
                         <div>
-                            <button class="btn btn-secondary btn-sm" id="cert-sync" hidden onclick="syncCertificates()">Sync now</button>
-                            <button class="btn btn-secondary btn-sm" onclick="refreshCertificates()">Refresh</button>
+                            <button class="btn btn-secondary btn-sm" id="cert-sync" hidden data-click="syncCertificates">Sync now</button>
+                            <button class="btn btn-secondary btn-sm" data-click="refreshCertificates">Refresh</button>
                         </div>
                     </div>
                     <div class="card-body">
@@ -660,14 +660,14 @@
                         </button>
                     </div>
                     <div class="queue-actions">
-                        <button class="btn btn-secondary" onclick="refreshQueue()">
+                        <button class="btn btn-secondary" data-click="refreshQueue">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="23 4 23 10 17 10" />
                                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                             </svg>
                             Refresh
                         </button>
-                        <button class="btn btn-primary" data-needs="queue" onclick="retryCurrentQueue()">
+                        <button class="btn btn-primary" data-needs="queue" data-click="retryCurrentQueue">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polygon points="5 3 19 12 5 21 5 3" />
                             </svg>
@@ -747,9 +747,9 @@
 
                 <div class="batch-actions" id="batch-actions" style="display: none;">
                     <span class="selected-count"><span id="selected-count">0</span> selected</span>
-                    <button class="btn btn-secondary" onclick="clearSelection()">Clear Selection</button>
-                    <button class="btn btn-primary" onclick="retrySelected()">Retry Selected</button>
-                    <button class="btn btn-danger" onclick="deleteSelected()">Delete Selected</button>
+                    <button class="btn btn-secondary" data-click="clearSelection">Clear Selection</button>
+                    <button class="btn btn-primary" data-click="retrySelected">Retry Selected</button>
+                    <button class="btn btn-danger" data-click="deleteSelected">Delete Selected</button>
                 </div>
 
                 <div class="messages-table-container">
@@ -757,7 +757,7 @@
                         <thead>
                             <tr>
                                 <th class="checkbox-col">
-                                    <input type="checkbox" id="select-all" onchange="toggleSelectAll()">
+                                    <input type="checkbox" id="select-all" data-change="toggleSelectAll">
                                 </th>
                                 <th>ID</th>
                                 <th>From</th>
@@ -851,12 +851,12 @@
                             <h3>Delivery trends</h3>
                             <div class="chart-controls">
                                 <div class="time-scale-selector">
-                                    <button class="time-scale-btn active" data-scale="hour" onclick="changeTimeScale('hour')">Hourly</button>
-                                    <button class="time-scale-btn" data-scale="day" onclick="changeTimeScale('day')">Daily</button>
-                                    <button class="time-scale-btn" data-scale="week" onclick="changeTimeScale('week')">Weekly</button>
-                                    <button class="time-scale-btn" data-scale="month" onclick="changeTimeScale('month')">Monthly</button>
+                                    <button class="time-scale-btn active" data-scale="hour" data-click="changeTimeScale" data-args='["hour"]'>Hourly</button>
+                                    <button class="time-scale-btn" data-scale="day" data-click="changeTimeScale" data-args='["day"]'>Daily</button>
+                                    <button class="time-scale-btn" data-scale="week" data-click="changeTimeScale" data-args='["week"]'>Weekly</button>
+                                    <button class="time-scale-btn" data-scale="month" data-click="changeTimeScale" data-args='["month"]'>Monthly</button>
                                 </div>
-                                <button class="btn btn-secondary" onclick="refreshReports()">
+                                <button class="btn btn-secondary" data-click="refreshReports">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="23 4 23 10 17 10" />
                                         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
@@ -893,7 +893,7 @@
                     <div class="card">
                     <div class="card-header">
                         <h3>Delivery by destination</h3>
-                        <button class="btn btn-secondary btn-sm" onclick="refreshDomainStats()">Refresh</button>
+                        <button class="btn btn-secondary btn-sm" data-click="refreshDomainStats">Refresh</button>
                     </div>
                     <div class="card-body">
                         <div class="field-hint">
@@ -907,11 +907,11 @@
                     <div class="card-header">
                         <h3>Sender reputation</h3>
                         <div class="chart-controls">
-                            <select id="sender-stats-days" class="filter-select" onchange="refreshSenderStats()" aria-label="Window">
+                            <select id="sender-stats-days" class="filter-select" data-change="refreshSenderStats" aria-label="Window">
                                 <option value="1">Today (UTC)</option>
                                 <option value="7">Last 7 days</option>
                             </select>
-                            <button class="btn btn-secondary btn-sm" onclick="refreshSenderStats()">Refresh</button>
+                            <button class="btn btn-secondary btn-sm" data-click="refreshSenderStats">Refresh</button>
                         </div>
                     </div>
                     <div class="card-body">
@@ -1035,7 +1035,7 @@
                 <div class="card">
                     <div class="card-header">
                         <h3>Blocked addresses</h3>
-                        <button class="btn btn-secondary btn-sm" onclick="refreshAbuse()">Refresh</button>
+                        <button class="btn btn-secondary btn-sm" data-click="refreshAbuse">Refresh</button>
                     </div>
                     <div class="card-body">
                         <p id="abuse-shared" class="field-hint"></p>
@@ -1130,9 +1130,9 @@
                                     <line x1="21" y1="21" x2="16.65" y2="16.65" />
                                 </svg>
                                 <input type="text" id="log-search-input" placeholder="Search logs..."
-                                    oninput="refreshLogs()">
+                                    data-input="refreshLogs">
                             </div>
-                            <select id="log-type-filter" class="filter-select" onchange="refreshLogs()">
+                            <select id="log-type-filter" class="filter-select" data-change="refreshLogs">
                                 <option value="">All Types</option>
                                 <option value="reception">Reception</option>
                                 <option value="delivery">Delivery</option>
@@ -1142,13 +1142,13 @@
                                 <option value="authentication">Authentication</option>
                                 <option value="system">System</option>
                             </select>
-                            <select id="log-level-filter" class="filter-select" onchange="refreshLogs()">
+                            <select id="log-level-filter" class="filter-select" data-change="refreshLogs">
                                 <option value="">All Levels</option>
                                 <option value="INFO">Info</option>
                                 <option value="WARN">Warning</option>
                                 <option value="ERROR">Error</option>
                             </select>
-                            <button class="btn btn-secondary" onclick="refreshLogs()">Refresh</button>
+                            <button class="btn btn-secondary" data-click="refreshLogs">Refresh</button>
                         </div>
                     </div>
                     <div class="card-body logs-container" id="logs-container">
@@ -1171,7 +1171,7 @@
                         <div class="send-row">
                             <input type="text" id="trace-query"
                                 placeholder="Message ID, sender, recipient or subject">
-                            <button class="btn btn-primary" onclick="searchMessages()">Search</button>
+                            <button class="btn btn-primary" data-click="searchMessages">Search</button>
                         </div>
                         <div class="field-hint">
                             Searches the recent log, so it finds messages that have already been
@@ -1184,7 +1184,7 @@
                 <div class="card" id="trace-detail-card" style="display: none;">
                     <div class="card-header">
                         <h3 id="trace-detail-title">Message</h3>
-                        <button class="btn btn-secondary btn-sm" onclick="closeTrace()">Close</button>
+                        <button class="btn btn-secondary btn-sm" data-click="closeTrace">Close</button>
                     </div>
                     <div class="card-body" id="trace-detail"></div>
                 </div>
@@ -1200,8 +1200,8 @@
                         <div class="card-header">
                             <h3>Campaigns</h3>
                             <div class="card-actions">
-                                <button class="btn btn-secondary btn-sm" onclick="refreshCampaigns()">Refresh</button>
-                                <button class="btn btn-primary btn-sm" onclick="newCampaign()">New Campaign</button>
+                                <button class="btn btn-secondary btn-sm" data-click="refreshCampaigns">Refresh</button>
+                                <button class="btn btn-primary btn-sm" data-click="newCampaign">New Campaign</button>
                             </div>
                         </div>
                         <div class="card-body">
@@ -1212,7 +1212,7 @@
                     <div class="card" id="suppression-card" style="margin-top: 1.5rem;">
                         <div class="card-header">
                             <h3>Suppression list</h3>
-                            <button class="btn btn-secondary btn-sm" onclick="refreshSuppression()">Refresh</button>
+                            <button class="btn btn-secondary btn-sm" data-click="refreshSuppression">Refresh</button>
                         </div>
                         <div class="card-body">
                             <p class="panel-intro">
@@ -1221,9 +1221,9 @@
                             </p>
                             <div class="send-row">
                                 <input type="text" id="suppression-search" placeholder="Search addresses">
-                                <button class="btn btn-secondary" onclick="refreshSuppression()">Search</button>
+                                <button class="btn btn-secondary" data-click="refreshSuppression">Search</button>
                                 <input type="text" id="suppression-add" placeholder="Suppress an address">
-                                <button class="btn btn-secondary" onclick="suppressAddress()">Add</button>
+                                <button class="btn btn-secondary" data-click="suppressAddress">Add</button>
                             </div>
                             <div id="suppression-list"></div>
                         </div>
@@ -1232,7 +1232,7 @@
 
                 <div id="campaign-editor-screen" class="editor-screen" style="display: none;">
                     <div class="editor-head">
-                        <button class="btn btn-secondary btn-sm" onclick="closeCampaignEditor()">&larr; Campaigns</button>
+                        <button class="btn btn-secondary btn-sm" data-click="closeCampaignEditor">&larr; Campaigns</button>
                         <h2 id="campaign-editor-title">New Campaign</h2>
                         <span class="campaign-state" id="campaign-editor-state"></span>
                     </div>
@@ -1274,9 +1274,9 @@
                         <div class="card-header">
                             <h3>Message</h3>
                             <div class="editor-modes">
-                                <button class="mode-btn active" data-mode="rich" onclick="setEditorMode('rich')">Rich text</button>
-                                <button class="mode-btn" data-mode="html" onclick="setEditorMode('html')">HTML</button>
-                                <button class="mode-btn" data-mode="preview" onclick="setEditorMode('preview')">Preview</button>
+                                <button class="mode-btn active" data-mode="rich" data-click="setEditorMode" data-args='["rich"]'>Rich text</button>
+                                <button class="mode-btn" data-mode="html" data-click="setEditorMode" data-args='["html"]'>HTML</button>
+                                <button class="mode-btn" data-mode="preview" data-click="setEditorMode" data-args='["preview"]'>Preview</button>
                             </div>
                         </div>
                         <div class="card-body">
@@ -1312,7 +1312,7 @@
                             <div class="text-alternative">
                                 <div class="text-alternative-head">
                                     <label for="campaign-text">Plain text alternative</label>
-                                    <button class="btn btn-secondary btn-sm" onclick="generatePlainText()">Generate from HTML</button>
+                                    <button class="btn btn-secondary btn-sm" data-click="generatePlainText">Generate from HTML</button>
                                 </div>
                                 <textarea id="campaign-text" rows="8"
                                     placeholder="Sent alongside the HTML for clients that will not show it. Bulk mail without one looks like bulk mail."></textarea>
@@ -1326,9 +1326,9 @@
                             <div class="card-actions">
                                 <input type="file" id="campaign-recipients-file" accept=".csv,.tsv,.txt" style="display: none;">
                                 <button class="btn btn-secondary btn-sm" id="campaign-import-directory"
-                                    onclick="importDirectoryRecipients()">Import from directory</button>
+                                    data-click="importDirectoryRecipients">Import from directory</button>
                                 <button class="btn btn-secondary btn-sm"
-                                    onclick="document.getElementById('campaign-recipients-file').click()">Upload CSV</button>
+                                    data-click="openFilePicker" data-args='["campaign-recipients-file"]'>Upload CSV</button>
                             </div>
                         </div>
                         <div class="card-body">
@@ -1346,13 +1346,13 @@
                         <div class="card-body">
                             <div class="send-row">
                                 <input type="text" id="campaign-test-address" placeholder="you@example.com">
-                                <button class="btn btn-secondary" onclick="sendCampaignTest()">Send test</button>
+                                <button class="btn btn-secondary" data-click="sendCampaignTest">Send test</button>
                                 <span class="field-hint">One copy, merged with the first recipient's values.</span>
                             </div>
                             <div class="form-actions">
                                 <span class="save-status" id="campaign-save-status"></span>
-                                <button class="btn btn-secondary" onclick="saveCampaign()">Save draft</button>
-                                <button class="btn btn-primary" id="campaign-start-btn" onclick="startCampaign()">Start sending</button>
+                                <button class="btn btn-secondary" data-click="saveCampaign">Save draft</button>
+                                <button class="btn btn-primary" id="campaign-start-btn" data-click="startCampaign">Start sending</button>
                             </div>
                         </div>
                     </div>
@@ -1555,7 +1555,7 @@
                         <div class="card-body">
                             <div class="form-group">
                                 <label for="refresh-interval">Auto-refresh every</label>
-                                <select id="refresh-interval" onchange="updateRefreshInterval()">
+                                <select id="refresh-interval" data-change="updateRefreshInterval">
                                     <option value="10000">10 seconds</option>
                                     <option value="30000" selected>30 seconds</option>
                                     <option value="60000">1 minute</option>
@@ -1565,7 +1565,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="default-page-size">Messages per page</label>
-                                <select id="default-page-size" onchange="updateDefaultPageSize()">
+                                <select id="default-page-size" data-change="updateDefaultPageSize">
                                     <option value="25">25 messages</option>
                                     <option value="50">50 messages</option>
                                     <option value="100">100 messages</option>
@@ -1579,8 +1579,8 @@
                             <div class="form-group">
                                 <label>Theme</label>
                                 <div class="theme-buttons">
-                                    <button class="btn btn-secondary" onclick="setTheme('dark')">Dark</button>
-                                    <button class="btn btn-secondary" onclick="setTheme('light')">Light</button>
+                                    <button class="btn btn-secondary" data-click="setTheme" data-args='["dark"]'>Dark</button>
+                                    <button class="btn btn-secondary" data-click="setTheme" data-args='["light"]'>Light</button>
                                 </div>
                             </div>
                         </div>
@@ -1592,7 +1592,7 @@
                     <div class="card">
                         <div class="card-header">
                             <h3>Mail server</h3>
-                            <button class="btn btn-primary btn-sm" onclick="refreshServerConfig()">Refresh</button>
+                            <button class="btn btn-primary btn-sm" data-click="refreshServerConfig">Refresh</button>
                         </div>
                         <div class="card-body">
                             <div id="server-config-loading" class="loading-placeholder">Loading server configuration...</div>
@@ -1642,7 +1642,7 @@
                                     </div>
                                 </div>
                                 <div class="settings-form-actions">
-                                    <button class="btn btn-primary" onclick="saveServerConfig()">Save Configuration</button>
+                                    <button class="btn btn-primary" data-click="saveServerConfig">Save Configuration</button>
                                     <span id="server-config-status"></span>
                                 </div>
                             </div>
@@ -1655,7 +1655,7 @@
                     <div class="card">
                         <div class="card-header">
                             <h3>Plugins</h3>
-                            <button class="btn btn-primary btn-sm" onclick="refreshPlugins()">Refresh</button>
+                            <button class="btn btn-primary btn-sm" data-click="refreshPlugins">Refresh</button>
                         </div>
                         <div class="card-body">
                             <div id="plugins-loading" class="loading-placeholder">Loading plugins...</div>
@@ -1681,7 +1681,7 @@
                                         <h4>Restart Server</h4>
                                         <p>Gracefully restart the Elemta server. This will terminate all active connections.</p>
                                     </div>
-                                    <button class="btn btn-danger" onclick="restartServer()">
+                                    <button class="btn btn-danger" data-click="restartServer">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
                                             <polyline points="16 6 12 2 8 6" />
@@ -1714,7 +1714,7 @@
                             <div class="send-row">
                                 <input type="password" id="own-current-password" placeholder="Current password" autocomplete="current-password">
                                 <input type="password" id="own-new-password" placeholder="New password (12+ characters)" autocomplete="new-password">
-                                <button class="btn btn-secondary" onclick="changeOwnPassword()">Change password</button>
+                                <button class="btn btn-secondary" data-click="changeOwnPassword">Change password</button>
                             </div>
                         </div>
                     </div>
@@ -1765,7 +1765,7 @@
                     <div class="card" id="users-card" style="margin-bottom: 1.5rem;">
                         <div class="card-header">
                             <h3>Dashboard users</h3>
-                            <button class="btn btn-secondary btn-sm" onclick="refreshUsers()">Refresh</button>
+                            <button class="btn btn-secondary btn-sm" data-click="refreshUsers">Refresh</button>
                         </div>
                         <div class="card-body">
                             <p class="panel-intro">
@@ -1782,7 +1782,7 @@
                                     <option value="operator">operator</option>
                                     <option value="admin">admin</option>
                                 </select>
-                                <button class="btn btn-primary" onclick="createUser()">Add user</button>
+                                <button class="btn btn-primary" data-click="createUser">Add user</button>
                             </div>
                             <div id="users-list"></div>
                         </div>
@@ -1973,11 +1973,11 @@
 
     <!-- Message Detail Modal -->
     <div class="modal" id="message-modal">
-        <div class="modal-backdrop" onclick="closeModal()"></div>
+        <div class="modal-backdrop" data-click="closeModal"></div>
         <div class="modal-container">
             <div class="modal-header">
                 <h2 id="modal-title">Message Details</h2>
-                <button class="modal-close" onclick="closeModal()">
+                <button class="modal-close" data-click="closeModal">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18" />
                         <line x1="6" y1="6" x2="18" y2="18" />
@@ -1985,29 +1985,29 @@
                 </button>
             </div>
             <div class="modal-tabs">
-                <button class="modal-tab active" data-tab="details" onclick="switchModalTab('details')">Details</button>
-                <button class="modal-tab" data-tab="preview" onclick="switchModalTab('preview')">Preview</button>
-                <button class="modal-tab" data-tab="headers" onclick="switchModalTab('headers')">Headers</button>
-                <button class="modal-tab" data-tab="raw" onclick="switchModalTab('raw')">Raw Content</button>
+                <button class="modal-tab active" data-tab="details" data-click="switchModalTab" data-args='["details"]'>Details</button>
+                <button class="modal-tab" data-tab="preview" data-click="switchModalTab" data-args='["preview"]'>Preview</button>
+                <button class="modal-tab" data-tab="headers" data-click="switchModalTab" data-args='["headers"]'>Headers</button>
+                <button class="modal-tab" data-tab="raw" data-click="switchModalTab" data-args='["raw"]'>Raw Content</button>
             </div>
             <div class="modal-body" id="modal-body">
                 <div class="loading-placeholder">Loading...</div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-                <button class="btn btn-primary" onclick="retryCurrentMessage()">Retry</button>
-                <button class="btn btn-danger" onclick="deleteCurrentMessage()">Delete</button>
+                <button class="btn btn-secondary" data-click="closeModal">Close</button>
+                <button class="btn btn-primary" data-click="retryCurrentMessage">Retry</button>
+                <button class="btn btn-danger" data-click="deleteCurrentMessage">Delete</button>
             </div>
         </div>
     </div>
 
     <!-- Login Modal -->
     <div class="modal" id="login-modal">
-        <div class="modal-backdrop" onclick="closeLoginModal()"></div>
+        <div class="modal-backdrop" data-click="closeLoginModal"></div>
         <div class="modal-container login-modal-container">
             <div class="modal-header">
                 <h2>Login to Elemta</h2>
-                <button class="modal-close" onclick="closeLoginModal()">
+                <button class="modal-close" data-click="closeLoginModal">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18" />
                         <line x1="6" y1="6" x2="18" y2="18" />
@@ -2015,7 +2015,7 @@
                 </button>
             </div>
             <div class="modal-body">
-                <form id="login-form" onsubmit="handleLogin(event)">
+                <form id="login-form" data-submit="handleLogin" data-args='[{"$":"event"}]'>
                     <div class="form-group">
                         <label for="login-username">Username</label>
                         <input type="text" id="login-username" placeholder="Username" required autocomplete="username">
@@ -2041,11 +2041,11 @@
 
     <!-- API Keys Modal -->
     <div class="modal" id="apikeys-modal">
-        <div class="modal-backdrop" onclick="closeAPIKeysModal()"></div>
+        <div class="modal-backdrop" data-click="closeAPIKeysModal"></div>
         <div class="modal-container">
             <div class="modal-header">
                 <h2>API Keys</h2>
-                <button class="modal-close" onclick="closeAPIKeysModal()">
+                <button class="modal-close" data-click="closeAPIKeysModal">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18" />
                         <line x1="6" y1="6" x2="18" y2="18" />
@@ -2055,7 +2055,7 @@
             <div class="modal-body">
                 <div class="apikey-create-section">
                     <h4>Create New API Key</h4>
-                    <form id="apikey-form" onsubmit="createAPIKey(event)">
+                    <form id="apikey-form" data-submit="createAPIKey" data-args='[{"$":"event"}]'>
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="apikey-name">Name</label>
@@ -2092,12 +2092,13 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
+    <script src="/static/actions.js?v=20261122-csp"></script>
     <script src="/static/shell.js?v=20261122-refresh"></script>
     <script src="/static/overview.js?v=20261122-dashboard"></script>
     <script src="/static/logship.js?v=20261122-logship"></script>
-    <script src="/static/app.js?v=20261122-dashboard"></script>
-    <script src="/static/campaigns.js?v=20261122-escaping"></script>
-    <script src="/static/users.js?v=20261103-2fa"></script>
+    <script src="/static/app.js?v=20261122-csp"></script>
+    <script src="/static/campaigns.js?v=20261122-csp"></script>
+    <script src="/static/users.js?v=20261122-csp"></script>
     <script src="/static/mail-admin.js?v=20261122-support"></script>
     <script src="/static/abuse.js?v=20261122-refresh"></script>
     <script src="/static/dmarc.js?v=20261122-refresh"></script>

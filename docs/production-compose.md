@@ -356,7 +356,8 @@ What the overlay and the stack do:
 - TLS 1.2 and 1.3 only, forward-secret AEAD suites only, on every port
   (an nmap `ssl-enum-ciphers` scan of dev rates every port A). Public IMAP
   and POP3 never accept a password before TLS.
-- Webmail and dashboard send a strict Content-Security-Policy, HSTS,
+- Webmail and dashboard send a strict Content-Security-Policy (scripts only
+  from the server's own files, no inline script or handlers), HSTS,
   `X-Frame-Options: DENY` and `nosniff`; sign-ins are throttled per address
   and per account; two-step verification can be required per class of
   service.
