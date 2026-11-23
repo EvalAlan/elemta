@@ -319,7 +319,16 @@ func (ss *sieveSession) authenticate(ctx context.Context, args []string) {
 	// internal-only tokens.
 	public := !ss.s.internalAddr(ss.conn.RemoteAddr())
 	a, err := ss.s.login(withLoginSource(ctx, "sieve"), string(parts[1]), string(parts[2]), public, "", clientKey(ss.conn.RemoteAddr()))
-	if err == nil && a.Policy != nil && !a.Policy.Filters {
+	filtersOff := err == nil && a.Policy != nil && !a.Policy.Filters
+	// Mail apps' filter editors only; the webmail logs its own sign-ins.
+	if public {
+		logged := err
+		if filtersOff {
+			logged = ErrProtocolDisabled
+		}
+		ss.s.logSignIn("managesieve", ss.conn.RemoteAddr(), string(parts[1]), a, logged)
+	}
+	if filtersOff {
 		ss.no("", mailpolicy.FiltersOffMessage)
 		return
 	}

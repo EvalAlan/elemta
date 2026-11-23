@@ -31,6 +31,6 @@ func (s *Server) stampOrigin(ctx context.Context, d *Draft) {
 // Message-ID, which this line ties to the account and the address it was
 // sent from.
 func (s *Server) logSent(ctx context.Context, sess *Session, d *Draft, kind string) {
-	s.log.Info("webmail: sent", "user", sess.User, "ip", clientIPFrom(ctx),
+	s.log.Info("webmail: sent", "event_type", "submission", "user", sess.User, "ip", clientIPFrom(ctx),
 		"message_id", d.MessageID, "recipients", len(d.Recipients()), "kind", kind)
 }

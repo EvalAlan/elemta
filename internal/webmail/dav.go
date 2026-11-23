@@ -269,7 +269,7 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 	switch {
 	case errors.Is(err, ErrAuthFailed):
 		s.loginFailed(r, ip, userKey, user)
-		s.log.Info("webmail: dav sign-in failed", "user", user, "ip", ip)
+		s.logSignInRefused(user, ip, "dav", "credentials")
 		challenge()
 		return nil, false
 	case errors.Is(err, ErrLoginRefused):
@@ -293,6 +293,7 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 			}
 			if errors.Is(err, errSecurityAuth) {
 				s.loginFailed(r, ip, userKey, user)
+				s.logSignInRefused(user, ip, "dav", "credentials")
 				challenge()
 				return nil, false
 			}
@@ -304,7 +305,7 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 			if st != nil {
 				_ = st.Close()
 			}
-			s.log.Info("webmail: dav refused by class of service", "user", user, "ip", ip)
+			s.logSignInRefused(user, ip, "dav", "dav_disabled")
 			http.Error(w, "Calendar and contact sync is turned off for this account.", http.StatusForbidden)
 			return nil, false
 		}
@@ -320,7 +321,7 @@ func (s *Server) davAuth(w http.ResponseWriter, r *http.Request) (*davConn, bool
 				_ = st.Close()
 			}
 			s.limiter.fail(userKey)
-			s.log.Info("webmail: dav account password refused; app password required", "user", user, "ip", ip)
+			s.logSignInRefused(user, ip, "dav", "app_password_required")
 			challenge()
 			return nil, false
 		}

@@ -132,7 +132,7 @@ func (s *Server) forcedSetupSubmit(w http.ResponseWriter, r *http.Request) {
 		s.renderLogin(w, r, http.StatusBadGateway, p.user, "", "Two-step verification is on. The mail server didn't respond; sign in again in a moment.")
 		return
 	}
-	if !s.startSession(ctx, w, r, p.user, p.password, store) {
+	if !s.startSession(ctx, w, r, p.user, p.password, "two_step_setup", store) {
 		return
 	}
 	// The codes are shown once, now, on a page of their own; the session
