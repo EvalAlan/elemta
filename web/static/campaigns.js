@@ -55,7 +55,7 @@ async function refreshCampaigns() {
             listEl.innerHTML = `
                 <div class="empty-state">
                     <p>No campaigns yet.</p>
-                    <button class="btn btn-primary" onclick="newCampaign()">New Campaign</button>
+                    <button class="btn btn-primary" data-click="newCampaign">New Campaign</button>
                 </div>`;
         } else {
             listEl.innerHTML = campaigns.map(renderCampaignRow).join('');
@@ -76,7 +76,6 @@ function renderCampaignRow(c) {
     // suppressed reads as a stuck campaign.
     const done = (c.sent || 0) + (c.failed || 0) + (c.skipped || 0);
     const percent = total > 0 ? Math.round((done / total) * 100) : 0;
-    const id = escapeJsArg(c.id);
 
     // Actions follow the state machine rather than being greyed out: a button
     // that is present but refuses is a button people click twice.
@@ -84,24 +83,24 @@ function renderCampaignRow(c) {
     switch (c.state) {
         case 'running':
             actions = `
-                <button class="btn btn-secondary btn-sm" onclick="campaignAction('${id}','pause')">Pause</button>
-                <button class="btn btn-danger btn-sm" onclick="campaignAction('${id}','cancel')">Cancel</button>`;
+                <button class="btn btn-secondary btn-sm" data-click="campaignAction" data-args="${actionArgs(c.id, 'pause')}">Pause</button>
+                <button class="btn btn-danger btn-sm" data-click="campaignAction" data-args="${actionArgs(c.id, 'cancel')}">Cancel</button>`;
             break;
         case 'paused':
             actions = `
-                <button class="btn btn-primary btn-sm" onclick="campaignAction('${id}','start')">Resume</button>
-                <button class="btn btn-danger btn-sm" onclick="campaignAction('${id}','cancel')">Cancel</button>
-                <button class="btn btn-secondary btn-sm" onclick="editCampaign('${id}')">Edit</button>`;
+                <button class="btn btn-primary btn-sm" data-click="campaignAction" data-args="${actionArgs(c.id, 'start')}">Resume</button>
+                <button class="btn btn-danger btn-sm" data-click="campaignAction" data-args="${actionArgs(c.id, 'cancel')}">Cancel</button>
+                <button class="btn btn-secondary btn-sm" data-click="editCampaign" data-args="${actionArgs(c.id)}">Edit</button>`;
             break;
         case 'draft':
             actions = `
-                <button class="btn btn-primary btn-sm" onclick="editCampaign('${id}')">Open</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteCampaign('${id}')">Delete</button>`;
+                <button class="btn btn-primary btn-sm" data-click="editCampaign" data-args="${actionArgs(c.id)}">Open</button>
+                <button class="btn btn-danger btn-sm" data-click="deleteCampaign" data-args="${actionArgs(c.id)}">Delete</button>`;
             break;
         default:
             actions = `
-                <button class="btn btn-secondary btn-sm" onclick="editCampaign('${id}')">View</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteCampaign('${id}')">Delete</button>`;
+                <button class="btn btn-secondary btn-sm" data-click="editCampaign" data-args="${actionArgs(c.id)}">View</button>
+                <button class="btn btn-danger btn-sm" data-click="deleteCampaign" data-args="${actionArgs(c.id)}">Delete</button>`;
     }
 
     const failed = c.failed > 0
@@ -315,13 +314,14 @@ function buildPreviewDocument() {
     // The frame carries its own minimal styling: it is a mail client stand-in,
     // not part of the dashboard, and inheriting the dark theme would misreport
     // how the message looks.
-    return `<!DOCTYPE html><html><head><meta charset="utf-8">
-        <style>
-          body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-                 color: #111; background: #fff; margin: 0; padding: 1.25rem; line-height: 1.5; }
-          img { max-width: 100%; }
-        </style></head><body>${body}</body></html>`;
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${PREVIEW_CSS}</style></head><body>${body}</body></html>`;
 }
+
+// PREVIEW_CSS is allowed by its hash in the console's CSP (previewStyleHash in
+// internal/api/console_csp.go): the frame inherits the page's policy, which
+// refuses other inline styles. Change one and the Go test says to change the
+// other.
+const PREVIEW_CSS = 'body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #111; background: #fff; margin: 0; padding: 1.25rem; line-height: 1.5; } img { max-width: 100%; }';
 
 // mergePreview fills merge fields for display only. Unresolved ones are left
 // visible rather than blanked, so the preview shows the gap the recipient
@@ -906,7 +906,7 @@ async function refreshSuppression() {
                             <td class="trace-detail-text">${escapeHtml(e.reason || '—')}</td>
                             <td>${escapeHtml(formatTimeAgo(e.created_at))}</td>
                             <td><button class="btn btn-secondary btn-sm"
-                                onclick="unsuppressAddress('${escapeJsArg(e.address)}')">Allow again</button></td>
+                                data-click="unsuppressAddress" data-args="${actionArgs(e.address)}">Allow again</button></td>
                         </tr>`).join('')}
                 </tbody>
             </table>

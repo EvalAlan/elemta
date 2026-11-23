@@ -56,24 +56,23 @@ async function refreshUsers() {
                     ${data.users.map(u => {
                         const isMe = u.username === data.current_user;
                         const current = (u.roles && u.roles[0]) || 'user';
-                        const name = escapeJsArg(u.username);
                         return `
                         <tr>
                             <td>${escapeHtml(u.username)}${isMe ? ' <span class="field-hint">(you)</span>' : ''}</td>
                             <td>
-                                <select class="users-role-select" onchange="setUserRole('${name}', this.value, this)" data-current="${escapeHtml(current)}">
+                                <select class="users-role-select" data-change="setUserRole" data-args="${actionArgs(u.username, { $: 'value' }, { $: 'this' })}" data-current="${escapeHtml(current)}">
                                     ${roles.map(r => `<option value="${escapeHtml(r)}"${r === current ? ' selected' : ''}>${escapeHtml(r)}</option>`).join('')}
                                 </select>
                             </td>
                             <td>${current === 'domain-admin'
-                                ? `<button class="btn btn-secondary btn-sm" onclick="setUserRole('${name}', 'domain-admin', null, '${escapeJsArg((u.domains || []).join(', '))}')">${escapeHtml((u.domains || []).join(', ') || 'none')}</button>`
+                                ? `<button class="btn btn-secondary btn-sm" data-click="setUserRole" data-args="${actionArgs(u.username, 'domain-admin', null, (u.domains || []).join(', '))}">${escapeHtml((u.domains || []).join(', ') || 'none')}</button>`
                                 : '<span class="field-hint">all</span>'}</td>
                             ${data.two_factor ? `<td>${u.two_factor
-                                ? `On${isMe ? '' : ` <button class="btn btn-secondary btn-sm" onclick="resetSecondFactor('${name}')">Reset</button>`}`
+                                ? `On${isMe ? '' : ` <button class="btn btn-secondary btn-sm" data-click="resetSecondFactor" data-args="${actionArgs(u.username)}">Reset</button>`}`
                                 : '<span class="field-hint">Off</span>'}</td>` : ''}
                             <td style="white-space: nowrap;">
-                                <button class="btn btn-secondary btn-sm" onclick="resetUserPassword('${name}')">Set password</button>
-                                ${isMe ? '' : `<button class="btn btn-danger btn-sm" onclick="deleteUser('${name}')">Remove</button>`}
+                                <button class="btn btn-secondary btn-sm" data-click="resetUserPassword" data-args="${actionArgs(u.username)}">Set password</button>
+                                ${isMe ? '' : `<button class="btn btn-danger btn-sm" data-click="deleteUser" data-args="${actionArgs(u.username)}">Remove</button>`}
                             </td>
                         </tr>`;
                     }).join('')}

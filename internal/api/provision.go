@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -61,9 +59,8 @@ func (s *Server) provisionRoutes(api *mux.Router) {
 		if err := scopeOf(r).checkAddress(account.Address); err != nil {
 			return err
 		}
-		publicURL := strings.TrimRight(os.Getenv("ELEMTA_WEBMAIL_PUBLIC_URL"), "/")
-		u, err := url.Parse(publicURL)
-		if err != nil || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))) || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
+		publicURL := webmailPublicURL()
+		if publicURL == "" {
 			return mailpolicy.ErrUnavailable
 		}
 		c, err := s.provisioner.MailboxAdmin()

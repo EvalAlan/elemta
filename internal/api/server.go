@@ -676,6 +676,10 @@ func (s *Server) Start() error {
 	// Public routes (must be registered before protected routes)
 	r.HandleFunc("/login", s.handleLoginPage).Methods("GET")
 	r.HandleFunc("/logo.png", s.handleLogo).Methods("GET")
+	// The sign-in page's own script and style. Public, like the page: the
+	// console's CSP refuses inline ones, and /static/ needs a session.
+	r.HandleFunc("/login.js", serveLoginAsset("web/login.js")).Methods("GET")
+	r.HandleFunc("/login.css", serveLoginAsset("web/login.css")).Methods("GET")
 	// One-click unsubscribe from campaign mail: the recipient has no sign-in,
 	// and the signed token is the authority (unsubscribe.go).
 	r.HandleFunc("/unsubscribe/{token}", s.handleUnsubscribe).Methods("GET", "POST")
@@ -1349,6 +1353,7 @@ func (s *Server) handleGetQueueStorage(w http.ResponseWriter, r *http.Request) {
 // handleLoginPage serves the public login page
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	setHTMLNoCache(w)
+	setConsoleHeaders(w)
 	serveHTMLWithNotice(w, r, "web/login.html")
 }
 
@@ -1414,7 +1419,17 @@ func (s *Server) handleLogo(w http.ResponseWriter, r *http.Request) {
 // handleDashboard serves the main dashboard page
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	setHTMLNoCache(w)
+	setConsoleHeaders(w)
 	serveHTMLWithNotice(w, r, s.webRoot+"/index.html")
+}
+
+// serveLoginAsset serves one of the sign-in page's fixed files. They are
+// versioned by query string in login.html, like the console's assets.
+func serveLoginAsset(path string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeFile(w, r, path)
+	}
 }
 
 // setHTMLNoCache stops browsers reusing a stale application shell.

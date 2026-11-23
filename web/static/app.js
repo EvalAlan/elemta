@@ -398,7 +398,7 @@ function renderQueueObservability(snapshot) {
     backendEl.textContent = `backend: ${snapshot.backend || 'unknown'}`;
     totalEl.textContent = snapshot.total_messages ?? 0;
     oldestEl.innerHTML = snapshot.oldest_message
-        ? `<button class="link-button" onclick="viewMessage('${escapeJsArg(snapshot.oldest_message.id)}')">${escapeHtml(shortMessageId(snapshot.oldest_message.id))}</button>`
+        ? `<button class="link-button" data-click="viewMessage" data-args="${actionArgs(snapshot.oldest_message.id)}">${escapeHtml(shortMessageId(snapshot.oldest_message.id))}</button>`
         : '-';
     oldestAgeEl.textContent = formatDurationSeconds(snapshot.oldest_message?.age_seconds || 0);
     storageEl.textContent = formatBytes(snapshot.storage?.total_bytes || 0);
@@ -421,11 +421,11 @@ function renderQueueObservability(snapshot) {
     claimsEl.innerHTML = claims.length > 0 ? claims.map(claim => `
         <div class="queue-claim-row ${claim.expired ? 'expired' : ''}">
             <div>
-                <button class="link-button" onclick="viewMessage('${escapeJsArg(claim.message_id)}')">${escapeHtml(shortMessageId(claim.message_id))}</button>
+                <button class="link-button" data-click="viewMessage" data-args="${actionArgs(claim.message_id)}">${escapeHtml(shortMessageId(claim.message_id))}</button>
                 <span class="status-badge ${queueStatusClass(claim.queue_type)}">${escapeHtml(claim.queue_type || 'unknown')}</span>
             </div>
             <div class="queue-claim-meta">${escapeHtml(claim.claimed_by || 'unknown worker')} • ${claim.expired ? 'expired' : `${formatDurationSeconds(claim.seconds_remaining || 0)} left`}</div>
-            <button class="btn btn-secondary btn-compact" onclick="releaseMessageClaim('${escapeJsArg(claim.message_id)}', '${escapeJsArg(claim.claimed_by || '')}')">Release</button>
+            <button class="btn btn-secondary btn-compact" data-click="releaseMessageClaim" data-args="${actionArgs(claim.message_id, claim.claimed_by || '')}">Release</button>
         </div>
     `).join('') : '<div class="loading-placeholder">No active claims</div>';
 }
@@ -667,10 +667,10 @@ function renderMessages() {
             <tr class="${isSelected ? 'selected' : ''}">
                 <td class="checkbox-col">
                     <input type="checkbox"
-                           onchange="toggleMessageSelection('${escapeJsArg(msg.id)}')"
+                           data-change="toggleMessageSelection" data-args="${actionArgs(msg.id)}"
                            ${isSelected ? 'checked' : ''}>
                 </td>
-                <td><span class="message-id" title="${escapeHtml(msg.id || '')} (click to copy)" onclick="copyMessageId('${escapeJsArg(msg.id)}')">${escapeHtml(msg.id?.substring(0, 12) || '')}</span></td>
+                <td><span class="message-id" title="${escapeHtml(msg.id || '')} (click to copy)" data-click="copyMessageId" data-args="${actionArgs(msg.id)}">${escapeHtml(msg.id?.substring(0, 12) || '')}</span></td>
                 <td title="${escapeHtml(msg.from || '')}">${escapeHtml(msg.from || 'Unknown')}</td>
                 <td title="${escapeHtml(toList || '')}">${escapeHtml(toList || 'Unknown')}</td>
                 <td title="${escapeHtml(msg.subject || '')}">${escapeHtml(msg.subject || 'No Subject')}</td>
@@ -679,25 +679,25 @@ function renderMessages() {
                 <td><span class="status-badge status-${state.currentQueue}">${state.currentQueue}</span></td>
                 <td>
                     <div class="action-buttons">
-                        <button onclick="viewMessage('${escapeJsArg(msg.id)}')" title="View Details">
+                        <button data-click="viewMessage" data-args="${actionArgs(msg.id)}" title="View Details">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                                 <circle cx="12" cy="12" r="3"/>
                             </svg>
                         </button>
-                        <button onclick="retryMessage('${escapeJsArg(msg.id)}')" title="Requeue message">
+                        <button data-click="retryMessage" data-args="${actionArgs(msg.id)}" title="Requeue message">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="23 4 23 10 17 10"/>
                                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
                             </svg>
                         </button>
-                        <button onclick="holdMessage('${escapeJsArg(msg.id)}')" title="Hold message">
+                        <button data-click="holdMessage" data-args="${actionArgs(msg.id)}" title="Hold message">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="6" y="4" width="4" height="16"/>
                                 <rect x="14" y="4" width="4" height="16"/>
                             </svg>
                         </button>
-                        <button onclick="deleteMessage('${escapeJsArg(msg.id)}')" title="Delete">
+                        <button data-click="deleteMessage" data-args="${actionArgs(msg.id)}" title="Delete">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="3 6 5 6 21 6"/>
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -729,7 +729,7 @@ function renderPagination(totalPages) {
     let html = '';
 
     // Previous button
-    html += `<button onclick="goToPage(${state.currentPage - 1})" ${state.currentPage === 1 ? 'disabled' : ''}>‹</button>`;
+    html += `<button data-click="goToPage" data-args="${actionArgs(state.currentPage - 1)}" ${state.currentPage === 1 ? 'disabled' : ''}>‹</button>`;
 
     // Page numbers
     let startPage = Math.max(1, state.currentPage - 2);
@@ -740,21 +740,21 @@ function renderPagination(totalPages) {
     }
 
     if (startPage > 1) {
-        html += `<button onclick="goToPage(1)">1</button>`;
+        html += `<button data-click="goToPage" data-args="[1]">1</button>`;
         if (startPage > 2) html += '<span style="padding: 0 0.5rem;">...</span>';
     }
 
     for (let i = startPage; i <= endPage; i++) {
-        html += `<button onclick="goToPage(${i})" class="${i === state.currentPage ? 'active' : ''}">${i}</button>`;
+        html += `<button data-click="goToPage" data-args="${actionArgs(i)}" class="${i === state.currentPage ? 'active' : ''}">${i}</button>`;
     }
 
     if (endPage < totalPages) {
         if (endPage < totalPages - 1) html += '<span style="padding: 0 0.5rem;">...</span>';
-        html += `<button onclick="goToPage(${totalPages})">${totalPages}</button>`;
+        html += `<button data-click="goToPage" data-args="${actionArgs(totalPages)}">${totalPages}</button>`;
     }
 
     // Next button
-    html += `<button onclick="goToPage(${state.currentPage + 1})" ${state.currentPage === totalPages ? 'disabled' : ''}>›</button>`;
+    html += `<button data-click="goToPage" data-args="${actionArgs(state.currentPage + 1)}" ${state.currentPage === totalPages ? 'disabled' : ''}>›</button>`;
 
     controls.innerHTML = html;
 }
@@ -1498,7 +1498,7 @@ function showToast(message, type = 'info') {
     toast.innerHTML = `
         <span class="toast-icon">${iconSvg[type]}</span>
         <span class="toast-message">${escapeHtml(message)}</span>
-        <button class="toast-close" onclick="this.parentElement.remove()">
+        <button class="toast-close" data-click="dismiss">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="6" x2="6" y2="18"/>
                 <line x1="6" y1="6" x2="18" y2="18"/>
@@ -1561,15 +1561,6 @@ async function copyMessageId(id) {
     } catch {
         showToast('Could not copy — clipboard unavailable', 'error');
     }
-}
-
-// escapeJsArg makes a value safe as a quoted argument in an inline handler.
-// The browser decodes the attribute as HTML before it reads it as JavaScript,
-// so a character that means something to either is written as \\uXXXX, which
-// means nothing to HTML and only itself to JavaScript.
-function escapeJsArg(value) {
-    return String(value ?? '').replace(/[^A-Za-z0-9 _.,:@/-]/g,
-        c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
 }
 
 function queueStatusClass(queueType) {
@@ -2045,7 +2036,7 @@ function renderPluginCard(plugin) {
                 </div>
                 <label class="switch" title="${enabled ? 'Disable' : 'Enable'} ${escapeHtml(name)}">
                     <input type="checkbox" ${enabled ? 'checked' : ''}
-                           onchange="togglePlugin('${escapeJsArg(name)}', this.checked)">
+                           data-change="togglePlugin" data-args="${actionArgs(name, { $: 'checked' })}">
                     <span class="switch-track"><span class="switch-thumb"></span></span>
                 </label>
             </div>
@@ -2058,7 +2049,7 @@ function renderPluginCard(plugin) {
             ${summary ? `<div class="plugin-summary">${summary}</div>` : ''}
             ${operational ? `<div class="plugin-summary">${operational}</div>` : ''}
             ${enabled && schema ? `<div class="plugin-open"><a href="#" class="link-button"
-                onclick="switchSettingsTab('plugin-${escapeJsArg(name)}'); return false;">Open settings</a></div>` : ''}
+                data-click="switchSettingsTab" data-args="${actionArgs('plugin-' + name)}">Open settings</a></div>` : ''}
         </div>
     `;
 }
@@ -2172,7 +2163,7 @@ function pluginRowHtml(pluginName, fieldKey, row = {}) {
         <div class="rows-editor-row" style="grid-template-columns: repeat(${columns.length}, 1fr) auto;">
             ${cells}
             <button type="button" class="btn btn-secondary btn-sm" title="Remove"
-                    onclick="this.closest('.rows-editor-row').remove()">Remove</button>
+                    data-click="removeRow">Remove</button>
         </div>`;
 }
 
@@ -2247,7 +2238,7 @@ function renderPluginPanel(plugin) {
                         ${list.map(row => pluginRowHtml(plugin.name, f.key, row)).join('')}
                     </div>
                     <button type="button" class="btn btn-secondary btn-sm"
-                            onclick="addPluginRow('${escapeJsArg(plugin.name)}', '${escapeJsArg(f.key)}')">
+                            data-click="addPluginRow" data-args="${actionArgs(plugin.name, f.key)}">
                         Add ${escapeHtml(f.itemLabel || 'row')}
                     </button>
                     ${hint}
@@ -2295,7 +2286,7 @@ function renderPluginPanel(plugin) {
         <div class="card">
             <div class="card-header">
                 <h3>${escapeHtml(plugin.title || plugin.name)}</h3>
-                <button class="btn btn-secondary btn-sm" onclick="refreshPlugins()">Refresh</button>
+                <button class="btn btn-secondary btn-sm" data-click="refreshPlugins">Refresh</button>
             </div>
             <div class="card-body">
                 <p class="panel-intro">${escapeHtml(plugin.description || '')}</p>
@@ -2319,7 +2310,7 @@ function renderPluginPanel(plugin) {
                     </div>` : ''}
                 <div class="form-actions">
                     <button class="btn btn-primary" id="plugin-${escapeHtml(plugin.name)}-save"
-                            onclick="savePluginSettings('${escapeJsArg(plugin.name)}', ${enableOnSave})">${
+                            data-click="savePluginSettings" data-args="${actionArgs(plugin.name, enableOnSave)}">${
                         enableOnSave ? 'Save and Enable' : 'Save Settings'}</button>
                     <span class="save-status" id="plugin-${escapeHtml(plugin.name)}-status"></span>
                 </div>
@@ -2331,7 +2322,7 @@ function renderPluginPanel(plugin) {
                                    value="${escapeHtml((cfg.domain || (cfg.domains && cfg.domains[0] && cfg.domains[0].domain) || ''))}">
                         </div>
                         <div class="config-item plugin-check-action">
-                            <button class="btn btn-secondary" onclick="checkMailAuthPlugin('${escapeJsArg(plugin.name)}')">Check key and DNS</button>
+                            <button class="btn btn-secondary" data-click="checkMailAuthPlugin" data-args="${actionArgs(plugin.name)}">Check key and DNS</button>
                         </div>
                     </div>
                     <pre class="plugin-check-result" id="plugin-${escapeHtml(plugin.name)}-check-result"></pre>` : ''}
@@ -2541,7 +2532,7 @@ function showConfigWarning(message) {
     }
     banner.innerHTML = `
         <span><strong>Not saved permanently.</strong> ${escapeHtml(message)}</span>
-        <button class="btn btn-secondary btn-sm" onclick="this.parentElement.remove()">Dismiss</button>
+        <button class="btn btn-secondary btn-sm" data-click="dismiss">Dismiss</button>
     `;
     banner.style.display = 'flex';
 }
@@ -2559,8 +2550,8 @@ function showRestartRequired(message) {
     }
     banner.innerHTML = `
         <span>${escapeHtml(message)} — saved, but the SMTP server reads this at startup.</span>
-        <button class="btn btn-primary btn-sm" onclick="restartServer()">Restart now</button>
-        <button class="btn btn-secondary btn-sm" onclick="this.parentElement.remove()">Dismiss</button>
+        <button class="btn btn-primary btn-sm" data-click="restartServer">Restart now</button>
+        <button class="btn btn-secondary btn-sm" data-click="dismiss">Dismiss</button>
     `;
     banner.style.display = 'flex';
 }
@@ -2645,7 +2636,7 @@ async function loadAPIKeys() {
                     <span class="apikey-meta">Created: ${formatDate(key.created_at)}</span>
                 </div>
                 <div class="apikey-actions">
-                    <button class="btn btn-danger btn-sm" onclick="revokeAPIKey('${escapeJsArg(key.id)}')">Revoke</button>
+                    <button class="btn btn-danger btn-sm" data-click="revokeAPIKey" data-args="${actionArgs(key.id)}">Revoke</button>
                 </div>
             </div>
         `).join('');
@@ -3014,7 +3005,7 @@ function renderRecentErrors(errors) {
                 <div class="error-message">${escapeHtml(err.error)}</div>
                 <div class="error-meta">${escapeHtml(err.recipient)} • ${formatTimeAgo(err.timestamp)}</div>
                 <div style="margin-top: 0.35rem;">
-                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch('${escapeJsArg(err.error)}')">View related logs</button>
+                    <button class="btn btn-secondary btn-sm" data-click="drilldownLogsBySearch" data-args="${actionArgs(err.error)}">View related logs</button>
                 </div>
             </div>
         </div>
@@ -3036,7 +3027,7 @@ function renderTopErrorReasons(reasons) {
                 <div class="error-message">${escapeHtml(reason.reason || 'unknown error')}</div>
                 <div class="error-meta">${reason.count || 0} event(s)</div>
                 <div style="margin-top: 0.35rem;">
-                    <button class="btn btn-secondary btn-sm" onclick="drilldownLogsBySearch('${escapeJsArg(reason.reason)}')">View matching logs</button>
+                    <button class="btn btn-secondary btn-sm" data-click="drilldownLogsBySearch" data-args="${actionArgs(reason.reason)}">View matching logs</button>
                 </div>
             </div>
         </div>
@@ -3187,7 +3178,7 @@ async function searchMessages() {
                             <td>${escapeHtml(m.subject || '—')}</td>
                             <td><span class="campaign-state ${escapeHtml(outcomeClass(m.outcome))}">${escapeHtml(m.outcome)}</span></td>
                             <td><button class="btn btn-secondary btn-sm"
-                                onclick="traceMessage('${escapeJsArg(m.message_id)}')">Trace</button></td>
+                                data-click="traceMessage" data-args="${actionArgs(m.message_id)}">Trace</button></td>
                         </tr>`).join('')}
                 </tbody>
             </table>
