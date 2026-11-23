@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1983,21 +1984,65 @@ const maxLogScanBytes = 32 * 1024 * 1024
 // The scan stops at limit*3 matches or after maxLogScanBytes, whichever comes
 // first. A filter with no matches therefore returns empty quickly instead of
 // scanning to the beginning of time.
+//
+// When the live file has fewer than limit matches, the scan carries on into
+// the rotated file (filename + ".1") with what is left of the byte budget.
+// The log rotates at 25 MB, and right after a rotation the live file holds
+// only the minutes since: on a quiet server that is startup and probe noise,
+// with every reception and delivery sitting in the rotated file, so the Logs
+// tab showed nothing for those types until new mail arrived. A writer that
+// has not yet noticed the rotation also keeps appending to the ".1" file for
+// up to a megabyte, so its newest lines can be newer than some in the live
+// file; the result is sorted by time rather than by file.
 func (s *Server) tailLogFile(filename string, limit int, eventTypeFilter, levelFilter string) ([]MessageLog, error) {
 	if !isAllowedLogPath(filename) {
 		return nil, fmt.Errorf("log file path not allowed: %s", filename)
 	}
 
-	// #nosec G304 -- path is constrained by isAllowedLogPath allowlist
-	file, err := os.Open(filename)
+	maxMatches := limit * 3 // Read more lines than needed to survive filtering
+	messageLogs, scanned, err := scanLogBackwards(filename, maxLogScanBytes, maxMatches, eventTypeFilter, levelFilter)
 	if err != nil {
 		return nil, err
+	}
+	if len(messageLogs) < limit && scanned < maxLogScanBytes {
+		// A missing or unreadable rotated file just means there is no older
+		// history to add.
+		older, _, oerr := scanLogBackwards(filename+".1", maxLogScanBytes-scanned, maxMatches-len(messageLogs), eventTypeFilter, levelFilter)
+		if oerr == nil {
+			messageLogs = append(messageLogs, older...)
+		}
+	}
+
+	// Chronological order. Entries without a parseable time sort first, so
+	// they are the ones trimmed.
+	sort.SliceStable(messageLogs, func(i, j int) bool {
+		ti, _ := time.Parse(time.RFC3339Nano, messageLogs[i].Time)
+		tj, _ := time.Parse(time.RFC3339Nano, messageLogs[j].Time)
+		return ti.Before(tj)
+	})
+
+	// Trim to the requested limit, keeping the newest entries.
+	if len(messageLogs) > limit {
+		messageLogs = messageLogs[len(messageLogs)-limit:]
+	}
+
+	return messageLogs, nil
+}
+
+// scanLogBackwards walks one log file from its end, reading at most budget
+// bytes, and returns up to maxMatches matching entries newest first, along
+// with the number of bytes it read.
+func scanLogBackwards(filename string, budget int64, maxMatches int, eventTypeFilter, levelFilter string) ([]MessageLog, int64, error) {
+	// #nosec G304 -- callers pass an isAllowedLogPath path or its ".1" rotation
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, 0, err
 	}
 	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var messageLogs []MessageLog
@@ -2010,11 +2055,11 @@ func (s *Server) tailLogFile(filename string, limit int, eventTypeFilter, levelF
 
 	offset := stat.Size()
 	scanFloor := int64(0)
-	if offset > maxLogScanBytes {
-		scanFloor = offset - maxLogScanBytes
+	if offset > budget {
+		scanFloor = offset - budget
 	}
 	linesFound := 0
-	maxLinesToRead := limit * 3 // Read more lines than needed to survive filtering
+	maxLinesToRead := maxMatches
 
 	for offset > scanFloor && linesFound < maxLinesToRead {
 		chunkSize := int64(len(buffer))
@@ -2127,17 +2172,7 @@ func (s *Server) tailLogFile(filename string, limit int, eventTypeFilter, levelF
 		}
 	}
 
-	// The walk collected newest-first; flip to chronological order.
-	for i, j := 0, len(messageLogs)-1; i < j; i, j = i+1, j-1 {
-		messageLogs[i], messageLogs[j] = messageLogs[j], messageLogs[i]
-	}
-
-	// Trim to the requested limit, keeping the newest entries.
-	if len(messageLogs) > limit {
-		messageLogs = messageLogs[len(messageLogs)-limit:]
-	}
-
-	return messageLogs, nil
+	return messageLogs, stat.Size() - offset, nil
 }
 
 // Configuration management handlers
