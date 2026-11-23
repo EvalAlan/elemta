@@ -21,6 +21,10 @@ x-mailbox: &mailbox
     - ./.secrets/mailbox-tls/cert.pem:/etc/elemta/tls/cert.pem:ro
     - ./.secrets/mailbox-tls/key.pem:/etc/elemta/tls/key.pem:ro
     - mailbox_bodies:/var/lib/elemta/bodies
+    # The shared log file, which the admin console's Logs tab reads: IMAP,
+    # POP3 and ManageSieve sign-ins are only seen there if they are written
+    # to it. Every writer follows the others' rotations (internal/logging).
+    - elemta_logs:/app/logs
   tmpfs: [/tmp:size=64m]
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
@@ -257,6 +261,9 @@ services:
     volumes:
       - ../../config:/app/config:ro
       - elemta_config:/app/runtime-config:rw
+      # The shared log file the admin console's Logs tab reads, for the
+      # webmail's sign-ins and sends.
+      - elemta_logs:/app/logs
     command: [ "/bin/sh", "-lc", "exec /app/elemta --config \"$(/app/prepare-config.sh)\" webmail" ]
     environment:
       - TZ=UTC

@@ -1910,12 +1910,15 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 // MessageLog represents a structured message lifecycle log entry
 type MessageLog struct {
-	Time      string                 `json:"time"`
-	Level     string                 `json:"level"`
-	Message   string                 `json:"msg"`
-	EventType string                 `json:"event_type,omitempty"`
-	Component string                 `json:"component,omitempty"`
-	Fields    map[string]interface{} `json:"fields,omitempty"`
+	Time      string `json:"time"`
+	Level     string `json:"level"`
+	Message   string `json:"msg"`
+	EventType string `json:"event_type,omitempty"`
+	// EventAction is the line's own event_type when it differs from the
+	// category in EventType, so the tab can say which step it was.
+	EventAction string                 `json:"event_action,omitempty"`
+	Component   string                 `json:"component,omitempty"`
+	Fields      map[string]interface{} `json:"fields,omitempty"`
 }
 
 // handleGetMessageLogs fetches structured message lifecycle logs
@@ -2051,7 +2054,7 @@ func scanLogBackwards(filename string, budget int64, maxMatches int, eventTypeFi
 
 	// Lowercased needles for the cheap pre-filter below.
 	levelNeedle := strings.ToLower(levelFilter)
-	typeNeedle := strings.ToLower(eventTypeFilter)
+	typeNeedles := categoryNeedles(eventTypeFilter)
 
 	offset := stat.Size()
 	scanFloor := int64(0)
@@ -2092,12 +2095,12 @@ func scanLogBackwards(filename string, budget int64, maxMatches int, eventTypeFi
 			// text cannot match it, and skipping the JSON parse is what makes
 			// scanning a large window affordable. False positives fall
 			// through to the real checks below.
-			if levelNeedle != "" || typeNeedle != "" {
+			if levelNeedle != "" || typeNeedles != nil {
 				lower := strings.ToLower(line)
 				if levelNeedle != "" && !strings.Contains(lower, levelNeedle) {
 					continue
 				}
-				if typeNeedle != "" && typeNeedle != "system" && !strings.Contains(lower, typeNeedle) {
+				if typeNeedles != nil && !containsAny(lower, typeNeedles) {
 					continue
 				}
 			}
@@ -2118,57 +2121,27 @@ func scanLogBackwards(filename string, budget int64, maxMatches int, eventTypeFi
 				eventType = categorizeLogEntry(logEntry, msg)
 			}
 
-			// Apply filters
-			if eventTypeFilter != "" {
-				if eventTypeFilter == "system" {
-					// System filter matches explicit "system" events or events with no type
-					// It excludes known lifecycle events
-					isKnownCategory := false
-					knownCategories := []string{"reception", "delivery", "rejection", "deferral", "bounce", "tempfail", "authentication"}
-					for _, t := range knownCategories {
-						if eventType == t {
-							isKnownCategory = true
-							break
-						}
-					}
-					if isKnownCategory {
-						continue
-					}
-				} else if eventType != eventTypeFilter {
-					continue
-				}
+			category := logCategory(eventType)
+			if eventTypeFilter != "" && category != eventTypeFilter {
+				continue
 			}
 			if levelFilter != "" && !strings.EqualFold(level, levelFilter) {
 				continue
 			}
 
-			// Only include message lifecycle events or interesting logs
-			includeLog := false
-			messageLifecycleTypes := []string{
-				"reception", "delivery", "rejection", "deferral", "bounce", "tempfail", "authentication",
+			entry := MessageLog{
+				Time:      timeStr,
+				Level:     level,
+				Message:   msg,
+				EventType: category,
+				Component: component,
+				Fields:    logEntry,
 			}
-			for _, t := range messageLifecycleTypes {
-				if eventType == t {
-					includeLog = true
-					break
-				}
+			if eventType != category {
+				entry.EventAction = eventType
 			}
-			// Always include system events, errors, and warnings
-			if !includeLog && (eventType == "system" || strings.EqualFold(level, "error") || strings.EqualFold(level, "warn")) {
-				includeLog = true
-			}
-
-			if includeLog {
-				messageLogs = append(messageLogs, MessageLog{
-					Time:      timeStr,
-					Level:     level,
-					Message:   msg,
-					EventType: eventType,
-					Component: component,
-					Fields:    logEntry,
-				})
-				linesFound++
-			}
+			messageLogs = append(messageLogs, entry)
+			linesFound++
 		}
 	}
 

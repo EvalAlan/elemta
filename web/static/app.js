@@ -1073,6 +1073,7 @@ async function refreshLogs(options = {}) {
                     log.msg,
                     log.component,
                     log.event_type,
+                    log.event_action,
                     JSON.stringify(log.fields)
                 ].join(' ').toLowerCase();
                 return searchable.includes(searchTerm);
@@ -1105,12 +1106,16 @@ async function refreshLogs(options = {}) {
             const level = (log.level || 'INFO').toUpperCase();
             const eventType = log.event_type || 'system';
             const eventTypeClass = getEventTypeClass(log.event_type);
+            // Under the badge: the line's own event type when the category
+            // differs, and the protocol of a sign-in (imap, pop3, webmail).
+            const protocol = log.fields && typeof log.fields.protocol === 'string' ? log.fields.protocol : '';
+            const detail = [log.event_action, protocol].filter(Boolean).join(' · ');
 
             return `
                         <tr class="log-row ${escapeHtml(level.toLowerCase())}">
                             <td class="log-time-cell">${escapeHtml(time)}</td>
                             <td><span class="log-level-badge ${escapeHtml(level.toLowerCase())}">${escapeHtml(level)}</span></td>
-                            <td><span class="log-type-badge ${eventTypeClass}">${escapeHtml(eventType)}</span></td>
+                            <td><span class="log-type-badge ${eventTypeClass}">${escapeHtml(eventType)}</span>${detail ? `<span class="log-event-action">${escapeHtml(detail)}</span>` : ''}</td>
                             <td class="log-message-cell">
                                 <div class="log-msg-text">${escapeHtml(log.msg || '')}</div>
                                 ${renderLogFields(log.fields)}
@@ -1175,7 +1180,10 @@ function getEventTypeClass(eventType) {
         'deferral': 'event-deferral',
         'bounce': 'event-bounce',
         'tempfail': 'event-tempfail',
-        'authentication': 'event-auth'
+        'authentication': 'event-auth',
+        'session': 'event-session',
+        'scan': 'event-scan',
+        'security': 'event-security'
     };
     return typeMap[eventType] || 'event-system';
 }
@@ -1256,62 +1264,6 @@ function parseLogLine(line) {
             context: null
         };
     }
-}
-
-function getLogType(log) {
-    const msg = log.message.toLowerCase();
-    const comp = (log.component || '').toLowerCase();
-    const ctx = log.context || {};
-    const response = (ctx.response || '').toLowerCase();
-    const error = (ctx.error || '').toLowerCase();
-    const eventType = (ctx.event_type || '').toLowerCase();
-
-    // Rejection (5xx) - Check explicit event_type first
-    if (eventType === 'rejection' || msg.includes('reject') || msg.includes('denied') ||
-        response.startsWith('5') || error.includes('554') || error.includes('550')) {
-        return 'rejection';
-    }
-
-    // TempFail (4xx temporary failures) - Check explicit event_type first
-    if (eventType === 'tempfail' || msg.includes('tempfail') || msg.includes('temporary failure') ||
-        response.startsWith('4') || error.includes('451') || error.includes('421')) {
-        return 'tempfail';
-    }
-
-    // Deferral - Check explicit event_type first
-    if (eventType === 'deferral' || msg.includes('defer') || eventType === 'message_deferred') {
-        return 'defer';
-    }
-
-    // Bounce
-    if (eventType === 'bounce' || msg.includes('bounce') || msg.includes('bounced') || eventType === 'message_bounced') {
-        return 'bounce';
-    }
-
-    // Auth - Check explicit event_type first
-    if (eventType === 'authentication' || msg.includes('auth') || msg.includes('authentication') || comp.includes('auth')) {
-        return 'auth';
-    }
-
-    // Delivery
-    if (eventType === 'delivery' || msg.includes('delivered') || msg.includes('delivery successful') ||
-        comp.includes('delivery') || comp.includes('sender') || eventType === 'message_delivered') {
-        return 'delivery';
-    }
-
-    // Reception
-    if (eventType === 'reception' || msg.includes('received') || msg.includes('accepted') || msg.includes('session created') ||
-        comp.includes('smtp-session') || comp.includes('receiver') || eventType === 'message_received') {
-        return 'reception';
-    }
-
-    // Queue
-    if (msg.includes('queue') || comp.includes('queue') || eventType === 'message_accepted') {
-        return 'queue';
-    }
-
-    // System (default fallback)
-    return 'system';
 }
 
 function renderLogContext(context) {
