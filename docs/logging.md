@@ -1,8 +1,14 @@
 # Logging
 
-Every service writes JSON lines to standard output. The MTA and the admin
-console also write a rotated file when they can open one; if they can't, they
-say so and carry on with standard output.
+Every service writes JSON lines to standard output, and a rotated file when it
+can open one; if it can't, it says so and carries on with standard output.
+
+The admin console's Logs tab reads that file. In the Compose stacks the MTA,
+the console, the webmail and the mailbox servers all write the one file on the
+shared `elemta_logs` volume, so the tab shows mail flow, webmail sign-ins and
+IMAP, POP3 and ManageSieve sign-ins together. Several processes can share the
+file: each follows a rotation another made. A service whose `/app/logs` isn't
+that volume still logs, but only to its own copy, which the tab never sees.
 
 ## Config
 

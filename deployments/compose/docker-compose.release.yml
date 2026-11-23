@@ -56,16 +56,19 @@ services:
     pids_limit: 256
   elemta-webmail:
     <<: [*ours, *elemta-image]
-    # No logs or queue volume here: its file log is a scratch copy of
-    # stdout, and the shared configuration only checks the queue is
-    # writable; the webmail never queues anything.
-    tmpfs: !override ["/tmp:size=128m", "/app/logs:size=64m,uid=1001,gid=1001", "/app/queue:size=1m,uid=1001,gid=1001,mode=0700"]
+    # No queue volume here: the shared configuration only checks the queue
+    # is writable; the webmail never queues anything. Its log goes to the
+    # shared logs volume (docker-compose.yml), where the admin console's
+    # Logs tab reads it; it used to be a scratch tmpfs here, and the tab
+    # never saw a webmail sign-in.
+    tmpfs: !override ["/tmp:size=128m", "/app/queue:size=1m,uid=1001,gid=1001,mode=0700"]
     mem_limit: 512m
     pids_limit: 256
   mailbox-server:
     <<: [*ours, *mailbox-image]
     build: !reset null
-    tmpfs: !override ["/tmp:size=64m", "/app/logs:size=64m,uid=1001,gid=1001"]
+    # The log goes to the shared logs volume, as the webmail's does.
+    tmpfs: !override ["/tmp:size=64m"]
     mem_limit: 768m
     pids_limit: 256
 
