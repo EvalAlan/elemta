@@ -94,6 +94,9 @@ func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := s.clientIP(r)
 	if s.security == nil || s.throttled(ip, ip) {
+		if s.security != nil {
+			s.logSignInRefused("", ip, "passkey", "throttled")
+		}
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "Too many sign-in attempts. Wait a few minutes and try again."})
 		return
 	}
@@ -109,7 +112,7 @@ func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	}, &out)
 	if err != nil {
 		s.limiter.fail(ip)
-		s.log.Info("webmail: passkey sign-in failed", "ip", ip, "error", err)
+		s.logSignInRefused("", ip, "passkey", "not_accepted", "error", err)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "That passkey wasn't accepted here."})
 		return
 	}
@@ -122,10 +125,11 @@ func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	check, err := s.security.check(ctx, out.Address, out.Token)
 	if err != nil || !check.allows("webmail") {
 		_ = store.Close()
+		s.logSignInRefused(out.Address, ip, "passkey", "webmail_disabled")
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "Webmail is turned off for this account. Ask your administrator."})
 		return
 	}
-	if !s.startSession(ctx, w, r, out.Address, out.Token, store) {
+	if !s.startSession(ctx, w, r, out.Address, out.Token, "passkey", store) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"next": "/mail"})

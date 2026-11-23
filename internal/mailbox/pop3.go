@@ -41,6 +41,8 @@ type popSession struct {
 	messages  []Message
 	deleted   map[int]bool
 	owner     string
+	// signedIn is when the session signed in, for its closing line.
+	signedIn time.Time
 }
 
 func (s *Service) servePOP3(ln net.Listener) error {
@@ -58,7 +60,13 @@ func (s *Service) servePOP3(ln net.Listener) error {
 			defer cancel()
 			go func() { <-ctx.Done(); _ = conn.Close() }()
 			p := &popSession{s: s, conn: conn, reader: bufio.NewReaderSize(conn, 4096), writer: bufio.NewWriter(conn), deleted: make(map[int]bool)}
-			defer func() { _ = p.conn.Close(); p.release() }()
+			defer func() {
+				if !p.signedIn.IsZero() {
+					s.logSessionEnd("pop3", p.conn.RemoteAddr(), p.account, p.signedIn)
+				}
+				_ = p.conn.Close()
+				p.release()
+			}()
 			p.run(ctx)
 		}()
 	}
@@ -236,6 +244,7 @@ func (p *popSession) run(ctx context.Context) {
 					continue
 				}
 				if err := p.login(ctx, arg); err != nil {
+					p.s.logSignIn("pop3", p.conn.RemoteAddr(), p.user, Account{}, err)
 					if errors.Is(err, errPOPInUse) {
 						// Valid credentials: say so, so the client retries later
 						// instead of asking the user for a new password.
@@ -254,6 +263,8 @@ func (p *popSession) run(ctx context.Context) {
 					p.user = ""
 					continue
 				}
+				p.s.logSignIn("pop3", p.conn.RemoteAddr(), p.user, p.account, nil)
+				p.signedIn = time.Now()
 				_ = p.line("+OK Maildrop ready")
 			default:
 				_ = p.line("-ERR Authentication required")

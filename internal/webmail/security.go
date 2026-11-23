@@ -329,7 +329,7 @@ func (s *Server) twoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, errSecurityCode):
 		s.limiter.fail(ip)
-		s.log.Info("webmail: wrong verification code", "user", p.user, "ip", ip)
+		s.logSignInRefused(p.user, ip, "two_step", "wrong_code")
 		if !s.pending.fail(c.Value) {
 			s.setCookie(w, twoFactorCookie, "", -1)
 			s.renderLogin(w, r, http.StatusUnauthorized, p.user, "", "Too many wrong codes. Sign in again.")
@@ -338,6 +338,7 @@ func (s *Server) twoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 		retry(http.StatusUnauthorized, "That code isn't right. Codes change every 30 seconds; use the current one.")
 		return
 	case errors.Is(err, errSecurityLimited):
+		s.logSignInRefused(p.user, ip, "two_step", "throttled")
 		retry(http.StatusTooManyRequests, "Too many wrong codes. Wait a few minutes and try again.")
 		return
 	case err != nil:
@@ -361,7 +362,7 @@ func (s *Server) twoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("webmail: recovery code used", "user", p.user, "left", out.RecoveryLeft)
 		next = "/settings/security?n=recovery-code-used#two-step"
 	}
-	s.finishLogin(ctx, w, r, p.user, p.password, store, next)
+	s.finishLogin(ctx, w, r, p.user, p.password, "two_step", store, next)
 }
 
 // protocolChoice is IMAP or POP3 as Settings shows it.

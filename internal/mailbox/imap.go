@@ -38,11 +38,26 @@ type imapSession struct {
 	recheck  <-chan time.Time
 	ctx      context.Context
 	cancel   context.CancelFunc
+	// signedIn is when a public session signed in, for its closing line.
+	signedIn time.Time
 }
 
 var _ imapserver.SessionIMAP4rev2 = (*imapSession)(nil)
 
-func (s *imapSession) Close() error { s.cancel(); return nil }
+func (s *imapSession) Close() error {
+	if s.public && !s.signedIn.IsZero() {
+		s.service.logSessionEnd("imap", s.remoteAddr(), s.account, s.signedIn)
+	}
+	s.cancel()
+	return nil
+}
+
+func (s *imapSession) remoteAddr() net.Addr {
+	if s.conn == nil {
+		return nil
+	}
+	return s.conn.RemoteAddr()
+}
 
 // client is who the failure limit should count this session as. The internal
 // listener has no client of its own: every webmail user arrives from the
@@ -68,6 +83,9 @@ func (s *imapSession) signIn(user, password string) (Account, string, error) {
 
 func (s *imapSession) Login(user, password string) error {
 	a, level, err := s.signIn(user, password)
+	if s.public {
+		s.service.logSignIn("imap", s.remoteAddr(), user, a, err)
+	}
 	if errors.Is(err, ErrCredentials) {
 		return imapserver.ErrAuthFailed
 	}
@@ -80,6 +98,7 @@ func (s *imapSession) Login(user, password string) error {
 	s.account = a
 	s.calendarLevel = level
 	s.user, s.password = user, password
+	s.signedIn = time.Now()
 	go s.watchCredentials()
 	return nil
 }

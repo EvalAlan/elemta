@@ -788,6 +788,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
 	userKey := loginKey(user, ip)
 	if s.throttled(ip, userKey) {
+		s.logSignInRefused(user, ip, "password", "throttled")
 		s.renderLogin(w, r, http.StatusTooManyRequests, user, "", "Too many sign-in attempts. Wait a few minutes and try again.")
 		return
 	}
@@ -801,12 +802,12 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrAuthFailed) {
 			s.loginFailed(r, ip, userKey, user)
-			s.log.Info("webmail: login failed", "user", user, "ip", ip)
+			s.logSignInRefused(user, ip, "password", "credentials")
 			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
 			return
 		}
 		if errors.Is(err, ErrLoginRefused) {
-			s.log.Warn("webmail: login refused by mail server", "user", user, "error", err)
+			s.logSignInRefused(user, ip, "password", "connection_limit", "error", err)
 			s.renderLogin(w, r, http.StatusServiceUnavailable, user, "", "The mail server is limiting connections for this account. Sign out of other sessions or wait a minute, then try again.")
 			return
 		}
@@ -820,7 +821,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	if s.abuse.Shielded(ctx, ip, s.cfg.address(user)) {
 		_ = store.Close()
 		s.loginFailed(r, ip, userKey, user)
-		s.log.Info("webmail: login held back; account under attack", "user", user, "ip", ip)
+		s.logSignInRefused(user, ip, "password", "account_shielded")
 		s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
 		return
 	}
@@ -838,6 +839,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 			// Never something anyone types.
 			_ = store.Close()
 			s.loginFailed(r, ip, userKey, user)
+			s.logSignInRefused(user, ip, "password", "credentials")
 			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That email address and password don't match.")
 			return
 		}
@@ -846,23 +848,25 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 			// be a way around the second step.
 			_ = store.Close()
 			s.limiter.fail(userKey)
+			s.logSignInRefused(user, ip, "password", "app_password")
 			s.renderLogin(w, r, http.StatusUnauthorized, user, "", "That's an app password. Sign in to webmail with your account password.")
 			return
 		}
 		if !check.allows(mailpolicy.Webmail) {
 			_ = store.Close()
-			s.log.Info("webmail: sign-in refused by class of service", "user", user, "ip", ip)
+			s.logSignInRefused(user, ip, "password", "webmail_disabled")
 			s.renderLogin(w, r, http.StatusForbidden, user, "", "Webmail is turned off for this account. Ask your administrator if you need it.")
 			return
 		}
 		if check.Kind == "admin" {
 			if check.Administrator == "" || !check.Expires.After(s.now()) {
 				_ = store.Close()
+				s.logSignInRefused(user, ip, "admin_access", "expired")
 				s.renderLogin(w, r, http.StatusUnauthorized, user, "", "Administrator access has expired.")
 				return
 			}
 			s.limiter.reset(userKey)
-			if s.startSessionWithAccess(ctx, w, r, user, password, store, check.Administrator, check.Expires) {
+			if s.startSessionWithAccess(ctx, w, r, user, password, "admin_access", store, check.Administrator, check.Expires) {
 				http.Redirect(w, r, "/mail", http.StatusSeeOther)
 			}
 			return
@@ -889,7 +893,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.limiter.reset(userKey)
-	s.finishLogin(ctx, w, r, user, password, store, "/mail")
+	s.finishLogin(ctx, w, r, user, password, "password", store, "/mail")
 }
 
 // adminLoginSubmit accepts the short-lived token carried in a POST from the
@@ -913,6 +917,7 @@ func (s *Server) adminLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
 	userKey := loginKey(user, ip)
 	if s.throttled(ip, userKey) {
+		s.logSignInRefused(user, ip, "admin_access", "throttled")
 		http.Error(w, "Too many sign-in attempts.", http.StatusTooManyRequests)
 		return
 	}
@@ -922,6 +927,7 @@ func (s *Server) adminLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrAuthFailed) {
 			s.loginFailed(r, ip, userKey, user)
+			s.logSignInRefused(user, ip, "admin_access", "credentials")
 			http.Error(w, "Administrator access was refused.", http.StatusUnauthorized)
 			return
 		}
@@ -933,34 +939,36 @@ func (s *Server) adminLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	if err != nil || check.Kind != "admin" || check.Administrator == "" || !check.Expires.After(s.now()) {
 		_ = store.Close()
 		s.limiter.fail(userKey)
+		s.logSignInRefused(user, ip, "admin_access", "credentials")
 		http.Error(w, "Administrator access was refused.", http.StatusUnauthorized)
 		return
 	}
 	if !check.allows(mailpolicy.Webmail) {
 		_ = store.Close()
+		s.logSignInRefused(user, ip, "admin_access", "webmail_disabled")
 		http.Error(w, "Webmail is turned off for this account.", http.StatusForbidden)
 		return
 	}
 	s.limiter.reset(userKey)
-	if s.startSessionWithAccess(ctx, w, r, user, token, store, check.Administrator, check.Expires) {
+	if s.startSessionWithAccess(ctx, w, r, user, token, "admin_access", store, check.Administrator, check.Expires) {
 		http.Redirect(w, r, "/mail", http.StatusSeeOther)
 	}
 }
 
 // finishLogin turns a verified sign-in into a session.
-func (s *Server) finishLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password string, store Mailstore, next string) {
-	if s.startSession(ctx, w, r, user, password, store) {
+func (s *Server) finishLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password, method string, store Mailstore, next string) {
+	if s.startSession(ctx, w, r, user, password, method, store) {
 		http.Redirect(w, r, next, http.StatusSeeOther)
 	}
 }
 
 // startSession creates the session and its cookies, or writes an error and
-// reports false.
-func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password string, store Mailstore) bool {
-	return s.startSessionWithAccess(ctx, w, r, user, password, store, "", time.Time{})
+// reports false. method is how the person signed in, for the log (authlog.go).
+func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password, method string, store Mailstore) bool {
+	return s.startSessionWithAccess(ctx, w, r, user, password, method, store, "", time.Time{})
 }
 
-func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password string, store Mailstore, actor string, expires time.Time) bool {
+func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWriter, r *http.Request, user, password, method string, store Mailstore, actor string, expires time.Time) bool {
 	// Every account gets the standard folders, so Junk and Trash are there
 	// to move mail to from the first sign-in. A failure here only means
 	// they're created later, when first needed.
@@ -982,7 +990,7 @@ func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWrit
 	s.setCookie(w, preLoginCookie, "", -1)
 	s.setSessionCookie(w, sess)
 	s.setAppearanceCookies(w, s.prefs(ctx, sess))
-	s.log.Info("webmail: login", "user", user, "ip", s.clientIP(r))
+	s.logSignIn(user, s.clientIP(r), method)
 	if actor == "" {
 		s.abuse.RecordSignIn(ctx, s.clientIP(r), "webmail", sess.Address)
 	}
@@ -995,6 +1003,7 @@ func (s *Server) startSessionWithAccess(ctx context.Context, w http.ResponseWrit
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, sess *Session) {
+	s.log.Info("webmail: logout", "event_type", "logout", "username", sess.User, "ip", s.clientIP(r))
 	s.endPasskeySession(r.Context(), sess)
 	s.sessions.Destroy(sess.ID)
 	s.pages.forget(sess.ID)
