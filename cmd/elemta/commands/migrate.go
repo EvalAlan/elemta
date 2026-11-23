@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
 	"log/slog"
 	"math/big"
 	"os"
@@ -24,6 +23,7 @@ import (
 	"sync"
 	"text/tabwriter"
 
+	"github.com/EvalAlan/elemta/internal/logging"
 	"github.com/EvalAlan/elemta/internal/mailpolicy"
 	"github.com/EvalAlan/elemta/internal/migrate"
 	"github.com/EvalAlan/elemta/internal/provision"
@@ -171,7 +171,7 @@ Admin:     add --source-admin admin@old.example.com to sign in on each user's be
 					}
 				}
 			}
-			opts := migrate.Options{StateDir: stateDir, Exclude: splitValues(exclude), Log: slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))}
+			opts := migrate.Options{StateDir: stateDir, Exclude: splitValues(exclude), Log: slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), logging.Options(nil)))}
 			reports := make([]migrate.Report, len(jobs))
 			var wg sync.WaitGroup
 			slots := make(chan struct{}, max(1, parallel))

@@ -224,6 +224,9 @@ type Server struct {
 	mailAuthLookupTXT func(context.Context, string) ([]string, error)
 	// dnsHealth is replaceable for the same reason.
 	dnsHealth func(context.Context, dnshealth.Options) dnshealth.Report
+	// dnsWatchMu orders the writers of the DNS state file: the scheduled
+	// sweep and an on-demand check (dns_watch.go).
+	dnsWatchMu sync.Mutex
 	// dmarcLookup and hostLookup stand in for DNS in tests of the DMARC page.
 	dmarcLookup func(context.Context, string) (dnshealth.DMARCPolicy, error)
 	hostLookup  func(context.Context, string) ([]net.IPAddr, error)
@@ -518,9 +521,7 @@ func (a *valkeyMetricsAdapter) GetRecentErrors(ctx context.Context, limit int64)
 // initializeAuth initializes the authentication system
 func (s *Server) initializeAuth() error {
 	// Create logger for auth initialization
-	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})).With(
+	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), logging.Options(slog.LevelInfo))).With(
 		"component", "api-auth",
 	)
 

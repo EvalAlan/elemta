@@ -29,7 +29,7 @@ func main() {
 		}
 	}
 	if scripted {
-		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, logging.Options(nil))))
 	} else {
 		// The default file; the server switches to [logging] file once the
 		// configuration is read.

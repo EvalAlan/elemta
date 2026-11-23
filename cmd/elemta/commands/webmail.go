@@ -54,7 +54,7 @@ func runWebmail(cmd *cobra.Command, args []string) error {
 	}
 	wc = wc.WithDefaults()
 
-	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), nil))
+	logger := slog.New(slog.NewJSONHandler(logging.Stdout(), logging.Options(nil)))
 	srv, err := webmail.NewServer(wc, nil, nil, logger)
 	if err != nil {
 		return fmt.Errorf("webmail: %w (configure the [webmail] table)", err)
