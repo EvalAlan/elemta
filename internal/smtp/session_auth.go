@@ -399,7 +399,7 @@ func (ah *AuthHandler) performAuthentication(ctx context.Context, username, pass
 
 	// Validate authentication data
 	if err := ah.validateAuthenticationData(ctx, username, password); err != nil {
-		ah.recordAuthFailure(ctx, username, method, err, time.Since(startTime))
+		ah.recordAuthFailure(ctx, username, method, "invalid_request", err, time.Since(startTime))
 		return fmt.Errorf("535 5.7.8 Authentication credentials invalid")
 	}
 
@@ -409,7 +409,7 @@ func (ah *AuthHandler) performAuthentication(ctx context.Context, username, pass
 			"username", username,
 			"method", string(method),
 		)
-		ah.recordAuthFailure(ctx, username, method, fmt.Errorf("account locked"), time.Since(startTime))
+		ah.recordAuthFailure(ctx, username, method, "account_locked", fmt.Errorf("account locked"), time.Since(startTime))
 		return fmt.Errorf("535 5.7.8 Account temporarily locked")
 	}
 
@@ -425,8 +425,9 @@ func (ah *AuthHandler) performAuthentication(ctx context.Context, username, pass
 		authenticated, err = ah.authenticator.Authenticate(ctx, username, password)
 	}
 	duration := time.Since(startTime)
+	shielded := false
 	if authenticated && err == nil && ah.heldBack(ctx, username, appPassword) {
-		authenticated = false
+		authenticated, shielded = false, true
 	}
 
 	if err != nil || !authenticated {
@@ -436,7 +437,7 @@ func (ah *AuthHandler) performAuthentication(ctx context.Context, username, pass
 			"error", err,
 			"duration", duration,
 		)
-		ah.recordAuthFailure(ctx, username, method, err, duration)
+		ah.recordAuthFailure(ctx, username, method, authFailureReason(err, shielded), err, duration)
 		if ah.session == nil || !ah.session.webmailSubmission {
 			ah.abuse.Failure(ctx, ah.conn.RemoteAddr().String(), "smtp", username)
 		}
@@ -724,8 +725,26 @@ func (ah *AuthHandler) isAccountLocked(username string) bool {
 	return time.Now().Before(lockInfo.LockedUntil)
 }
 
-// recordAuthFailure records an authentication failure
-func (ah *AuthHandler) recordAuthFailure(ctx context.Context, username string, method AuthMethod, err error, duration time.Duration) {
+// authFailureReason names why the directory check refused a sign-in, for the
+// log's failure_reason: the client is told no more than before. The
+// directories answer a wrong password or an unknown account with false and no
+// error, and return an error only when they couldn't be asked.
+func authFailureReason(err error, shielded bool) string {
+	switch {
+	case err != nil:
+		return "unavailable"
+	case shielded:
+		return "account_shielded"
+	default:
+		return "credentials"
+	}
+}
+
+// recordAuthFailure records a failed authentication. reason is the log's
+// failure_reason: invalid_request, account_locked, account_shielded,
+// credentials or unavailable. It used to be left empty, so a refused SMTP
+// sign-in couldn't be told from an outage, unlike IMAP, POP3 and the webmail.
+func (ah *AuthHandler) recordAuthFailure(ctx context.Context, username string, method AuthMethod, reason string, err error, duration time.Duration) {
 	ah.securityManager.mu.Lock()
 	defer ah.securityManager.mu.Unlock()
 	if len(ah.securityManager.ipFailures) > 10000 {
@@ -749,13 +768,14 @@ func (ah *AuthHandler) recordAuthFailure(ctx context.Context, username string, m
 
 	// Log structured authentication event
 	ah.msgLogger.LogAuthentication(logging.AuthContext{
-		Success:     false,
-		Username:    username,
-		AuthMethod:  string(method),
-		ClientIP:    remoteAddr,
-		SessionID:   ah.session.sessionID,
-		AttemptTime: time.Now(),
-		TLSActive:   ah.state.IsTLSActive(),
+		Success:       false,
+		Username:      username,
+		AuthMethod:    string(method),
+		ClientIP:      remoteAddr,
+		SessionID:     ah.session.sessionID,
+		AttemptTime:   time.Now(),
+		TLSActive:     ah.state.IsTLSActive(),
+		FailureReason: reason,
 	})
 
 	// Check if account should be locked
