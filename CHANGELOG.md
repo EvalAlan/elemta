@@ -1,5 +1,31 @@
 # Elemta Changelog
 
+## v0.11.1 (2026-11-23)
+
+**A patch release: passwords out of the local log, and Check DNS that
+clears the Dashboard.** No configuration changes.
+
+### Security
+
+- **The local log could hold passwords** (v0.11.0 and earlier). After a
+  refused AUTH, mail apps often send the base64 password next, which the
+  server logged as an unknown command. Valkey and database URLs with their
+  password were logged at start-up and in connection errors, and raw client
+  input on the SMTP smuggling warnings. Shipped logs were already scrubbed;
+  stdout and the log file now get the same rules. Anyone who can read your
+  logs could read these, so after upgrading consider rotating or removing
+  old log files, and changing a Valkey or database password that appears
+  in them.
+
+### Fixes
+
+- **Check DNS updates Needs attention and the Health page.** Fixing a record
+  and checking again showed the domain as passing, but the Dashboard kept
+  the old problem until the next scheduled check, up to six hours later.
+  The alert addresses get the "healthy again" email from that check.
+- Shipped logs keep known SMTP commands such as `QUIT` that were redacted
+  because of their escaped line ending.
+
 ## v0.11.0 (2026-11-22)
 
 **A security release: upgrade, then reload any open admin console tab.**
