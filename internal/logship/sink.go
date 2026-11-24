@@ -176,6 +176,31 @@ func clip(s string) string {
 	return s
 }
 
+// endpoint maps one end of a connection: its address, its name, and the
+// geo and as fields an ingest pipeline adds from the address. Those are mapped
+// here because dynamic mapping is off, which would otherwise keep them in
+// _source but out of every search and chart.
+func endpoint(keyword map[string]any) map[string]any {
+	type m = map[string]any
+	return m{"properties": m{
+		"ip":     m{"type": "ip", "ignore_malformed": true},
+		"domain": keyword,
+		"geo": m{"properties": m{
+			"location":         m{"type": "geo_point"},
+			"continent_name":   keyword,
+			"country_iso_code": keyword,
+			"country_name":     keyword,
+			"region_iso_code":  keyword,
+			"region_name":      keyword,
+			"city_name":        keyword,
+		}},
+		"as": m{"properties": m{
+			"number":       m{"type": "long"},
+			"organization": m{"properties": m{"name": m{"type": "keyword", "ignore_above": 1024, "fields": m{"text": m{"type": "match_only_text"}}}}},
+		}},
+	}}
+}
+
 // template is the index template for s.Index. The typed fields are those
 // document fills in; everything else stays in the flattened elemta object.
 func template(s Settings) ([]byte, error) {
@@ -218,26 +243,10 @@ func template(s Settings) ([]byte, error) {
 						"response_code":   m{"type": "short", "ignore_malformed": true},
 						"response_status": keyword,
 					}},
-					// geo and as come from an ingest pipeline when one is named;
-					// mapped here because dynamic is off, which would otherwise
-					// keep them in _source but out of every search and chart.
-					"source": m{"properties": m{
-						"ip":     m{"type": "ip", "ignore_malformed": true},
-						"domain": keyword,
-						"geo": m{"properties": m{
-							"location":         m{"type": "geo_point"},
-							"continent_name":   keyword,
-							"country_iso_code": keyword,
-							"country_name":     keyword,
-							"region_iso_code":  keyword,
-							"region_name":      keyword,
-							"city_name":        keyword,
-						}},
-						"as": m{"properties": m{
-							"number":       m{"type": "long"},
-							"organization": m{"properties": m{"name": m{"type": "keyword", "ignore_above": 1024, "fields": m{"text": m{"type": "match_only_text"}}}}},
-						}},
-					}},
+					// source is the connecting peer; client is the person behind
+					// the message (X-Originating-IP), when that is someone else.
+					"source": endpoint(keyword),
+					"client": endpoint(keyword),
 					"elemta": m{"type": "flattened", "ignore_above": 4096},
 				},
 			},

@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/mail"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1452,6 +1453,20 @@ func (dh *DataHandler) extractMessageMetadata(ctx context.Context, head []byte, 
 	return metadata, nil
 }
 
+// originatingIP is the address in an X-Originating-IP header, written
+// "[192.0.2.1]" by convention and sometimes bare. Anything that isn't an
+// address is dropped rather than logged: the header is whatever the message's
+// author put there, and the log keeps only what it can type.
+func originatingIP(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(v, "["), "]"))
+	a, err := netip.ParseAddr(v)
+	if err != nil {
+		return ""
+	}
+	return a.Unmap().WithZone("").String()
+}
+
 // extractHeaders extracts headers from message data
 func (dh *DataHandler) extractHeaders(data []byte) map[string]string {
 	headers := make(map[string]string)
@@ -2450,6 +2465,7 @@ func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, bod
 		Size:           metadata.Size,
 		ClientIP:       dh.session.remoteAddr,
 		ClientHostname: dh.session.remoteAddr,
+		OriginatingIP:  originatingIP(metadata.Headers["x-originating-ip"]),
 		Username:       dh.state.GetUsername(),
 		Authenticated:  dh.state.IsAuthenticated(),
 		TLSActive:      dh.state.IsTLSActive(),

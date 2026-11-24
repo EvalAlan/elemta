@@ -497,3 +497,16 @@ func TestDocumentTypedFields(t *testing.T) {
 		require.NotContains(t, doc, k)
 	}
 }
+
+// X-Originating-IP is the writer, not the connecting server: client.ip, with
+// source.ip left to the peer. An ip:port in client_hostname isn't a domain.
+func TestDocumentOriginatingIP(t *testing.T) {
+	line := `{"msg":"message_reception","event_type":"reception","client_ip":"10.253.53.7:41234",` +
+		`"client_hostname":"10.253.53.7:41234","originating_ip":"203.0.113.9"}`
+	doc, _ := document("mta", "h", []byte(line), time.Now())
+	require.Equal(t, map[string]any{"ip": "10.253.53.7"}, doc["source"], "no domain made of an address")
+	require.Equal(t, map[string]any{"ip": "203.0.113.9"}, doc["client"])
+
+	doc, _ = document("mta", "h", []byte(`{"msg":"x","originating_ip":"not an address"}`), time.Now())
+	require.NotContains(t, doc, "client")
+}

@@ -98,6 +98,7 @@ one replica; on a single node give them
 | `event.action` | the line's `event_type` |
 | `source.ip` | the other end's address, when the line has one |
 | `source.domain` | the other end's host name (`client_hostname`) |
+| `client.ip` | who wrote the message, from its `X-Originating-IP` header (`originating_ip`, on `reception` lines), when the connecting server isn't them: the webmail with `originating_ip_header` on, or another provider that adds it. It's that system's word, not something Elemta checked |
 | `user.name` | the account (`username`) |
 | `event.outcome` | `success` or `failure` (`success`) |
 | `event.reason` | why a sign-in failed (`failure_reason`) |
@@ -109,7 +110,7 @@ one replica; on a single node give them
 | `mail.spam_score` | rspamd's score |
 | `mail.recipient_count` | how many recipients |
 | `mail.response_code`, `mail.response_status` | the SMTP reply, for example `550` and `5.7.1` |
-| `source.geo.*`, `source.as.*` | where `source.ip` is and whose network it is, with the GeoIP pipeline |
+| `source.geo.*`, `source.as.*`, `client.geo.*`, `client.as.*` | where `source.ip` and `client.ip` are and whose networks they are, with the GeoIP pipeline |
 | `elemta.*` | everything else, for example `elemta.auth_method : "dav"` |
 
 `elemta` is one flattened field, so lines that use one name for different types
