@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/netip"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -172,6 +174,7 @@ func document(service, host string, line []byte, at time.Time) (map[string]any, 
 			break
 		}
 	}
+	typed(doc, e)
 	rest := map[string]any{}
 	for k, v := range e {
 		switch k {
@@ -185,6 +188,76 @@ func document(service, host string, line []byte, at time.Time) (map[string]any, 
 	doc["elemta"] = rest
 	return doc, at
 }
+
+// typed copies the keys people chart and filter by into fields with types,
+// so numbers can be summed and ranged and Kibana's field lists show them.
+// They stay in elemta as well: saved searches and dashboards use those names.
+// A value of the wrong type is skipped, not converted: the same key means
+// different things on different lines, and a guess would be a wrong figure.
+func typed(doc, e map[string]any) {
+	put := func(path string, v any) {
+		parts := strings.Split(path, ".")
+		m := doc
+		for _, p := range parts[:len(parts)-1] {
+			next, ok := m[p].(map[string]any)
+			if !ok {
+				next = map[string]any{}
+				m[p] = next
+			}
+			m = next
+		}
+		m[parts[len(parts)-1]] = v
+	}
+	text := func(key, path string) {
+		if s, ok := e[key].(string); ok && s != "" {
+			put(path, s)
+		}
+	}
+	number := func(key, path string, integer bool) {
+		n, ok := e[key].(json.Number)
+		if !ok {
+			return
+		}
+		if i, err := n.Int64(); err == nil {
+			put(path, i)
+		} else if f, err := n.Float64(); err == nil && !integer {
+			put(path, f)
+		}
+	}
+	text("username", "user.name")
+	text("failure_reason", "event.reason")
+	text("client_hostname", "source.domain")
+	text("message_id", "email.message_id")
+	text("queue_id", "email.local_id")
+	if s, ok := e["protocol"].(string); ok && s != "" {
+		put("network.protocol", strings.ToLower(s))
+	}
+	if b, ok := e["success"].(bool); ok {
+		put("event.outcome", map[bool]string{true: "success", false: "failure"}[b])
+	}
+	if b, ok := e["tls_active"].(bool); ok {
+		put("tls.established", b)
+	}
+	// slog writes a time.Duration as nanoseconds, which is ECS's unit too.
+	number("duration", "event.duration", true)
+	number("size", "mail.size", true)
+	number("spam_score", "mail.spam_score", false)
+	number("recipient_count", "mail.recipient_count", true)
+	// "550 5.7.1 Relay access denied": the code, and the enhanced status
+	// when there is one.
+	if s, ok := e["response"].(string); ok {
+		f := strings.Fields(s)
+		if len(f) > 0 && len(f[0]) == 3 && f[0][0] >= '2' && f[0][0] <= '5' && strings.Trim(f[0], "0123456789") == "" {
+			code, _ := strconv.Atoi(f[0])
+			put("mail.response_code", code)
+			if len(f) > 1 && enhancedStatus.MatchString(f[1]) {
+				put("mail.response_status", f[1])
+			}
+		}
+	}
+}
+
+var enhancedStatus = regexp.MustCompile(`^[245]\.\d{1,3}\.\d{1,3}$`)
 
 func addressOnly(s string) (string, bool) {
 	if a, err := netip.ParseAddr(s); err == nil {

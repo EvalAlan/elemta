@@ -31,7 +31,8 @@
         el('logship-plain').hidden = !/^\s*http:/i.test(url);
         el('logship-test').disabled = !url;
         // Logstash installs its own template from a file, so the policy would go nowhere.
-        el('logship-policy-field').hidden = el('logship-policy-hint').hidden = el('logship-kind').value !== 'elasticsearch';
+        const es = el('logship-kind').value === 'elasticsearch';
+        el('logship-policy-field').hidden = el('logship-pipeline-field').hidden = el('logship-policy-hint').hidden = !es;
     }
 
     function fillDestinations(allowed, saved) {
@@ -74,6 +75,7 @@
         fillDestinations(data.destinations, s.url);
         el('logship-index').value = s.index;
         el('logship-policy').value = s.lifecycle_policy || '';
+        el('logship-pipeline').value = s.ingest_pipeline || '';
         el('logship-level').value = s.min_level;
         el('logship-subjects').checked = s.include_subjects;
         savedOrigin = origin(s.url);
@@ -91,6 +93,7 @@
                 url: el('logship-url').value.trim(),
                 index: el('logship-index').value.trim(),
                 lifecycle_policy: el('logship-policy').value.trim(),
+                ingest_pipeline: el('logship-pipeline').value.trim(),
                 min_level: el('logship-level').value,
                 include_subjects: el('logship-subjects').checked,
             },

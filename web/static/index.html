@@ -1834,6 +1834,9 @@
                                     <label id="logship-policy-field">Lifecycle policy
                                         <input id="logship-policy" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="None" aria-describedby="logship-policy-hint">
                                     </label>
+                                    <label id="logship-pipeline-field">Ingest pipeline
+                                        <input id="logship-pipeline" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="None" aria-describedby="logship-policy-hint">
+                                    </label>
                                     <label>Lowest level
                                         <select id="logship-level"><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select>
                                     </label>
@@ -1851,7 +1854,7 @@
                                     </label>
                                 </div>
                                 <p class="field-hint" id="logship-allowed"></p>
-                                <p class="field-hint" id="logship-policy-hint">The lifecycle policy is the name of an ILM policy in Elasticsearch that decides how long the daily indices are kept. Create it there first; new indices take it from the next day.</p>
+                                <p class="field-hint" id="logship-policy-hint">The lifecycle policy is the name of an ILM policy in Elasticsearch that decides how long the daily indices are kept. The ingest pipeline runs on every line as Elasticsearch takes it, for example to add GeoIP and network owner details. Create either in Elasticsearch first; new indices take them from the next day. A pipeline that doesn't exist makes Elasticsearch refuse every line, so send a test line after naming one.</p>
                                 <p class="logship-detail" id="logship-plain" hidden>This address is plain HTTP: logs and any credential cross the network unencrypted. Use HTTPS off this machine.</p>
                                 <label class="logship-check"><input id="logship-subjects" type="checkbox"> Include subjects</label>
                                 <p class="field-hint">Subjects are the content of people's mail, so they stay here unless you tick this. Passwords, tokens, typed command arguments and message lines are never sent. Addresses and IPs are.</p>
@@ -2103,7 +2106,7 @@
     <script src="/static/actions.js?v=20261122-csp"></script>
     <script src="/static/shell.js?v=20261122-refresh"></script>
     <script src="/static/overview.js?v=20261122-dashboard"></script>
-    <script src="/static/logship.js?v=20261123-ilm-policy"></script>
+    <script src="/static/logship.js?v=20261124-pipeline"></script>
     <script src="/static/app.js?v=20261122-csp"></script>
     <script src="/static/campaigns.js?v=20261122-csp"></script>
     <script src="/static/users.js?v=20261122-csp"></script>

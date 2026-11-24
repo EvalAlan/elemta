@@ -1,20 +1,202 @@
 {
-  "index_patterns": ["elemta-logs-*"],
+  "index_patterns": [
+    "elemta-logs-*"
+  ],
   "priority": 511,
-  "_meta": { "description": "Elemta service logs" },
+  "_meta": {
+    "description": "Elemta service logs"
+  },
   "template": {
-    "settings": { "index": { "auto_expand_replicas": "0-1" } },
+    "settings": {
+      "index": {
+        "auto_expand_replicas": "0-1"
+      }
+    },
     "mappings": {
       "dynamic": false,
       "properties": {
-        "@timestamp": { "type": "date" },
-        "message": { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 512 } } },
-        "log": { "properties": { "level": { "type": "keyword", "ignore_above": 1024 } } },
-        "service": { "properties": { "name": { "type": "keyword", "ignore_above": 1024 } } },
-        "host": { "properties": { "name": { "type": "keyword", "ignore_above": 1024 } } },
-        "event": { "properties": { "action": { "type": "keyword", "ignore_above": 1024 } } },
-        "source": { "properties": { "ip": { "type": "ip", "ignore_malformed": true } } },
-        "elemta": { "type": "flattened", "ignore_above": 4096 }
+        "@timestamp": {
+          "type": "date"
+        },
+        "elemta": {
+          "ignore_above": 4096,
+          "type": "flattened"
+        },
+        "email": {
+          "properties": {
+            "local_id": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            },
+            "message_id": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            }
+          }
+        },
+        "event": {
+          "properties": {
+            "action": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            },
+            "duration": {
+              "ignore_malformed": true,
+              "type": "long"
+            },
+            "outcome": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            },
+            "reason": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            }
+          }
+        },
+        "host": {
+          "properties": {
+            "name": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            }
+          }
+        },
+        "log": {
+          "properties": {
+            "level": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            }
+          }
+        },
+        "mail": {
+          "properties": {
+            "recipient_count": {
+              "ignore_malformed": true,
+              "type": "integer"
+            },
+            "response_code": {
+              "ignore_malformed": true,
+              "type": "short"
+            },
+            "response_status": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            },
+            "size": {
+              "ignore_malformed": true,
+              "type": "long"
+            },
+            "spam_score": {
+              "ignore_malformed": true,
+              "type": "float"
+            }
+          }
+        },
+        "message": {
+          "fields": {
+            "keyword": {
+              "ignore_above": 512,
+              "type": "keyword"
+            }
+          },
+          "type": "text"
+        },
+        "network": {
+          "properties": {
+            "protocol": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            }
+          }
+        },
+        "service": {
+          "properties": {
+            "name": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            }
+          }
+        },
+        "source": {
+          "properties": {
+            "as": {
+              "properties": {
+                "number": {
+                  "type": "long"
+                },
+                "organization": {
+                  "properties": {
+                    "name": {
+                      "fields": {
+                        "text": {
+                          "type": "match_only_text"
+                        }
+                      },
+                      "ignore_above": 1024,
+                      "type": "keyword"
+                    }
+                  }
+                }
+              }
+            },
+            "domain": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            },
+            "geo": {
+              "properties": {
+                "city_name": {
+                  "ignore_above": 1024,
+                  "type": "keyword"
+                },
+                "continent_name": {
+                  "ignore_above": 1024,
+                  "type": "keyword"
+                },
+                "country_iso_code": {
+                  "ignore_above": 1024,
+                  "type": "keyword"
+                },
+                "country_name": {
+                  "ignore_above": 1024,
+                  "type": "keyword"
+                },
+                "location": {
+                  "type": "geo_point"
+                },
+                "region_iso_code": {
+                  "ignore_above": 1024,
+                  "type": "keyword"
+                },
+                "region_name": {
+                  "ignore_above": 1024,
+                  "type": "keyword"
+                }
+              }
+            },
+            "ip": {
+              "ignore_malformed": true,
+              "type": "ip"
+            }
+          }
+        },
+        "tls": {
+          "properties": {
+            "established": {
+              "type": "boolean"
+            }
+          }
+        },
+        "user": {
+          "properties": {
+            "name": {
+              "ignore_above": 1024,
+              "type": "keyword"
+            }
+          }
+        }
       }
     }
   }

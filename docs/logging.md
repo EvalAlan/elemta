@@ -97,10 +97,48 @@ one replica; on a single node give them
 | `host.name` | the process's host or container |
 | `event.action` | the line's `event_type` |
 | `source.ip` | the other end's address, when the line has one |
-| `elemta.*` | everything else, for example `elemta.message_id : "..."` |
+| `source.domain` | the other end's host name (`client_hostname`) |
+| `user.name` | the account (`username`) |
+| `event.outcome` | `success` or `failure` (`success`) |
+| `event.reason` | why a sign-in failed (`failure_reason`) |
+| `event.duration` | nanoseconds (`duration`) |
+| `network.protocol` | `imap`, `pop3`, `webmail` and so on (`protocol`) |
+| `tls.established` | whether the connection is encrypted (`tls_active`) |
+| `email.message_id`, `email.local_id` | the Message-ID and the queue ID |
+| `mail.size` | the message's size in bytes |
+| `mail.spam_score` | rspamd's score |
+| `mail.recipient_count` | how many recipients |
+| `mail.response_code`, `mail.response_status` | the SMTP reply, for example `550` and `5.7.1` |
+| `source.geo.*`, `source.as.*` | where `source.ip` is and whose network it is, with the GeoIP pipeline |
+| `elemta.*` | everything else, for example `elemta.auth_method : "dav"` |
 
 `elemta` is one flattened field, so lines that use one name for different types
-aren't refused. Search it by exact value.
+aren't refused. Search it by exact value. The typed fields are copies of the
+key in brackets, which stays in `elemta` too; a value of another type, such as
+a `size` that isn't a number, is left out of the typed field rather than
+guessed at. Indices made by an older Elemta don't have the typed fields: new
+lines get them from the next daily index.
+
+### GeoIP and network owners
+
+Elasticsearch can add where an address is and which network it belongs to, from
+its free GeoLite2 City and ASN databases. It downloads them when a pipeline
+first uses them and keeps them up to date, so the cluster needs to reach
+`geoip.elastic.co`.
+
+1. Create the pipeline from `deployments/elk/geoip-pipeline.json`:
+   `PUT _ingest/pipeline/elemta-geoip` with the file as the body.
+2. Put `elemta-geoip` in **Ingest pipeline** in Log shipping's settings, save
+   and **Send a test line**. While the named pipeline doesn't exist,
+   Elasticsearch refuses every line, and the test says so.
+3. In Kibana, `source.geo.location` draws on a map, and `source.as.number` and
+   `source.as.organization.name` show whose networks the traffic comes from.
+
+Every processor in the file ignores failure, so an address it can't place, or
+a database that hasn't downloaded yet, leaves the line without those fields
+rather than refused. The credential needs no more privileges for this: the
+index's default pipeline runs whoever writes. Private and loopback addresses
+have no location.
 
 ### Logstash
 
