@@ -28,6 +28,10 @@ type MessageContext struct {
 	Size           int64
 	ClientIP       string
 	ClientHostname string
+	// OriginatingIP is the address in the message's X-Originating-IP header:
+	// where the person who wrote it was, by the word of the system that added
+	// the header (the webmail, another mail provider).
+	OriginatingIP  string
 	Username       string
 	Authenticated  bool
 	TLSActive      bool
@@ -54,7 +58,7 @@ func (ml *MessageLogger) LogReception(ctx MessageContext) {
 		processingDelay = ctx.ProcessingTime.Sub(ctx.ReceptionTime)
 	}
 
-	ml.logger.Info("message_reception",
+	args := []any{
 		"event_type", "reception",
 		"message_id", ctx.MessageID,
 		"queue_id", ctx.QueueID,
@@ -74,7 +78,13 @@ func (ml *MessageLogger) LogReception(ctx MessageContext) {
 		"virus_found", ctx.VirusFound,
 		"spam_scanned", ctx.SpamScanned,
 		"spam_score", ctx.SpamScore,
-	)
+	}
+	// Only when the message had one: an empty field on every other message
+	// would read as "the header was there and blank".
+	if ctx.OriginatingIP != "" {
+		args = append(args, "originating_ip", ctx.OriginatingIP)
+	}
+	ml.logger.Info("message_reception", args...)
 }
 
 // LogDelivery logs successful message delivery

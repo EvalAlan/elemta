@@ -226,7 +226,20 @@ func typed(doc, e map[string]any) {
 	}
 	text("username", "user.name")
 	text("failure_reason", "event.reason")
-	text("client_hostname", "source.domain")
+	// The MTA's reception line has logged the peer's ip:port as
+	// client_hostname, and an address isn't a domain.
+	if s, ok := e["client_hostname"].(string); ok && s != "" {
+		if _, isAddr := addressOnly(s); !isAddr {
+			put("source.domain", s)
+		}
+	}
+	// X-Originating-IP: who wrote the message, as distinct from source, the
+	// server that connected. The ingest pipeline places it on the map too.
+	if s, ok := e["originating_ip"].(string); ok {
+		if ip, isAddr := addressOnly(s); isAddr {
+			put("client.ip", ip)
+		}
+	}
 	text("message_id", "email.message_id")
 	text("queue_id", "email.local_id")
 	if s, ok := e["protocol"].(string); ok && s != "" {
