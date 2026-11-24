@@ -203,13 +203,20 @@ func template(prefix, policy string) ([]byte, error) {
 			},
 		},
 	}
+	// One replica where there is a second node to hold it, none on a single
+	// node. The default of 1 can never be placed on one node: the cluster
+	// stays yellow and ILM's warm phase waits for that copy forever, so a
+	// delete phase never runs. Logs are a copy of what the services wrote,
+	// so more than one replica isn't worth the disk.
+	index := m{"auto_expand_replicas": "0-1"}
 	// The template is written again whenever the shipper starts, so a policy
 	// set on it by hand would be lost; it has to come from the settings.
-	// Without one the settings block is left out, so the template still
-	// matches deployments/elk/logs-template.json, which Logstash installs.
+	// Without one it is left out, so the template still matches
+	// deployments/elk/logs-template.json, which Logstash installs.
 	if policy != "" {
-		tmpl["template"].(m)["settings"] = m{"index": m{"lifecycle": m{"name": policy}}}
+		index["lifecycle"] = m{"name": policy}
 	}
+	tmpl["template"].(m)["settings"] = m{"index": index}
 	return json.Marshal(tmpl)
 }
 
