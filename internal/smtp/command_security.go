@@ -291,7 +291,9 @@ func (csm *CommandSecurityManager) validateCommandStructure(ctx context.Context,
 
 	// Command name must contain only allowed characters
 	if !csm.commandChars.MatchString(cmd) {
-		csm.logger.WarnContext(ctx, "Command name contains invalid characters",
+		// DEBUG: the 500 is logged at WARN by Session.writeError with the
+		// same redacted command, and scanners send these all day.
+		csm.logger.DebugContext(ctx, "Command name contains invalid characters",
 			"command", redactCommand(cmd),
 		)
 		return fmt.Errorf("500 5.5.2 Invalid command name")
