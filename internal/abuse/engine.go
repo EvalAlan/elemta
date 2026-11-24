@@ -335,7 +335,7 @@ func (e *Engine) Acquire(addr, protocol string) (func(), bool) {
 		if p.Mode == ModeEnforce {
 			return nil, false
 		}
-		e.log.Info("Connection limit reached; logging only", "address", network, "protocol", protocol)
+		e.log.Info(eventMessages["would-limit"], append(attrs("would-limit", network), "protocol", protocol)...)
 	}
 	e.conns[key]++
 	var once sync.Once

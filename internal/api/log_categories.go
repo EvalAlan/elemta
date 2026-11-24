@@ -49,6 +49,8 @@ var logCategories = map[string]string{
 	"suspicious_pattern":        "security",
 	"protocol_error":            "security",
 	"policy":                    "security",
+	// The abuse engine: blocks, holds, sign-in alerts, refusals by rule.
+	"abuse": "security",
 
 	"authentication": "authentication",
 	"logout":         "authentication",

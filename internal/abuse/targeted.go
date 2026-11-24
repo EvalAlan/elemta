@@ -70,7 +70,6 @@ func (e *Engine) noteTarget(ctx context.Context, p Policy, network, service, acc
 	shielded := e.setShield(ctx, account, window)
 	if !shielded {
 		e.raise(ctx, Alert{Time: time.Now().UTC(), Account: account, Kind: AlertTargeted, Address: network, Service: service, Detail: detail})
-		e.log.Warn("Account under attack from many addresses; unfamiliar networks held back", "account", account, "addresses", n)
 	}
 }
 
@@ -162,7 +161,7 @@ func (e *Engine) Shielded(ctx context.Context, addr, account string) bool {
 		return false
 	}
 	e.Refused(RefusedShielded)
-	e.log.Info("Correct password from an unfamiliar network refused while the account is under attack", "account", account, "network", subnet)
+	e.log.Info(eventMessages["shield-refused"], append(attrs("shield-refused", subnet), "username", account)...)
 	return true
 }
 

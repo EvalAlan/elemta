@@ -218,8 +218,16 @@ func (e *Engine) refusal(r Rule, denied bool, subject string) (Rule, bool) {
 		return Rule{}, false
 	}
 	e.Refused(RefusedRule)
-	e.log.Info("Refused by a rule", "subject", subject, "rule", r.Value, "direction", r.Direction, "mode", e.Policy().Mode)
-	return r, e.Policy().Mode == ModeEnforce
+	enforce := e.Policy().Mode == ModeEnforce
+	action := "rule-refused"
+	if !enforce {
+		action = "would-rule"
+	}
+	// subject is an address, a domain or a mail address. Only an address
+	// is placed (client_ip); the subject is logged as it was either way.
+	args := append(attrs(action, ""), addressAttrs(subject)...)
+	e.log.Info(eventMessages[action], append(args, "subject", subject, "rule", r.Value, "direction", r.Direction)...)
+	return r, enforce
 }
 
 // DenyPeer reports whether a rule refuses a client at addr on protocol.
