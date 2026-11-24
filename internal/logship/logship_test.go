@@ -289,7 +289,7 @@ func TestPipeline(t *testing.T) {
 
 // Logstash installs the template from a file; it has to be this one.
 func TestLogstashTemplateIsTheSame(t *testing.T) {
-	want, err := template(DefaultIndex, "")
+	want, err := template(Settings{Index: DefaultIndex})
 	require.NoError(t, err)
 	got, err := os.ReadFile("../../deployments/elk/logs-template.json")
 	require.NoError(t, err)
@@ -298,7 +298,7 @@ func TestLogstashTemplateIsTheSame(t *testing.T) {
 
 func TestOverlappingPrefixesGetTheirOwnPriority(t *testing.T) {
 	priority := func(prefix string) float64 {
-		raw, err := template(prefix, "")
+		raw, err := template(Settings{Index: prefix})
 		require.NoError(t, err)
 		var body struct {
 			Priority float64 `json:"priority"`
@@ -440,8 +440,60 @@ func TestTemplateCarriesTheLifecyclePolicy(t *testing.T) {
 	require.NoError(t, json.Unmarshal(es.template, &body))
 	require.Equal(t, "elemta-logs", body.Template.Settings.Index.Lifecycle.Name)
 
-	raw, err := template(DefaultIndex, "")
+	raw, err := template(Settings{Index: DefaultIndex})
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "lifecycle", "no policy, no lifecycle setting")
+	require.NotContains(t, string(raw), "default_pipeline", "no pipeline, no default_pipeline")
 	require.Contains(t, string(raw), `"auto_expand_replicas":"0-1"`, "a single node can't place a replica")
+}
+
+func TestTemplateCarriesTheIngestPipeline(t *testing.T) {
+	good := Settings{URL: "https://es.example.com:9200", IngestPipeline: " elemta-geoip "}.WithDefaults()
+	require.NoError(t, good.Validate())
+	raw, err := template(good)
+	require.NoError(t, err)
+	var body struct {
+		Template struct {
+			Settings struct {
+				Index struct {
+					DefaultPipeline string `json:"default_pipeline"`
+				} `json:"index"`
+			} `json:"settings"`
+		} `json:"template"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.Equal(t, "elemta-geoip", body.Template.Settings.Index.DefaultPipeline)
+	for _, bad := range []string{"_geo", "geo ip", "a/b"} {
+		require.Error(t, Settings{URL: good.URL, IngestPipeline: bad}.WithDefaults().Validate(), bad)
+	}
+}
+
+// The keys people chart by get typed fields, and stay in elemta for the
+// searches already written against them.
+func TestDocumentTypedFields(t *testing.T) {
+	line := `{"msg":"SMTP command refused","level":"WARN","username":"dana@example.com","success":false,` +
+		`"failure_reason":"credentials","protocol":"IMAP","tls_active":true,"duration":2344916,"size":8193,` +
+		`"spam_score":1.4,"recipient_count":2,"message_id":"<a@b>","queue_id":"q1","client_hostname":"mx.example.net",` +
+		`"client_ip":"192.0.2.7","response":"550 5.7.1 Relay access denied"}`
+	doc, _ := document("mta", "h", []byte(line), time.Now())
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	got := string(raw)
+	for _, want := range []string{
+		`"user":{"name":"dana@example.com"}`,
+		`"outcome":"failure"`, `"reason":"credentials"`, `"duration":2344916`,
+		`"network":{"protocol":"imap"}`, `"tls":{"established":true}`,
+		`"source":{"domain":"mx.example.net","ip":"192.0.2.7"}`,
+		`"local_id":"q1"`, `"message_id":"\u003ca@b\u003e"`,
+		`"recipient_count":2`, `"response_code":550`, `"response_status":"5.7.1"`, `"size":8193`, `"spam_score":1.4`,
+	} {
+		require.Contains(t, got, want)
+	}
+	require.Equal(t, "dana@example.com", doc["elemta"].(map[string]any)["username"], "kept in elemta too")
+
+	// The wrong type is left out, not guessed at.
+	doc, _ = document("mta", "h", []byte(`{"msg":"x","size":"big","success":"yes","duration":1.5,"response":"hello there"}`), time.Now())
+	for _, k := range []string{"mail", "event"} {
+		require.NotContains(t, doc, k)
+	}
 }

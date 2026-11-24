@@ -43,9 +43,10 @@ const (
 
 var (
 	indexRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)
-	// policyRE is narrower than what Elasticsearch takes for a policy name:
-	// no leading _, - or +, which it reserves, and nothing that needs quoting.
-	policyRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
+	// nameRE, for ILM policy and ingest pipeline names, is narrower than what
+	// Elasticsearch takes: no leading _, - or +, which it reserves, and
+	// nothing that needs quoting.
+	nameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
 )
 
 // Settings is what the administrator chooses.
@@ -59,6 +60,12 @@ type Settings struct {
 	// create the policy: how long logs are kept is the cluster owner's call,
 	// and a policy Elemta wrote would undo theirs every time it started.
 	LifecyclePolicy string `json:"lifecycle_policy,omitempty"`
+	// IngestPipeline names an Elasticsearch ingest pipeline the template makes
+	// every new daily index's default, for what Elemta can't add itself, such
+	// as GeoIP and ASN details from source.ip (deployments/elk/geoip-pipeline.json).
+	// Elasticsearch refuses every line while the named pipeline doesn't
+	// exist, which Send a test line shows.
+	IngestPipeline string `json:"ingest_pipeline,omitempty"`
 	// MinLevel is debug, info, warn or error.
 	MinLevel string `json:"min_level"`
 	// IncludeSubjects ships subjects, which are the content of people's
@@ -79,6 +86,7 @@ func (s Settings) WithDefaults() Settings {
 	}
 	s.URL = strings.TrimRight(strings.TrimSpace(s.URL), "/")
 	s.LifecyclePolicy = strings.TrimSpace(s.LifecyclePolicy)
+	s.IngestPipeline = strings.TrimSpace(s.IngestPipeline)
 	return s
 }
 
@@ -90,8 +98,11 @@ func (s Settings) Validate() error {
 	if !indexRE.MatchString(s.Index) {
 		return errors.New("the index prefix takes lower-case letters, digits, - and _, starting with a letter or digit")
 	}
-	if s.LifecyclePolicy != "" && !policyRE.MatchString(s.LifecyclePolicy) {
+	if s.LifecyclePolicy != "" && !nameRE.MatchString(s.LifecyclePolicy) {
 		return errors.New("the lifecycle policy takes letters, digits, '.', '-' and '_', starting with a letter or digit")
+	}
+	if s.IngestPipeline != "" && !nameRE.MatchString(s.IngestPipeline) {
+		return errors.New("the ingest pipeline takes letters, digits, '.', '-' and '_', starting with a letter or digit")
 	}
 	if _, ok := levels[s.MinLevel]; !ok {
 		return errors.New("the level must be debug, info, warn or error")

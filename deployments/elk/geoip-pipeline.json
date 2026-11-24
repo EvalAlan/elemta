@@ -1,0 +1,27 @@
+{
+  "description": "Elemta logs: where source.ip is (GeoLite2 City) and whose network it is (GeoLite2 ASN). Every processor ignores failure, so a lookup problem never costs a log line.",
+  "processors": [
+    {
+      "geoip": {
+        "field": "source.ip",
+        "target_field": "source.geo",
+        "database_file": "GeoLite2-City.mmdb",
+        "properties": ["continent_name", "country_iso_code", "country_name", "region_iso_code", "region_name", "city_name", "location"],
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "geoip": {
+        "field": "source.ip",
+        "target_field": "source.as",
+        "database_file": "GeoLite2-ASN.mmdb",
+        "properties": ["asn", "organization_name"],
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    { "rename": { "field": "source.as.asn", "target_field": "source.as.number", "ignore_missing": true, "ignore_failure": true } },
+    { "rename": { "field": "source.as.organization_name", "target_field": "source.as.organization.name", "ignore_missing": true, "ignore_failure": true } }
+  ]
+}

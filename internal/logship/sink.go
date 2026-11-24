@@ -176,16 +176,18 @@ func clip(s string) string {
 	return s
 }
 
-func template(prefix, policy string) ([]byte, error) {
+// template is the index template for s.Index. The typed fields are those
+// document fills in; everything else stays in the flattened elemta object.
+func template(s Settings) ([]byte, error) {
 	type m = map[string]any
 	keyword := m{"type": "keyword", "ignore_above": 1024}
 	tmpl := m{
-		"index_patterns": []string{prefix + "-*"},
+		"index_patterns": []string{s.Index + "-*"},
 		// Above the broad elemta-* template of the development overlay, and
 		// higher the longer the prefix: elemta-logs-* also covers
 		// elemta-logs-prod-*, and Elasticsearch refuses two templates that
 		// overlap at one priority.
-		"priority": templatePriority + len(prefix),
+		"priority": templatePriority + len(s.Index),
 		"_meta":    m{"description": "Elemta service logs"},
 		"template": m{
 			"mappings": m{
@@ -196,9 +198,47 @@ func template(prefix, policy string) ([]byte, error) {
 					"log":        m{"properties": m{"level": keyword}},
 					"service":    m{"properties": m{"name": keyword}},
 					"host":       m{"properties": m{"name": keyword}},
-					"event":      m{"properties": m{"action": keyword}},
-					"source":     m{"properties": m{"ip": m{"type": "ip", "ignore_malformed": true}}},
-					"elemta":     m{"type": "flattened", "ignore_above": 4096},
+					"event": m{"properties": m{
+						"action":   keyword,
+						"outcome":  keyword,
+						"reason":   keyword,
+						"duration": m{"type": "long", "ignore_malformed": true},
+					}},
+					"user":    m{"properties": m{"name": keyword}},
+					"network": m{"properties": m{"protocol": keyword}},
+					"tls":     m{"properties": m{"established": m{"type": "boolean"}}},
+					"email": m{"properties": m{
+						"message_id": keyword,
+						"local_id":   keyword,
+					}},
+					"mail": m{"properties": m{
+						"size":            m{"type": "long", "ignore_malformed": true},
+						"spam_score":      m{"type": "float", "ignore_malformed": true},
+						"recipient_count": m{"type": "integer", "ignore_malformed": true},
+						"response_code":   m{"type": "short", "ignore_malformed": true},
+						"response_status": keyword,
+					}},
+					// geo and as come from an ingest pipeline when one is named;
+					// mapped here because dynamic is off, which would otherwise
+					// keep them in _source but out of every search and chart.
+					"source": m{"properties": m{
+						"ip":     m{"type": "ip", "ignore_malformed": true},
+						"domain": keyword,
+						"geo": m{"properties": m{
+							"location":         m{"type": "geo_point"},
+							"continent_name":   keyword,
+							"country_iso_code": keyword,
+							"country_name":     keyword,
+							"region_iso_code":  keyword,
+							"region_name":      keyword,
+							"city_name":        keyword,
+						}},
+						"as": m{"properties": m{
+							"number":       m{"type": "long"},
+							"organization": m{"properties": m{"name": m{"type": "keyword", "ignore_above": 1024, "fields": m{"text": m{"type": "match_only_text"}}}}},
+						}},
+					}},
+					"elemta": m{"type": "flattened", "ignore_above": 4096},
 				},
 			},
 		},
@@ -210,11 +250,14 @@ func template(prefix, policy string) ([]byte, error) {
 	// so more than one replica isn't worth the disk.
 	index := m{"auto_expand_replicas": "0-1"}
 	// The template is written again whenever the shipper starts, so a policy
-	// set on it by hand would be lost; it has to come from the settings.
-	// Without one it is left out, so the template still matches
+	// or pipeline set on it by hand would be lost; they have to come from the
+	// settings. Without them nothing is added, so the template still matches
 	// deployments/elk/logs-template.json, which Logstash installs.
-	if policy != "" {
-		index["lifecycle"] = m{"name": policy}
+	if s.LifecyclePolicy != "" {
+		index["lifecycle"] = m{"name": s.LifecyclePolicy}
+	}
+	if s.IngestPipeline != "" {
+		index["default_pipeline"] = s.IngestPipeline
 	}
 	tmpl["template"].(m)["settings"] = m{"index": index}
 	return json.Marshal(tmpl)
@@ -259,7 +302,7 @@ func (s *sink) sendElasticsearch(ctx context.Context, batch []entry) (delivery, 
 	if !s.templated {
 		// Before the first document: an index made without it maps fields by
 		// whatever line came first, and that can't be changed afterwards.
-		body, err := template(s.settings.Index, s.settings.LifecyclePolicy)
+		body, err := template(s.settings)
 		if err != nil {
 			return out, err
 		}
