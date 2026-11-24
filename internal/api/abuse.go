@@ -119,7 +119,6 @@ func (s *Server) handleAbuseBlock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	slog.Info("Address blocked by an administrator", "address", block.Network, "by", abuseActor(r))
 	writeJSON(w, block)
 }
 
@@ -135,7 +134,6 @@ func (s *Server) handleAbuseUnblock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	slog.Info("Address unblocked", "address", abuse.Network(address), "by", abuseActor(r))
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -167,7 +165,6 @@ func (s *Server) handleAbuseRelease(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	slog.Info("Account released from hold", "account", account, "by", abuseActor(r))
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -210,7 +207,9 @@ func (s *Server) handleAbusePolicy(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	published := s.abuse.Publish(ctx, p) == nil
-	slog.Info("Abuse policy changed", "mode", p.Mode, "connections_per_address", p.ConnectionsPerAddress, "rules", len(p.Rules), "published", published)
+	// The engine logs blocks, unblocks and releases with who did them; this
+	// one is the console's alone.
+	slog.Info("Abuse policy changed", "event_type", "abuse", "abuse_action", "policy-changed", "by", abuseActor(r), "mode", p.Mode, "connections_per_address", p.ConnectionsPerAddress, "rules", len(p.Rules), "published", published)
 	writeJSON(w, map[string]any{"policy": p, "shared": s.abuse.Shared(ctx), "published": published})
 }
 

@@ -275,8 +275,7 @@ func (e *Engine) raise(ctx context.Context, a Alert) {
 	metricAlerts.WithLabelValues(a.Kind).Inc()
 	subject, body := alertSubjectBody(a)
 	e.notify(ctx, subject, body)
-	e.record(ctx, Event{Action: a.Kind, Network: a.Address, Service: a.Service, Detail: a.Account + ": " + a.Detail})
-	e.log.Warn("Sign-in alert", "kind", a.Kind, "account", a.Account, "address", a.Address, "detail", a.Detail)
+	e.record(ctx, Event{Action: a.Kind, Network: a.Address, Service: a.Service, Detail: a.Account + ": " + a.Detail, Account: a.Account})
 }
 
 // Alerts lists sign-in alerts, newest first.

@@ -50,6 +50,9 @@ type Event struct {
 	Service string    `json:"service,omitempty"`
 	Detail  string    `json:"detail,omitempty"`
 	By      string    `json:"by,omitempty"`
+	// Account is the account a sign-in alert is about, when Network holds
+	// the address it came from.
+	Account string `json:"account,omitempty"`
 }
 
 // AccountCount is an account being guessed at, from any number of addresses.
@@ -225,7 +228,6 @@ func (e *Engine) trip(ctx context.Context, p Policy, network, service string, fa
 	metricBlocks.WithLabelValues(e.service).Inc()
 	e.apply(ctx, Block{Network: network, Reason: "too many failed sign-ins", Service: service, Failures: failures, Strikes: strikes, Created: now, Until: now.Add(duration)})
 	e.record(ctx, Event{Action: "blocked", Network: network, Service: service, Detail: fmt.Sprintf("%d failures; blocked for %s", failures, duration)})
-	e.log.Warn("Address blocked", "address", network, "service", service, "failures", failures, "for", duration.String())
 }
 
 func (e *Engine) strike(ctx context.Context, network string) int {
@@ -269,6 +271,7 @@ func (e *Engine) apply(ctx context.Context, b Block) {
 
 func (e *Engine) record(ctx context.Context, ev Event) {
 	ev.Time = time.Now().UTC()
+	e.logEvent(ctx, ev)
 	if client := e.valkey(); client != nil {
 		raw, err := json.Marshal(ev)
 		if err == nil && client.Do(ctx, client.B().Lpush().Key(keyEvents).Element(string(raw)).Build()).Error() == nil {
