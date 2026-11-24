@@ -502,6 +502,9 @@ func (s *Server) composeSubmit(w http.ResponseWriter, r *http.Request, sess *Ses
 			again(http.StatusBadGateway, laterProblem(err, "Scheduling")+" The message hasn't been lost.")
 			return
 		}
+		// Logged now, while the request knows where the user is: the mailbox
+		// service sends it later, and nothing else ties the Message-ID to them.
+		s.logSent(r.Context(), sess, d, "scheduled")
 		// It lives in Scheduled now; the draft it came from goes, as on Send.
 		if err := s.sessions.withMailStore(r.Context(), sess, s.dial, func(st Mailstore) error {
 			return s.dropDraft(r.Context(), st, cv.DraftUID)
