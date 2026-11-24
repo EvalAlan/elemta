@@ -202,7 +202,7 @@ func endpoint(keyword map[string]any) map[string]any {
 }
 
 // template is the index template for s.Index. The typed fields are those
-// document fills in; everything else stays in the flattened elemta object.
+// document fills in; everything else is under elemta, a keyword per key.
 func template(s Settings) ([]byte, error) {
 	type m = map[string]any
 	keyword := m{"type": "keyword", "ignore_above": 1024}
@@ -217,6 +217,13 @@ func template(s Settings) ([]byte, error) {
 		"template": m{
 			"mappings": m{
 				"dynamic": false,
+				// Every key under elemta is a keyword field of its own, made
+				// when first seen. document sends them all as text, so no
+				// type is ever refused.
+				"dynamic_templates": []m{{"elemta_keys": m{
+					"path_match": "elemta.*",
+					"mapping":    m{"type": "keyword", "ignore_above": 4096},
+				}}},
 				"properties": m{
 					"@timestamp": m{"type": "date"},
 					"message":    m{"type": "text", "fields": m{"keyword": m{"type": "keyword", "ignore_above": 512}}},
@@ -247,7 +254,10 @@ func template(s Settings) ([]byte, error) {
 					// the message (X-Originating-IP), when that is someone else.
 					"source": endpoint(keyword),
 					"client": endpoint(keyword),
-					"elemta": m{"type": "flattened", "ignore_above": 4096},
+					// subobjects off: "imap" and "imap.addr" are separate
+					// fields, so a key that is a value in one line and an
+					// object in another doesn't clash.
+					"elemta": m{"type": "object", "dynamic": true, "subobjects": false},
 				},
 			},
 		},
@@ -257,7 +267,13 @@ func template(s Settings) ([]byte, error) {
 	// stays yellow and ILM's warm phase waits for that copy forever, so a
 	// delete phase never runs. Logs are a copy of what the services wrote,
 	// so more than one replica isn't worth the disk.
-	index := m{"auto_expand_replicas": "0-1"}
+	index := m{
+		"auto_expand_replicas": "0-1",
+		// About 60 keys are in use; the room is for new ones. Past the limit
+		// a new key is left out of the index (it stays in the line's
+		// _source) instead of the whole line being refused.
+		"mapping": m{"total_fields": m{"limit": 2000, "ignore_dynamic_beyond_limit": true}},
+	}
 	// The template is written again whenever the shipper starts, so a policy
 	// or pipeline set on it by hand would be lost; they have to come from the
 	// settings. Without them nothing is added, so the template still matches

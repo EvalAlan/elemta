@@ -510,3 +510,21 @@ func TestDocumentOriginatingIP(t *testing.T) {
 	doc, _ = document("mta", "h", []byte(`{"msg":"x","originating_ip":"not an address"}`), time.Now())
 	require.NotContains(t, doc, "client")
 }
+
+// Every key under elemta is its own text value: nested objects become dotted
+// keys, lists of plain values stay lists, and anything deeper stays whole.
+func TestElemtaFieldsAreFlatText(t *testing.T) {
+	line := `{"msg":"x","session_id":"s1","size":8193,"spam_score":1.4,"success":false,` +
+		`"imap":{"addr":":993","tls":{"on":true}},"to":["a@x","b@x"],"parts":[{"n":1}],"gone":null}`
+	doc, _ := document("mta", "h", []byte(line), time.Now())
+	require.Equal(t, map[string]any{
+		"session_id":  "s1",
+		"size":        "8193",
+		"spam_score":  "1.4",
+		"success":     "false",
+		"imap.addr":   ":993",
+		"imap.tls.on": "true",
+		"to":          []string{"a@x", "b@x"},
+		"parts":       `[{"n":1}]`,
+	}, doc["elemta"])
+}

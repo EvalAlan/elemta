@@ -113,12 +113,20 @@ one replica; on a single node give them
 | `source.geo.*`, `source.as.*`, `client.geo.*`, `client.as.*` | where `source.ip` and `client.ip` are and whose networks they are, with the GeoIP pipeline |
 | `elemta.*` | everything else, for example `elemta.auth_method : "dav"` |
 
-`elemta` is one flattened field, so lines that use one name for different types
-aren't refused. Search it by exact value. The typed fields are copies of the
-key in brackets, which stays in `elemta` too; a value of another type, such as
-a `size` that isn't a number, is left out of the typed field rather than
-guessed at. Indices made by an older Elemta don't have the typed fields: new
-lines get them from the next daily index.
+Every key under `elemta` is a field of its own, so Kibana lists it, shows it
+as its own row and can chart it. Each is a keyword holding the value as text,
+and a nested object becomes dotted keys (`elemta.imap.addr`). Text throughout
+means a key that is a number in one line and a string or an object in another
+is never refused, so search by exact value. The keys worth summing or ranging
+have the typed copies above, which take the key in brackets; a value of another
+type, such as a `size` that isn't a number, is left out of the typed field
+rather than guessed at. Up to 2,000 fields are indexed; past that a new key
+stays in the stored line but isn't searchable.
+
+Mapping changes reach a daily index when it is made, so they show from the
+next day. Indices made by an Elemta before 2026-11-24 hold `elemta` as one
+flattened field: still searchable as `elemta.key : "value"`, but shown in
+Kibana as one block.
 
 ### GeoIP and network owners
 
