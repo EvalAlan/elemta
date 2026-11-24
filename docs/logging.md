@@ -81,10 +81,14 @@ Elemta doesn't create or change the policy, so retention stays with whoever
 runs the cluster, and it writes its template again each time it starts, so a
 policy added to that template by hand doesn't last. Indices made before the
 policy was named keep none; give them one with
-`PUT elemta-logs-*/_settings {"index.lifecycle.name": "elemta-logs"}`. On a
-single-node cluster also set `number_of_replicas` to 0 on them: a replica that
-can never be placed holds a policy with a warm phase there forever, and the
-delete never comes.
+`PUT elemta-logs-*/_settings {"index.lifecycle.name": "elemta-logs"}`.
+
+The template sets `auto_expand_replicas` to `0-1`: one replica when the
+cluster has a second node, none on a single node. A replica that can never be
+placed keeps the cluster yellow and holds a policy's warm phase forever, so
+the delete never comes. Indices made by an older Elemta have the default of
+one replica; on a single node give them
+`PUT elemta-logs-*/_settings {"index.auto_expand_replicas": "0-1"}`.
 
 | Field | What it is |
 |---|---|

@@ -3,6 +3,7 @@
   "priority": 511,
   "_meta": { "description": "Elemta service logs" },
   "template": {
+    "settings": { "index": { "auto_expand_replicas": "0-1" } },
     "mappings": {
       "dynamic": false,
       "properties": {

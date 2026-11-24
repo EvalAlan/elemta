@@ -442,5 +442,6 @@ func TestTemplateCarriesTheLifecyclePolicy(t *testing.T) {
 
 	raw, err := template(DefaultIndex, "")
 	require.NoError(t, err)
-	require.NotContains(t, string(raw), "settings", "no policy, no settings block")
+	require.NotContains(t, string(raw), "lifecycle", "no policy, no lifecycle setting")
+	require.Contains(t, string(raw), `"auto_expand_replicas":"0-1"`, "a single node can't place a replica")
 }
