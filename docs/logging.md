@@ -65,7 +65,26 @@ logs somewhere else. With none listed, nothing can be sent.
 4. In Kibana make a data view `elemta-logs-*` with `@timestamp` as the time.
 
 Elemta installs an index template before the first line and writes a daily
-index. It doesn't delete old ones; set a lifecycle policy.
+index. It doesn't delete old ones. To have them deleted, create an ILM policy
+in Elasticsearch and put its name in **Lifecycle policy**: the template then
+gives it to every new daily index. For example, kept for 90 days:
+
+```
+PUT _ilm/policy/elemta-logs
+{"policy": {"phases": {
+  "hot":    {"actions": {}},
+  "delete": {"min_age": "90d", "actions": {"delete": {}}}
+}}}
+```
+
+Elemta doesn't create or change the policy, so retention stays with whoever
+runs the cluster, and it writes its template again each time it starts, so a
+policy added to that template by hand doesn't last. Indices made before the
+policy was named keep none; give them one with
+`PUT elemta-logs-*/_settings {"index.lifecycle.name": "elemta-logs"}`. On a
+single-node cluster also set `number_of_replicas` to 0 on them: a replica that
+can never be placed holds a policy with a warm phase there forever, and the
+delete never comes.
 
 | Field | What it is |
 |---|---|
@@ -86,6 +105,9 @@ Use `deployments/elk/logstash-shipping.conf` as the pipeline and mount
 `/usr/share/logstash/elemta/logs-template.json`. In the console choose Logstash,
 choose the input's URL (port 8080 in that file, and it has to be listed as
 above) and enter the user name and password it was started with.
+Logstash installs the template from that file, so the console's lifecycle
+policy doesn't apply; add `"settings": {"index.lifecycle.name": "..."}` under
+`template` in the file instead.
 
 ### Where it can send
 

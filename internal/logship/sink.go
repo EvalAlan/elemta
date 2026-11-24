@@ -176,10 +176,10 @@ func clip(s string) string {
 	return s
 }
 
-func template(prefix string) ([]byte, error) {
+func template(prefix, policy string) ([]byte, error) {
 	type m = map[string]any
 	keyword := m{"type": "keyword", "ignore_above": 1024}
-	return json.Marshal(m{
+	tmpl := m{
 		"index_patterns": []string{prefix + "-*"},
 		// Above the broad elemta-* template of the development overlay, and
 		// higher the longer the prefix: elemta-logs-* also covers
@@ -202,7 +202,15 @@ func template(prefix string) ([]byte, error) {
 				},
 			},
 		},
-	})
+	}
+	// The template is written again whenever the shipper starts, so a policy
+	// set on it by hand would be lost; it has to come from the settings.
+	// Without one the settings block is left out, so the template still
+	// matches deployments/elk/logs-template.json, which Logstash installs.
+	if policy != "" {
+		tmpl["template"].(m)["settings"] = m{"index": m{"lifecycle": m{"name": policy}}}
+	}
+	return json.Marshal(tmpl)
 }
 
 func (s *sink) send(ctx context.Context, batch []entry) (delivery, error) {
@@ -244,7 +252,7 @@ func (s *sink) sendElasticsearch(ctx context.Context, batch []entry) (delivery, 
 	if !s.templated {
 		// Before the first document: an index made without it maps fields by
 		// whatever line came first, and that can't be changed afterwards.
-		body, err := template(s.settings.Index)
+		body, err := template(s.settings.Index, s.settings.LifecyclePolicy)
 		if err != nil {
 			return out, err
 		}

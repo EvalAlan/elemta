@@ -41,7 +41,12 @@ const (
 	DefaultIndex = "elemta-logs"
 )
 
-var indexRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)
+var (
+	indexRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)
+	// policyRE is narrower than what Elasticsearch takes for a policy name:
+	// no leading _, - or +, which it reserves, and nothing that needs quoting.
+	policyRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
+)
 
 // Settings is what the administrator chooses.
 type Settings struct {
@@ -49,6 +54,11 @@ type Settings struct {
 	Kind    string `json:"kind"`
 	URL     string `json:"url"`
 	Index   string `json:"index"`
+	// LifecyclePolicy names an ILM policy the index template assigns to each
+	// new daily index; empty leaves the indices without one. Elemta doesn't
+	// create the policy: how long logs are kept is the cluster owner's call,
+	// and a policy Elemta wrote would undo theirs every time it started.
+	LifecyclePolicy string `json:"lifecycle_policy,omitempty"`
 	// MinLevel is debug, info, warn or error.
 	MinLevel string `json:"min_level"`
 	// IncludeSubjects ships subjects, which are the content of people's
@@ -68,6 +78,7 @@ func (s Settings) WithDefaults() Settings {
 		s.MinLevel = "info"
 	}
 	s.URL = strings.TrimRight(strings.TrimSpace(s.URL), "/")
+	s.LifecyclePolicy = strings.TrimSpace(s.LifecyclePolicy)
 	return s
 }
 
@@ -78,6 +89,9 @@ func (s Settings) Validate() error {
 	}
 	if !indexRE.MatchString(s.Index) {
 		return errors.New("the index prefix takes lower-case letters, digits, - and _, starting with a letter or digit")
+	}
+	if s.LifecyclePolicy != "" && !policyRE.MatchString(s.LifecyclePolicy) {
+		return errors.New("the lifecycle policy takes letters, digits, '.', '-' and '_', starting with a letter or digit")
 	}
 	if _, ok := levels[s.MinLevel]; !ok {
 		return errors.New("the level must be debug, info, warn or error")

@@ -30,6 +30,8 @@
         el('logship-user-field').hidden = el('logship-password-field').hidden = auth.value !== 'basic';
         el('logship-plain').hidden = !/^\s*http:/i.test(url);
         el('logship-test').disabled = !url;
+        // Logstash installs its own template from a file, so the policy would go nowhere.
+        el('logship-policy-field').hidden = el('logship-policy-hint').hidden = el('logship-kind').value !== 'elasticsearch';
     }
 
     function fillDestinations(allowed, saved) {
@@ -71,6 +73,7 @@
         el('logship-kind').value = s.kind;
         fillDestinations(data.destinations, s.url);
         el('logship-index').value = s.index;
+        el('logship-policy').value = s.lifecycle_policy || '';
         el('logship-level').value = s.min_level;
         el('logship-subjects').checked = s.include_subjects;
         savedOrigin = origin(s.url);
@@ -87,6 +90,7 @@
                 kind: el('logship-kind').value,
                 url: el('logship-url').value.trim(),
                 index: el('logship-index').value.trim(),
+                lifecycle_policy: el('logship-policy').value.trim(),
                 min_level: el('logship-level').value,
                 include_subjects: el('logship-subjects').checked,
             },
