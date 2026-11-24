@@ -83,13 +83,16 @@ func TestSettings(t *testing.T) {
 	good := Settings{Enabled: true, URL: "https://es.example.com:9200"}
 	require.NoError(t, good.WithDefaults().Validate())
 	for name, s := range map[string]Settings{
-		"no URL":         {Enabled: true},
-		"password":       {URL: "https://u:p@es.example.com"},
-		"scheme":         {URL: "file:///etc/passwd"},
-		"query":          {URL: "https://es.example.com?x=1"},
-		"index traverse": {URL: good.URL, Index: "../_security"},
-		"level":          {URL: good.URL, MinLevel: "loud"},
-		"kind":           {URL: good.URL, Kind: "syslog"},
+		"no URL":          {Enabled: true},
+		"password":        {URL: "https://u:p@es.example.com"},
+		"scheme":          {URL: "file:///etc/passwd"},
+		"query":           {URL: "https://es.example.com?x=1"},
+		"index traverse":  {URL: good.URL, Index: "../_security"},
+		"level":           {URL: good.URL, MinLevel: "loud"},
+		"kind":            {URL: good.URL, Kind: "syslog"},
+		"policy reserved": {URL: good.URL, LifecyclePolicy: "_internal"},
+		"policy space":    {URL: good.URL, LifecyclePolicy: "keep 90d"},
+		"policy quote":    {URL: good.URL, LifecyclePolicy: `x"y`},
 	} {
 		require.Error(t, s.WithDefaults().Validate(), name)
 	}
@@ -131,6 +134,8 @@ type fakeES struct {
 	status map[string]int // by message
 	calls  []string
 	docs   map[string]map[string]any
+	// template is the last index template body PUT.
+	template []byte
 }
 
 func (f *fakeES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +148,7 @@ func (f *fakeES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	f.calls = append(f.calls, r.Method+" "+r.URL.Path)
 	if r.Method == http.MethodPut {
+		f.template, _ = io.ReadAll(r.Body)
 		_, _ = io.WriteString(w, `{"acknowledged":true}`)
 		return
 	}
@@ -283,7 +289,7 @@ func TestPipeline(t *testing.T) {
 
 // Logstash installs the template from a file; it has to be this one.
 func TestLogstashTemplateIsTheSame(t *testing.T) {
-	want, err := template(DefaultIndex)
+	want, err := template(DefaultIndex, "")
 	require.NoError(t, err)
 	got, err := os.ReadFile("../../deployments/elk/logs-template.json")
 	require.NoError(t, err)
@@ -292,7 +298,7 @@ func TestLogstashTemplateIsTheSame(t *testing.T) {
 
 func TestOverlappingPrefixesGetTheirOwnPriority(t *testing.T) {
 	priority := func(prefix string) float64 {
-		raw, err := template(prefix)
+		raw, err := template(prefix, "")
 		require.NoError(t, err)
 		var body struct {
 			Priority float64 `json:"priority"`
@@ -405,4 +411,36 @@ func TestRunKeepsToTheList(t *testing.T) {
 
 	set.Enabled = false
 	require.NoError(t, NewShipper(dir, addr, nil, nil).Save(ctx, set, nil), "switching off has to work without a list")
+}
+
+// The policy has to reach the template Elemta writes: one the cluster owner
+// added to it by hand would be overwritten the next time the shipper starts.
+func TestTemplateCarriesTheLifecyclePolicy(t *testing.T) {
+	good := Settings{URL: "https://es.example.com:9200", LifecyclePolicy: " elemta-logs "}.WithDefaults()
+	require.NoError(t, good.Validate())
+	require.Equal(t, "elemta-logs", good.LifecyclePolicy, "spaces around the name are trimmed")
+
+	es := &fakeES{docs: map[string]map[string]any{}}
+	srv := httptest.NewServer(es)
+	defer srv.Close()
+	s := newSink(srv.URL, good, Credential{})
+	_, err := s.send(context.Background(), []entry{newEntry("a", "mta", "h", `{"msg":"x"}`, time.Now())})
+	require.NoError(t, err)
+	var body struct {
+		Template struct {
+			Settings struct {
+				Index struct {
+					Lifecycle struct {
+						Name string `json:"name"`
+					} `json:"lifecycle"`
+				} `json:"index"`
+			} `json:"settings"`
+		} `json:"template"`
+	}
+	require.NoError(t, json.Unmarshal(es.template, &body))
+	require.Equal(t, "elemta-logs", body.Template.Settings.Index.Lifecycle.Name)
+
+	raw, err := template(DefaultIndex, "")
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "settings", "no policy, no settings block")
 }

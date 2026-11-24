@@ -143,7 +143,7 @@ func (s *Server) saveLogShipping(w http.ResponseWriter, r *http.Request, set log
 	}
 	set = set.WithDefaults()
 	slog.Info("Log shipping changed", "enabled", set.Enabled, "kind", set.Kind, "destination", set.URL,
-		"min_level", set.MinLevel, "include_subjects", set.IncludeSubjects, "by", abuseActor(r))
+		"min_level", set.MinLevel, "lifecycle_policy", set.LifecyclePolicy, "include_subjects", set.IncludeSubjects, "by", abuseActor(r))
 	message := "Log shipping is off"
 	if set.Enabled {
 		message = "Log shipping is on; every service follows within seconds"
