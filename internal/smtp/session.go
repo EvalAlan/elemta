@@ -874,6 +874,9 @@ func (s *Session) writeError(ctx context.Context, err error, command string) int
 			"event_type", eventType,
 			"command", command,
 			"response", errorMsg,
+			"phase", s.state.GetPhase().String(),
+			"authenticated", s.state.IsAuthenticated(),
+			"username", s.state.GetUsername(),
 		)
 		_ = s.write(errorMsg) // Intentionally ignore error in error handling
 	} else {

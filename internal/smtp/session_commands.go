@@ -58,8 +58,9 @@ func (ch *CommandHandler) ProcessCommand(ctx context.Context, line string) error
 	ch.state.UpdateActivity(ctx)
 
 	// Validate input with comprehensive security checks
+	// A refused command is logged once, by Session.writeError, which sends
+	// the reply: logging it here as well put every refusal in the log twice.
 	if err := ch.securityManager.ValidateCommand(ctx, line); err != nil {
-		ch.logCommandResult(ctx, line, false, err.Error(), time.Since(startTime))
 		return err
 	}
 
@@ -75,9 +76,7 @@ func (ch *CommandHandler) ProcessCommand(ctx context.Context, line string) error
 		if strings.EqualFold(cmd, "BDAT") {
 			ch.discardRefusedBDAT(ctx, args)
 		}
-		err := fmt.Errorf("503 5.5.1 Bad sequence of commands")
-		ch.logCommandResult(ctx, line, false, err.Error(), time.Since(startTime))
-		return err
+		return fmt.Errorf("503 5.5.1 Bad sequence of commands")
 	}
 
 	// Route command to appropriate handler
@@ -117,14 +116,9 @@ func (ch *CommandHandler) ProcessCommand(ctx context.Context, line string) error
 		err = ch.HandleUnknown(ctx, cmd)
 	}
 
-	// Log command result
-	success := err == nil
-	response := ""
-	if err != nil {
-		response = err.Error()
+	if err == nil {
+		ch.logCommandAccepted(ctx, line, time.Since(startTime))
 	}
-	ch.logCommandResult(ctx, line, success, response, time.Since(startTime))
-
 	return err
 }
 
@@ -1409,37 +1403,16 @@ func (ch *CommandHandler) isRelayAllowed(recipient string) bool {
 	return IsAllowedRelay(ip, ch.config.AllowedRelays)
 }
 
-// logCommandResult logs the result of a command execution
-func (ch *CommandHandler) logCommandResult(ctx context.Context, command string, success bool, response string, duration time.Duration) {
-	level := slog.LevelInfo
-	var eventType string
-	if !success {
-		level = slog.LevelWarn
-		eventType = "rejection"
-		// Check for tempfail (4xx)
-		if len(response) >= 3 && response[0] == '4' {
-			eventType = "tempfail"
-		}
-	} else {
-		// For successful commands, we can use specific event types if needed,
-		// or leave empty to be categorized as system/info
-		if strings.HasPrefix(strings.ToUpper(command), "MAIL FROM") {
-			eventType = "mail_from_accepted"
-		} else if strings.HasPrefix(strings.ToUpper(command), "RCPT TO") {
-			eventType = "rcpt_to_accepted"
-		} else if strings.HasPrefix(strings.ToUpper(command), "DATA") {
-			eventType = "data_accepted"
-		}
+// logCommandAccepted traces a command that succeeded, at DEBUG. The events
+// worth keeping already have lines of their own (mail_from_accepted,
+// rcpt_to_accepted, message_received), so this carries no event_type: with
+// one, the Logs tab would count each of them twice whenever DEBUG is on.
+func (ch *CommandHandler) logCommandAccepted(ctx context.Context, command string, duration time.Duration) {
+	if !ch.logger.Enabled(ctx, slog.LevelDebug) {
+		return
 	}
-
-	// Sanitize command for safe logging
-	sanitizedCommand := ch.securityManager.SanitizeCommand(command)
-
-	ch.logger.Log(ctx, level, "SMTP command processed",
-		"event_type", eventType,
-		"command", sanitizedCommand,
-		"success", success,
-		"response", response,
+	ch.logger.DebugContext(ctx, "SMTP command accepted",
+		"command", ch.securityManager.SanitizeCommand(command),
 		"duration", duration,
 		"phase", ch.state.GetPhase().String(),
 		"authenticated", ch.state.IsAuthenticated(),
