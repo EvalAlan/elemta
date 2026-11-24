@@ -135,10 +135,8 @@ func scrubValue(v any, subjects bool, depth int) any {
 var clientKeys = []string{"client_ip", "remote_addr", "ip", "ip_address", "client", "remote"}
 
 // document is a line as it is indexed. The fields everyone searches have ECS
-// names and fixed types. The rest go under elemta, mapped as one flattened
-// object: the same key is a string in one line and an object in another, and
-// with a field each, the first type seen would have every later line of the
-// other type refused.
+// names and fixed types. Everything else goes under elemta, one keyword field
+// per key (see fields).
 func document(service, host string, line []byte, at time.Time) (map[string]any, time.Time) {
 	var e map[string]any
 	d := json.NewDecoder(bytes.NewReader(line))
@@ -180,13 +178,65 @@ func document(service, host string, line []byte, at time.Time) (map[string]any, 
 		switch k {
 		case "", "time", "msg", "level":
 		default:
-			if v != nil {
-				rest[k] = v
-			}
+			fields(rest, k, v, 0)
 		}
 	}
 	doc["elemta"] = rest
 	return doc, at
+}
+
+// fields puts v in out under key, with nested objects flattened into dotted
+// keys ("imap.addr") and every value as text. The template maps elemta with
+// subobjects off and each key as a keyword, so every key is a field of its
+// own that Kibana lists, shows and charts. Text throughout is what makes that
+// safe: the same key is a number in one line and a string or an object in
+// another, and with a type per field the first type seen would have every
+// later line of another type refused. With subobjects off, "imap" and
+// "imap.addr" are two separate fields, so an object in one line and a string
+// in the next don't clash either. The keys worth summing or ranging have
+// typed copies (typed).
+func fields(out map[string]any, key string, v any, depth int) {
+	switch t := v.(type) {
+	case nil:
+	case string:
+		out[key] = t
+	case json.Number:
+		out[key] = t.String()
+	case bool:
+		out[key] = strconv.FormatBool(t)
+	case map[string]any:
+		if depth >= maxEventDepth {
+			out[key] = redacted
+			return
+		}
+		for k, inner := range t {
+			fields(out, key+"."+k, inner, depth+1)
+		}
+	case []any:
+		// A list of plain values stays a list, which a keyword field holds;
+		// anything deeper is kept whole as JSON rather than split into keys
+		// that would lose which item each value came from.
+		list := make([]string, 0, len(t))
+		for _, item := range t {
+			switch s := item.(type) {
+			case string:
+				list = append(list, s)
+			case json.Number:
+				list = append(list, s.String())
+			case bool:
+				list = append(list, strconv.FormatBool(s))
+			case nil:
+			default:
+				raw, _ := json.Marshal(t)
+				out[key] = string(raw)
+				return
+			}
+		}
+		out[key] = list
+	default:
+		raw, _ := json.Marshal(t)
+		out[key] = string(raw)
+	}
 }
 
 // typed copies the keys people chart and filter by into fields with types,

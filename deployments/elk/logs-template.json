@@ -9,11 +9,28 @@
   "template": {
     "settings": {
       "index": {
-        "auto_expand_replicas": "0-1"
+        "auto_expand_replicas": "0-1",
+        "mapping": {
+          "total_fields": {
+            "ignore_dynamic_beyond_limit": true,
+            "limit": 2000
+          }
+        }
       }
     },
     "mappings": {
       "dynamic": false,
+      "dynamic_templates": [
+        {
+          "elemta_keys": {
+            "mapping": {
+              "ignore_above": 4096,
+              "type": "keyword"
+            },
+            "path_match": "elemta.*"
+          }
+        }
+      ],
       "properties": {
         "@timestamp": {
           "type": "date"
@@ -82,8 +99,9 @@
           }
         },
         "elemta": {
-          "ignore_above": 4096,
-          "type": "flattened"
+          "dynamic": true,
+          "subobjects": false,
+          "type": "object"
         },
         "email": {
           "properties": {
