@@ -3,6 +3,7 @@ package webmail
 import (
 	"bytes"
 	"encoding/base64"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/mail"
@@ -116,6 +117,8 @@ func (h *harness) postMultipart(path string, fields map[string]string) *http.Res
 func TestComposeScheduleSend(t *testing.T) {
 	f := &fakeSecurity{}
 	h := newSecurityHarness(t, f)
+	var logs bytes.Buffer
+	h.server.log = slog.New(slog.NewTextHandler(&logs, nil))
 	csrf := h.login()
 	_, page := h.get("/compose")
 	if !strings.Contains(page, "Send later") || !strings.Contains(page, `name="schedule" value="custom"`) {
@@ -163,6 +166,12 @@ func TestComposeScheduleSend(t *testing.T) {
 	}
 	if strings.Contains(msg, "archive@example.com") {
 		t.Error("the Bcc address is in the message")
+	}
+	// The mailbox service sends it later; the send log, with where the user
+	// was, is written now, when the request still knows.
+	if !strings.Contains(logs.String(), `msg="webmail: sent"`) || !strings.Contains(logs.String(), "ip=127.0.0.1") ||
+		!strings.Contains(logs.String(), "kind=scheduled") {
+		t.Errorf("scheduling wasn't logged as a send with the client address:\n%s", logs.String())
 	}
 }
 

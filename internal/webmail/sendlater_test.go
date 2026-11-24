@@ -1,6 +1,7 @@
 package webmail
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -8,8 +9,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"log/slog"
 )
 
 // withUndoSend runs a test with a one-second undo delay as the default.
@@ -191,4 +195,40 @@ func TestUndoSendSetting(t *testing.T) {
 		t.Errorf("with undo send off: %q, want sent at once", loc)
 	}
 	waitSent(t, h, time.Second)
+}
+
+// An undo-send goes out on a timer after the request has ended, and its send
+// log line still has to say where the user was.
+func TestUndoSendLogsTheClientIP(t *testing.T) {
+	withUndoSend(t)
+	h := newHarness(t)
+	h.sub.sent = make(chan struct{}, 1)
+	var logs lockedLog
+	h.server.log = slog.New(slog.NewTextHandler(&logs, nil))
+	csrf := h.login()
+	_ = sendTestMessage(t, h, csrf)
+	waitSent(t, h, 5*time.Second)
+	eventually(t, "no send log line", func() bool { return strings.Contains(logs.String(), `msg="webmail: sent"`) })
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, `msg="webmail: sent"`) && !strings.Contains(l, "ip=127.0.0.1") {
+			t.Errorf("delayed send logged without the client address: %s", l)
+		}
+	}
+}
+
+type lockedLog struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *lockedLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lockedLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
 }

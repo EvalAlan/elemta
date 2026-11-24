@@ -40,6 +40,9 @@ type pendingSend struct {
 	mode       string
 	due        time.Time
 	timer      *time.Timer
+	// clientIP is where the user sent it from. The send runs later on a
+	// timer, outside the request that knew it, and the send log needs it.
+	clientIP string
 }
 
 type sendQueue struct {
@@ -128,7 +131,7 @@ func (s *Server) queueSend(ctx context.Context, sess *Session, password, from st
 	p := &pendingSend{
 		id: id, sessID: sess.ID, sess: sess, password: password, from: from, draft: d, raw: raw,
 		draftUID: draftUID, origFolder: cv.OrigFolder, origUID: cv.OrigUID, mode: cv.Mode,
-		due: s.now().Add(delay),
+		due: s.now().Add(delay), clientIP: clientIPFrom(ctx),
 	}
 	s.sends.mu.Lock()
 	s.sends.pending[id] = p
@@ -167,7 +170,7 @@ func (s *Server) deliverPending(ctx context.Context, p *pendingSend) error {
 	if err := s.submit.Submit(ctx, p.sess.User, p.password, p.from, p.draft.Recipients(), p.raw); err != nil {
 		return err
 	}
-	s.logSent(ctx, p.sess, p.draft, "message")
+	s.logSent(context.WithValue(ctx, clientIPKey{}, p.clientIP), p.sess, p.draft, "message")
 	if err := s.sessions.withMailStore(ctx, p.sess, s.dial, func(st Mailstore) error {
 		if _, err := st.Append(ctx, RoleSent, p.raw, true, false); err != nil {
 			return err
