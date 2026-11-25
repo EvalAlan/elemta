@@ -598,7 +598,7 @@ func TestPalettesKeepLogoColours(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	logo := []string{"#dc2626", "#f97316", "#fbbf24", "#0369a1", "#0ea5e9", "#38bdf8"}
+	logo := []string{"#F14B24", "#FFAB24", "#FF6E1D", "#EB3B2C", "#38C4F1", "#14A7E4", "#087DBA", "#086FAD"}
 	block := regexp.MustCompile(`(?s):root\[data-palette="\w+"\]([^{]*)\{(.*?)\}`)
 	token := func(body, name string) string {
 		m := regexp.MustCompile(`--` + name + `: (#[0-9A-Fa-f]{6});`).FindStringSubmatch(body)
