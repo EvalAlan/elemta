@@ -393,7 +393,24 @@ func (s *Session) verifyAuthenticationContent(ctx context.Context, mailFrom stri
 	}
 	clientIP := net.ParseIP(host)
 
-	results := verifier.CheckWithOpener(ctx, clientIP, s.state.HeloName(), mailFrom, head, open)
+	// A peer in allowed_relays is this installation's own: on a cluster, the
+	// mailbox servers handing back sieve redirects, vacation replies and
+	// other mail they generate. They send from private addresses that no
+	// domain's SPF record lists, so SPF failed every such message, and the
+	// failure was this server's own network, not the sender. SPF is skipped
+	// for them (no address, so "none"); DKIM, ARC and DMARC still run, so the
+	// hop keeps its Authentication-Results header, which ARC sealing on the
+	// way out builds on.
+	ownRelay := s.commandHandler != nil && s.commandHandler.isRelayAllowed("")
+	spfIP := clientIP
+	if ownRelay {
+		spfIP = nil
+	}
+
+	results := verifier.CheckWithOpener(ctx, spfIP, s.state.HeloName(), mailFrom, head, open)
+	if ownRelay && results.SPF.Value == "none" {
+		results.SPF.Reason = "internal relay (allowed_relays); not checked"
+	}
 	metrics := GetMetrics()
 	metrics.MailAuthResults.WithLabelValues("spf", orMetricNone(results.SPF.Value)).Inc()
 	if len(results.DKIM) == 0 {
@@ -412,7 +429,10 @@ func (s *Session) verifyAuthenticationContent(ctx context.Context, mailFrom stri
 	s.authChecked = true
 	reports := s.dmarcReports
 	s.mu.Unlock()
-	if reports != nil {
+	// Not for an internal relay: the message was recorded when it first
+	// arrived, and a second record would tell the domain owner a private
+	// address of ours sent their mail.
+	if reports != nil && !ownRelay {
 		// Counted before any rejection below: a report exists to tell the
 		// domain owner what was refused in its name.
 		if eval, ok := dmarcEvaluation(results, clientIP, mailFrom, head); ok {
@@ -430,6 +450,7 @@ func (s *Session) verifyAuthenticationContent(ctx context.Context, mailFrom stri
 	s.logger.InfoContext(ctx, "Sender authentication checked",
 		"event_type", "sender_authentication",
 		"client_ip", host,
+		"internal_relay", ownRelay,
 		"mail_from", mailFrom,
 		"spf", results.SPF.Value,
 		"dkim", dkimVerdict,
@@ -441,7 +462,6 @@ func (s *Session) verifyAuthenticationContent(ctx context.Context, mailFrom stri
 		"disposition", results.Disposition,
 	)
 
-	ownRelay := s.commandHandler != nil && s.commandHandler.isRelayAllowed("")
 	var localDomains []string
 	if s.config != nil {
 		localDomains = s.config.LocalDomains
