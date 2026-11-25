@@ -293,9 +293,17 @@ func authenticationResultsValue(content []byte) string {
 // is configured for the message domain, a signing error fails the delivery
 // attempt rather than silently downgrading it to unsigned mail.
 func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) ([]byte, error) {
+	signed, _, err := h.sign(msg, content)
+	return signed, err
+}
+
+// sign is signContent that also returns the domain it signed for, "" when it
+// left the message as it was, so the delivery log can say what went out
+// signed.
+func (h *SMTPDeliveryHandler) sign(msg Message, content []byte) ([]byte, string, error) {
 	signer := h.currentSigner()
 	if signer == nil {
-		return content, nil
+		return content, "", nil
 	}
 
 	signingDomain := dkim.DomainFromAddress(msg.From)
@@ -304,20 +312,26 @@ func (h *SMTPDeliveryHandler) signContent(msg Message, content []byte) ([]byte, 
 	}
 	if signingDomain == "" {
 		h.logger.Debug("No signing domain resolved for message, delivering unsigned", "message_id", msg.ID)
-		return content, nil
+		return content, "", nil
 	}
 
 	// Signed at submission for this domain (internal/smtp/submission_dkim.go):
 	// a second signature from the same domain adds nothing.
 	if strings.EqualFold(msg.Annotations[AnnotationDKIMSigned], signingDomain) {
-		return content, nil
+		return content, "", nil
 	}
 
 	signed, err := signer.Sign(content, signingDomain)
 	if err != nil {
-		return nil, fmt.Errorf("dkim signing failed for message %q and domain %q: %w", msg.ID, signingDomain, err)
+		return nil, "", fmt.Errorf("dkim signing failed for message %q and domain %q: %w", msg.ID, signingDomain, err)
 	}
-	return signed, nil
+	// The signer hands content back as it was when it holds no key for the
+	// domain; a signature always adds a header, so unchanged length means
+	// unsigned, and the log mustn't claim otherwise.
+	if len(signed) == len(content) {
+		return signed, "", nil
+	}
+	return signed, signingDomain, nil
 }
 
 // SignForDelivery returns content as delivery would send it, DKIM-signed by
@@ -358,8 +372,7 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 	// identical signed bytes go to every MX. A configured-domain signing failure
 	// aborts this attempt; the queue processor treats unknown delivery errors as
 	// temporary and retries from the original stored content.
-	var err error
-	content, err = h.signContent(msg, content)
+	content, signedFor, err := h.sign(msg, content)
 	if err != nil {
 		return nil, err
 	}
@@ -492,6 +505,7 @@ func (h *SMTPDeliveryHandler) deliverWithMetadata(ctx context.Context, msg Messa
 
 	result, err := h.buildDeliveryResult(msg.To, delivered, firstSuccessfulIP, firstSuccessfulHost, aggregateDomainFailures(failures))
 	result.RecipientOutcomes = outcomes
+	result.DKIMSigned = signedFor
 	return result, err
 }
 

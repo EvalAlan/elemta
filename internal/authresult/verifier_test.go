@@ -436,3 +436,25 @@ func TestHeaderFromDomain(t *testing.T) {
 		}
 	}
 }
+
+// One valid signature is enough for DMARC, so any pass makes the message a
+// pass whatever order the signatures came in; otherwise the first one speaks
+// for it, and no signatures is "none", not "".
+func TestDKIMVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		dkim            []Result
+		verdict, domain string
+	}{
+		{"none", nil, "none", ""},
+		{"pass", []Result{{Value: "pass", Domain: "a.example"}}, "pass", "a.example"},
+		{"pass after fail", []Result{{Value: "fail", Domain: "b.example"}, {Value: "pass", Domain: "a.example"}}, "pass", "a.example"},
+		{"fail", []Result{{Value: "fail", Domain: "b.example"}, {Value: "permerror", Domain: "c.example"}}, "fail", "b.example"},
+		{"blank value", []Result{{Domain: "b.example"}}, "none", "b.example"},
+	} {
+		verdict, domain := Results{DKIM: tc.dkim}.DKIMVerdict()
+		if verdict != tc.verdict || domain != tc.domain {
+			t.Errorf("%s: got (%q, %q), want (%q, %q)", tc.name, verdict, domain, tc.verdict, tc.domain)
+		}
+	}
+}

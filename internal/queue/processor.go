@@ -66,6 +66,10 @@ type DeliveryResult struct {
 	// remote delivery was recorded as local and the trace read it back and told
 	// operators the wrong thing.
 	DeliveryMethod string
+	// DKIMSigned is the domain delivery signed the message for; empty when it
+	// didn't sign (no key, or the message was signed at submission, which the
+	// AnnotationDKIMSigned annotation records instead).
+	DKIMSigned string
 }
 
 // The transports a message can be carried by, as reported in the logs and the
@@ -1091,7 +1095,7 @@ func (p *Processor) observePartial(msg Message, result *DeliveryResult, delivere
 	if len(delivered) == 0 {
 		return
 	}
-	p.msgLogger.LogDelivery(logging.MessageContext{MessageID: msg.ID, QueueID: msg.ID, From: msg.From, To: delivered, Subject: msg.Subject, Size: msg.Size, ReceptionTime: msg.ReceivedAt, ProcessingTime: msg.CreatedAt, DeliveryTime: result.DeliveryTime, DeliveryIP: result.DeliveryIP, DeliveryHost: result.DeliveryHost, RetryCount: msg.RetryCount, DeliveryMethod: result.DeliveryMethod})
+	p.msgLogger.LogDelivery(logging.MessageContext{MessageID: msg.ID, QueueID: msg.ID, From: msg.From, To: delivered, Subject: msg.Subject, Size: msg.Size, ReceptionTime: msg.ReceivedAt, ProcessingTime: msg.CreatedAt, DeliveryTime: result.DeliveryTime, DeliveryIP: result.DeliveryIP, DeliveryHost: result.DeliveryHost, RetryCount: msg.RetryCount, DeliveryMethod: result.DeliveryMethod, DKIMSigned: dkimSigned(msg, result)})
 	if err := p.manager.AddAttempt(msg.ID, "partial", fmt.Sprintf("delivered=%d temporary=%d permanent=%d", len(delivered), temporary, permanent)); err != nil {
 		p.logger.Debug("Could not record partial delivery attempt", "message_id", msg.ID, "error", err)
 	}
@@ -1115,6 +1119,16 @@ func (p *Processor) finalizeNoTemporary(msg Message, permanent int) {
 	}
 }
 
+// dkimSigned is the domain the delivered copy carried this server's DKIM
+// signature for: added at delivery, or at submission (then delivery adds none
+// and the annotation says so). Local deliveries are only ever the second.
+func dkimSigned(msg Message, result *DeliveryResult) string {
+	if result != nil && result.DKIMSigned != "" {
+		return result.DKIMSigned
+	}
+	return msg.Annotations[AnnotationDKIMSigned]
+}
+
 // handleDeliverySuccess processes a successful message delivery
 func (p *Processor) handleDeliverySuccess(msg Message, result *DeliveryResult) {
 	// Log comprehensive delivery success with delivery IP
@@ -1132,6 +1146,7 @@ func (p *Processor) handleDeliverySuccess(msg Message, result *DeliveryResult) {
 		DeliveryHost:   result.DeliveryHost,
 		RetryCount:     msg.RetryCount,
 		DeliveryMethod: result.DeliveryMethod,
+		DKIMSigned:     dkimSigned(msg, result),
 	})
 
 	p.metricsLock.Lock()
