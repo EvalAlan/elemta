@@ -1434,10 +1434,9 @@ select.compact { min-height: 36px; border: 1px solid var(--line); border-radius:
 .brand { display: flex; align-items: center; gap: 10px; color: var(--chrome-strong); text-decoration: none; font-weight: 600; font-size: 16px; }
 .brand:hover { color: var(--chrome-strong); }
 .brand .icon { width: 22px; height: 22px; stroke: var(--chrome-accent); }
-/* The envelope logo is the administration console's, gradients and all;
-   only its paper follows the theme so it sits on either top bar. */
-.brand .logo { width: 34px; height: 27px; flex: none; }
-.brand .logo .paper { fill: var(--chrome); }
+/* Fire and water meet in the envelope's flap. The envelope is open, so the
+   top bar shows through and the mark sits on either theme unchanged. */
+.brand .logo { width: 32px; height: 32px; flex: none; }
 .brand.dark { color: var(--ink); }
 .apps { display: flex; gap: 4px; }
 .apps a { display: inline-flex; align-items: center; gap: 8px; color: var(--chrome-muted); text-decoration: none; padding: 8px 12px; border-radius: 6px; white-space: nowrap; }
