@@ -642,6 +642,24 @@ func (r Results) Header(hostname string) string {
 	return sanitizeHeader(strings.Join(parts, "; "))
 }
 
+// DKIMVerdict is one word for all of a message's DKIM signatures, and the
+// domain it is about, for logs and dashboards that count messages rather than
+// signatures. A message often carries two (its author's and its sending
+// service's), and one valid signature is enough for DMARC, so any pass is a
+// pass. Otherwise it is the first signature's result, and "none" when there
+// were none.
+func (r Results) DKIMVerdict() (string, string) {
+	if len(r.DKIM) == 0 {
+		return "none", ""
+	}
+	for _, d := range r.DKIM {
+		if d.Value == "pass" {
+			return "pass", d.Domain
+		}
+	}
+	return orNone(r.DKIM[0].Value), r.DKIM[0].Domain
+}
+
 func orNone(value string) string {
 	if value == "" {
 		return "none"

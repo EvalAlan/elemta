@@ -26,3 +26,28 @@ func TestReceptionOriginatingIP(t *testing.T) {
 		}
 	}
 }
+
+// dkim_signed is on the reception and delivery lines only when this server
+// signed the message, so counting it counts signed mail and nothing else.
+func TestDKIMSignedLogged(t *testing.T) {
+	for _, tc := range []struct {
+		domain  string
+		present bool
+	}{{"example.com", true}, {"", false}} {
+		for name, log := range map[string]func(*MessageLogger, MessageContext){
+			"reception": (*MessageLogger).LogReception,
+			"delivery":  (*MessageLogger).LogDelivery,
+		} {
+			var buf bytes.Buffer
+			log(NewMessageLogger(slog.New(slog.NewJSONHandler(&buf, nil))), MessageContext{MessageID: "<m@x>", DKIMSigned: tc.domain})
+			var line map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+				t.Fatal(err)
+			}
+			got, present := line["dkim_signed"]
+			if present != tc.present || (present && got != tc.domain) {
+				t.Errorf("%s, DKIMSigned %q: logged %v (present %v)", name, tc.domain, got, present)
+			}
+		}
+	}
+}

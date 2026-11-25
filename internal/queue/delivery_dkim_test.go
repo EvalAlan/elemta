@@ -78,6 +78,39 @@ func TestSignContentUsesEnvelopeFrom(t *testing.T) {
 	}
 }
 
+// sign reports the domain it signed for, and "" when it signed nothing: for a
+// domain with no key, or one already signed at submission. The delivery log
+// line carries it, and must not claim a signature the message lacks.
+func TestSignReportsDomain(t *testing.T) {
+	h := NewSMTPDeliveryHandler(0)
+	h.SetDKIMSigner(newTestSigner(t, "example.com"))
+	for _, tc := range []struct {
+		name string
+		msg  Message
+		want string
+	}{
+		{"signed", Message{ID: "m1", From: "alice@example.com"}, "example.com"},
+		{"no key", Message{ID: "m2", From: "bob@other.example"}, ""},
+		{"signed at submission", Message{ID: "m3", From: "alice@example.com",
+			Annotations: map[string]string{AnnotationDKIMSigned: "example.com"}}, ""},
+	} {
+		_, got, err := h.sign(tc.msg, []byte(dkimTestMessage))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: signed for %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	m := Message{ID: "m3", Annotations: map[string]string{AnnotationDKIMSigned: "example.com"}}
+	if got := dkimSigned(m, &DeliveryResult{}); got != "example.com" {
+		t.Errorf("submission-signed message logged as signed for %q", got)
+	}
+	if got := dkimSigned(Message{ID: "m1"}, &DeliveryResult{DKIMSigned: "example.com"}); got != "example.com" {
+		t.Errorf("delivery-signed message logged as signed for %q", got)
+	}
+}
+
 // TestSignContentRetriesStartFromStoredContent models the processor retry path:
 // each attempt reloads the original stored message rather than feeding the
 // previous attempt's signed bytes back into the signer.

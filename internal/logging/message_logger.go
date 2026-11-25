@@ -48,6 +48,9 @@ type MessageContext struct {
 	SpamScanned    bool
 	SpamScore      float64
 	DeliveryMethod string
+	// DKIMSigned is the domain this server DKIM-signed the message for, at
+	// submission or at delivery; empty when it went out unsigned.
+	DKIMSigned string
 }
 
 // LogReception logs when a message is received and accepted
@@ -83,6 +86,9 @@ func (ml *MessageLogger) LogReception(ctx MessageContext) {
 	// would read as "the header was there and blank".
 	if ctx.OriginatingIP != "" {
 		args = append(args, "originating_ip", ctx.OriginatingIP)
+	}
+	if ctx.DKIMSigned != "" {
+		args = append(args, "dkim_signed", ctx.DKIMSigned)
 	}
 	ml.logger.Info("message_reception", args...)
 }
@@ -127,6 +133,9 @@ func (ml *MessageLogger) LogDelivery(ctx MessageContext) {
 	}
 	if ctx.DeliveryHost != "" {
 		fields = append(fields, "delivery_host", ctx.DeliveryHost)
+	}
+	if ctx.DKIMSigned != "" {
+		fields = append(fields, "dkim_signed", ctx.DKIMSigned)
 	}
 
 	ml.logger.Info("message_delivery", fields...)

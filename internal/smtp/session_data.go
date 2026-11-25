@@ -2466,6 +2466,7 @@ func (dh *DataHandler) saveMessage(ctx context.Context, headerPrefix []byte, bod
 		ClientIP:       dh.session.remoteAddr,
 		ClientHostname: dh.session.remoteAddr,
 		OriginatingIP:  originatingIP(metadata.Headers["x-originating-ip"]),
+		DKIMSigned:     signedFor,
 		Username:       dh.state.GetUsername(),
 		Authenticated:  dh.state.IsAuthenticated(),
 		TLSActive:      dh.state.IsTLSActive(),
