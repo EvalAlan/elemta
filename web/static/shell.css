@@ -14,8 +14,7 @@
 }
 .sidebar-header { height: var(--header-height); flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 0.75rem 0 1rem; }
 .logo { display: flex; align-items: center; gap: 0.65rem; min-width: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: -0.01em; color: var(--text-primary); }
-.logo-icon { width: 36px; height: 29px; flex: none; }
-.logo-icon .envelope-fill { fill: var(--bg-primary); }
+.logo-icon { width: 32px; height: 32px; flex: none; }
 .icon-btn {
     width: 36px; height: 36px; flex: none;
     display: inline-flex; align-items: center; justify-content: center;

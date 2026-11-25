@@ -5,8 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elemta Mail Server</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/styles.css?v=20261122-dashboard">
-    <link rel="stylesheet" href="/static/shell.css?v=20261122-dashboard">
+    <link rel="stylesheet" href="/static/shell.css?v=20261125-icon">
     <link rel="stylesheet" href="/static/mail-admin.css?v=20261122-refresh">
 </head>
 
@@ -16,54 +17,8 @@
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
-                    <svg class="logo-icon" viewBox="0 0 40 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <!-- Main Envelope -->
-                        <rect x="6" y="6" width="28" height="20" rx="2" class="envelope-fill" stroke="url(#borderGrad)"
-                            stroke-width="2" />
-
-                        <!-- Envelope flap with fire/water gradient -->
-                        <path d="M6 8 L20 18 L34 8" stroke="url(#flapGrad)" stroke-width="2" stroke-linecap="round"
-                            stroke-linejoin="round" />
-
-                        <!-- Fire accent (left side) -->
-                        <path d="M4 24 Q2 20 4 16 Q6 12 3 8" stroke="url(#fireGrad)" stroke-width="2.5"
-                            stroke-linecap="round" fill="none" />
-                        <path d="M6 22 Q5 18 7 14" stroke="url(#fireGrad)" stroke-width="1.5" stroke-linecap="round"
-                            fill="none" />
-                        <circle cx="3" cy="6" r="1.2" fill="#fbbf24" />
-
-                        <!-- Water accent (right side) -->
-                        <path d="M36 24 Q38 20 36 16 Q34 12 37 8" stroke="url(#waterGrad)" stroke-width="2.5"
-                            stroke-linecap="round" fill="none" />
-                        <path d="M34 22 Q35 18 33 14" stroke="url(#waterGrad)" stroke-width="1.5" stroke-linecap="round"
-                            fill="none" />
-                        <circle cx="37" cy="6" r="1.2" fill="#38bdf8" />
-
-                        <defs>
-                            <linearGradient id="borderGrad" x1="6" y1="16" x2="34" y2="16"
-                                gradientUnits="userSpaceOnUse">
-                                <stop stop-color="#f97316" />
-                                <stop offset="0.5" stop-color="#64748b" />
-                                <stop offset="1" stop-color="#0ea5e9" />
-                            </linearGradient>
-                            <linearGradient id="flapGrad" x1="6" y1="13" x2="34" y2="13" gradientUnits="userSpaceOnUse">
-                                <stop stop-color="#f97316" />
-                                <stop offset="0.5" stop-color="#94a3b8" />
-                                <stop offset="1" stop-color="#0ea5e9" />
-                            </linearGradient>
-                            <linearGradient id="fireGrad" x1="4" y1="24" x2="4" y2="6" gradientUnits="userSpaceOnUse">
-                                <stop stop-color="#dc2626" />
-                                <stop offset="0.5" stop-color="#f97316" />
-                                <stop offset="1" stop-color="#fbbf24" />
-                            </linearGradient>
-                            <linearGradient id="waterGrad" x1="36" y1="24" x2="36" y2="6"
-                                gradientUnits="userSpaceOnUse">
-                                <stop stop-color="#0369a1" />
-                                <stop offset="0.5" stop-color="#0ea5e9" />
-                                <stop offset="1" stop-color="#38bdf8" />
-                            </linearGradient>
-                        </defs>
-                    </svg>
+                    <!-- Fire and water meet in the envelope flap; the webmail uses the same mark. -->
+                    <svg class="logo-icon" viewBox="0 0 64 64" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="logo-rim" x1="7" y1="35" x2="57" y2="35" gradientUnits="userSpaceOnUse"><stop stop-color="#F14B24"/><stop offset=".43" stop-color="#FFAB24"/><stop offset=".55" stop-color="#38C4F1"/><stop offset="1" stop-color="#087DBA"/></linearGradient><linearGradient id="logo-fire" x1="10" y1="12" x2="32" y2="37" gradientUnits="userSpaceOnUse"><stop stop-color="#FFB21E"/><stop offset=".55" stop-color="#FF6E1D"/><stop offset="1" stop-color="#EB3B2C"/></linearGradient><linearGradient id="logo-water" x1="32" y1="14" x2="54" y2="43" gradientUnits="userSpaceOnUse"><stop stop-color="#67D7FA"/><stop offset=".54" stop-color="#14A7E4"/><stop offset="1" stop-color="#086FAD"/></linearGradient></defs><g stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="17" width="50" height="39" rx="6" fill="none" stroke="url(#logo-rim)" stroke-width="4.4"/><path d="M9 21c5 1 7-5 10-12 1 6 5 7 7 7 1-3 1-6 0-9 6 5 9 11 7 18l-1 10L9 21Z" fill="url(#logo-fire)"/><path d="M55 22c-6-2-9-7-11-12 0 8-3 13-8 13-2 0-3-1-4-3 2 5 1 10 0 15l23-13Z" fill="url(#logo-water)"/><circle cx="51" cy="12" r="2" fill="#67D7FA"/><path d="m9 23 23 16 23-16" fill="none" stroke="url(#logo-rim)" stroke-width="4.5"/><path d="m28.8 29.5 3.2-8.2 3.2 8.2-3.2 5.1Z" fill="#EAF9FF"/></g></svg>
                     <span>Elemta</span>
                 </div>
                 <button class="icon-btn sidebar-toggle" id="sidebar-toggle" aria-label="Collapse or expand the menu" aria-expanded="true">
