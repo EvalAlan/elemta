@@ -131,7 +131,7 @@ func TestConsolePagesCarryCSP(t *testing.T) {
 
 	// The sign-in page's script and style are public: the page needs them
 	// before there is a session.
-	for path, kind := range map[string]string{"/login.js": "javascript", "/login.css": "css"} {
+	for path, kind := range map[string]string{"/login.js": "javascript", "/login.css": "css", "/favicon.svg": "svg"} {
 		resp, err := http.Get(base + path)
 		require.NoError(t, err)
 		b, _ := io.ReadAll(resp.Body)

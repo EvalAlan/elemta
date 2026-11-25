@@ -681,6 +681,8 @@ func (s *Server) Start() error {
 	// console's CSP refuses inline ones, and /static/ needs a session.
 	r.HandleFunc("/login.js", serveLoginAsset("web/login.js")).Methods("GET")
 	r.HandleFunc("/login.css", serveLoginAsset("web/login.css")).Methods("GET")
+	// Both the sign-in page and the console link it, so it is public too.
+	r.HandleFunc("/favicon.svg", serveLoginAsset("web/favicon.svg")).Methods("GET")
 	// One-click unsubscribe from campaign mail: the recipient has no sign-in,
 	// and the signed token is the authority (unsubscribe.go).
 	r.HandleFunc("/unsubscribe/{token}", s.handleUnsubscribe).Methods("GET", "POST")
